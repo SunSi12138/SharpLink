@@ -1,0 +1,317 @@
+name: Static Codec Core Production Evidence
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - issue-747-static-struct-codec-core
+    paths:
+      - 'test/SharpLink.StaticCodecCoreEvidence/**'
+      - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.Client/**'
+      - 'src/SharpLink.Generator/**'
+      - 'src/SharpLink.Runtime/**'
+      - 'src/SharpLink.Server/**'
+      - '.github/workflows/static-codec-core-performance-evidence.yml'
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the full 100k-item stream matrix
+        required: true
+        default: 'true'
+
+concurrency:
+  group: static-codec-core-production-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  production-rpc-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      EVIDENCE_ROOT: ${{ github.workspace }}/artifacts/performance/static-codec-core
+      PROJECT: test/SharpLink.StaticCodecCoreEvidence/SharpLink.StaticCodecCoreEvidence.csproj
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Prepare same-source dev baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin dev --depth=1
+          baseline="$RUNNER_TEMP/sharplink-static-core-dev"
+          git worktree add --detach "$baseline" FETCH_HEAD
+          rm -rf "$baseline/test/SharpLink.StaticCodecCoreEvidence"
+          cp -a "$GITHUB_WORKSPACE/test/SharpLink.StaticCodecCoreEvidence" "$baseline/test/"
+          echo "BASELINE_ROOT=$baseline" >> "$GITHUB_ENV"
+          echo "CANDIDATE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE_ROOT"/{jit,aot,generated,codegen,summary}
+
+      - name: Build production-path JIT binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_one() {
+            local label="$1"
+            local root="$2"
+            local generated="$EVIDENCE_ROOT/generated/$label"
+            mkdir -p "$generated"
+            dotnet restore "$root/$PROJECT"
+            dotnet build "$root/$PROJECT" --no-restore -c Release -v minimal \
+              -p:PublishAot=false \
+              -p:EmitCompilerGeneratedFiles=true \
+              -p:CompilerGeneratedFilesOutputPath="$generated"
+            stat -c '%s' "$root/test/SharpLink.StaticCodecCoreEvidence/bin/Release/net10.0/SharpLink.StaticCodecCoreEvidence.dll" \
+              > "$EVIDENCE_ROOT/codegen/$label-managed-size.txt"
+            find "$generated" -type f -name '*.cs' -print0 | sort -z | xargs -0 cat \
+              > "$EVIDENCE_ROOT/codegen/$label-generated.cs"
+            wc -c < "$EVIDENCE_ROOT/codegen/$label-generated.cs" \
+              > "$EVIDENCE_ROOT/codegen/$label-generated-source-size.txt"
+          }
+          build_one baseline "$BASELINE_ROOT"
+          build_one candidate "$CANDIDATE_ROOT"
+
+          if grep -q 'StaticCore' "$EVIDENCE_ROOT/codegen/baseline-generated.cs"; then
+            echo "dev baseline unexpectedly contains StaticCore" >&2
+            exit 1
+          fi
+          grep -q 'StaticCore' "$EVIDENCE_ROOT/codegen/candidate-generated.cs"
+          grep -q 'InvokeGeneratedUnaryAsync<' "$EVIDENCE_ROOT/codegen/candidate-generated.cs"
+          grep -q 'InvokeGeneratedOneWayAsync<' "$EVIDENCE_ROOT/codegen/candidate-generated.cs"
+          grep -q 'InvokeGeneratedClientStreamingAsync<' "$EVIDENCE_ROOT/codegen/candidate-generated.cs"
+          grep -q 'InvokeGeneratedServerStreamingAsync<' "$EVIDENCE_ROOT/codegen/candidate-generated.cs"
+          grep -q 'InvokeGeneratedDuplexStreamingAsync<' "$EVIDENCE_ROOT/codegen/candidate-generated.cs"
+
+      - name: Run same-runner JIT PGO ON/OFF A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+          full_arg="--full"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.full }}" != "true" ]]; then
+            full_arg=""
+          fi
+
+          run_jit() {
+            local label="$1"
+            local root="$2"
+            local pgo_label="$3"
+            local pgo="$4"
+            local round="$5"
+            local output="$EVIDENCE_ROOT/jit/$label-$pgo_label-r$round.json"
+            (
+              cd "$root"
+              DOTNET_TieredCompilation=1 \
+              DOTNET_TieredPGO="$pgo" \
+              DOTNET_TC_QuickJitForLoops=1 \
+              dotnet run -c Release --no-build -p:PublishAot=false \
+                --project "$PROJECT" -- \
+                --rpc-evidence "$output" $full_arg
+            )
+          }
+
+          for round in 1 2; do
+            if (( round % 2 == 1 )); then
+              run_jit baseline "$BASELINE_ROOT" pgo-on 1 "$round"
+              run_jit candidate "$CANDIDATE_ROOT" pgo-on 1 "$round"
+              run_jit candidate "$CANDIDATE_ROOT" pgo-off 0 "$round"
+              run_jit baseline "$BASELINE_ROOT" pgo-off 0 "$round"
+            else
+              run_jit candidate "$CANDIDATE_ROOT" pgo-on 1 "$round"
+              run_jit baseline "$BASELINE_ROOT" pgo-on 1 "$round"
+              run_jit baseline "$BASELINE_ROOT" pgo-off 0 "$round"
+              run_jit candidate "$CANDIDATE_ROOT" pgo-off 0 "$round"
+            fi
+          done
+
+      - name: Capture targeted JIT code-size evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd "$CANDIDATE_ROOT"
+            COMPlus_TieredCompilation=0 \
+            COMPlus_JitDisasm='SharpLink.Client.SharpLinkClient:InvokeGenerated*' \
+            COMPlus_JitStdOutFile="$EVIDENCE_ROOT/codegen/candidate-generated-bridge-jit.txt" \
+            dotnet run -c Release --no-build -p:PublishAot=false \
+              --project "$PROJECT" -- \
+              --rpc-evidence "$EVIDENCE_ROOT/jit/candidate-disasm.json" \
+              > /dev/null
+          )
+          if [[ ! -s "$EVIDENCE_ROOT/codegen/candidate-generated-bridge-jit.txt" ]]; then
+            echo "JIT disassembly output unavailable" > "$EVIDENCE_ROOT/codegen/candidate-generated-bridge-jit.txt"
+          fi
+          grep -E 'Total bytes of code|InvokeGenerated' \
+            "$EVIDENCE_ROOT/codegen/candidate-generated-bridge-jit.txt" \
+            > "$EVIDENCE_ROOT/codegen/candidate-generated-bridge-jit-summary.txt" || true
+
+      - name: Publish NativeAOT and capture build/size evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish_one() {
+            local label="$1"
+            local root="$2"
+            local output="$EVIDENCE_ROOT/aot/$label-publish"
+            mkdir -p "$output"
+            /usr/bin/time -f '%e' -o "$EVIDENCE_ROOT/aot/$label-publish-seconds.txt" \
+              dotnet publish "$root/$PROJECT" -c Release -r linux-x64 --self-contained true \
+                -p:PublishAot=true -p:StripSymbols=false -p:IlcGenerateMapFile=true \
+                -o "$output" -v minimal
+            stat -c '%s' "$output/SharpLink.StaticCodecCoreEvidence" \
+              > "$EVIDENCE_ROOT/aot/$label-image-size.txt"
+            local map
+            map="$(find "$root/test/SharpLink.StaticCodecCoreEvidence/obj" -name 'SharpLink.StaticCodecCoreEvidence.map.xml' -print | head -n 1 || true)"
+            if [[ -n "$map" ]]; then
+              cp "$map" "$EVIDENCE_ROOT/codegen/$label-nativeaot-map.xml"
+              grep -E 'InvokeGenerated|RpcRequestOperation|PooledAsyncStreamDispatcher|StaticCodecCoreEvidence' "$map" \
+                > "$EVIDENCE_ROOT/codegen/$label-nativeaot-map-filtered.txt" || true
+            fi
+          }
+          publish_one baseline "$BASELINE_ROOT"
+          publish_one candidate "$CANDIDATE_ROOT"
+
+      - name: Run NativeAOT production RPC A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+          full_arg="--full"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.full }}" != "true" ]]; then
+            full_arg=""
+          fi
+          run_aot() {
+            local label="$1"
+            "$EVIDENCE_ROOT/aot/$label-publish/SharpLink.StaticCodecCoreEvidence" \
+              --rpc-evidence "$EVIDENCE_ROOT/aot/$label.json" $full_arg
+          }
+          run_aot baseline
+          run_aot candidate
+
+      - name: Summarize correctness, performance, allocation, and code size
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE_ROOT" <<'PY'
+          import json
+          import pathlib
+          import statistics
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+
+          def load(path):
+              return json.loads((root / path).read_text())
+
+          modes = {
+              "JIT / Dynamic PGO ON": (
+                  [load(f"jit/baseline-pgo-on-r{r}.json") for r in (1, 2)],
+                  [load(f"jit/candidate-pgo-on-r{r}.json") for r in (1, 2)]),
+              "JIT / Dynamic PGO OFF": (
+                  [load(f"jit/baseline-pgo-off-r{r}.json") for r in (1, 2)],
+                  [load(f"jit/candidate-pgo-off-r{r}.json") for r in (1, 2)]),
+              "NativeAOT": ([load("aot/baseline.json")], [load("aot/candidate.json")]),
+          }
+
+          lines = [
+              "# Static struct Codec Core production RPC evidence",
+              "",
+              "The candidate and dev baseline use the same evidence source and the real generated Proxy/Stub, Client, Runtime, Server and SharedMemory transport.",
+              "JIT rounds alternate baseline/candidate order on one hosted runner.",
+              "",
+          ]
+
+          for mode, (before_reports, after_reports) in modes.items():
+              if any(b["Checksum"] != a["Checksum"] for b, a in zip(before_reports, after_reports)):
+                  raise SystemExit(f"semantic checksum mismatch in {mode}")
+
+              before_rounds = [{c["Name"]: c for c in report["Cases"]} for report in before_reports]
+              after_rounds = [{c["Name"]: c for c in report["Cases"]} for report in after_reports]
+              names = list(before_rounds[0])
+              if names != list(after_rounds[0]):
+                  raise SystemExit(f"case-set mismatch in {mode}")
+
+              lines += [
+                  f"## {mode}",
+                  "",
+                  "| case | dev ns/unit | candidate ns/unit | paired delta | dev CPU ns/unit | candidate CPU ns/unit | allocation delta B/unit | candidate P99 ns |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|",
+              ]
+              for name in names:
+                  before = [r[name] for r in before_rounds]
+                  after = [r[name] for r in after_rounds]
+                  ns_before = statistics.median(x["NanosecondsPerUnit"] for x in before)
+                  ns_after = statistics.median(x["NanosecondsPerUnit"] for x in after)
+                  cpu_before = statistics.median(x["CpuNanosecondsPerUnit"] for x in before)
+                  cpu_after = statistics.median(x["CpuNanosecondsPerUnit"] for x in after)
+                  alloc_before = statistics.median(x["AllocatedBytesPerUnit"] for x in before)
+                  alloc_after = statistics.median(x["AllocatedBytesPerUnit"] for x in after)
+                  p99 = statistics.median(x["P99Nanoseconds"] for x in after)
+                  deltas = [
+                      (a["NanosecondsPerUnit"] / b["NanosecondsPerUnit"] - 1.0) * 100.0
+                      for b, a in zip(before, after)
+                  ]
+                  lines.append(
+                      f"| {name} | {ns_before:.2f} | {ns_after:.2f} | "
+                      f"{statistics.median(deltas):+.2f}% | {cpu_before:.2f} | {cpu_after:.2f} | "
+                      f"{alloc_after - alloc_before:+.2f} | {p99:.0f} |")
+              lines.append("")
+
+          managed_before = int((root / "codegen/baseline-managed-size.txt").read_text())
+          managed_after = int((root / "codegen/candidate-managed-size.txt").read_text())
+          source_before = int((root / "codegen/baseline-generated-source-size.txt").read_text())
+          source_after = int((root / "codegen/candidate-generated-source-size.txt").read_text())
+          aot_before = int((root / "aot/baseline-image-size.txt").read_text())
+          aot_after = int((root / "aot/candidate-image-size.txt").read_text())
+          publish_before = float((root / "aot/baseline-publish-seconds.txt").read_text())
+          publish_after = float((root / "aot/candidate-publish-seconds.txt").read_text())
+
+          candidate_map = root / "codegen/candidate-nativeaot-map-filtered.txt"
+          closed_generic_lines = []
+          if candidate_map.exists():
+              closed_generic_lines = [
+                  line for line in candidate_map.read_text(errors="ignore").splitlines()
+                  if "InvokeGenerated" in line or "RpcRequestOperation" in line or "PooledAsyncStreamDispatcher" in line
+              ]
+
+          lines += [
+              "## Code-size / AOT evidence",
+              "",
+              f"- generated source: dev {source_before} B; candidate {source_after} B; delta {source_after - source_before:+d} B",
+              f"- managed evidence assembly: dev {managed_before} B; candidate {managed_after} B; delta {managed_after - managed_before:+d} B",
+              f"- NativeAOT image: dev {aot_before} B; candidate {aot_after} B; delta {aot_after - aot_before:+d} B",
+              f"- NativeAOT publish time: dev {publish_before:.2f}s; candidate {publish_after:.2f}s; delta {publish_after - publish_before:+.2f}s",
+              f"- filtered closed generic NativeAOT map entries: {len(closed_generic_lines)}",
+              "",
+              "Targeted generated-bridge JIT disassembly and NativeAOT maps are included in the artifact.",
+              "",
+          ]
+
+          summary = "\n".join(lines) + "\n"
+          (root / "summary/summary.md").write_text(summary)
+          print(summary)
+          PY
+
+      - name: Publish evidence summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$EVIDENCE_ROOT/summary/summary.md" ]]; then
+            cat "$EVIDENCE_ROOT/summary/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload production static Core evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: static-codec-core-production-${{ github.sha }}
+          path: artifacts/performance/static-codec-core
+          if-no-files-found: error
+          retention-days: 30
