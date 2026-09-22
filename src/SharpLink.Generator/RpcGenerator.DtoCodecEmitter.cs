@@ -57,7 +57,7 @@ public partial class RpcGenerator
         sb.AppendLine("        __canExactSize = true;");
         for (var index = 0; index < complexMembers.Length; index++)
         {
-            sb.AppendLine($"        if (__sizedCodec_{index} is not {{ CanExactSize: true }})");
+            sb.AppendLine($"        if (__sizedCodec_{index} is null || !__sizedCodec_{index}.CanExactSize)");
             sb.AppendLine("            __canExactSize = false;");
         }
         sb.AppendLine("    }");
