@@ -117,12 +117,15 @@ public partial class RpcGenerator
         sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("    {");
         for (var index = 0; index < cases.Length; index++)
-            sb.AppendLine($"        private readonly {GetCodecStorageType(cases[index].TypeName, cases[index].TypeName, concreteCodecTypes)} __codec_{index};");
+            sb.AppendLine($"        private readonly {GetCodecHotStorageType(cases[index].TypeName, cases[index].TypeName, concreteCodecTypes)} __codec_{index};");
         sb.AppendLine();
         sb.AppendLine($"        internal Core({model.CodecName} owner)");
         sb.AppendLine("        {");
         for (var index = 0; index < cases.Length; index++)
-            sb.AppendLine($"            __codec_{index} = owner.__codec_{index};");
+        {
+            sb.AppendLine(
+                $"            __codec_{index} = {GetCodecHotBoundExpression($"owner.__codec_{index}", cases[index].TypeName, concreteCodecTypes)};");
+        }
         sb.AppendLine("        }");
         sb.AppendLine();
         sb.AppendLine($"        public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");
