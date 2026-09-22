@@ -24,20 +24,13 @@ internal interface IStreamConsumptionAwareDispatcher : IStreamDispatcher
         Action<long, ushort, int>? callback,
         long requestId,
         ushort streamId);
-}
 
+    bool TrySetResolvedBytesConsumedCallback(
+        ResolvedStreamBytesCallback? callback,
+        in StreamFlowController.ResolvedReceiveCreditLease lease)
+        => false;
+}
 
 internal delegate void ResolvedStreamBytesCallback(
     in StreamFlowController.ResolvedReceiveCreditLease lease,
     int encodedByteCount);
-
-/// <summary>
-/// Optional runtime-only capability that carries a generation-bound receive-credit lease through
-/// the existing dispatcher lifecycle without changing stream routing or consumer timing.
-/// </summary>
-internal interface IResolvedStreamConsumptionAwareDispatcher : IStreamConsumptionAwareDispatcher
-{
-    void SetResolvedBytesConsumedCallback(
-        ResolvedStreamBytesCallback? callback,
-        in StreamFlowController.ResolvedReceiveCreditLease lease);
-}
