@@ -2,20 +2,21 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    private ValueTask SendRpcCall<TRequest>(
+    private ValueTask SendRpcCall<TRequest, TRequestCodec>(
         RpcSession session,
         long contractId,
         long methodId,
         long requestId,
         ProtocolV2FrameFlags flags,
         in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
+        TRequestCodec requestCodec,
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
         bool observeEmission = false,
         CancellationToken cancellationToken = default,
         IRequestEmissionFailureObserver? failureObserver = null,
         PendingRequestTable? publicationTable = null)
+        where TRequestCodec : IRpcCodec<TRequest>
     {
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
