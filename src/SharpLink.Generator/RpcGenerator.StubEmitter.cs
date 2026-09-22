@@ -370,7 +370,13 @@ public partial class RpcGenerator
             foreach (var item in streamParams)
             {
                 var p = item.Parameter;
-                sb.AppendLine($"                stream_{p.Name} = bridge.CreateInboundStream(requestId, (ushort){streamId}, {GetStubParameterCodecField(method, item.Index)}, {(p.PayloadNullable ? "true" : "false")}, cancellationToken);");
+                var createStreamMethod = TryGetStaticGeneratedCodecCoreType(
+                    p.StreamItemType!,
+                    concreteCodecTypes,
+                    out _)
+                    ? "CreateGeneratedInboundStream"
+                    : "CreateInboundStream";
+                sb.AppendLine($"                stream_{p.Name} = bridge.{createStreamMethod}(requestId, (ushort){streamId}, {GetStubParameterCodecField(method, item.Index)}, {(p.PayloadNullable ? "true" : "false")}, cancellationToken);");
                 streamId++;
             }
 
@@ -381,7 +387,13 @@ public partial class RpcGenerator
             if (method.IsStreamReturn)
             {
                 sb.AppendLine($"                var resultStream = {callLine};");
-                sb.AppendLine($"                return bridge.PumpOutboundStreamAsync(requestId, 0, resultStream, {GetStubResponseCodecField(method)}, {(method.ResponseNullable ? "true" : "false")}, {interfaceHash}L, {method.Hash}L, cancellationToken);");
+                var pumpMethod = TryGetStaticGeneratedCodecCoreType(
+                    method.StreamItemType!,
+                    concreteCodecTypes,
+                    out _)
+                    ? "PumpGeneratedOutboundStreamAsync"
+                    : "PumpOutboundStreamAsync";
+                sb.AppendLine($"                return bridge.{pumpMethod}(requestId, 0, resultStream, {GetStubResponseCodecField(method)}, {(method.ResponseNullable ? "true" : "false")}, {interfaceHash}L, {method.Hash}L, cancellationToken);");
             }
             else if (method.IsVoid)
             {
