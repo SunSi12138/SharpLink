@@ -310,7 +310,7 @@ using SharpLink.Abstractions;
     4,
     2,
     "2.0.0",
-    "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
+    "sharplink-2.0-api4-static-codec-core-v2")]
 
 namespace Vendor
 {
