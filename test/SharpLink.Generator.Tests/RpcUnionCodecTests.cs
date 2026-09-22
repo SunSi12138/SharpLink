@@ -326,6 +326,7 @@ public static class UnionRuntimeProbe
     {
         var codecType = typeof(UnionRuntimeProbe).Assembly.GetTypes()
             .Single(type => type.Namespace == "SharpLink.Generated" &&
+                            type.IsClass &&
                             !type.IsAbstract &&
                             typeof(SharpLink.Abstractions.IRpcCodec<ITestUnion>).IsAssignableFrom(type));
         var codec = (SharpLink.Abstractions.IRpcCodec<ITestUnion>)Activator.CreateInstance(

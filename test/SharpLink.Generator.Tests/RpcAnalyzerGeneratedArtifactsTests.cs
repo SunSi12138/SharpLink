@@ -68,9 +68,9 @@ public interface IAbi4Service : SharpLink.Sdk.IService
         Ensure(stub.Contains("internal __Stub_", StringComparison.Ordinal) &&
                stub.Contains("IRpcCodecProvider codecs)", StringComparison.Ordinal),
             "server codecs must be resolved when the Stub is constructed");
-        Ensure(stub.Contains("bridge.CreateInboundStream", StringComparison.Ordinal) &&
-               stub.Contains("bridge.PumpOutboundStreamAsync", StringComparison.Ordinal),
-            "inbound and outbound stream lifecycles must be delegated to Runtime");
+        Ensure(stub.Contains("bridge.CreateGeneratedInboundStream", StringComparison.Ordinal) &&
+               stub.Contains("bridge.PumpGeneratedOutboundStreamAsync", StringComparison.Ordinal),
+            "statically known inbound and outbound stream lifecycles must preserve generated Codec types through the Runtime bridge");
         foreach (var forbidden in new[]
                  {
                      "SharpLink.Runtime", "IRpcSession", "RuntimeContext",
