@@ -1,0 +1,103 @@
+namespace SharpLink.Generated
+{
+    public sealed class @__SharpLinkGeneratedAssemblyManifest_32f0a8024fcc85d7 : SharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest, SharpLink.Abstractions.ISharpLinkReferencedCodecDependencyManifest
+    {
+        public const string CompileTimeDescriptor = @"C:2232255388794236560:global::SharpLink.GenerationControl.ISharpLinkGenerationControl:5564ea2e80ab661cf2b28c6f579c3b6e3a5775e741e97fa523a978f43896f768;D:global::SharpLink.GenerationControl.SharpLinkGenerationDescriptor:0c5ba952a7b2d31ba7cca92fd987ed34;D:global::SharpLink.GenerationControl.SharpLinkGenerationIdentity:c3517e95148cbcc5600e383ca88463c1;D:global::SharpLink.GenerationControl.SharpLinkGenerationInventory:3264754839103fc88750806e219b9906;D:global::SharpLink.GenerationControl.SharpLinkGenerationSnapshot:5eaf023abc179817cbd42c45a8b9ce4f;D:global::SharpLink.GenerationControl.SharpLinkGenerationSnapshot[]:b9faf8027e2d215b533c9a76260e46a0;";
+        public static readonly SharpLink.Generated.@__SharpLinkGeneratedAssemblyManifest_32f0a8024fcc85d7 Instance;
+        public @__SharpLinkGeneratedAssemblyManifest_32f0a8024fcc85d7() { }
+        public int ApiVersion { get; }
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.IRpcGeneratedCodecFactory> Codecs { get; }
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.IRpcGeneratedCodecFactory> ContractCodecs { get; }
+        public System.Collections.Generic.IReadOnlyList<string> ContractDependencies { get; }
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedContractDescriptor> Contracts { get; }
+        public System.Collections.Generic.IReadOnlyList<string> Dependencies { get; }
+        public string GeneratorVersion { get; }
+        public System.Reflection.Assembly OwnerAssembly { get; }
+        public int ProtocolVersion { get; }
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkReferencedCodecDependency> ReferencedCodecDependencies { get; }
+        public SharpLink.Abstractions.RpcHash128 RpcAssemblyHash { get; }
+        public System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedServiceDescriptor> Services { get; }
+        public static void Register() { }
+    }
+}
+namespace SharpLink.GenerationControl
+{
+    [SharpLink.Sdk.RpcContract]
+    public interface ISharpLinkGenerationControl : SharpLink.Sdk.IService
+    {
+        System.Threading.Tasks.ValueTask<SharpLink.GenerationControl.SharpLinkGenerationInventory> GetInventoryAsync(System.Threading.CancellationToken cancellationToken);
+        System.Collections.Generic.IAsyncEnumerable<SharpLink.GenerationControl.SharpLinkGenerationInventory> SynchronizeAsync(System.Collections.Generic.IAsyncEnumerable<SharpLink.GenerationControl.SharpLinkGenerationInventory> clientInventories, System.Threading.CancellationToken cancellationToken);
+    }
+    public interface ISharpLinkGenerationProvider
+    {
+        SharpLink.GenerationControl.SharpLinkGenerationMaterializationMode MaterializationMode { get; }
+        System.Threading.Tasks.ValueTask<SharpLink.GenerationControl.SharpLinkGenerationProviderResult> ActivateAsync(SharpLink.GenerationControl.SharpLinkGenerationIdentity identity, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<SharpLink.GenerationControl.SharpLinkGenerationProviderResult> DrainAsync(SharpLink.GenerationControl.SharpLinkGenerationIdentity identity, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<SharpLink.GenerationControl.SharpLinkGenerationProviderResult> StageAsync(SharpLink.GenerationControl.SharpLinkGenerationDescriptor descriptor, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask<SharpLink.GenerationControl.SharpLinkGenerationProviderResult> ValidateAsync(SharpLink.GenerationControl.SharpLinkGenerationIdentity identity, System.Threading.CancellationToken cancellationToken);
+    }
+    public sealed class SharpLinkGenerationDescriptor
+    {
+        public SharpLinkGenerationDescriptor() { }
+        public string ArtifactHash { get; init; }
+        public string ArtifactReference { get; init; }
+        public string CompatibilityMetadata { get; init; }
+        public string GeneratedAbiIdentity { get; init; }
+        public SharpLink.GenerationControl.SharpLinkGenerationIdentity Identity { get; init; }
+        public string WireIdentity { get; init; }
+    }
+    public sealed class SharpLinkGenerationIdentity
+    {
+        public SharpLinkGenerationIdentity() { }
+        public string CapabilityId { get; init; }
+        public string GenerationId { get; init; }
+    }
+    public sealed class SharpLinkGenerationInventory
+    {
+        public SharpLinkGenerationInventory() { }
+        public string EndpointEpoch { get; init; }
+        public SharpLink.GenerationControl.SharpLinkGenerationSnapshot[] Generations { get; init; }
+        public long Revision { get; init; }
+    }
+    public enum SharpLinkGenerationMaterializationMode
+    {
+        Unknown = 0,
+        HotReplaceSupported = 1,
+        ProcessReplacementRequired = 2,
+        Unsupported = 3,
+    }
+    public enum SharpLinkGenerationOperationStatus
+    {
+        Succeeded = 0,
+        AlreadySatisfied = 1,
+        ProcessReplacementRequired = 2,
+        Rejected = 3,
+        Unsupported = 4,
+    }
+    public sealed class SharpLinkGenerationProviderResult
+    {
+        public SharpLinkGenerationProviderResult() { }
+        public string DiagnosticCode { get; init; }
+        public string Message { get; init; }
+        public SharpLink.GenerationControl.SharpLinkGenerationState State { get; init; }
+        public SharpLink.GenerationControl.SharpLinkGenerationOperationStatus Status { get; init; }
+    }
+    public sealed class SharpLinkGenerationSnapshot
+    {
+        public SharpLinkGenerationSnapshot() { }
+        public SharpLink.GenerationControl.SharpLinkGenerationDescriptor Descriptor { get; init; }
+        public string DiagnosticCode { get; init; }
+        public SharpLink.GenerationControl.SharpLinkGenerationState State { get; init; }
+    }
+    public enum SharpLinkGenerationState
+    {
+        Absent = 0,
+        Staged = 1,
+        Validated = 2,
+        Ready = 3,
+        Active = 4,
+        Draining = 5,
+        Removed = 6,
+        Failed = 7,
+    }
+}
