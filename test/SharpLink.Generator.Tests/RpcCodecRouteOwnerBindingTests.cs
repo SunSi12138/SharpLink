@@ -47,6 +47,8 @@ public sealed class RouteAdapter : TestRouteAdapterBase
             "client stream routing must not rely on a runtime wrapper/type predicate");
         Ensure(generated.Contains("PumpOutboundStreamAsync", StringComparison.Ordinal),
             "generated server streams must send with the owner-bound item Codec");
+        Ensure(!generated.Contains("PumpGeneratedOutboundStreamAsync", StringComparison.Ordinal),
+            "adapter/custom Codec streams must remain on the dynamic interface fallback instead of fabricating a static Core");
         Ensure(!generated.Contains("session.RuntimeContext.Codecs.GetCodec", StringComparison.Ordinal),
             "generated stubs must not resolve response or stream Codecs from the context-global provider per call");
         return Task.CompletedTask;
