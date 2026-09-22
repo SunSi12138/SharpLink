@@ -304,15 +304,15 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<global::FixturePayload>;
     }
 
-    internal CoreValue Core => new(this);
+    internal Core StaticCore => new(this);
 
-    internal readonly struct CoreValue : IRpcCodec<global::FixturePayload>, IRpcSizedCodec<global::FixturePayload>
+    internal readonly struct Core : IRpcCodec<global::FixturePayload>, IRpcSizedCodec<global::FixturePayload>
     {
         private readonly __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 __owner;
         private readonly global::SharpLink.Generated.__SharpLinkGeneratedCodec_E73FF795487FA4FB __codec_0;
         private readonly bool __canExactSize;
 
-        internal CoreValue(__SharpLinkGeneratedCodec_A2C1A7F2F97244B4 owner)
+        internal Core(__SharpLinkGeneratedCodec_A2C1A7F2F97244B4 owner)
         {
             __owner = owner;
             __codec_0 = owner.__codec_0;
@@ -521,13 +521,13 @@ internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<glo
         public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<global::System.Collections.Generic.List<string>>;
     }
 
-    internal CoreValue Core => new(this);
+    internal Core StaticCore => new(this);
 
-    internal readonly struct CoreValue : IRpcCodec<global::System.Collections.Generic.List<string>>, IRpcSizedCodec<global::System.Collections.Generic.List<string>>
+    internal readonly struct Core : IRpcCodec<global::System.Collections.Generic.List<string>>, IRpcSizedCodec<global::System.Collections.Generic.List<string>>
     {
         private readonly IRpcCodec<string> __elementCodec;
 
-        internal CoreValue(__SharpLinkGeneratedCodec_E73FF795487FA4FB owner)
+        internal Core(__SharpLinkGeneratedCodec_E73FF795487FA4FB owner)
         {
             __elementCodec = owner.__elementCodec;
         }
