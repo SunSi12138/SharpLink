@@ -202,7 +202,11 @@ jobs:
               RunDispatchProbeDeserializeInterface \
               RunDispatchProbeDeserializeConcrete \
               RunDispatchProbeDeserializeUnusedInterface \
-              RunDispatchProbeDeserializeUnusedConcrete; do
+              RunDispatchProbeDeserializeUnusedConcrete \
+              RunDispatchProbeSerializeDualA \
+              RunDispatchProbeSerializeDualB \
+              RunDispatchProbeDeserializeDualA \
+              RunDispatchProbeDeserializeDualB; do
               local probe_address
               probe_address="$(nm -C "$executable" | awk -v probe="$probe" 'index($0, probe) { print $1; exit }')"
               if [[ "$probe_address" =~ ^[0-9A-Fa-f]+$ ]]; then
@@ -390,6 +394,47 @@ jobs:
                       candidate_cases_by_round)
                   lines.append(
                       f"| {operation} | {dev_interface:.3f} | {dev_concrete:.3f} "
+                      f"| {dev_delta:+.2f}% | {candidate_interface:.3f} | "
+                      f"{candidate_concrete:.3f} | {candidate_delta:+.2f}% |"
+                  )
+              lines.append("")
+
+              layout_pairs = [
+                  ("Serialize layout A", "layout-a-serialize-interface", "layout-a-serialize-concrete"),
+                  ("Serialize layout B", "layout-b-serialize-interface", "layout-b-serialize-concrete"),
+                  ("Deserialize layout A", "layout-a-deserialize-interface", "layout-a-deserialize-concrete"),
+                  ("Deserialize layout B", "layout-b-deserialize-interface", "layout-b-deserialize-concrete"),
+              ]
+              lines.extend([
+                  "### Same-method layout controls",
+                  "",
+                  "Each pair shares one probe method and one Codec instance; only a loop-external branch "
+                  "selects interface or concrete dispatch. A/B invert source branch order.",
+                  "",
+                  "| control | dev interface ns/call | dev concrete ns/call | dev concrete delta | candidate interface ns/call | candidate concrete ns/call | candidate concrete delta |",
+                  "|---|---:|---:|---:|---:|---:|---:|",
+              ])
+              for label, interface_name, concrete_name in layout_pairs:
+                  def summarize_layout(cases_by_round):
+                      interface_rows = [items[interface_name] for items in cases_by_round]
+                      concrete_rows = [items[concrete_name] for items in cases_by_round]
+                      interface_ns = statistics.median(
+                          item["medianNanosecondsPerOperation"] for item in interface_rows)
+                      concrete_ns = statistics.median(
+                          item["medianNanosecondsPerOperation"] for item in concrete_rows)
+                      paired = [
+                          (right["medianNanosecondsPerOperation"] /
+                           left["medianNanosecondsPerOperation"] - 1.0) * 100.0
+                          for left, right in zip(interface_rows, concrete_rows)
+                      ]
+                      return interface_ns, concrete_ns, statistics.median(paired)
+
+                  dev_interface, dev_concrete, dev_delta = summarize_layout(
+                      baseline_cases_by_round)
+                  candidate_interface, candidate_concrete, candidate_delta = summarize_layout(
+                      candidate_cases_by_round)
+                  lines.append(
+                      f"| {label} | {dev_interface:.3f} | {dev_concrete:.3f} "
                       f"| {dev_delta:+.2f}% | {candidate_interface:.3f} | "
                       f"{candidate_concrete:.3f} | {candidate_delta:+.2f}% |"
                   )
