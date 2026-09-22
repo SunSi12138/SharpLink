@@ -345,10 +345,10 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
                 }
                 break;
             case AotPairedMode.PreboundCore:
-                var core = wrapper.Core;
+                var preboundCore = wrapper.Core;
                 for (var stream = 0; stream < streamCount; stream++)
                     checksum += PumpUnsizedPaired<int, GeneratedIntCore>(
-                        core, in value, writer, length);
+                        preboundCore, in value, writer, length);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));
@@ -454,10 +454,10 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
                 }
                 break;
             case AotPairedMode.PreboundCore:
-                var core = wrapper.Core;
+                var preboundCore = wrapper.Core;
                 for (var stream = 0; stream < streamCount; stream++)
                     checksum += PumpUnsizedPaired<Nested64, Post727Nested64Core>(
-                        core, in value, writer, length);
+                        preboundCore, in value, writer, length);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));
@@ -528,10 +528,10 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
                 }
                 break;
             case AotPairedMode.PreboundCore:
-                var core = wrapper.OwnerCore;
+                var preboundCore = wrapper.OwnerCore;
                 for (var stream = 0; stream < streamCount; stream++)
                     checksum += PumpSized<Nested64, Post727StateRefNested64Core>(
-                        core, in value, writer, length);
+                        preboundCore, in value, writer, length);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));
@@ -565,10 +565,10 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
                 }
                 break;
             case AotPairedMode.PreboundCore:
-                var core = wrapper.OwnerCore;
+                var preboundCore = wrapper.OwnerCore;
                 for (var stream = 0; stream < streamCount; stream++)
                     checksum += PumpUnsizedPaired<Nested64, Post727StateRefNested64Core>(
-                        core, in value, writer, length);
+                        preboundCore, in value, writer, length);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));
@@ -601,10 +601,10 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
                 }
                 break;
             case AotPairedMode.PreboundCore:
-                var core = wrapper.OwnerCore;
+                var preboundCore = wrapper.OwnerCore;
                 for (var stream = 0; stream < streamCount; stream++)
                     checksum += PumpDeserialize<Nested64, Post727StateRefNested64Core>(
-                        core, in payload, length);
+                        preboundCore, in payload, length);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));
@@ -676,10 +676,10 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
                 }
                 break;
             case AotPairedMode.PreboundCore:
-                var core = wrapper.Core;
+                var preboundCore = wrapper.Core;
                 for (var stream = 0; stream < streamCount; stream++)
                     checksum += PumpUnsizedPaired<Nested64, GeneratedNested64Core>(
-                        core, in value, writer, length);
+                        preboundCore, in value, writer, length);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));
