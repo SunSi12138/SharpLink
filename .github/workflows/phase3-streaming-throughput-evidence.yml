@@ -1,0 +1,411 @@
+name: Phase 3 End-to-End Streaming Throughput Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - '.github/workflows/phase3-streaming-throughput-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  throughput-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ORIGINAL_SHA: f624d0968a8e65a3bd1356f42f287e25aeae3e93
+      PHASE_A_SHA: 172a4bab78ba117cf66832a234c7495076ff7961
+      CURRENT_SHA: 56c643cd308f294cb03df79d9f1214fb8292affb
+      EVIDENCE_ROOT: ${{ github.workspace }}/artifacts/performance/phase3-streaming-throughput
+      WARMUP: '20'
+      MEASUREMENT_SECONDS: '4'
+      MAX_OPERATIONS: '200000'
+
+    steps:
+      - name: Checkout evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Prepare exact revision worktrees
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"/{jit,aot,logs,env}
+
+          cpu_count="$(nproc)"
+          if (( cpu_count >= 4 )); then
+            cpu_list="0-3"
+          elif (( cpu_count >= 2 )); then
+            cpu_list="0-1"
+          else
+            cpu_list="0"
+          fi
+          echo "CPU_LIST=$cpu_list" >> "$GITHUB_ENV"
+
+          printf 'original=%s\nphase-a=%s\ncurrent=%s\n'             "$ORIGINAL_SHA" "$PHASE_A_SHA" "$CURRENT_SHA"             > "$EVIDENCE_ROOT/env/revisions.txt"
+          dotnet --info > "$EVIDENCE_ROOT/env/dotnet-info.txt"
+          uname -a > "$EVIDENCE_ROOT/env/uname.txt"
+          lscpu > "$EVIDENCE_ROOT/env/cpu.txt"
+
+          for spec in             "original:$ORIGINAL_SHA"             "phase-a:$PHASE_A_SHA"             "current:$CURRENT_SHA"; do
+            label="${spec%%:*}"
+            sha="${spec#*:}"
+            root="$RUNNER_TEMP/sharplink-$label"
+            git worktree add --detach "$root" "$sha"
+            echo "${label^^}_ROOT=$root" >> "$GITHUB_ENV"
+          done
+
+      - name: Restore and build JIT revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for root in "$ORIGINAL_ROOT" "$PHASE_A_ROOT" "$CURRENT_ROOT"; do
+            project="$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            dotnet restore "$project"
+            dotnet build "$project" -c Release --no-restore               -p:PublishAot=false -m:1 /nodeReuse:false -v minimal
+          done
+
+      - name: Run JIT Dynamic PGO end-to-end matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forward=(
+            Server1x16
+            Server100x16
+            Server100x4096
+            Client100x16
+            Client100x4096
+            Duplex100x16
+            Duplex100x4096
+          )
+          reverse=(
+            Duplex100x4096
+            Duplex100x16
+            Client100x4096
+            Client100x16
+            Server100x4096
+            Server100x16
+            Server1x16
+          )
+
+          run_one() {
+            local label="$1"
+            local root="$2"
+            local sha="$3"
+            local repetition="$4"
+            local scenario="$5"
+            local output="$EVIDENCE_ROOT/jit/${label}-r${repetition}-${scenario}.json"
+            local log="$EVIDENCE_ROOT/logs/jit-${label}-r${repetition}-${scenario}.log"
+
+            (
+              cd "$root"
+              env                 SHARPLINK_BENCHMARK_SHA="$sha"                 DOTNET_ReadyToRun=0                 DOTNET_TieredCompilation=1                 DOTNET_TieredPGO=1                 DOTNET_TC_QuickJitForLoops=1                 taskset -c "$CPU_LIST" dotnet run                   -c Release --no-build --no-restore                   -p:PublishAot=false                   --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --                   --generated-abi-streaming-evidence                   "$scenario" "$WARMUP" "$MEASUREMENT_SECONDS" "$MAX_OPERATIONS"                   "$output" > "$log"
+            )
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              scenarios=("${forward[@]}")
+            else
+              scenarios=("${reverse[@]}")
+            fi
+
+            case "$repetition" in
+              1) revisions=(
+                   "original:$ORIGINAL_ROOT:$ORIGINAL_SHA"
+                   "phase-a:$PHASE_A_ROOT:$PHASE_A_SHA"
+                   "current:$CURRENT_ROOT:$CURRENT_SHA") ;;
+              2) revisions=(
+                   "current:$CURRENT_ROOT:$CURRENT_SHA"
+                   "phase-a:$PHASE_A_ROOT:$PHASE_A_SHA"
+                   "original:$ORIGINAL_ROOT:$ORIGINAL_SHA") ;;
+              3) revisions=(
+                   "phase-a:$PHASE_A_ROOT:$PHASE_A_SHA"
+                   "original:$ORIGINAL_ROOT:$ORIGINAL_SHA"
+                   "current:$CURRENT_ROOT:$CURRENT_SHA") ;;
+            esac
+
+            for scenario in "${scenarios[@]}"; do
+              for spec in "${revisions[@]}"; do
+                IFS=: read -r label root sha <<< "$spec"
+                echo "::group::JIT r$repetition $scenario $label"
+                run_one "$label" "$root" "$sha" "$repetition" "$scenario"
+                echo "::endgroup::"
+              done
+            done
+          done
+
+      - name: Publish NativeAOT revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish_one() {
+            local label="$1"
+            local root="$2"
+            local output="$EVIDENCE_ROOT/aot/publish-$label"
+            rm -rf "$root/test/SharpLink.Benchmarks/bin" "$root/test/SharpLink.Benchmarks/obj"
+            dotnet publish "$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"               -c Release -r linux-x64 --self-contained true               -p:PublishAot=true               -o "$output"               -m:1 /nodeReuse:false -v minimal
+            test -x "$output/SharpLink.Benchmarks"
+            stat -c '%s' "$output/SharpLink.Benchmarks"               > "$EVIDENCE_ROOT/aot/${label}-binary-bytes.txt"
+          }
+
+          publish_one original "$ORIGINAL_ROOT"
+          publish_one phase-a "$PHASE_A_ROOT"
+          publish_one current "$CURRENT_ROOT"
+
+      - name: Run NativeAOT end-to-end matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forward=(
+            Server1x16
+            Server100x16
+            Server100x4096
+            Client100x16
+            Client100x4096
+            Duplex100x16
+            Duplex100x4096
+          )
+          reverse=(
+            Duplex100x4096
+            Duplex100x16
+            Client100x4096
+            Client100x16
+            Server100x4096
+            Server100x16
+            Server1x16
+          )
+
+          run_one() {
+            local label="$1"
+            local sha="$2"
+            local repetition="$3"
+            local scenario="$4"
+            local executable="$EVIDENCE_ROOT/aot/publish-$label/SharpLink.Benchmarks"
+            local output="$EVIDENCE_ROOT/aot/${label}-r${repetition}-${scenario}.json"
+            local log="$EVIDENCE_ROOT/logs/aot-${label}-r${repetition}-${scenario}.log"
+
+            env SHARPLINK_BENCHMARK_SHA="$sha"               taskset -c "$CPU_LIST" "$executable"                 --generated-abi-streaming-evidence                 "$scenario" "$WARMUP" "$MEASUREMENT_SECONDS" "$MAX_OPERATIONS"                 "$output" > "$log"
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              scenarios=("${forward[@]}")
+            else
+              scenarios=("${reverse[@]}")
+            fi
+
+            case "$repetition" in
+              1) revisions=(
+                   "original:$ORIGINAL_SHA"
+                   "phase-a:$PHASE_A_SHA"
+                   "current:$CURRENT_SHA") ;;
+              2) revisions=(
+                   "current:$CURRENT_SHA"
+                   "phase-a:$PHASE_A_SHA"
+                   "original:$ORIGINAL_SHA") ;;
+              3) revisions=(
+                   "phase-a:$PHASE_A_SHA"
+                   "original:$ORIGINAL_SHA"
+                   "current:$CURRENT_SHA") ;;
+            esac
+
+            for scenario in "${scenarios[@]}"; do
+              for spec in "${revisions[@]}"; do
+                IFS=: read -r label sha <<< "$spec"
+                echo "::group::NativeAOT r$repetition $scenario $label"
+                run_one "$label" "$sha" "$repetition" "$scenario"
+                echo "::endgroup::"
+              done
+            done
+          done
+
+      - name: Summarize Phase 3 evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/phase3-streaming-throughput")
+          revisions = ("original", "phase-a", "current")
+          modes = ("jit", "aot")
+          scenarios = (
+              "Server1x16",
+              "Server100x16",
+              "Server100x4096",
+              "Client100x16",
+              "Client100x4096",
+              "Duplex100x16",
+              "Duplex100x4096",
+          )
+
+          def load(mode, revision, scenario):
+              rows = []
+              for path in sorted((root / mode).glob(f"{revision}-r*-{scenario}.json")):
+                  rows.append(json.loads(path.read_text()))
+              if len(rows) != 3:
+                  raise SystemExit(
+                      f"expected 3 rows for {mode}/{revision}/{scenario}, got {len(rows)}")
+              return rows
+
+          def median(rows, key):
+              return statistics.median(row[key] for row in rows)
+
+          def pct(new, old):
+              return (new / old - 1.0) * 100.0
+
+          def better_lower(new, old):
+              return (old / new - 1.0) * 100.0
+
+          aggregates = {}
+          for mode in modes:
+              aggregates[mode] = {}
+              for revision in revisions:
+                  aggregates[mode][revision] = {}
+                  for scenario in scenarios:
+                      rows = load(mode, revision, scenario)
+                      if any(row["validationFailures"] != 0 for row in rows):
+                          raise SystemExit(f"validation failure in {mode}/{revision}/{scenario}")
+                      aggregates[mode][revision][scenario] = {
+                          "ops": median(rows, "throughputOperationsPerSecond"),
+                          "items": median(rows, "throughputItemsPerSecond"),
+                          "p50": median(rows, "p50Us"),
+                          "p99": median(rows, "p99Us"),
+                          "p999": median(rows, "p999Us"),
+                          "cpu": median(rows, "cpuUsPerOperation"),
+                          "allocOp": median(rows, "allocatedBytesPerOperation"),
+                          "allocItem": median(rows, "allocatedBytesPerItem"),
+                          "first": median(rows, "firstCallUs"),
+                          "itemCount": rows[0]["itemCount"],
+                          "itemBytes": rows[0]["itemBytes"],
+                      }
+
+          comparisons = (
+              ("Phase A vs original", "original", "phase-a"),
+              ("#727 incremental", "phase-a", "current"),
+              ("Cumulative current vs original", "original", "current"),
+          )
+
+          summary = {"aggregates": aggregates, "comparisons": {}}
+          lines = [
+              "# Phase 3 end-to-end streaming throughput evidence",
+              "",
+              "All values are medians of three independent processes on the same runner.",
+              "Positive throughput/CPU efficiency deltas mean the newer revision is better.",
+              "",
+          ]
+
+          for mode in modes:
+              title = "JIT / Dynamic PGO ON" if mode == "jit" else "NativeAOT"
+              lines += [f"## {title}", ""]
+              for label, old_rev, new_rev in comparisons:
+                  lines += [
+                      f"### {label}",
+                      "",
+                      "| Scenario | Items/s delta | Ops/s delta | CPU efficiency | P50 delta | P99 delta | Alloc/item delta |",
+                      "|---|---:|---:|---:|---:|---:|---:|",
+                  ]
+                  values = []
+                  for scenario in scenarios:
+                      old = aggregates[mode][old_rev][scenario]
+                      new = aggregates[mode][new_rev][scenario]
+                      row = {
+                          "itemsPct": pct(new["items"], old["items"]),
+                          "opsPct": pct(new["ops"], old["ops"]),
+                          "cpuEfficiencyPct": better_lower(new["cpu"], old["cpu"]),
+                          "p50Pct": pct(new["p50"], old["p50"]),
+                          "p99Pct": pct(new["p99"], old["p99"]),
+                          "allocItemPct": (
+                              0.0 if old["allocItem"] == 0 and new["allocItem"] == 0
+                              else pct(new["allocItem"], old["allocItem"])
+                              if old["allocItem"] != 0 else float("inf")
+                          ),
+                      }
+                      values.append(row)
+                      lines.append(
+                          f"| {scenario} | {row['itemsPct']:+.2f}% | {row['opsPct']:+.2f}% | "
+                          f"{row['cpuEfficiencyPct']:+.2f}% | {row['p50Pct']:+.2f}% | "
+                          f"{row['p99Pct']:+.2f}% | {row['allocItemPct']:+.2f}% |"
+                      )
+                  summary["comparisons"].setdefault(mode, {})[label] = values
+                  primary = [
+                      v["itemsPct"] for s, v in zip(scenarios, values)
+                      if s != "Server1x16"
+                  ]
+                  lines += [
+                      "",
+                      f"Median throughput delta across 100-item primary scenarios: {statistics.median(primary):+.2f}%",
+                      "",
+                  ]
+
+              lines += [
+                  "### Absolute current production numbers",
+                  "",
+                  "| Scenario | Ops/s | Items/s | P50 us | P99 us | CPU us/stream | Alloc B/item |",
+                  "|---|---:|---:|---:|---:|---:|---:|",
+              ]
+              for scenario in scenarios:
+                  cur = aggregates[mode]["current"][scenario]
+                  lines.append(
+                      f"| {scenario} | {cur['ops']:.1f} | {cur['items']:.1f} | "
+                      f"{cur['p50']:.2f} | {cur['p99']:.2f} | {cur['cpu']:.2f} | "
+                      f"{cur['allocItem']:.2f} |"
+                  )
+              lines.append("")
+
+          binary = {}
+          for revision in revisions:
+              path = root / "aot" / f"{revision}-binary-bytes.txt"
+              if path.exists():
+                  binary[revision] = int(path.read_text().strip())
+          summary["nativeBinaryBytes"] = binary
+
+          if binary:
+              base = binary["original"]
+              lines += [
+                  "## NativeAOT executable size",
+                  "",
+                  "| Revision | Bytes | Delta vs original |",
+                  "|---|---:|---:|",
+              ]
+              for revision in revisions:
+                  value = binary[revision]
+                  lines.append(
+                      f"| {revision} | {value} | {(value / base - 1.0) * 100:+.2f}% |"
+                  )
+              lines.append("")
+
+          (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          (root / "summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Publish summary
+        shell: bash
+        run: cat "$EVIDENCE_ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove NativeAOT executables from artifact
+        if: always()
+        shell: bash
+        run: rm -rf "$EVIDENCE_ROOT"/aot/publish-*
+
+      - name: Upload Phase 3 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: phase3-streaming-throughput-${{ github.sha }}
+          path: artifacts/performance/phase3-streaming-throughput
+          if-no-files-found: error
+          retention-days: 30
