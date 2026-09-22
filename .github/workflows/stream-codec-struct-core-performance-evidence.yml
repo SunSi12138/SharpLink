@@ -634,6 +634,7 @@ jobs:
                       "overall": med(mode),
                       "flat": med(mode, lambda k: k[0] == "int"),
                       "generatedConcrete": med(mode, lambda k: k[0] == "generated-concrete64"),
+                      "generatedStateRef": med(mode, lambda k: k[0] == "generated-state-ref64"),
                       "generatedLike": med(mode, lambda k: k[0] == "generated-like64"),
                       "sizedSerialize": med(mode, lambda k: k[1] == "stream-sized-serialize"),
                       "deserialize": med(mode, lambda k: k[1] == "stream-deserialize"),
@@ -672,7 +673,8 @@ jobs:
                       "",
                       f"- overall vs interface: {fmt(d['overall'])}",
                       f"- flat int vs interface: {fmt(d['flat'])}",
-                      f"- post-#727 generated-concrete64 vs interface: {fmt(d['generatedConcrete'])}",
+                      f"- post-#727 generated-concrete64 (32B Core) vs interface: {fmt(d['generatedConcrete'])}",
+                      f"- post-#727 generated-state-ref64 (8B Core) vs interface: {fmt(d['generatedStateRef'])}",
                       f"- fallback generated-like64 vs interface: {fmt(d['generatedLike'])}",
                       f"- sized serialize vs interface: {fmt(d['sizedSerialize'])}",
                       f"- deserialize vs interface: {fmt(d['deserialize'])}",
@@ -897,7 +899,7 @@ jobs:
             symbols="$executable.dbg"
           fi
           nm -S -C "$symbols" 2>/dev/null \
-            | grep -E 'AotPaired|PumpInterfaceSized|PumpSized|PumpInterfaceDeserialize|PumpDeserialize|Generated(Int|Nested64)Core|Post727Nested64Core' \
+            | grep -E 'AotPaired|PumpInterfaceSized|PumpSized|PumpInterfaceDeserialize|PumpDeserialize|Generated(Int|Nested64)Core|Post727Nested64Core|Post727StateRefNested64Core' \
             > "$EVIDENCE_ROOT/aot-generated-paired-symbol-sizes.txt" || true
 
           objdump -d "$executable" 2>/dev/null \
@@ -931,6 +933,12 @@ jobs:
           ]
           if len(docs) != 6:
               raise SystemExit(f"expected 6 paired runs, got {len(docs)}")
+
+          core_sizes = {
+              "generatedConcrete": docs[0]["generatedConcreteCoreBytes"],
+              "generatedStateRef": docs[0]["generatedStateRefCoreBytes"],
+              "fallbackInterfaceChild": docs[0]["fallbackInterfaceChildCoreBytes"],
+          }
 
           grouped = {}
           for doc in docs:
@@ -979,6 +987,7 @@ jobs:
                   "overall": med(mode),
                   "flat": med(mode, lambda k: k[0] == "int"),
                   "generatedConcrete": med(mode, lambda k: k[0] == "generated-concrete64"),
+                  "generatedStateRef": med(mode, lambda k: k[0] == "generated-state-ref64"),
                   "generatedLike": med(mode, lambda k: k[0] == "generated-like64"),
                   "sizedSerialize": med(mode, lambda k: k[1] == "stream-sized-serialize"),
                   "deserialize": med(mode, lambda k: k[1] == "stream-deserialize"),
@@ -1006,6 +1015,10 @@ jobs:
               "",
               "All three paths are compiled into the same native image. Six processes rotate all measurement orders.",
               "",
+              f"Core sizes: generated-concrete={core_sizes['generatedConcrete']} B; "
+              f"state-ref={core_sizes['generatedStateRef']} B; "
+              f"fallback-interface-child={core_sizes['fallbackInterfaceChild']} B.",
+              "",
           ]
           for mode, title in (
               ("wrapper-core", "Wrapper -> Core once per stream"),
@@ -1017,7 +1030,8 @@ jobs:
                   "",
                   f"- overall vs interface: {fmt(d['overall'])}",
                   f"- flat int vs interface: {fmt(d['flat'])}",
-                  f"- post-#727 generated-concrete64 vs interface: {fmt(d['generatedConcrete'])}",
+                  f"- post-#727 generated-concrete64 (32B Core) vs interface: {fmt(d['generatedConcrete'])}",
+                  f"- post-#727 generated-state-ref64 (8B Core) vs interface: {fmt(d['generatedStateRef'])}",
                   f"- fallback generated-like64 (interface children) vs interface: {fmt(d['generatedLike'])}",
                   f"- sized serialize vs interface: {fmt(d['sizedSerialize'])}",
                   f"- deserialize vs interface: {fmt(d['deserialize'])}",
