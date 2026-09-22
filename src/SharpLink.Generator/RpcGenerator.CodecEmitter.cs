@@ -137,7 +137,7 @@ public partial class RpcGenerator
         if (concreteCodecTypes.TryGetValue(codecLookupType, out var concreteType) &&
             concreteType.StartsWith("global::SharpLink.Generated.", StringComparison.Ordinal))
         {
-            coreType = concreteType + ".Core";
+            coreType = concreteType + ".CoreValue";
             return true;
         }
 
