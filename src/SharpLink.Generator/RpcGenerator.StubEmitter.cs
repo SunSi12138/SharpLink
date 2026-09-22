@@ -174,7 +174,7 @@ public partial class RpcGenerator
                 if (parameter.IsStream)
                 {
                     sb.AppendLine(
-                        $"    private readonly {GetCodecStorageType(parameter.DisplayStreamItemType!, parameter.StreamItemType!, concreteCodecTypes)} {GetStubParameterCodecField(method, parameterIndex)};");
+                        $"    private readonly {GetCodecHotStorageType(parameter.DisplayStreamItemType!, parameter.StreamItemType!, concreteCodecTypes)} {GetStubParameterCodecField(method, parameterIndex)};");
                 }
                 else if (parameter is
                 {
@@ -183,14 +183,14 @@ public partial class RpcGenerator
                 })
                 {
                     sb.AppendLine(
-                        $"    private readonly {GetCodecStorageType(parameter.DisplayType, parameter.Type, concreteCodecTypes)} {GetStubParameterCodecField(method, parameterIndex)};");
+                        $"    private readonly {GetCodecHotStorageType(parameter.DisplayType, parameter.Type, concreteCodecTypes)} {GetStubParameterCodecField(method, parameterIndex)};");
                 }
             }
 
             if (!method.IsVoid && !method.IsOneWay)
             {
                 sb.AppendLine(
-                    $"    private readonly {GetCodecStorageType(GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)} {GetStubResponseCodecField(method)};");
+                    $"    private readonly {GetCodecHotStorageType(GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)} {GetStubResponseCodecField(method)};");
             }
         }
 
@@ -206,7 +206,7 @@ public partial class RpcGenerator
                 if (parameter.IsStream)
                 {
                     sb.AppendLine(
-                        $"        {GetStubParameterCodecField(method, parameterIndex)} = {GetCodecResolveExpression("codecs", parameter.DisplayStreamItemType!, parameter.StreamItemType!, concreteCodecTypes)};");
+                        $"        {GetStubParameterCodecField(method, parameterIndex)} = {GetCodecHotResolveExpression("codecs", parameter.DisplayStreamItemType!, parameter.StreamItemType!, concreteCodecTypes)};");
                 }
                 else if (parameter is
                 {
@@ -215,14 +215,14 @@ public partial class RpcGenerator
                 })
                 {
                     sb.AppendLine(
-                        $"        {GetStubParameterCodecField(method, parameterIndex)} = {GetCodecResolveExpression("codecs", parameter.DisplayType, parameter.Type, concreteCodecTypes)};");
+                        $"        {GetStubParameterCodecField(method, parameterIndex)} = {GetCodecHotResolveExpression("codecs", parameter.DisplayType, parameter.Type, concreteCodecTypes)};");
                 }
             }
 
             if (!method.IsVoid && !method.IsOneWay)
             {
                 sb.AppendLine(
-                    $"        {GetStubResponseCodecField(method)} = {GetCodecResolveExpression("codecs", GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)};");
+                    $"        {GetStubResponseCodecField(method)} = {GetCodecHotResolveExpression("codecs", GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)};");
             }
         }
         sb.AppendLine("    }");
