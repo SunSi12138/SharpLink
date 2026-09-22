@@ -1104,112 +1104,6 @@ jobs:
           print("\n".join(lines))
           PY
 
-      - name: Summarize generated Core state-layout attribution
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json
-          import pathlib
-          import statistics
-
-          root = pathlib.Path("artifacts/performance/stream-codec-struct-core")
-          layouts = (
-              "generated-like64",
-              "generated-like64-concrete4",
-              "generated-like64-state-interface",
-              "generated-like64-state-concrete",
-          )
-          labels = {
-              "generated-like64": "4 refs / child interface",
-              "generated-like64-concrete4": "4 refs / child concrete",
-              "generated-like64-state-interface": "1 state ref / child interface",
-              "generated-like64-state-concrete": "1 state ref / child concrete",
-          }
-
-          def load(prefix, shape):
-              return [
-                  json.loads(path.read_text())
-                  for path in sorted(root.glob(f"{prefix}-{shape}-r*.json"))
-              ]
-
-          def med_rows(docs):
-              grouped = {}
-              for doc in docs:
-                  for row in doc["measurements"]:
-                      if row["payload"] not in layouts:
-                          continue
-                      if row["operation"] not in ("stream-sized-serialize", "stream-deserialize"):
-                          continue
-                      if row["streamLength"] < 10000:
-                          continue
-                      key = (row["payload"], row["operation"], row["streamLength"])
-                      grouped.setdefault(key, []).append(row["nanosecondsPerItem"])
-              return {key: statistics.median(values) for key, values in grouped.items()}
-
-          def compare(prefix):
-              interface = med_rows(load(prefix, "interface"))
-              direct = med_rows(load(prefix, "direct"))
-              guarded = med_rows(load(prefix, "guarded-value"))
-              result = {}
-              for layout in layouts:
-                  keys = [k for k in interface if k[0] == layout and k in direct and k in guarded]
-                  direct_gain = [
-                      (interface[k] / direct[k] - 1.0) * 100.0 for k in keys
-                  ]
-                  guarded_gain = [
-                      (interface[k] / guarded[k] - 1.0) * 100.0 for k in keys
-                  ]
-                  by_operation = {}
-                  for op in ("stream-sized-serialize", "stream-deserialize"):
-                      op_keys = [k for k in keys if k[1] == op]
-                      by_operation[op] = statistics.median(
-                          (interface[k] / direct[k] - 1.0) * 100.0 for k in op_keys
-                      )
-                  result[layout] = {
-                      "directVsInterfacePct": statistics.median(direct_gain),
-                      "guardedVsInterfacePct": statistics.median(guarded_gain),
-                      "directByOperationPct": by_operation,
-                  }
-              return result
-
-          out = {
-              "jitPgoOn": compare("generated-jit-pgo1"),
-              "jitPgoOff": compare("generated-jit-pgo0"),
-              "nativeAot": compare("aot-generated"),
-          }
-
-          lines = [
-              "# Phase C Core state-layout attribution",
-              "",
-              "Positive values mean the concrete struct Core path is faster than the same wrapper through IRpcCodec.",
-              "",
-          ]
-          for mode, title in (
-              ("jitPgoOn", "JIT Dynamic PGO ON"),
-              ("jitPgoOff", "JIT Dynamic PGO OFF"),
-              ("nativeAot", "NativeAOT"),
-          ):
-              lines += [
-                  f"## {title}",
-                  "",
-                  "| Core layout | Direct Core | Guarded Core | Sized serialize | Deserialize |",
-                  "|---|---:|---:|---:|---:|",
-              ]
-              for layout in layouts:
-                  row = out[mode][layout]
-                  lines.append(
-                      f"| {labels[layout]} | {row['directVsInterfacePct']:+.2f}% | "
-                      f"{row['guardedVsInterfacePct']:+.2f}% | "
-                      f"{row['directByOperationPct']['stream-sized-serialize']:+.2f}% | "
-                      f"{row['directByOperationPct']['stream-deserialize']:+.2f}% |"
-                  )
-              lines.append("")
-
-          (root / "state-layout-summary.json").write_text(json.dumps(out, indent=2) + "\n")
-          (root / "state-layout-summary.md").write_text("\n".join(lines) + "\n")
-          print("\n".join(lines))
-          PY
-
       - name: Publish evidence summary
         shell: bash
         run: |
@@ -1222,8 +1116,6 @@ jobs:
           cat "$EVIDENCE_ROOT/generated-jit-paired-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$EVIDENCE_ROOT/generated-aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
-          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
-          cat "$EVIDENCE_ROOT/state-layout-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$EVIDENCE_ROOT/generated-aot-paired-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
