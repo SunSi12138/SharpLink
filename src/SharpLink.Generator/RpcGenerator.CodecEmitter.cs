@@ -129,6 +129,46 @@ public partial class RpcGenerator
             ? $"({concreteType}){providerExpression}.GetCodec<{codecLookupType}>()"
             : $"{providerExpression}.GetCodec<{payloadType}>()";
 
+    private static bool TryGetStaticGeneratedCodecCoreType(
+        string codecLookupType,
+        IReadOnlyDictionary<string, string> concreteCodecTypes,
+        out string coreType)
+    {
+        if (concreteCodecTypes.TryGetValue(codecLookupType, out var concreteType) &&
+            concreteType.StartsWith("global::SharpLink.Generated.", StringComparison.Ordinal))
+        {
+            coreType = concreteType + ".Core";
+            return true;
+        }
+
+        coreType = string.Empty;
+        return false;
+    }
+
+    private static string GetCodecHotStorageType(
+        string payloadType,
+        string codecLookupType,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
+        => TryGetStaticGeneratedCodecCoreType(codecLookupType, concreteCodecTypes, out var coreType)
+            ? coreType
+            : GetCodecStorageType(payloadType, codecLookupType, concreteCodecTypes);
+
+    private static string GetCodecHotResolveExpression(
+        string providerExpression,
+        string payloadType,
+        string codecLookupType,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
+    {
+        var resolved = GetCodecResolveExpression(
+            providerExpression,
+            payloadType,
+            codecLookupType,
+            concreteCodecTypes);
+        return TryGetStaticGeneratedCodecCoreType(codecLookupType, concreteCodecTypes, out _)
+            ? resolved + ".Core"
+            : resolved;
+    }
+
     private static string GetWireType(int fixedSize) => fixedSize switch
     {
         1 => "RpcGeneratedWireType.Fixed1",
