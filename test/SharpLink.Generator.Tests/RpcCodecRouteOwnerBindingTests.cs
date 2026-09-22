@@ -182,4 +182,62 @@ public sealed class RouteAdapter : TestRouteAdapterBase
             "a Contract-reachable explicit selection must be emitted into the owner-scoped Contract table");
         return Task.CompletedTask;
     }
+
+    [Test]
+    public Task NativeGeneratedCodecsShouldUseStaticCoreAcrossAllRpcShapes()
+    {
+        var source = BuildRouteSource("""
+public sealed class CoreValue
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IStaticCoreContract : SharpLink.Sdk.IService
+{
+    ValueTask<CoreValue> Echo(CoreValue value, CancellationToken cancellationToken);
+
+    [SharpLink.Sdk.Oneway]
+    ValueTask Notify(CoreValue value, CancellationToken cancellationToken);
+
+    ValueTask<CoreValue> Upload(
+        System.Collections.Generic.IAsyncEnumerable<CoreValue> values,
+        CancellationToken cancellationToken);
+
+    System.Collections.Generic.IAsyncEnumerable<CoreValue> Download(
+        CoreValue value,
+        CancellationToken cancellationToken);
+
+    System.Collections.Generic.IAsyncEnumerable<CoreValue> Duplex(
+        System.Collections.Generic.IAsyncEnumerable<CoreValue> values,
+        CancellationToken cancellationToken);
+}
+""");
+
+        var generated = string.Join("\n", RunGeneratorAndGetSources(source));
+
+        Ensure(generated.Contains("internal readonly struct CoreValue : IRpcCodec<global::CoreValue>, IRpcSizedCodec<global::CoreValue>", StringComparison.Ordinal),
+            "native generated DTOs must expose a readonly static Core");
+        Ensure(generated.Contains(".Core;", StringComparison.Ordinal),
+            "generated proxy/stub construction must extract Core from the authoritative Codec instance");
+        Ensure(generated.Contains("InvokeGeneratedUnaryAsync", StringComparison.Ordinal),
+            "Unary must use the generated static Codec bridge");
+        Ensure(generated.Contains("InvokeGeneratedOneWayAsync", StringComparison.Ordinal),
+            "OneWay must use the generated static Codec bridge");
+        Ensure(generated.Contains("InvokeGeneratedClientStreamingAsync", StringComparison.Ordinal),
+            "ClientStreaming must use the generated static Codec bridge");
+        Ensure(generated.Contains("InvokeGeneratedServerStreamingAsync", StringComparison.Ordinal),
+            "ServerStreaming must use the generated static Codec bridge");
+        Ensure(generated.Contains("InvokeGeneratedDuplexStreamingAsync", StringComparison.Ordinal),
+            "DuplexStreaming must use the generated static Codec bridge");
+        Ensure(generated.Contains("SendGeneratedClientStreamAsync", StringComparison.Ordinal),
+            "generated client stream items must retain their static Core through the sink");
+        Ensure(generated.Contains("CreateGeneratedInboundStream", StringComparison.Ordinal),
+            "generated server inbound stream items must retain their static Core through the dispatcher");
+        Ensure(generated.Contains("PumpGeneratedOutboundStreamAsync", StringComparison.Ordinal),
+            "generated server stream items must retain their static Core through the outbound pump");
+        Ensure(!generated.Contains("RpcCodecBoundAsyncEnumerable", StringComparison.Ordinal),
+            "static Core routing must not use a runtime existential wrapper");
+        return Task.CompletedTask;
+    }
 }
