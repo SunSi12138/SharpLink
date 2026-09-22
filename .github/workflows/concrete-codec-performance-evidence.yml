@@ -105,17 +105,27 @@ jobs:
             local root="$2"
             local pgo_label="$3"
             local pgo_value="$4"
-            local output="$EVIDENCE_ROOT/jit/$label-$pgo_label.json"
+            local round="$5"
+            local output="$EVIDENCE_ROOT/jit/$label-$pgo_label-r$round.json"
             (
               cd "$root"
-              SHARPLINK_EVIDENCE_REF="$label"               DOTNET_TieredCompilation=1               DOTNET_TieredPGO="$pgo_value"               DOTNET_TC_QuickJitForLoops=1               dotnet run -c Release --no-build -p:PublishAot=false                 --project test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj --                 --concrete-codec-evidence 20000 10000 100000 7 "$output"
+              SHARPLINK_EVIDENCE_REF="$label-r$round"               DOTNET_TieredCompilation=1               DOTNET_TieredPGO="$pgo_value"               DOTNET_TC_QuickJitForLoops=1               dotnet run -c Release --no-build -p:PublishAot=false                 --project test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj --                 --concrete-codec-evidence 20000 10000 100000 7 "$output"
             )
           }
 
-          run_jit baseline "$BASELINE_ROOT" pgo-on 1
-          run_jit candidate "$CANDIDATE_ROOT" pgo-on 1
-          run_jit candidate "$CANDIDATE_ROOT" pgo-off 0
-          run_jit baseline "$BASELINE_ROOT" pgo-off 0
+          for round in 1 2 3; do
+            if (( round % 2 == 1 )); then
+              run_jit baseline "$BASELINE_ROOT" pgo-on 1 "$round"
+              run_jit candidate "$CANDIDATE_ROOT" pgo-on 1 "$round"
+              run_jit candidate "$CANDIDATE_ROOT" pgo-off 0 "$round"
+              run_jit baseline "$BASELINE_ROOT" pgo-off 0 "$round"
+            else
+              run_jit candidate "$CANDIDATE_ROOT" pgo-on 1 "$round"
+              run_jit baseline "$BASELINE_ROOT" pgo-on 1 "$round"
+              run_jit baseline "$BASELINE_ROOT" pgo-off 0 "$round"
+              run_jit candidate "$CANDIDATE_ROOT" pgo-off 0 "$round"
+            fi
+          done
 
       - name: Capture targeted JIT disassembly
         shell: bash
@@ -147,7 +157,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          publish_and_run() {
+          publish_one() {
             local label="$1"
             local root="$2"
             local publish="$EVIDENCE_ROOT/aot/$label-publish"
@@ -156,7 +166,6 @@ jobs:
 
             local executable="$publish/SharpLink.AotSmoke"
             stat -c '%s' "$executable" > "$EVIDENCE_ROOT/aot/$label-native-image-size.txt"
-            SHARPLINK_EVIDENCE_REF="$label"               "$executable" --concrete-codec-evidence 5000 10000 100000 7               "$EVIDENCE_ROOT/aot/$label.json"
 
             local map
             map="$(find "$root/test/SharpLink.AotSmoke/obj" -name 'SharpLink.AotSmoke.map.xml' -print | head -n 1 || true)"
@@ -173,17 +182,34 @@ jobs:
               local address
               address="$(nm -C "$executable" | awk -v codec="$codec" -v method="$method"                 'index($0, codec) && index($0, method) { print $1; exit }')"
               if [[ "$address" =~ ^[0-9A-Fa-f]+$ ]]; then
-                local start=$((16#$address))
-                local stop=$((start + 1024))
-                objdump -d -C --start-address="$start" --stop-address="$stop" "$executable"                   > "$EVIDENCE_ROOT/codegen/$label-nativeaot-$method.txt"
+                local address_value=$((16#$address))
+                local stop=$((address_value + 1024))
+                objdump -d -C --start-address="$address_value" --stop-address="$stop" "$executable"                   > "$EVIDENCE_ROOT/codegen/$label-nativeaot-$method.txt"
               else
                 echo "NativeAOT symbol address unavailable for $codec:$method"                   > "$EVIDENCE_ROOT/codegen/$label-nativeaot-$method.txt"
               fi
             done
           }
 
-          publish_and_run baseline "$BASELINE_ROOT"
-          publish_and_run candidate "$CANDIDATE_ROOT"
+          run_aot() {
+            local label="$1"
+            local round="$2"
+            local executable="$EVIDENCE_ROOT/aot/$label-publish/SharpLink.AotSmoke"
+            SHARPLINK_EVIDENCE_REF="$label-r$round"               "$executable" --concrete-codec-evidence 5000 10000 100000 7               "$EVIDENCE_ROOT/aot/$label-r$round.json"
+          }
+
+          publish_one baseline "$BASELINE_ROOT"
+          publish_one candidate "$CANDIDATE_ROOT"
+
+          for round in 1 2 3; do
+            if (( round % 2 == 1 )); then
+              run_aot baseline "$round"
+              run_aot candidate "$round"
+            else
+              run_aot candidate "$round"
+              run_aot baseline "$round"
+            fi
+          done
 
       - name: Summarize identity, performance, allocation, and size
         shell: bash
@@ -192,60 +218,95 @@ jobs:
           python3 - "$EVIDENCE_ROOT" <<'PY'
           import json
           import pathlib
+          import statistics
           import sys
 
           root = pathlib.Path(sys.argv[1])
           modes = {
               "JIT / Dynamic PGO ON": (
-                  root / "jit/baseline-pgo-on.json",
-                  root / "jit/candidate-pgo-on.json"),
+                  "jit/baseline-pgo-on-r{}.json",
+                  "jit/candidate-pgo-on-r{}.json"),
               "JIT / Dynamic PGO OFF": (
-                  root / "jit/baseline-pgo-off.json",
-                  root / "jit/candidate-pgo-off.json"),
+                  "jit/baseline-pgo-off-r{}.json",
+                  "jit/candidate-pgo-off-r{}.json"),
               "NativeAOT": (
-                  root / "aot/baseline.json",
-                  root / "aot/candidate.json"),
+                  "aot/baseline-r{}.json",
+                  "aot/candidate-r{}.json"),
           }
+          rounds = (1, 2, 3)
 
           lines = [
               "# Concrete Codec dispatch evidence",
               "",
               "Same hosted runner; identical evidence source overlaid onto dev baseline and candidate.",
+              "Three process-level A/B rounds use alternating execution order; each process report contains seven samples.",
               "",
           ]
           identity_reference = None
-          for mode, (baseline_path, candidate_path) in modes.items():
-              baseline = json.loads(baseline_path.read_text())
-              candidate = json.loads(candidate_path.read_text())
-              if baseline["identity"] != candidate["identity"]:
-                  raise SystemExit(f"wire/hash identity changed in {mode}")
-              if identity_reference is None:
-                  identity_reference = baseline["identity"]
-              elif baseline["identity"] != identity_reference:
-                  raise SystemExit(f"identity changed between evidence runtime modes in {mode}")
+          for mode, (baseline_pattern, candidate_pattern) in modes.items():
+              baseline_reports = [
+                  json.loads((root / baseline_pattern.format(round_number)).read_text())
+                  for round_number in rounds
+              ]
+              candidate_reports = [
+                  json.loads((root / candidate_pattern.format(round_number)).read_text())
+                  for round_number in rounds
+              ]
+              for round_number, (baseline, candidate) in enumerate(
+                      zip(baseline_reports, candidate_reports), start=1):
+                  if baseline["identity"] != candidate["identity"]:
+                      raise SystemExit(f"wire/hash identity changed in {mode}, round {round_number}")
+                  if identity_reference is None:
+                      identity_reference = baseline["identity"]
+                  elif baseline["identity"] != identity_reference:
+                      raise SystemExit(f"identity changed across runtime modes in {mode}, round {round_number}")
 
-              baseline_cases = {item["name"]: item for item in baseline["cases"]}
-              candidate_cases = {item["name"]: item for item in candidate["cases"]}
+              baseline_cases_by_round = [
+                  {item["name"]: item for item in report["cases"]}
+                  for report in baseline_reports
+              ]
+              candidate_cases_by_round = [
+                  {item["name"]: item for item in report["cases"]}
+                  for report in candidate_reports
+              ]
+              names = list(baseline_cases_by_round[0])
               lines.extend([
                   f"## {mode}",
                   "",
-                  "| case | dev ns/op | candidate ns/op | delta | dev CPU ns/op | candidate CPU ns/op | delta | dev alloc B/op | candidate alloc B/op |",
+                  "| case | dev ns/op | candidate ns/op | paired delta median [range] | dev CPU ns/op | candidate CPU ns/op | paired CPU delta median [range] | dev alloc B/op | candidate alloc B/op |",
                   "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
               ])
-              for name in baseline_cases:
-                  before = baseline_cases[name]
-                  after = candidate_cases[name]
-                  ns_before = before["medianNanosecondsPerOperation"]
-                  ns_after = after["medianNanosecondsPerOperation"]
-                  cpu_before = before["medianCpuNanosecondsPerOperation"]
-                  cpu_after = after["medianCpuNanosecondsPerOperation"]
-                  alloc_before = before["medianAllocatedBytesPerOperation"]
-                  alloc_after = after["medianAllocatedBytesPerOperation"]
-                  ns_delta = (ns_after / ns_before - 1.0) * 100.0
-                  cpu_delta = (cpu_after / cpu_before - 1.0) * 100.0 if cpu_before else 0.0
+              for name in names:
+                  before = [items[name] for items in baseline_cases_by_round]
+                  after = [items[name] for items in candidate_cases_by_round]
+                  ns_before = statistics.median(
+                      item["medianNanosecondsPerOperation"] for item in before)
+                  ns_after = statistics.median(
+                      item["medianNanosecondsPerOperation"] for item in after)
+                  cpu_before = statistics.median(
+                      item["medianCpuNanosecondsPerOperation"] for item in before)
+                  cpu_after = statistics.median(
+                      item["medianCpuNanosecondsPerOperation"] for item in after)
+                  alloc_before = statistics.median(
+                      item["medianAllocatedBytesPerOperation"] for item in before)
+                  alloc_after = statistics.median(
+                      item["medianAllocatedBytesPerOperation"] for item in after)
+                  ns_deltas = [
+                      (right["medianNanosecondsPerOperation"] /
+                       left["medianNanosecondsPerOperation"] - 1.0) * 100.0
+                      for left, right in zip(before, after)
+                  ]
+                  cpu_deltas = [
+                      (right["medianCpuNanosecondsPerOperation"] /
+                       left["medianCpuNanosecondsPerOperation"] - 1.0) * 100.0
+                      if left["medianCpuNanosecondsPerOperation"] else 0.0
+                      for left, right in zip(before, after)
+                  ]
                   lines.append(
-                      f"| {name} | {ns_before:.2f} | {ns_after:.2f} | {ns_delta:+.2f}% "
-                      f"| {cpu_before:.2f} | {cpu_after:.2f} | {cpu_delta:+.2f}% "
+                      f"| {name} | {ns_before:.2f} | {ns_after:.2f} "
+                      f"| {statistics.median(ns_deltas):+.2f}% [{min(ns_deltas):+.2f}%, {max(ns_deltas):+.2f}%] "
+                      f"| {cpu_before:.2f} | {cpu_after:.2f} "
+                      f"| {statistics.median(cpu_deltas):+.2f}% [{min(cpu_deltas):+.2f}%, {max(cpu_deltas):+.2f}%] "
                       f"| {alloc_before:.2f} | {alloc_after:.2f} |"
                   )
               lines.append("")
@@ -254,7 +315,33 @@ jobs:
           managed_after = int((root / "candidate-managed-assembly-size.txt").read_text())
           native_before = int((root / "aot/baseline-native-image-size.txt").read_text())
           native_after = int((root / "aot/candidate-native-image-size.txt").read_text())
+
+          jit_baseline = (root / "codegen/baseline-jit-Serialize.txt").read_text()
+          jit_candidate = (root / "codegen/candidate-jit-Serialize.txt").read_text()
+          jit_baseline_decode = (root / "codegen/baseline-jit-Deserialize.txt").read_text()
+          jit_candidate_decode = (root / "codegen/candidate-jit-Deserialize.txt").read_text()
+          aot_baseline = (root / "codegen/baseline-nativeaot-Serialize.txt").read_text()
+          aot_candidate = (root / "codegen/candidate-nativeaot-Serialize.txt").read_text()
+          aot_baseline_decode = (root / "codegen/baseline-nativeaot-Deserialize.txt").read_text()
+          aot_candidate_decode = (root / "codegen/candidate-nativeaot-Deserialize.txt").read_text()
+
+          direct_small = "__SharpLinkGeneratedCodec_67E80BAE07C9FD90"
+          direct_list = "__SharpLinkGeneratedCodec_32D50A810713F692"
+          if "IRpcCodec" not in jit_baseline or direct_small not in jit_candidate or direct_list not in jit_candidate:
+              raise SystemExit("JIT dispatch evidence did not show the expected interface-to-direct transition")
+          if "IRpcCodec" not in jit_baseline_decode or direct_small not in jit_candidate_decode or direct_list not in jit_candidate_decode:
+              raise SystemExit("JIT decode dispatch evidence did not show the expected interface-to-direct transition")
+          if "__InterfaceDispatchCell" not in aot_baseline or direct_small not in aot_candidate or direct_list not in aot_candidate:
+              raise SystemExit("NativeAOT dispatch evidence did not show the expected interface-to-direct transition")
+          if "__InterfaceDispatchCell" not in aot_baseline_decode or direct_small not in aot_candidate_decode or direct_list not in aot_candidate_decode:
+              raise SystemExit("NativeAOT decode dispatch evidence did not show the expected interface-to-direct transition")
+
           lines.extend([
+              "## Dispatch/codegen",
+              "",
+              "- JIT baseline nested DTO encode/decode uses IRpcCodec child interface dispatch; candidate calls the generated small/list Codec methods directly.",
+              "- NativeAOT baseline contains child Codec interface-dispatch cells; candidate emits direct calls to the generated small/list Codec methods.",
+              "",
               "## Size",
               "",
               f"- Managed AotSmoke assembly: dev {managed_before} B; candidate {managed_after} B; delta {managed_after - managed_before:+d} B.",
@@ -262,7 +349,7 @@ jobs:
               "",
               "## Compatibility identity",
               "",
-              "- wire bytes SHA-256, CodecHash, MethodId, ContractId, fingerprints and RpcAssemblyHash match exactly between dev and candidate in every mode.",
+              "- wire bytes SHA-256, CodecHash, MethodId, ContractId, fingerprints and RpcAssemblyHash match exactly between dev and candidate in every round and runtime mode.",
               "",
           ])
           (root / "summary.md").write_text("\n".join(lines) + "\n")
