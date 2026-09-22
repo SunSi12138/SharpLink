@@ -479,7 +479,6 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _receiveCreditLease = lease;
         return true;
     }
-
     void IStreamLocalAbortDispatcher.CompleteLocalAbort(Exception? exception)
     {
         if (!TryAcquireDispatch(out var retentionLeaseState))
