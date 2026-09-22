@@ -13,7 +13,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null,
     bool retainUntilLocalCompletion = false,
     int maxRetainedBytes = int.MaxValue)
-    : IResolvedStreamConsumptionAwareDispatcher, IStreamDispatchLease, IStreamDispatchState
+    : IStreamConsumptionAwareDispatcher, IStreamDispatchLease, IStreamDispatchState
 {
     private const int MaxBufferedElements = 4096;
     private static Action<long, ushort, bool>? s_bufferedItemObserverForTests;
@@ -529,11 +529,11 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         }
     }
 
-    public void SetResolvedBytesConsumedCallback(
+    public bool TrySetResolvedBytesConsumedCallback(
         ResolvedStreamBytesCallback? callback,
         in StreamFlowController.ResolvedReceiveCreditLease lease)
     {
-        IResolvedStreamConsumptionAwareDispatcher? consumptionAware = null;
+        IStreamConsumptionAwareDispatcher? consumptionAware = null;
         var childLeaseAcquired = false;
         lock (_gate)
         {
@@ -541,7 +541,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             _receiveCreditLease = lease;
             _configurationVersion++;
             if (!_attachmentInProgress && !_childClosed && !_childDetached &&
-                _dispatcher is IResolvedStreamConsumptionAwareDispatcher child &&
+                _dispatcher is IStreamConsumptionAwareDispatcher child &&
                 TryAcquireChildDispatchLocked(out _))
             {
                 consumptionAware = child;
@@ -549,17 +549,20 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             }
         }
 
-        if (consumptionAware is null)
-            return;
-        try
+        if (consumptionAware is not null)
         {
-            consumptionAware.SetResolvedBytesConsumedCallback(callback, in lease);
+            try
+            {
+                _ = consumptionAware.TrySetResolvedBytesConsumedCallback(callback, in lease);
+            }
+            finally
+            {
+                if (childLeaseAcquired)
+                    ReleaseChildDispatch();
+            }
         }
-        finally
-        {
-            if (childLeaseAcquired)
-                ReleaseChildDispatch();
-        }
+
+        return true;
     }
 
     ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
@@ -852,12 +855,16 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                 version = _configurationVersion;
             }
 
-            if (dispatcher is IResolvedStreamConsumptionAwareDispatcher resolvedConsumptionAware)
-                resolvedConsumptionAware.SetResolvedBytesConsumedCallback(
-                    resolvedBytesConsumed,
-                    in receiveCreditLease);
-            else if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            {
                 consumptionAware.SetBytesConsumedCallback(bytesConsumed, requestId, streamId);
+                if (resolvedBytesConsumed is not null && receiveCreditLease.IsResolved)
+                {
+                    _ = consumptionAware.TrySetResolvedBytesConsumedCallback(
+                        resolvedBytesConsumed,
+                        in receiveCreditLease);
+                }
+            }
             if (!dispatchStateBound && dispatcher is IStreamDispatchLease dispatchLease)
             {
                 dispatchLease.BindDispatchState(this);
