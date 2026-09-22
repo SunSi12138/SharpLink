@@ -149,6 +149,51 @@ public interface IConcreteBindingContract : SharpLink.Sdk.IService
     }
 
     [Test]
+    public Task StructCustomCodecShouldKeepInterfaceFallback()
+    {
+        var source = AddAssemblyAttribute(
+            UseCurrentIdentitySdk(BuildSource("""
+public sealed class StructCodecPayload
+{
+    public int Value { get; set; }
+}
+
+[SharpLink.Sdk.RpcCodecSemanticIdentity(0x7269UL, 0x726AUL)]
+public struct StructPayloadCodec : SharpLink.Abstractions.IRpcCodec<StructCodecPayload>
+{
+    public StructPayloadCodec()
+    {
+    }
+}
+
+[SharpLink.Sdk.RpcContract]
+public interface IStructCodecContract : SharpLink.Sdk.IService
+{
+    ValueTask<StructCodecPayload> Echo(StructCodecPayload value, CancellationToken cancellationToken);
+}
+""")),
+            "[assembly: SharpLink.Sdk.RpcCodec(typeof(StructCodecPayload), typeof(StructPayloadCodec))]");
+
+        var generated = string.Join("\\n", RunGeneratorAndGetSources(source));
+        Ensure(generated.Contains(
+                "private readonly IRpcCodec<global::StructCodecPayload>",
+                StringComparison.Ordinal),
+            "custom struct Codecs must keep interface storage so provider-owned boxed instances retain their identity and mutable state");
+        Ensure(!generated.Contains(
+                "private readonly global::StructPayloadCodec ",
+                StringComparison.Ordinal),
+            "custom struct Codecs must not be copied out of the provider-owned boxed instance into concrete generated fields");
+        Ensure(!generated.Contains(
+                "(global::StructPayloadCodec)codecs.GetCodec<global::StructCodecPayload>()",
+                StringComparison.Ordinal) &&
+               !generated.Contains(
+                "(global::StructPayloadCodec)__codecs.GetCodec<global::StructCodecPayload>()",
+                StringComparison.Ordinal),
+            "custom struct Codec resolution must not unbox/copy the provider-owned instance during generated binding construction");
+        return Task.CompletedTask;
+    }
+
+    [Test]
     public Task ExplicitInterfaceCustomCodecShouldKeepInterfaceFallback()
     {
         var source = UseCurrentIdentitySdk(BuildSource("""
