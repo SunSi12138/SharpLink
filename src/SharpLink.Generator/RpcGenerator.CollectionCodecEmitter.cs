@@ -63,24 +63,24 @@ public partial class RpcGenerator
         sb.AppendLine("    {");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine($"        private readonly {GetCodecStorageType(model.KeyType!, model.KeyType!, concreteCodecTypes)} __keyCodec;");
-            sb.AppendLine($"        private readonly {GetCodecStorageType(model.ValueType!, model.ValueType!, concreteCodecTypes)} __valueCodec;");
+            sb.AppendLine($"        private readonly {GetCodecHotStorageType(model.KeyType!, model.KeyType!, concreteCodecTypes)} __keyCodec;");
+            sb.AppendLine($"        private readonly {GetCodecHotStorageType(model.ValueType!, model.ValueType!, concreteCodecTypes)} __valueCodec;");
         }
         else
         {
-            sb.AppendLine($"        private readonly {GetCodecStorageType(model.ElementType!, model.ElementType!, concreteCodecTypes)} __elementCodec;");
+            sb.AppendLine($"        private readonly {GetCodecHotStorageType(model.ElementType!, model.ElementType!, concreteCodecTypes)} __elementCodec;");
         }
         sb.AppendLine();
         sb.AppendLine($"        internal Core({model.CodecName} owner)");
         sb.AppendLine("        {");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine("            __keyCodec = owner.__keyCodec;");
-            sb.AppendLine("            __valueCodec = owner.__valueCodec;");
+            sb.AppendLine($"            __keyCodec = {GetCodecHotBoundExpression("owner.__keyCodec", model.KeyType!, concreteCodecTypes)};");
+            sb.AppendLine($"            __valueCodec = {GetCodecHotBoundExpression("owner.__valueCodec", model.ValueType!, concreteCodecTypes)};");
         }
         else
         {
-            sb.AppendLine("            __elementCodec = owner.__elementCodec;");
+            sb.AppendLine($"            __elementCodec = {GetCodecHotBoundExpression("owner.__elementCodec", model.ElementType!, concreteCodecTypes)};");
         }
         sb.AppendLine("        }");
         sb.AppendLine();
