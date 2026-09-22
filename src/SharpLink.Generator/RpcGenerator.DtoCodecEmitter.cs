@@ -38,6 +38,8 @@ public partial class RpcGenerator
             var member = complexMembers[index];
             sb.AppendLine(
                 $"    private readonly {GetCodecStorageType(member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)} __codec_{index};");
+            sb.AppendLine(
+                $"    private readonly IRpcSizedCodec<{member.TypeName}>? __sizedCodec_{index};");
         }
         sb.AppendLine("    private readonly bool __canExactSize;");
         sb.AppendLine();
@@ -49,13 +51,13 @@ public partial class RpcGenerator
             var member = complexMembers[index];
             sb.AppendLine(
                 $"        __codec_{index} = {GetCodecResolveExpression("provider", member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)};");
+            sb.AppendLine(
+                $"        __sizedCodec_{index} = (object)__codec_{index} as IRpcSizedCodec<{member.TypeName}>;");
         }
         sb.AppendLine("        __canExactSize = true;");
         for (var index = 0; index < complexMembers.Length; index++)
         {
-            sb.AppendLine(
-                $"        if ((object)__codec_{index} is not IRpcSizedCodec<{complexMembers[index].TypeName}> __sizedCodec_{index} ||");
-            sb.AppendLine($"            !__sizedCodec_{index}.CanExactSize)");
+            sb.AppendLine($"        if (__sizedCodec_{index} is not {{ CanExactSize: true }})");
             sb.AppendLine("            __canExactSize = false;");
         }
         sb.AppendLine("    }");
