@@ -303,6 +303,144 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         }
         public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<global::FixturePayload>;
     }
+
+    internal CoreValue Core => new(this);
+
+    internal readonly struct CoreValue : IRpcCodec<global::FixturePayload>, IRpcSizedCodec<global::FixturePayload>
+    {
+        private readonly __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 __owner;
+        private readonly global::SharpLink.Generated.__SharpLinkGeneratedCodec_E73FF795487FA4FB __codec_0;
+        private readonly bool __canExactSize;
+
+        internal CoreValue(__SharpLinkGeneratedCodec_A2C1A7F2F97244B4 owner)
+        {
+            __owner = owner;
+            __codec_0 = owner.__codec_0;
+            __canExactSize = owner.__canExactSize;
+        }
+
+        public bool CanExactSize => __canExactSize;
+
+        public void Serialize(in global::FixturePayload value, IBufferWriter<byte> writer)
+        {
+            ArgumentNullException.ThrowIfNull(writer);
+            var rpcWriter = writer as IRpcByteBufferWriter ?? throw new InvalidOperationException("Generated DTO Codecs require the SharpLink packet writer.");
+            if (value is null)
+            {
+                RpcGeneratedCodecWire.WritePresence(writer, false);
+                return;
+            }
+            if (__canExactSize && writer is IRpcByteBufferWriter __exactWriter)
+            {
+                if (TryGetEncodedSize(in value, out var __exactSize, out var __sizedSnapshot) && __sizedSnapshot is not null)
+                {
+                    try
+                    {
+                        __exactWriter.GetSpan(checked(__exactSize + 4));
+                        __exactWriter.Advance(0);
+                        SerializeSized(in value, writer, __exactSize, __sizedSnapshot);
+                    }
+                    finally
+                    {
+                        ReleaseSnapshot(__sizedSnapshot);
+                    }
+                    return;
+                }
+            }
+            var __string_0 = value.Name;
+            var __stringByteCount_0 = __string_0 is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__string_0);
+            var __fixed_1 = value.Count;
+            var __complex_2 = value.Tags;
+            var __encodedSize = 10;
+            checked
+            {
+                __encodedSize += __string_0 is null ? 1 : 5 + __stringByteCount_0;
+            }
+            if (writer is IRpcByteBufferWriter __rpcWriter)
+            {
+                __rpcWriter.GetSpan(checked(__encodedSize + 4));
+                __rpcWriter.Advance(0);
+            }
+            RpcGeneratedCodecWire.WritePresence(writer, true);
+            if (__string_0 is null)
+                RpcGeneratedCodecWire.WriteFieldKey(writer, 7U, RpcGeneratedWireType.Null);
+            else
+            {
+                RpcGeneratedCodecWire.WriteFieldKey(writer, 7U, RpcGeneratedWireType.LengthDelimited);
+                __SharpLinkGeneratedUtf16.WriteStringKnownSize(writer, __string_0, __stringByteCount_0);
+            }
+            RpcGeneratedCodecWire.WriteFieldKey(writer, 31963284U, RpcGeneratedWireType.Fixed4);
+            RpcGeneratedCodecWire.WriteUnmanaged<int>(writer, __fixed_1);
+            RpcGeneratedCodecWire.WriteFieldKey(writer, 381526208U, RpcGeneratedWireType.LengthDelimited);
+            var lengthToken_0 = RpcGeneratedCodecWire.BeginLength(rpcWriter);
+            __codec_0.Serialize(__complex_2!, writer);
+            RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_0);
+            RpcGeneratedCodecWire.WriteObjectEnd(writer);
+        }
+
+        public global::FixturePayload? Deserialize(in ReadOnlySequence<byte> buffer)
+        {
+            var reader = new SequenceReader<byte>(buffer);
+            if (!RpcGeneratedCodecWire.ReadPresence(ref reader))
+            {
+                RpcGeneratedCodecWire.EnsureFullyConsumed(reader);
+                return null;
+            }
+            string local_Name = default!;
+            var seen_Name = false;
+            int local_Count = default!;
+            global::System.Collections.Generic.List<string> local_Tags = default!;
+            while (RpcGeneratedCodecWire.TryReadField(ref reader, out var fieldId, out var wireType))
+            {
+                switch (fieldId)
+                {
+                    case 7U:
+                        seen_Name = true;
+                        if (wireType == RpcGeneratedWireType.Null)
+                            local_Name = null!;
+                        else
+                        {
+                            RpcGeneratedCodecWire.EnsureWireType(wireType, RpcGeneratedWireType.LengthDelimited);
+                            local_Name = RpcGeneratedCodecWire.ReadString(ref reader);
+                        }
+                        break;
+                    case 31963284U:
+                        RpcGeneratedCodecWire.EnsureWireType(wireType, RpcGeneratedWireType.Fixed4);
+                        local_Count = RpcGeneratedCodecWire.ReadUnmanaged<int>(ref reader);
+                        break;
+                    case 381526208U:
+                        RpcGeneratedCodecWire.EnsureWireType(wireType, RpcGeneratedWireType.LengthDelimited);
+                        local_Tags = __codec_0.Deserialize(RpcGeneratedCodecWire.ReadLengthDelimited(ref reader))!;
+                        break;
+                    default:
+                        RpcGeneratedCodecWire.SkipField(ref reader, wireType);
+                        break;
+                }
+            }
+            RpcGeneratedCodecWire.EnsureFullyConsumed(reader);
+            if (!seen_Name)
+                throw RpcGeneratedCodecWire.DataLoss("Missing required RPC member 'Name'.");
+            return new global::FixturePayload()
+            {
+                Name = local_Name,
+                Count = local_Count,
+                Tags = local_Tags
+            };
+        }
+
+        public bool TryGetEncodedSize(in global::FixturePayload value, out int size)
+            => __owner.TryGetEncodedSize(in value, out size);
+
+        public bool TryGetEncodedSize(in global::FixturePayload value, out int size, out IRpcSizedCodecSnapshot? snapshot)
+            => __owner.TryGetEncodedSize(in value, out size, out snapshot);
+
+        public void SerializeSized(in global::FixturePayload value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
+            => __owner.SerializeSized(in value, buffer, size, snapshot);
+
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+            => __owner.ReleaseSnapshot(snapshot);
+    }
+
 }
 
 internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<global::System.Collections.Generic.List<string>>
@@ -382,4 +520,79 @@ internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<glo
         }
         public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<global::System.Collections.Generic.List<string>>;
     }
+
+    internal CoreValue Core => new(this);
+
+    internal readonly struct CoreValue : IRpcCodec<global::System.Collections.Generic.List<string>>, IRpcSizedCodec<global::System.Collections.Generic.List<string>>
+    {
+        private readonly IRpcCodec<string> __elementCodec;
+
+        internal CoreValue(__SharpLinkGeneratedCodec_E73FF795487FA4FB owner)
+        {
+            __elementCodec = owner.__elementCodec;
+        }
+
+        public void Serialize(in global::System.Collections.Generic.List<string> value, IBufferWriter<byte> writer)
+        {
+            ArgumentNullException.ThrowIfNull(writer);
+            var rpcWriter = writer as IRpcByteBufferWriter ?? throw new InvalidOperationException("Generated collection Codecs require the SharpLink packet writer.");
+            if (value is null)
+            {
+                RpcGeneratedCodecWire.WriteCollectionCount(writer, 0, true);
+                return;
+            }
+            if ((uint)value.Count > RpcGeneratedCodecWire.MaximumCollectionItems)
+                throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, $"Generated collection contains more than {RpcGeneratedCodecWire.MaximumCollectionItems} items.");
+            var __countMarker = checked((uint)value.Count + 1U);
+            var __encodedSize = 1;
+            while (__countMarker >= 0x80)
+            {
+                __encodedSize++;
+                __countMarker >>= 7;
+            }
+            for (var __index = 0; __index < value.Count; __index++)
+            {
+                var __item = value[__index];
+                if (__item is not null && __item.Length > (RpcGeneratedCodecWire.MaximumStringPayloadBytes / 2))
+                    throw new ArgumentOutOfRangeException(nameof(__item), "Serialized payload exceeds the protocol maximum.");
+                __encodedSize = checked(__encodedSize + sizeof(uint) + sizeof(uint) + (__item is null ? 0 : __item.Length * 2));
+            }
+            rpcWriter.GetSpan(checked(__encodedSize));
+            rpcWriter.Advance(0);
+            RpcGeneratedCodecWire.WriteCollectionCount(writer, value.Count, false);
+            for (var index = 0; index < value.Count; index++)
+            {
+                var item = value[index];
+                var itemLengthToken = RpcGeneratedCodecWire.BeginLength(rpcWriter);
+                __elementCodec.Serialize(item, writer);
+                RpcGeneratedCodecWire.EndLength(rpcWriter, itemLengthToken);
+            }
+        }
+
+        public global::System.Collections.Generic.List<string>? Deserialize(in ReadOnlySequence<byte> buffer)
+        {
+            var reader = new SequenceReader<byte>(buffer);
+            var count = RpcGeneratedCodecWire.ReadCollectionCount(ref reader);
+            if (count < 0)
+            {
+                RpcGeneratedCodecWire.EnsureFullyConsumed(reader);
+                return null;
+            }
+            var result = new global::System.Collections.Generic.List<string>(count);
+            for (var index = 0; index < count; index++)
+                result.Add(__elementCodec.Deserialize(RpcGeneratedCodecWire.ReadLengthDelimited(ref reader))!);
+            RpcGeneratedCodecWire.EnsureFullyConsumed(reader);
+            return result;
+        }
+
+        public bool CanExactSize => false;
+        public bool TryGetEncodedSize(in global::System.Collections.Generic.List<string> value, out int size)
+        { size = 0; return false; }
+        public bool TryGetEncodedSize(in global::System.Collections.Generic.List<string> value, out int size, out IRpcSizedCodecSnapshot? snapshot)
+        { size = 0; snapshot = null; return false; }
+        public void SerializeSized(in global::System.Collections.Generic.List<string> value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
+            => Serialize(in value, buffer);
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot) { }
+    }
+
 }
