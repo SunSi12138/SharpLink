@@ -95,7 +95,7 @@ public partial class RpcGenerator
             var suffix = GetMethodSuffix(method);
             var payloadParameters = GetPayloadParameters(method);
             if (payloadParameters.Length != 0)
-                sb.AppendLine($"        __requestCodec_{suffix} = new {GetHelperTypeReference(model, GetRequestCodecType(model, method))}(__codecs).Core;");
+                sb.AppendLine($"        __requestCodec_{suffix} = new {GetHelperTypeReference(model, GetRequestCodecType(model, method))}(__codecs).StaticCore;");
             if (!method.IsOneWay)
                 sb.AppendLine($"        __responseCodec_{suffix} = {GetCodecHotResolveExpression("__codecs", GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)};");
             var streamParameters = GetStreamParameters(method);
@@ -128,7 +128,7 @@ public partial class RpcGenerator
             $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
 
         if (GetPayloadParameters(method).Length != 0)
-            sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))}.CoreValue __requestCodec_{suffix};");
+            sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))}.Core __requestCodec_{suffix};");
         if (!method.IsOneWay)
             sb.AppendLine($"    private readonly {GetCodecHotStorageType(GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)} __responseCodec_{suffix};");
         var streamParameters = GetStreamParameters(method);
@@ -338,19 +338,19 @@ public partial class RpcGenerator
         sb.AppendLine($"        return new {requestType}({string.Join(", ", parameters.Select(static parameter => $"value_{parameter.Name}"))});");
         sb.AppendLine("    }");
         sb.AppendLine();
-        sb.AppendLine("    internal CoreValue Core => new(this);");
+        sb.AppendLine("    internal Core StaticCore => new(this);");
         sb.AppendLine();
-        sb.AppendLine($"    internal readonly struct CoreValue : IRpcCodec<{requestType}>");
+        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{requestType}>");
         sb.AppendLine("    {");
         foreach (var parameter in complex)
             sb.AppendLine($"        private readonly {GetCodecHotStorageType(parameter.DisplayType, parameter.Type, concreteCodecTypes)} __codec_{parameter.Name};");
         sb.AppendLine();
-        sb.AppendLine($"        internal CoreValue({codecType} owner)");
+        sb.AppendLine($"        internal Core({codecType} owner)");
         sb.AppendLine("        {");
         foreach (var parameter in complex)
         {
             var expression = TryGetStaticGeneratedCodecCoreType(parameter.Type, concreteCodecTypes, out _)
-                ? $"owner.__codec_{parameter.Name}.Core"
+                ? $"owner.__codec_{parameter.Name}.StaticCore"
                 : $"owner.__codec_{parameter.Name}";
             sb.AppendLine($"            __codec_{parameter.Name} = {expression};");
         }
