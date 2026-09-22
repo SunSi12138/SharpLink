@@ -12,6 +12,8 @@ SharpLink 2.0 将进程内 Generated ABI 从已发布的 1.1.1/API 3 原子升�
 
 ## Generated ABI（API 4）与重新生成
 
+当前 2.0 generated ABI identity 包含 static Codec Core bridge。升级到带有 `static-codec-core-v2` identity 的 Runtime/Generator 时，即使整数 API 仍为 4，也必须删除旧生成输出并重新生成所有 contract/service/plugin assemblies；旧 `rpcchannel-codec-provider-v1` artifact 会在 materialize 前因 exact ABI identity 不匹配被拒绝。网络 Protocol 与 wire bytes 不因此改变。
+
 2.0 Generator 只生成 API 4，2.0 Runtime 只接受 `Generated API = 4`、`Protocol = 2`，并要求 locator 携带当前 `SharpLinkGeneratedManifestVersions.AbiIdentity`。已发布的 1.1.1 生成程序集是 API 3，升级到 2.0 时会在 materialize Manifest 或发布任何运行时资源前明确拒绝 API 3，并要求重新生成。开发分支曾使用过的中间 ABI 编号不属于受支持输入，也不作为发布兼容性资产；如果旧开发 artifact 曾复用整数 API 4，但它没有当前 ABI identity，同样会在 materialize 前拒绝，避免同一整数误识别两种不兼容 binary shape。版本与 identity 校验只发生在 assembly load / registration / startup 边界，不进入任何调用热路径。
 
 升级必须同时完成：
