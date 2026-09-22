@@ -714,7 +714,7 @@ jobs:
             symbols="$executable.dbg"
           fi
           nm -S -C "$symbols" 2>/dev/null \
-            | grep -E 'AotPaired|PumpInterfaceSized|PumpSized|PumpInterfaceDeserialize|PumpDeserialize|Generated(Int|Nested64)Core' \
+            | grep -E 'AotPaired|PumpInterfaceSized|PumpSized|PumpInterfaceDeserialize|PumpDeserialize|Generated(Int|Nested64)Core|Post727Nested64Core' \
             > "$EVIDENCE_ROOT/aot-generated-paired-symbol-sizes.txt" || true
 
           objdump -d "$executable" 2>/dev/null \
@@ -795,6 +795,7 @@ jobs:
               out[mode] = {
                   "overall": med(mode),
                   "flat": med(mode, lambda k: k[0] == "int"),
+                  "generatedConcrete": med(mode, lambda k: k[0] == "generated-concrete64"),
                   "generatedLike": med(mode, lambda k: k[0] == "generated-like64"),
                   "sizedSerialize": med(mode, lambda k: k[1] == "stream-sized-serialize"),
                   "deserialize": med(mode, lambda k: k[1] == "stream-deserialize"),
@@ -833,7 +834,8 @@ jobs:
                   "",
                   f"- overall vs interface: {fmt(d['overall'])}",
                   f"- flat int vs interface: {fmt(d['flat'])}",
-                  f"- generated-like64 vs interface: {fmt(d['generatedLike'])}",
+                  f"- post-#727 generated-concrete64 vs interface: {fmt(d['generatedConcrete'])}",
+                  f"- fallback generated-like64 (interface children) vs interface: {fmt(d['generatedLike'])}",
                   f"- sized serialize vs interface: {fmt(d['sizedSerialize'])}",
                   f"- deserialize vs interface: {fmt(d['deserialize'])}",
                   f"- 100k streams/items rows: {fmt(d['long100k'])}",
