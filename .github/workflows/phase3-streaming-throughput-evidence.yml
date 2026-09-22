@@ -54,13 +54,17 @@ jobs:
           uname -a > "$EVIDENCE_ROOT/env/uname.txt"
           lscpu > "$EVIDENCE_ROOT/env/cpu.txt"
 
-          for spec in             "original:$ORIGINAL_SHA"             "phase-a:$PHASE_A_SHA"             "current:$CURRENT_SHA"; do
-            label="${spec%%:*}"
-            sha="${spec#*:}"
-            root="$RUNNER_TEMP/sharplink-$label"
-            git worktree add --detach "$root" "$sha"
-            echo "${label^^}_ROOT=$root" >> "$GITHUB_ENV"
-          done
+          original_root="$RUNNER_TEMP/sharplink-original"
+          phase_a_root="$RUNNER_TEMP/sharplink-phase-a"
+          current_root="$RUNNER_TEMP/sharplink-current"
+
+          git worktree add --detach "$original_root" "$ORIGINAL_SHA"
+          git worktree add --detach "$phase_a_root" "$PHASE_A_SHA"
+          git worktree add --detach "$current_root" "$CURRENT_SHA"
+
+          echo "ORIGINAL_ROOT=$original_root" >> "$GITHUB_ENV"
+          echo "PHASE_A_ROOT=$phase_a_root" >> "$GITHUB_ENV"
+          echo "CURRENT_ROOT=$current_root" >> "$GITHUB_ENV"
 
       - name: Restore and build JIT revisions
         shell: bash
