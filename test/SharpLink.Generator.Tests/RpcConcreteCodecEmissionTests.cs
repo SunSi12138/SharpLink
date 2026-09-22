@@ -137,6 +137,9 @@ public interface IConcreteBindingContract : SharpLink.Sdk.IService
         Ensure(lines.Any(static line =>
                 line.Contains("private readonly IRpcCodec<global::AdaptedPayload>", StringComparison.Ordinal)),
             "Adapter-backed Codecs must keep IRpcCodec<T> storage because the concrete runtime implementation is not statically known");
+        Ensure(lines.Any(static line =>
+                line.Contains("private readonly IRpcCodec<global::CustomPayload> __responseCodec_", StringComparison.Ordinal)),
+            "custom Codecs without a generated Core must use the interface fallback on RPC hot-path fields");
         Ensure(generated.Contains(
                 "private readonly IRpcCodec<global::AdaptedPayload> __codec_0;",
                 StringComparison.Ordinal),
