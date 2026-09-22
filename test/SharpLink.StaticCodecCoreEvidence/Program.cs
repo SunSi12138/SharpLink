@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
@@ -14,7 +15,7 @@ using SharpLink.Server;
 
 namespace SharpLink.StaticCodecCoreEvidence;
 
-internal static class Program
+internal static partial class Program
 {
     private const int DefaultCallIterations = 512;
     private const int EvidenceStreamWindowBytes = 128 * 1024;
@@ -43,7 +44,7 @@ internal static class Program
 
         await File.WriteAllTextAsync(
             output,
-            JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }))
+            JsonSerializer.Serialize(report, EvidenceJsonContext.Default.EvidenceReport))
             .ConfigureAwait(false);
 
         Console.WriteLine($"static Codec Core RPC evidence written to {output}");
@@ -333,6 +334,12 @@ internal static class Program
 
     private static double TicksToNanoseconds(long ticks)
         => ticks * (1_000_000_000d / Stopwatch.Frequency);
+
+    [JsonSourceGenerationOptions(WriteIndented = true)]
+    [JsonSerializable(typeof(EvidenceReport))]
+    private sealed partial class EvidenceJsonContext : JsonSerializerContext
+    {
+    }
 
     private sealed class EvidenceReport
     {
