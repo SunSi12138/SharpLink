@@ -33,6 +33,9 @@
   <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-direct'">
     <DefineConstants>$(DefineConstants);GENERATED_BINDING_DIRECT</DefineConstants>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-paired'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_PAIRED</DefineConstants>
+  </PropertyGroup>
 
   <Target Name="ValidateEvidenceShape" BeforeTargets="CoreCompile">
     <Error
@@ -45,7 +48,8 @@
                  '$(EvidenceShape)' != 'generated-interface' and
                  '$(EvidenceShape)' != 'generated-guarded-value' and
                  '$(EvidenceShape)' != 'generated-guarded-ref' and
-                 '$(EvidenceShape)' != 'generated-direct'"
+                 '$(EvidenceShape)' != 'generated-direct' and
+                 '$(EvidenceShape)' != 'generated-paired'"
       Text="Unsupported EvidenceShape '$(EvidenceShape)'." />
   </Target>
 
