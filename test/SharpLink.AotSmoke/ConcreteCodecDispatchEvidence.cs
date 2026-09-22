@@ -169,13 +169,13 @@ internal static class ConcreteCodecDispatchEvidence
                             Interlocked.Add(ref s_sink, value.Primary.Value + value.Items.Count);
                         })
                 };
-    
+
                 var manifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
                     .Single(item => item.OwnerAssembly == typeof(ConcreteCodecDispatchEvidence).Assembly);
                 var contract = manifest.Contracts.Single(item =>
                     item.ContractType == typeof(IConcreteCodecEvidenceRpc));
                 var allFactories = manifest.Codecs.Concat(manifest.ContractCodecs).ToArray();
-    
+
                 return new EvidenceReport
                 {
                     Ref = Environment.GetEnvironmentVariable("SHARPLINK_EVIDENCE_REF") ?? "unknown",
