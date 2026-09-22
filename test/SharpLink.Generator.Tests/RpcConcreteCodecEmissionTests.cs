@@ -151,34 +151,57 @@ public interface IConcreteBindingContract : SharpLink.Sdk.IService
     [Test]
     public Task StructCustomCodecShouldKeepInterfaceFallback()
     {
-        var source = AddAssemblyAttribute(
-            UseCurrentIdentitySdk(BuildSource("""
+        var source = UseCurrentIdentitySdk(BuildSource("""
 public sealed class StructCodecPayload
 {
     public int Value { get; set; }
 }
 
 [SharpLink.Sdk.RpcCodecSemanticIdentity(0x7269UL, 0x726AUL)]
-public struct StructPayloadCodec : SharpLink.Abstractions.IRpcCodec<StructCodecPayload>
+public struct StructPayloadCodec :
+    SharpLink.Abstractions.IRpcCodec<StructCodecPayload>,
+    SharpLink.Abstractions.IRpcSizedCodec<StructCodecPayload>
 {
+    private int _state;
+
     public StructPayloadCodec()
     {
     }
+
+    public void Touch() => _state++;
+}
+
+[SharpLink.Sdk.RpcSerializable]
+public sealed class StructCodecEnvelope
+{
+    [SharpLink.Sdk.RpcMember(1)]
+    public StructCodecPayload Value { get; set; } = new();
 }
 
 [SharpLink.Sdk.RpcContract]
 public interface IStructCodecContract : SharpLink.Sdk.IService
 {
-    ValueTask<StructCodecPayload> Echo(StructCodecPayload value, CancellationToken cancellationToken);
+    ValueTask<StructCodecEnvelope> Echo(
+        StructCodecEnvelope value,
+        CancellationToken cancellationToken);
 }
-""")),
+"""));
+        source = source.Replace(
+            "public interface IRpcCodec<T> : IRpcCodec { }",
+            """
+public interface IRpcCodec<T> : IRpcCodec { }
+    public interface IRpcSizedCodec<T> { }
+""",
+            StringComparison.Ordinal);
+        source = AddAssemblyAttribute(
+            source,
             "[assembly: SharpLink.Sdk.RpcCodec(typeof(StructCodecPayload), typeof(StructPayloadCodec))]");
 
         var generated = string.Join("\\n", RunGeneratorAndGetSources(source));
         Ensure(generated.Contains(
-                "private readonly IRpcCodec<global::StructCodecPayload>",
+                "private readonly IRpcCodec<global::StructCodecPayload> __codec_0;",
                 StringComparison.Ordinal),
-            "custom struct Codecs must keep interface storage so provider-owned boxed instances retain their identity and mutable state");
+            "custom struct Codecs must keep interface storage, including when a generated parent probes IRpcSizedCodec<T> capabilities");
         Ensure(!generated.Contains(
                 "private readonly global::StructPayloadCodec ",
                 StringComparison.Ordinal),
