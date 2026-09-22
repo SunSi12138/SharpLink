@@ -303,6 +303,94 @@ internal static class ConcreteCodecDispatchEvidence
                         count => RunDispatchProbeDeserializeUnusedConcrete(
                             dispatchDeserializeConcrete,
                             in dispatchPayload,
+                            count)),
+                    MeasureTightLoopCase(
+                        "layout-a-serialize-interface",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeSerializeDualA(
+                            concretePath: false,
+                            dispatchSerializeInterface,
+                            dispatchSerializeInterfaceProbe,
+                            writer,
+                            count)),
+                    MeasureTightLoopCase(
+                        "layout-a-serialize-concrete",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeSerializeDualA(
+                            concretePath: true,
+                            dispatchSerializeInterface,
+                            dispatchSerializeInterfaceProbe,
+                            writer,
+                            count)),
+                    MeasureTightLoopCase(
+                        "layout-b-serialize-interface",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeSerializeDualB(
+                            concretePath: false,
+                            dispatchSerializeInterface,
+                            dispatchSerializeInterfaceProbe,
+                            writer,
+                            count)),
+                    MeasureTightLoopCase(
+                        "layout-b-serialize-concrete",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeSerializeDualB(
+                            concretePath: true,
+                            dispatchSerializeInterface,
+                            dispatchSerializeInterfaceProbe,
+                            writer,
+                            count)),
+                    MeasureTightLoopCase(
+                        "layout-a-deserialize-interface",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeDeserializeDualA(
+                            concretePath: false,
+                            dispatchDeserializeInterface,
+                            dispatchDeserializeInterfaceProbe,
+                            in dispatchPayload,
+                            count)),
+                    MeasureTightLoopCase(
+                        "layout-a-deserialize-concrete",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeDeserializeDualA(
+                            concretePath: true,
+                            dispatchDeserializeInterface,
+                            dispatchDeserializeInterfaceProbe,
+                            in dispatchPayload,
+                            count)),
+                    MeasureTightLoopCase(
+                        "layout-b-deserialize-interface",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeDeserializeDualB(
+                            concretePath: false,
+                            dispatchDeserializeInterface,
+                            dispatchDeserializeInterfaceProbe,
+                            in dispatchPayload,
+                            count)),
+                    MeasureTightLoopCase(
+                        "layout-b-deserialize-concrete",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeDeserializeDualB(
+                            concretePath: true,
+                            dispatchDeserializeInterface,
+                            dispatchDeserializeInterfaceProbe,
+                            in dispatchPayload,
                             count))
                 };
 
@@ -551,6 +639,98 @@ internal static class ConcreteCodecDispatchEvidence
         for (var index = 0; index < operations; index++)
             _ = codec.Deserialize(in payload);
         return codec.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeSerializeDualA(
+        bool concretePath,
+        IRpcCodec<int> codec,
+        DispatchProbeCodec concrete,
+        IBufferWriter<byte> writer,
+        int operations)
+    {
+        concrete.Reset();
+        var value = 42;
+        if (concretePath)
+        {
+            for (var index = 0; index < operations; index++)
+                concrete.Serialize(in value, writer);
+        }
+        else
+        {
+            for (var index = 0; index < operations; index++)
+                codec.Serialize(in value, writer);
+        }
+        return concrete.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeSerializeDualB(
+        bool concretePath,
+        IRpcCodec<int> codec,
+        DispatchProbeCodec concrete,
+        IBufferWriter<byte> writer,
+        int operations)
+    {
+        concrete.Reset();
+        var value = 42;
+        if (!concretePath)
+        {
+            for (var index = 0; index < operations; index++)
+                codec.Serialize(in value, writer);
+        }
+        else
+        {
+            for (var index = 0; index < operations; index++)
+                concrete.Serialize(in value, writer);
+        }
+        return concrete.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeDeserializeDualA(
+        bool concretePath,
+        IRpcCodec<int> codec,
+        DispatchProbeCodec concrete,
+        in ReadOnlySequence<byte> payload,
+        int operations)
+    {
+        concrete.Reset();
+        long checksum = 0;
+        if (concretePath)
+        {
+            for (var index = 0; index < operations; index++)
+                checksum += concrete.Deserialize(in payload);
+        }
+        else
+        {
+            for (var index = 0; index < operations; index++)
+                checksum += codec.Deserialize(in payload);
+        }
+        return checksum ^ concrete.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeDeserializeDualB(
+        bool concretePath,
+        IRpcCodec<int> codec,
+        DispatchProbeCodec concrete,
+        in ReadOnlySequence<byte> payload,
+        int operations)
+    {
+        concrete.Reset();
+        long checksum = 0;
+        if (!concretePath)
+        {
+            for (var index = 0; index < operations; index++)
+                checksum += codec.Deserialize(in payload);
+        }
+        else
+        {
+            for (var index = 0; index < operations; index++)
+                checksum += concrete.Deserialize(in payload);
+        }
+        return checksum ^ concrete.State;
     }
 
     private static async Task<EvidenceSample> MeasureAsyncSample(
