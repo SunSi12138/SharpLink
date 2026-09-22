@@ -196,6 +196,17 @@ namespace SharpLink.Abstractions
         T? Deserialize(in ReadOnlySequence<byte> buffer);
     }
 
+    public interface IRpcSizedCodec<T>
+    {
+        bool CanExactSize { get; }
+        bool TryGetEncodedSize(in T value, out int size);
+        bool TryGetEncodedSize(in T value, out int size, out IRpcSizedCodecSnapshot? snapshot);
+        void SerializeSized(in T value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot);
+        void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot);
+    }
+
+    public interface IRpcSizedCodecSnapshot { }
+
     public interface IRpcCodecProvider
     {
         IRpcCodec<T> GetCodec<T>();
