@@ -64,6 +64,7 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         var rows = new List<Measurement>();
         AddFlat(shape, rows);
         AddGeneratedLike(shape, rows);
+        AddStateLayouts(shape, rows);
         WriteJson(outputPath, shape, rows);
     }
 
