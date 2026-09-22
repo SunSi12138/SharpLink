@@ -371,13 +371,17 @@ public partial class RpcGenerator
             foreach (var item in streamParams)
             {
                 var p = item.Parameter;
-                var createStreamMethod = TryGetStaticGeneratedCodecCoreType(
-                    p.StreamItemType!,
-                    concreteCodecTypes,
-                    out _)
-                    ? "CreateGeneratedInboundStream"
-                    : "CreateInboundStream";
-                sb.AppendLine($"                stream_{p.Name} = bridge.{createStreamMethod}(requestId, (ushort){streamId}, {GetStubParameterCodecField(method, item.Index)}, {(p.PayloadNullable ? "true" : "false")}, cancellationToken);");
+                if (TryGetStaticGeneratedCodecCoreType(
+                        p.StreamItemType!,
+                        concreteCodecTypes,
+                        out var streamCoreType))
+                {
+                    sb.AppendLine($"                stream_{p.Name} = bridge.CreateGeneratedInboundStream<{p.DisplayStreamItemType}, {streamCoreType}>(requestId, (ushort){streamId}, {GetStubParameterCodecField(method, item.Index)}, {(p.PayloadNullable ? "true" : "false")}, cancellationToken);");
+                }
+                else
+                {
+                    sb.AppendLine($"                stream_{p.Name} = bridge.CreateInboundStream(requestId, (ushort){streamId}, {GetStubParameterCodecField(method, item.Index)}, {(p.PayloadNullable ? "true" : "false")}, cancellationToken);");
+                }
                 streamId++;
             }
 
