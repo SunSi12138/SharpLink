@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <EvidenceShape Condition="'$(EvidenceShape)' == ''">runtime</EvidenceShape>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'production-interface'">
+    <DefineConstants>$(DefineConstants);STRUCT_CORE_EVIDENCE_BASELINE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'shell-interface'">
+    <DefineConstants>$(DefineConstants);STRUCT_CORE_EVIDENCE_SHELL</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'open-value'">
+    <DefineConstants>$(DefineConstants);STRUCT_CORE_EVIDENCE_OPEN_VALUE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'open-in'">
+    <DefineConstants>$(DefineConstants);STRUCT_CORE_EVIDENCE_OPEN_IN</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'direct-core'">
+    <DefineConstants>$(DefineConstants);STRUCT_CORE_EVIDENCE_DIRECT</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-interface'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_INTERFACE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-guarded-value'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_GUARDED_VALUE</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-guarded-ref'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_GUARDED_REF</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EvidenceShape)' == 'generated-direct'">
+    <DefineConstants>$(DefineConstants);GENERATED_BINDING_DIRECT</DefineConstants>
+  </PropertyGroup>
+
+  <Target Name="ValidateEvidenceShape" BeforeTargets="CoreCompile">
+    <Error
+      Condition="'$(EvidenceShape)' != 'runtime' and
+                 '$(EvidenceShape)' != 'production-interface' and
+                 '$(EvidenceShape)' != 'shell-interface' and
+                 '$(EvidenceShape)' != 'open-value' and
+                 '$(EvidenceShape)' != 'open-in' and
+                 '$(EvidenceShape)' != 'direct-core' and
+                 '$(EvidenceShape)' != 'generated-interface' and
+                 '$(EvidenceShape)' != 'generated-guarded-value' and
+                 '$(EvidenceShape)' != 'generated-guarded-ref' and
+                 '$(EvidenceShape)' != 'generated-direct'"
+      Text="Unsupported EvidenceShape '$(EvidenceShape)'." />
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
+  </ItemGroup>
+</Project>
