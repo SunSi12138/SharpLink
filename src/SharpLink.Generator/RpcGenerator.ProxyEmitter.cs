@@ -381,8 +381,11 @@ public partial class RpcGenerator
         if (streams.Length == 1)
         {
             var stream = streams[0];
+            var sendMethod = TryGetStaticGeneratedCodecCoreType(stream.StreamItemType!, concreteCodecTypes, out _)
+                ? "SendGeneratedClientStreamAsync"
+                : "SendClientStreamAsync";
             sb.AppendLine("    public ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)");
-            sb.AppendLine($"        => new(sink.SendClientStreamAsync(requestId, (ushort)1, _{stream.Name}, __codec_{stream.Name}, cancellationToken));");
+            sb.AppendLine($"        => new(sink.{sendMethod}(requestId, (ushort)1, _{stream.Name}, __codec_{stream.Name}, cancellationToken));");
         }
         else
         {
@@ -391,7 +394,10 @@ public partial class RpcGenerator
             for (var index = 0; index < streams.Length; index++)
             {
                 var stream = streams[index];
-                sb.AppendLine($"        var pending_{index} = sink.SendClientStreamAsync(requestId, (ushort){index + 1}, _{stream.Name}, __codec_{stream.Name}, cancellationToken);");
+                var sendMethod = TryGetStaticGeneratedCodecCoreType(stream.StreamItemType!, concreteCodecTypes, out _)
+                    ? "SendGeneratedClientStreamAsync"
+                    : "SendClientStreamAsync";
+                sb.AppendLine($"        var pending_{index} = sink.{sendMethod}(requestId, (ushort){index + 1}, _{stream.Name}, __codec_{stream.Name}, cancellationToken);");
             }
             sb.AppendLine($"        await Task.WhenAll({string.Join(", ", Enumerable.Range(0, streams.Length).Select(static index => $"pending_{index}"))}).ConfigureAwait(false);");
             sb.AppendLine("    }");
