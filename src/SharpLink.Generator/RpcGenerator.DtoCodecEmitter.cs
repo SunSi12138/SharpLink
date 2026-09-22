@@ -73,6 +73,7 @@ public partial class RpcGenerator
         AppendDtoStaticCore(sb, model, complexMembers, complexIndexes, hasDirectString, hasComplex, concreteCodecTypes);
         sb.AppendLine("}");
         sb.AppendLine();
+    }
 
     private static void AppendDtoStaticCore(
         StringBuilder sb,
@@ -128,6 +129,5 @@ public partial class RpcGenerator
         sb.AppendLine("        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)");
         sb.AppendLine("            => __owner.ReleaseSnapshot(snapshot);");
         sb.AppendLine("    }");
-    }
     }
 }
