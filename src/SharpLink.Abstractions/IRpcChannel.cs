@@ -237,7 +237,7 @@ public interface IRpcClientStreamSink
         IAsyncEnumerable<T> stream,
         in TCodec codec,
         CancellationToken cancellationToken = default)
-        where TCodec : IRpcCodec<T>
+        where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
         => SendClientStreamAsync(requestId, streamId, stream, codec, cancellationToken);
 }
 
