@@ -222,15 +222,17 @@ public interface IStaticCoreContract : SharpLink.Sdk.IService
             "native generated DTOs must expose a readonly static Core");
         Ensure(generated.Contains(".StaticCore;", StringComparison.Ordinal),
             "generated proxy/stub construction must extract Core from the authoritative Codec instance");
-        Ensure(generated.Contains("InvokeGeneratedUnaryAsync", StringComparison.Ordinal),
+        Ensure(!generated.Contains("GetCodec<global::CoreValue>().StaticCore", StringComparison.Ordinal),
+            "static Core extraction must apply member access after the concrete Codec cast");
+        Ensure(generated.Contains("InvokeGeneratedUnaryAsync<", StringComparison.Ordinal),
             "Unary must use the generated static Codec bridge");
-        Ensure(generated.Contains("InvokeGeneratedOneWayAsync", StringComparison.Ordinal),
+        Ensure(generated.Contains("InvokeGeneratedOneWayAsync<", StringComparison.Ordinal),
             "OneWay must use the generated static Codec bridge");
-        Ensure(generated.Contains("InvokeGeneratedClientStreamingAsync", StringComparison.Ordinal),
+        Ensure(generated.Contains("InvokeGeneratedClientStreamingAsync<", StringComparison.Ordinal),
             "ClientStreaming must use the generated static Codec bridge");
-        Ensure(generated.Contains("InvokeGeneratedServerStreamingAsync", StringComparison.Ordinal),
+        Ensure(generated.Contains("InvokeGeneratedServerStreamingAsync<", StringComparison.Ordinal),
             "ServerStreaming must use the generated static Codec bridge");
-        Ensure(generated.Contains("InvokeGeneratedDuplexStreamingAsync", StringComparison.Ordinal),
+        Ensure(generated.Contains("InvokeGeneratedDuplexStreamingAsync<", StringComparison.Ordinal),
             "DuplexStreaming must use the generated static Codec bridge");
         Ensure(generated.Contains("SendGeneratedClientStreamAsync", StringComparison.Ordinal),
             "generated client stream items must retain their static Core through the sink");
