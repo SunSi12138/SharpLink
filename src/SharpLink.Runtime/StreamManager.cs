@@ -126,28 +126,19 @@ internal sealed class StreamManager
         var receiveCreditLease = default(StreamFlowController.ResolvedReceiveCreditLease);
         try
         {
-            if (dispatcher is IResolvedStreamConsumptionAwareDispatcher resolvedConsumptionAware &&
-                _resolveReceiveCreditLease is not null &&
-                _resolvedBytesConsumed is not null)
-            {
-                receiveCreditLease = _resolveReceiveCreditLease(requestId, streamId);
-                if (receiveCreditLease.IsResolved)
-                {
-                    resolvedConsumptionAware.SetResolvedBytesConsumedCallback(
-                        _resolvedBytesConsumed,
-                        in receiveCreditLease);
-                }
-                else
-                {
-                    resolvedConsumptionAware.SetBytesConsumedCallback(
-                        _bytesConsumed,
-                        requestId,
-                        streamId);
-                }
-            }
-            else if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
             {
                 consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
+                if (_resolveReceiveCreditLease is not null && _resolvedBytesConsumed is not null)
+                {
+                    receiveCreditLease = _resolveReceiveCreditLease(requestId, streamId);
+                    if (receiveCreditLease.IsResolved)
+                    {
+                        _ = consumptionAware.TrySetResolvedBytesConsumedCallback(
+                            _resolvedBytesConsumed,
+                            in receiveCreditLease);
+                    }
+                }
             }
         }
         catch
@@ -783,13 +774,12 @@ internal sealed class StreamManager
 
     private static void ClearBytesConsumedCallback(IStreamDispatcher dispatcher)
     {
-        if (dispatcher is IResolvedStreamConsumptionAwareDispatcher resolved)
-        {
-            var emptyLease = default(StreamFlowController.ResolvedReceiveCreditLease);
-            resolved.SetResolvedBytesConsumedCallback(null, in emptyLease);
-        }
-        if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-            consumptionAware.SetBytesConsumedCallback(null, 0, 0);
+        if (dispatcher is not IStreamConsumptionAwareDispatcher consumptionAware)
+            return;
+
+        var emptyLease = default(StreamFlowController.ResolvedReceiveCreditLease);
+        _ = consumptionAware.TrySetResolvedBytesConsumedCallback(null, in emptyLease);
+        consumptionAware.SetBytesConsumedCallback(null, 0, 0);
     }
 
     private void RemoveEmptyRequest(long requestId, RequestDispatchers requestDispatchers)
@@ -1373,7 +1363,7 @@ internal sealed class StreamManager
     }
 }
 
-internal sealed class DiscardingStreamDispatcher : IResolvedStreamConsumptionAwareDispatcher
+internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispatcher
 {
     private Action<long, ushort, int>? _bytesConsumed;
     private ResolvedStreamBytesCallback? _resolvedBytesConsumed;
@@ -1412,12 +1402,13 @@ internal sealed class DiscardingStreamDispatcher : IResolvedStreamConsumptionAwa
         _streamId = streamId;
     }
 
-    public void SetResolvedBytesConsumedCallback(
+    public bool TrySetResolvedBytesConsumedCallback(
         ResolvedStreamBytesCallback? callback,
         in StreamFlowController.ResolvedReceiveCreditLease lease)
     {
         _resolvedBytesConsumed = callback;
         _receiveCreditLease = lease;
+        return true;
     }
 }
 
