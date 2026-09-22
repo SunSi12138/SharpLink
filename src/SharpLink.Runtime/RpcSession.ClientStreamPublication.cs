@@ -96,6 +96,44 @@ internal sealed partial class RpcSession
             terminalToken);
     }
 
+    internal ValueTask SendGeneratedClientStreamChunkAsync<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        T item,
+        TCodec codec,
+        RpcDeadline deadline,
+        TimeProvider timeProvider,
+        CancellationToken terminalToken)
+        where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
+
+        if (codec.CanExactSize &&
+            codec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
+        {
+            return SendClientStreamChunkKnownSizeAsync(
+                requestId,
+                streamId,
+                item,
+                codec,
+                knownEncodedBytes,
+                sizedSnapshot,
+                deadline,
+                timeProvider,
+                terminalToken);
+        }
+
+        return SendClientUnsizedStreamChunkAsync(
+            requestId,
+            streamId,
+            item,
+            codec,
+            deadline,
+            timeProvider,
+            terminalToken);
+    }
+
     internal void SendClientStreamComplete(
         long requestId,
         ushort streamId,
@@ -189,16 +227,17 @@ internal sealed partial class RpcSession
         }
     }
 
-    private async ValueTask SendClientStreamChunkKnownSizeAsync<T>(
+    private async ValueTask SendClientStreamChunkKnownSizeAsync<T, TCodec>(
         long requestId,
         ushort streamId,
         T item,
-        IRpcSizedCodec<T> sizedCodec,
+        TCodec sizedCodec,
         int encodedBytes,
         IRpcSizedCodecSnapshot? sizedSnapshot,
         RpcDeadline deadline,
         TimeProvider timeProvider,
         CancellationToken terminalToken)
+        where TCodec : IRpcSizedCodec<T>
     {
         var creditBytes = Math.Max(1, encodedBytes);
         var creditAcquired = false;
@@ -259,14 +298,15 @@ internal sealed partial class RpcSession
         }
     }
 
-    private ValueTask SendClientUnsizedStreamChunkAsync<T>(
+    private ValueTask SendClientUnsizedStreamChunkAsync<T, TCodec>(
         long requestId,
         ushort streamId,
         T item,
-        IRpcCodec<T> codec,
+        TCodec codec,
         RpcDeadline deadline,
         TimeProvider timeProvider,
         CancellationToken terminalToken)
+        where TCodec : IRpcCodec<T>
     {
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
