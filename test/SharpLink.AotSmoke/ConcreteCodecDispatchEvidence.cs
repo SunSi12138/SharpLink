@@ -86,7 +86,8 @@ internal static class ConcreteCodecDispatchEvidence
         {
             await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
             var rpc = client.Get<IConcreteCodecEvidenceRpc>();
-            var provider = ((IRpcChannel)client).RuntimeContext.Codecs;
+            var runtimeContext = ((IRpcChannel)client).RuntimeContext;
+            var provider = runtimeContext.Codecs;
 
             var small = new ConcreteCodecSmallPayload
             {
@@ -107,12 +108,13 @@ internal static class ConcreteCodecDispatchEvidence
 
             var smallCodec = provider.GetCodec<ConcreteCodecSmallPayload>();
             var nestedCodec = provider.GetCodec<ConcreteCodecNestedPayload>();
-            var smallBytes = SerializeOnce(smallCodec, small);
-            var nestedBytes = SerializeOnce(nestedCodec, nested);
+            var smallBytes = SerializeOnce(smallCodec, small, runtimeContext.Buffers);
+            var nestedBytes = SerializeOnce(nestedCodec, nested, runtimeContext.Buffers);
             var nestedSequence = new ReadOnlySequence<byte>(nestedBytes);
-            var writer = new ArrayBufferWriter<byte>(4096);
-
-            var cases = new List<EvidenceCase>
+            var writer = runtimeContext.Buffers.Rent();
+            try
+            {
+                var cases = new List<EvidenceCase>
             {
                 await MeasureAsyncCase(
                     "small-generated-dto-unary",
@@ -202,8 +204,13 @@ internal static class ConcreteCodecDispatchEvidence
                 NestedCodecHash = FindCodecHash(allFactories, typeof(ConcreteCodecNestedPayload)),
                 SmallWireSha256 = Hash(smallBytes),
                 NestedWireSha256 = Hash(nestedBytes),
-                Cases = cases
-            };
+                    Cases = cases
+                };
+            }
+            finally
+            {
+                runtimeContext.Buffers.Return(writer);
+            }
         }
         finally
         {
@@ -214,11 +221,21 @@ internal static class ConcreteCodecDispatchEvidence
         }
     }
 
-    private static byte[] SerializeOnce<T>(IRpcCodec<T> codec, T value)
+    private static byte[] SerializeOnce<T>(
+        IRpcCodec<T> codec,
+        T value,
+        IRpcBufferWriterPool buffers)
     {
-        var writer = new ArrayBufferWriter<byte>(4096);
-        codec.Serialize(value, writer);
-        return writer.WrittenSpan.ToArray();
+        var writer = buffers.Rent();
+        try
+        {
+            codec.Serialize(value, writer);
+            return writer.WrittenSpan.ToArray();
+        }
+        finally
+        {
+            buffers.Return(writer);
+        }
     }
 
     private static async Task<EvidenceCase> MeasureAsyncCase(
