@@ -25,7 +25,7 @@ using System;
     4,
     2,
     "2.0.0-test",
-    "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
+    "sharplink-2.0-api4-static-codec-core-v2")]
 
 namespace SharpLink.Abstractions
 {
