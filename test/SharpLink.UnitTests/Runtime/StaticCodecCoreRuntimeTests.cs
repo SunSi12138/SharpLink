@@ -13,7 +13,7 @@ public class StaticCodecCoreRuntimeTests
         using var table = PendingRequestTableTestFixture.Create(8);
         var codec = new StaticInt32Core();
 
-        var first = table.RentGenerated(
+        var first = table.RentGenerated<int, StaticInt32Core>(
             in codec,
             PendingCallKind.Unary,
             deadline: default,
@@ -23,7 +23,7 @@ public class StaticCodecCoreRuntimeTests
         Ensure(table.Dispatch(firstId, ref payload), "generated response should dispatch");
         Ensure(await first.AsValueTask() == 41, "generated response should decode through the static Core");
 
-        var second = table.RentGenerated(
+        var second = table.RentGenerated<int, StaticInt32Core>(
             in codec,
             PendingCallKind.Unary,
             deadline: default,
@@ -42,7 +42,7 @@ public class StaticCodecCoreRuntimeTests
     {
         using var table = PendingRequestTableTestFixture.Create(8);
         var codec = new StaticInt32Core();
-        var operation = table.RentGenerated(
+        var operation = table.RentGenerated<int, StaticInt32Core>(
             in codec,
             PendingCallKind.Unary,
             deadline: default,
