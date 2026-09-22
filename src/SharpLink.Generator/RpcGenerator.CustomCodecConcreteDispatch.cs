@@ -8,6 +8,9 @@ public partial class RpcGenerator
             INamedTypeSymbol codecType,
             ITypeSymbol targetType)
         {
+            if (codecType.TypeKind != TypeKind.Class)
+                return false;
+
             var codecInterface = codecType.AllInterfaces.FirstOrDefault(item =>
                 item is
                 {
