@@ -64,6 +64,23 @@ internal sealed class ServerGeneratedBridge(
                 payloadNullable,
                 cancellationToken));
 
+    public IAsyncEnumerable<T> CreateGeneratedInboundStream<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        in TCodec codec,
+        bool payloadNullable,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>
+        => new UserCodeEntryAsyncEnumerable<T>(
+            this,
+            requestId,
+            _protocolBridge.CreateGeneratedInboundStream(
+                requestId,
+                streamId,
+                in codec,
+                payloadNullable,
+                cancellationToken));
+
     public async ValueTask PumpOutboundStreamAsync<T>(
         long requestId,
         ushort streamId,
@@ -94,6 +111,50 @@ internal sealed class ServerGeneratedBridge(
             // mapper and do not publish a second StreamComplete(Error); the selected call terminal
             // is already responsible for the externally visible outcome. The local send-flow state
             // still belongs to this pump and must be retired even though no wire terminal is sent.
+            if (GetSelectedTerminal(requestId) is { } selectedTerminal)
+            {
+                session.CompleteSendStream(requestId, streamId, selectedTerminal);
+                return;
+            }
+
+            var protocolError = server.MapStreamServiceException(
+                callCancellations,
+                session,
+                requestId,
+                contractId,
+                methodId,
+                exception);
+            session.SendStreamErrorAsync(requestId, streamId, protocolError);
+        }
+    }
+
+    public async ValueTask PumpGeneratedOutboundStreamAsync<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        in TCodec codec,
+        bool payloadNullable,
+        long contractId,
+        long methodId,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
+    {
+        var staticCodec = codec;
+        try
+        {
+            await _protocolBridge.PumpGeneratedOutboundStreamAsync(
+                requestId,
+                streamId,
+                new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
+                in staticCodec,
+                payloadNullable,
+                contractId,
+                methodId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            exception is not OutOfMemoryException and not StackOverflowException)
+        {
             if (GetSelectedTerminal(requestId) is { } selectedTerminal)
             {
                 session.CompleteSendStream(requestId, streamId, selectedTerminal);
