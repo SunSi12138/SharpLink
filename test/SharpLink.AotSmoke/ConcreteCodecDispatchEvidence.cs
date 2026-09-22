@@ -124,6 +124,20 @@ internal static class ConcreteCodecDispatchEvidence
             var writer = runtimeContext.Buffers.Rent();
             try
             {
+                var dispatchSerializeInterfaceProbe = new DispatchProbeCodec();
+                IRpcCodec<int> dispatchSerializeInterface = dispatchSerializeInterfaceProbe;
+                var dispatchSerializeConcrete = new DispatchProbeCodec();
+                var dispatchDeserializeInterfaceProbe = new DispatchProbeCodec();
+                IRpcCodec<int> dispatchDeserializeInterface = dispatchDeserializeInterfaceProbe;
+                var dispatchDeserializeConcrete = new DispatchProbeCodec();
+                var dispatchPayload = new ReadOnlySequence<byte>(new byte[] { 0x2A });
+                var dispatchOperations = codecOperations >= 1_000
+                    ? Math.Max(2_000_000, checked(codecOperations * 20))
+                    : codecOperations;
+                var dispatchWarmupOperations = warmupOperations >= 1_000
+                    ? Math.Max(200_000, checked(warmupOperations * 20))
+                    : warmupOperations;
+
                 var cases = new List<EvidenceCase>
                 {
                     await MeasureAsyncCase(
@@ -232,7 +246,45 @@ internal static class ConcreteCodecDispatchEvidence
                             var value = concreteSmallCodec.Deserialize(in smallSequence)
                                 ?? throw new InvalidOperationException("small concrete decode returned null");
                             Interlocked.Add(ref s_sink, value.Value);
-                        })
+                        }),
+                    MeasureTightLoopCase(
+                        "dispatch-only-serialize-interface",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeSerializeInterface(
+                            dispatchSerializeInterface,
+                            dispatchSerializeInterfaceProbe,
+                            writer,
+                            count)),
+                    MeasureTightLoopCase(
+                        "dispatch-only-serialize-concrete",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeSerializeConcrete(
+                            dispatchSerializeConcrete,
+                            writer,
+                            count)),
+                    MeasureTightLoopCase(
+                        "dispatch-only-deserialize-interface",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeDeserializeInterface(
+                            dispatchDeserializeInterface,
+                            dispatchDeserializeInterfaceProbe,
+                            in dispatchPayload,
+                            count)),
+                    MeasureTightLoopCase(
+                        "dispatch-only-deserialize-concrete",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeDeserializeConcrete(
+                            dispatchDeserializeConcrete,
+                            in dispatchPayload,
+                            count))
                 };
 
                 var manifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
@@ -364,6 +416,97 @@ internal static class ConcreteCodecDispatchEvidence
             samples.Add(MeasureSyncSample(operations, operation));
         }
         return BuildCase(name, operations, samples);
+    }
+
+    private static EvidenceCase MeasureTightLoopCase(
+        string name,
+        int warmupOperations,
+        int operations,
+        int sampleCount,
+        Func<int, long> loop)
+    {
+        Interlocked.Add(ref s_sink, loop(warmupOperations));
+
+        var samples = new List<EvidenceSample>(sampleCount);
+        for (var sample = 0; sample < sampleCount; sample++)
+        {
+            ForceGc();
+            samples.Add(MeasureTightLoopSample(operations, loop));
+        }
+        return BuildCase(name, operations, samples);
+    }
+
+    private static EvidenceSample MeasureTightLoopSample(
+        int operations,
+        Func<int, long> loop)
+    {
+        using var process = Process.GetCurrentProcess();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        var cpuBefore = process.TotalProcessorTime;
+        var started = Stopwatch.GetTimestamp();
+        var checksum = loop(operations);
+        var elapsed = Stopwatch.GetElapsedTime(started);
+        var cpu = process.TotalProcessorTime - cpuBefore;
+        var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+        Interlocked.Add(ref s_sink, checksum);
+        return new EvidenceSample(
+            elapsed.TotalNanoseconds / operations,
+            cpu.TotalNanoseconds / operations,
+            (double)allocated / operations);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeSerializeInterface(
+        IRpcCodec<int> codec,
+        DispatchProbeCodec concrete,
+        IBufferWriter<byte> writer,
+        int operations)
+    {
+        concrete.Reset();
+        const int value = 42;
+        for (var index = 0; index < operations; index++)
+            codec.Serialize(in value, writer);
+        return concrete.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeSerializeConcrete(
+        DispatchProbeCodec codec,
+        IBufferWriter<byte> writer,
+        int operations)
+    {
+        codec.Reset();
+        const int value = 42;
+        for (var index = 0; index < operations; index++)
+            codec.Serialize(in value, writer);
+        return codec.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeDeserializeInterface(
+        IRpcCodec<int> codec,
+        DispatchProbeCodec concrete,
+        in ReadOnlySequence<byte> payload,
+        int operations)
+    {
+        concrete.Reset();
+        long checksum = 0;
+        for (var index = 0; index < operations; index++)
+            checksum += codec.Deserialize(in payload);
+        return checksum ^ concrete.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeDeserializeConcrete(
+        DispatchProbeCodec codec,
+        in ReadOnlySequence<byte> payload,
+        int operations)
+    {
+        codec.Reset();
+        long checksum = 0;
+        for (var index = 0; index < operations; index++)
+            checksum += codec.Deserialize(in payload);
+        return checksum ^ codec.State;
     }
 
     private static async Task<EvidenceSample> MeasureAsyncSample(
@@ -586,6 +729,29 @@ internal static class ConcreteCodecDispatchEvidence
         double NanosecondsPerOperation,
         double CpuNanosecondsPerOperation,
         double AllocatedBytesPerOperation);
+
+    private sealed class DispatchProbeCodec : IRpcCodec<int>
+    {
+        private int _state;
+
+        internal int State => _state;
+
+        internal void Reset() => _state = 17;
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public void Serialize(in int value, IBufferWriter<byte> buffer)
+        {
+            _ = buffer;
+            _state = unchecked((_state * 31) + value);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        public int Deserialize(in ReadOnlySequence<byte> buffer)
+        {
+            _state = unchecked((_state * 31) + checked((int)buffer.Length) + 1);
+            return _state;
+        }
+    }
 }
 
 [RpcSerializable]
