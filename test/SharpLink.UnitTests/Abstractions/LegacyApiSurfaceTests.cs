@@ -14,6 +14,7 @@ public class LegacyApiSurfaceTests
         "SharpLink.Runtime.IStreamDispatchLease",
         "SharpLink.Runtime.IStreamDispatchState",
         "SharpLink.Runtime.PooledAsyncStreamDispatcher`1",
+        "SharpLink.Runtime.PooledAsyncStreamDispatcher`2",
         "SharpLink.Runtime.PreAdmissionStreamDispatcher",
         "SharpLink.Runtime.DiscardingStreamDispatcher"
     ];
