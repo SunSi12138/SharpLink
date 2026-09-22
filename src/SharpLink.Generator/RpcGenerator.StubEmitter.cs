@@ -91,7 +91,7 @@ public partial class RpcGenerator
         switch (methodHash)
         {
 """);
-            AppendStubDispatchCases(sb, noReturnMethods, model.Hash, writeResponse: false);
+            AppendStubDispatchCases(sb, noReturnMethods, model.Hash, concreteCodecTypes, writeResponse: false);
             sb.AppendLine("            default: throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, \"Method is not implemented.\");");
             sb.AppendLine("        }");
             if (needsCompletedReturn)
@@ -125,7 +125,7 @@ public partial class RpcGenerator
         switch (methodHash)
         {
 """);
-            AppendStubDispatchCases(sb, responseMethods, model.Hash, writeResponse: true);
+            AppendStubDispatchCases(sb, responseMethods, model.Hash, concreteCodecTypes, writeResponse: true);
             sb.AppendLine("            default: throw new SharpLinkException(SharpLinkErrorCode.Unimplemented, \"Method is not implemented.\");");
             sb.AppendLine("        }");
             sb.AppendLine("        return ValueTask.CompletedTask;");
@@ -287,6 +287,7 @@ public partial class RpcGenerator
         StringBuilder sb,
         IEnumerable<RpcMethodModel> methods,
         long interfaceHash,
+        IReadOnlyDictionary<string, string> concreteCodecTypes,
         bool writeResponse)
     {
         foreach (var method in methods)
