@@ -17,6 +17,8 @@ namespace SharpLink.StaticCodecCoreEvidence;
 internal static class Program
 {
     private const int DefaultCallIterations = 512;
+    private const int EvidenceStreamWindowBytes = 128 * 1024;
+    private const int EvidenceConnectionWindowBytes = 4 * 1024 * 1024;
     private static readonly int[] DefaultStreamLengths = [1, 8, 64, 1_000, 10_000];
     private static readonly int[] FullStreamLengths = [1, 8, 64, 1_000, 10_000, 100_000];
     private static readonly int[] ConcurrencyLevels = [1, 8, 32, 128];
@@ -56,6 +58,12 @@ internal static class Program
         return 0;
     }
 
+    private static void ConfigureEvidenceRuntime(SharpLink.Runtime.SharpLinkRuntimeOptions options)
+    {
+        options.FlowControl.StreamReceiveWindowBytes = EvidenceStreamWindowBytes;
+        options.FlowControl.ConnectionReceiveWindowBytes = EvidenceConnectionWindowBytes;
+    }
+
     private static int VerifyManifest()
     {
         var owner = typeof(IStaticCodecCoreEvidenceRpc).Assembly;
@@ -83,12 +91,14 @@ internal static class Program
         using var lifetime = new CancellationTokenSource(TimeSpan.FromMinutes(full ? 20 : 8));
         await using var server = SharpLinkServerBuilder.Create()
             .UseSharedMemory(transportName)
+            .UseRuntime(ConfigureEvidenceRuntime)
             .Build();
         await server.StartAsync(lifetime.Token).ConfigureAwait(false);
 
         await using var client = SharpClientBuilder.Create()
             .UseSharedMemory(transportName)
             .UseRequestTimeout(TimeSpan.FromSeconds(60))
+            .UseRuntime(ConfigureEvidenceRuntime)
             .Build();
 
         try
