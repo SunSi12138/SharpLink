@@ -200,7 +200,9 @@ jobs:
               RunDispatchProbeSerializeInterface \
               RunDispatchProbeSerializeConcrete \
               RunDispatchProbeDeserializeInterface \
-              RunDispatchProbeDeserializeConcrete; do
+              RunDispatchProbeDeserializeConcrete \
+              RunDispatchProbeDeserializeUnusedInterface \
+              RunDispatchProbeDeserializeUnusedConcrete; do
               local probe_address
               probe_address="$(nm -C "$executable" | awk -v probe="$probe" 'index($0, probe) { print $1; exit }')"
               if [[ "$probe_address" =~ ^[0-9A-Fa-f]+$ ]]; then
@@ -351,9 +353,12 @@ jobs:
                   ("Serialize",
                    "dispatch-only-serialize-interface",
                    "dispatch-only-serialize-concrete"),
-                  ("Deserialize",
+                  ("Deserialize return used",
                    "dispatch-only-deserialize-interface",
                    "dispatch-only-deserialize-concrete"),
+                  ("Deserialize return unused",
+                   "dispatch-only-deserialize-unused-interface",
+                   "dispatch-only-deserialize-unused-concrete"),
               ]
               lines.extend([
                   "### Isolated dispatch microkernel",
