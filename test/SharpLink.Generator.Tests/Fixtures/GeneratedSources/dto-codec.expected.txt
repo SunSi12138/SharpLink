@@ -332,7 +332,6 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
             => __owner.ReleaseSnapshot(snapshot);
     }
-
 }
 
 internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<global::System.Collections.Generic.List<string>>
@@ -436,5 +435,4 @@ internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<glo
             => __owner.Serialize(in value, buffer);
         public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot) { }
     }
-
 }
