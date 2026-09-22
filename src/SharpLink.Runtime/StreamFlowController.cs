@@ -33,6 +33,7 @@ internal sealed class StreamFlowController
     private SendState? _pooledSendStates;
     private int _pooledSendStateOverflowCount;
     private long _sendStateLeaseCounter;
+    private long _receiveStateLeaseCounter;
     // Completed states can remain as tombstones until their final in-flight credit arrives.
     // The active count distinguishes hard live-stream exhaustion from tombstone pressure;
     // the state dictionary itself remains bounded by the negotiated stream limit.
@@ -66,6 +67,54 @@ internal sealed class StreamFlowController
         _connectionUpdateThreshold = Math.Max(1, connectionWindow / 2);
         _sendConnectionCredit = connectionWindow;
         _receiveConnectionCredit = connectionWindow;
+    }
+
+    internal readonly struct ResolvedSendCreditLease
+    {
+        internal ResolvedSendCreditLease(
+            StreamFlowController owner,
+            long requestId,
+            ushort streamId,
+            object state,
+            long generation)
+        {
+            Owner = owner;
+            RequestId = requestId;
+            StreamId = streamId;
+            State = state;
+            Generation = generation;
+        }
+
+        internal StreamFlowController? Owner { get; }
+        internal object? State { get; }
+        internal long Generation { get; }
+        internal bool IsResolved => Owner is not null;
+        internal long RequestId { get; }
+        internal ushort StreamId { get; }
+    }
+
+    internal readonly struct ResolvedReceiveCreditLease
+    {
+        internal ResolvedReceiveCreditLease(
+            StreamFlowController owner,
+            long requestId,
+            ushort streamId,
+            object state,
+            long generation)
+        {
+            Owner = owner;
+            RequestId = requestId;
+            StreamId = streamId;
+            State = state;
+            Generation = generation;
+        }
+
+        internal StreamFlowController? Owner { get; }
+        internal object? State { get; }
+        internal long Generation { get; }
+        internal bool IsResolved => Owner is not null;
+        internal long RequestId { get; }
+        internal ushort StreamId { get; }
     }
 
     /// <summary>
@@ -112,6 +161,112 @@ internal sealed class StreamFlowController
             Reserve(state, encodedBytes);
             return true;
         }
+    }
+
+    internal bool TryAcquireSendCredit(
+        in ResolvedSendCreditLease lease,
+        int encodedBytes)
+    {
+        ValidateEncodedBytes(encodedBytes);
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            var state = ValidateSendLease(lease);
+            if (state.AbortException is { } abortException)
+                throw abortException;
+            if (state.Completed)
+                throw CreateStreamClosedException();
+            if (_waiters.Count != 0 || !CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+                return false;
+
+            Reserve(state, encodedBytes);
+            return true;
+        }
+    }
+
+    internal ResolvedSendCreditLease ResolveSendCreditLease(long requestId, ushort streamId)
+    {
+        var key = new StreamKey(requestId, streamId);
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            if (!_sendStates.TryGetValue(key, out var state) ||
+                state.Completed ||
+                state.AbortException is not null)
+            {
+                return default;
+            }
+
+            return new ResolvedSendCreditLease(
+                this,
+                key.RequestId,
+                key.StreamId,
+                state,
+                state.Lease);
+        }
+    }
+
+    internal ValueTask AcquireSendCreditAsync(
+        in ResolvedSendCreditLease lease,
+        int encodedBytes,
+        CancellationToken cancellationToken)
+    {
+        ValidateEncodedBytes(encodedBytes);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            var state = ValidateSendLease(lease);
+            if (state.AbortException is { } abortException)
+                throw abortException;
+            if (state.Completed)
+                throw CreateStreamClosedException();
+            if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+            {
+                Reserve(state, encodedBytes);
+                return ValueTask.CompletedTask;
+            }
+        }
+
+        return AcquireResolvedContendedSendCreditAsync(lease, encodedBytes, cancellationToken);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ValueTask AcquireResolvedContendedSendCreditAsync(
+        ResolvedSendCreditLease lease,
+        int encodedBytes,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        CreditWaiter waiter;
+        List<CreditWaiter>? ready;
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            var state = ValidateSendLease(lease);
+            if (state.AbortException is { } abortException)
+                throw abortException;
+            if (state.Completed)
+                throw CreateStreamClosedException();
+            if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+            {
+                Reserve(state, encodedBytes);
+                return ValueTask.CompletedTask;
+            }
+
+            waiter = new CreditWaiter(
+                this,
+                new StreamKey(lease.RequestId, lease.StreamId),
+                encodedBytes,
+                expectedState: state,
+                expectedLease: lease.Generation);
+            waiter.Node = _waiters.AddLast(waiter);
+            ready = AdmitWaiters();
+        }
+
+        CompleteReadyWaiters(ready);
+        return new ValueTask(waiter.WaitAsync(cancellationToken));
     }
 
     public ValueTask AcquireSendCreditAsync(
@@ -213,7 +368,13 @@ internal sealed class StreamFlowController
                 throw CreatePendingStreamCapacityLimitException();
             }
 
-            waiter = new CreditWaiter(this, key, encodedBytes, waitsForStateCapacity);
+            waiter = new CreditWaiter(
+                this,
+                key,
+                encodedBytes,
+                waitsForStateCapacity,
+                expectedState: state,
+                expectedLease: state?.Lease ?? 0L);
             if (waitsForStateCapacity)
                 _pendingSendStateWaiterCount++;
             waiter.Node = _waiters.AddLast(waiter);
@@ -255,6 +416,35 @@ internal sealed class StreamFlowController
             _sendConnectionCredit = updatedConnectionCredit;
             if (state.Completed && state.Credit == _streamWindow)
                 RemoveSendState(key, state);
+            ready = AdmitWaiters();
+        }
+
+        CompleteReadyWaiters(ready);
+    }
+
+    internal void ReturnUnsentCredit(in ResolvedSendCreditLease lease, int credit)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+        List<CreditWaiter>? ready;
+        lock (_gate)
+        {
+            if (_terminalException is not null)
+                return;
+            if (!TryValidateSendLease(lease, out var state) || state.AbortException is not null)
+                return;
+
+            var updatedStreamCredit = checked(state.Credit + credit);
+            var updatedConnectionCredit = checked(_sendConnectionCredit + credit);
+            if (updatedStreamCredit > _streamWindow || updatedConnectionCredit > _connectionWindow)
+            {
+                throw new InvalidOperationException(
+                    "Unsent stream credit was returned more than once.");
+            }
+
+            state.Credit = updatedStreamCredit;
+            _sendConnectionCredit = updatedConnectionCredit;
+            if (state.Completed && state.Credit == _streamWindow)
+                RemoveSendState(new StreamKey(lease.RequestId, lease.StreamId), state);
             ready = AdmitWaiters();
         }
 
@@ -364,7 +554,11 @@ internal sealed class StreamFlowController
             if (removedKeys is not null)
             {
                 for (var index = 0; index < removedKeys.Count; index++)
-                    _sendStates.Remove(removedKeys[index]);
+                {
+                    var key = removedKeys[index];
+                    if (_sendStates.TryGetValue(key, out var completedState))
+                        RemoveSendState(key, completedState);
+                }
             }
 
             var node = _waiters.First;
@@ -386,6 +580,48 @@ internal sealed class StreamFlowController
         CompleteReadyWaiters(ready);
     }
 
+    internal ResolvedReceiveCreditLease ResolveReceiveCreditLease(long requestId, ushort streamId)
+    {
+        var key = new StreamKey(requestId, streamId);
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            if (!_receiveStates.TryGetValue(key, out var state))
+            {
+                if (_receiveStates.Count >= _maxConcurrentStreams)
+                    throw Violation("The peer exceeded the negotiated concurrent stream limit.");
+                state = RentReceiveState();
+                state.Attached = true;
+                _receiveStates.Add(key, state);
+            }
+
+            if (state.Completed)
+                throw CreateStreamClosedException();
+            return new ResolvedReceiveCreditLease(
+                this,
+                key.RequestId,
+                key.StreamId,
+                state,
+                state.Lease);
+        }
+    }
+
+    internal void AcceptReceived(in ResolvedReceiveCreditLease lease, int encodedBytes)
+    {
+        ValidateEncodedBytes(encodedBytes);
+        lock (_gate)
+        {
+            ThrowIfTerminated();
+            var state = ValidateReceiveLease(lease);
+            if (state.Completed)
+                throw CreateStreamClosedException();
+            if (!CanReserve(state.Credit, _receiveConnectionCredit, encodedBytes))
+                throw Violation("StreamData exceeds the negotiated receive window.");
+            state.Credit -= encodedBytes;
+            _receiveConnectionCredit -= encodedBytes;
+        }
+    }
+
     public void AcceptReceived(long requestId, ushort streamId, int encodedBytes)
     {
         ValidateEncodedBytes(encodedBytes);
@@ -398,6 +634,7 @@ internal sealed class StreamFlowController
                 if (_receiveStates.Count >= _maxConcurrentStreams)
                     throw Violation("The peer exceeded the negotiated concurrent stream limit.");
                 state = RentReceiveState();
+                state.Attached = true;
                 _receiveStates.Add(key, state);
             }
 
@@ -409,6 +646,47 @@ internal sealed class StreamFlowController
     }
 
     /// <summary>Returns a non-zero credit delta when a WindowUpdate should be emitted.</summary>
+    internal int RecordConsumed(in ResolvedReceiveCreditLease lease, int encodedBytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedBytes);
+        lock (_gate)
+        {
+            if (_terminalException is not null)
+                return 0;
+            if (!TryValidateReceiveLease(lease, out var state))
+                return 0;
+
+            var streamCredit = checked(state.Credit + encodedBytes);
+            var connectionCredit = checked(_receiveConnectionCredit + encodedBytes);
+            if (streamCredit > _streamWindow || connectionCredit > _connectionWindow)
+            {
+                throw Violation(
+                    $"Consumed stream bytes exceed outstanding credit " +
+                    $"(request={new StreamKey(lease.RequestId, lease.StreamId).RequestId}, stream={new StreamKey(lease.RequestId, lease.StreamId).StreamId}, bytes={encodedBytes}, " +
+                    $"streamCredit={state.Credit}/{_streamWindow}, " +
+                    $"connectionCredit={_receiveConnectionCredit}/{_connectionWindow}).");
+            }
+
+            state.Credit = streamCredit;
+            _receiveConnectionCredit = connectionCredit;
+            state.PendingConsumed = checked(state.PendingConsumed + encodedBytes);
+            _pendingConnectionConsumed = checked(_pendingConnectionConsumed + encodedBytes);
+            if (state.Completed)
+            {
+                var completedDelta = TakePendingCredit(state);
+                if (state.Credit == _streamWindow)
+                    RemoveReceiveState(new StreamKey(lease.RequestId, lease.StreamId), state);
+                return completedDelta;
+            }
+            if (state.PendingConsumed >= _streamUpdateThreshold)
+                return TakePendingCredit(state);
+            if (_pendingConnectionConsumed < _connectionUpdateThreshold)
+                return 0;
+
+            return FlushPendingConnectionCredit(new StreamKey(lease.RequestId, lease.StreamId));
+        }
+    }
+
     public int RecordConsumed(long requestId, ushort streamId, int encodedBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedBytes);
@@ -484,6 +762,20 @@ internal sealed class StreamFlowController
         }
     }
 
+    internal int FlushConsumed(in ResolvedReceiveCreditLease lease)
+    {
+        lock (_gate)
+        {
+            if (_terminalException is not null || !TryValidateReceiveLease(lease, out var state))
+                return 0;
+            state.Completed = true;
+            var delta = TakePendingCredit(state);
+            if (state.Credit == _streamWindow)
+                RemoveReceiveState(new StreamKey(lease.RequestId, lease.StreamId), state);
+            return delta;
+        }
+    }
+
     public int FlushConsumed(long requestId, ushort streamId)
     {
         lock (_gate)
@@ -519,6 +811,8 @@ internal sealed class StreamFlowController
             for (var index = 0; index < waiters.Length; index++)
                 waiters[index].Node = null;
             _pendingSendStateWaiterCount = 0;
+            foreach (var state in _sendStates.Values)
+                state.Attached = false;
             _sendStates.Clear();
             ClearPooledSendStates();
             _activeSendStreamCount = 0;
@@ -564,6 +858,7 @@ internal sealed class StreamFlowController
     private SendState AddSendState(StreamKey key)
     {
         var state = RentSendState();
+        state.Attached = true;
         _sendStates.Add(key, state);
         _activeSendStreamCount++;
         return state;
@@ -594,6 +889,7 @@ internal sealed class StreamFlowController
             state.Credit = _streamWindow;
             state.Completed = false;
             state.AbortException = null;
+            state.Attached = false;
         }
 
         state.Lease = ++_sendStateLeaseCounter;
@@ -603,7 +899,10 @@ internal sealed class StreamFlowController
     private void RemoveSendState(StreamKey key, SendState state)
     {
         if (_sendStates.Remove(key))
+        {
+            state.Attached = false;
             ReturnSendState(state);
+        }
     }
 
     private void ReturnSendState(SendState state)
@@ -644,32 +943,43 @@ internal sealed class StreamFlowController
     {
         var state = _pooledReceiveStates;
         if (state is null)
-            return new ReceiveState(_streamWindow);
-
-        Debug.Assert(state.Credit == _streamWindow);
-        Debug.Assert(state.PendingConsumed == 0);
-        Debug.Assert(state.Completed);
-        var next = state.Next;
-        _pooledReceiveStates = next;
-        if (next is not null)
         {
-            Debug.Assert(_pooledReceiveStateOverflowCount > 0);
-            _pooledReceiveStateOverflowCount--;
-            state.Next = null;
+            state = new ReceiveState(_streamWindow);
         }
         else
         {
-            Debug.Assert(_pooledReceiveStateOverflowCount == 0);
+
+            Debug.Assert(state.Credit == _streamWindow);
+            Debug.Assert(state.PendingConsumed == 0);
+            Debug.Assert(state.Completed);
+            var next = state.Next;
+            _pooledReceiveStates = next;
+            if (next is not null)
+            {
+                Debug.Assert(_pooledReceiveStateOverflowCount > 0);
+                _pooledReceiveStateOverflowCount--;
+                state.Next = null;
+            }
+            else
+            {
+                Debug.Assert(_pooledReceiveStateOverflowCount == 0);
+            }
+
+            state.Completed = false;
         }
 
-        state.Completed = false;
+        state.Attached = false;
+        state.Lease = ++_receiveStateLeaseCounter;
         return state;
     }
 
     private void RemoveReceiveState(StreamKey key, ReceiveState state)
     {
         if (_receiveStates.Remove(key))
+        {
+            state.Attached = false;
             ReturnReceiveState(state);
+        }
     }
 
     private void ReturnReceiveState(ReceiveState state)
@@ -730,8 +1040,20 @@ internal sealed class StreamFlowController
         {
             var next = node.Next;
             var waiter = node.Value;
-            SendState? state = null;
-            if (!_sendStates.TryGetValue(waiter.Key, out state))
+            SendState? state;
+            if (waiter.ExpectedState is { } expectedState)
+            {
+                if (!expectedState.Attached || expectedState.Lease != waiter.ExpectedLease)
+                {
+                    RemoveWaiter(waiter);
+                    waiter.Rejection = CreateStreamClosedException();
+                    (ready ??= []).Add(waiter);
+                    node = next;
+                    continue;
+                }
+                state = expectedState;
+            }
+            else if (!_sendStates.TryGetValue(waiter.Key, out state))
             {
                 if (!waiter.CanCreateState)
                 {
@@ -747,6 +1069,8 @@ internal sealed class StreamFlowController
                     continue;
                 }
                 state = AddSendState(waiter.Key);
+                waiter.ExpectedState = state;
+                waiter.ExpectedLease = state.Lease;
             }
             ReleasePendingSendStateWaiter(waiter);
             if (state.Completed || state.AbortException is not null)
@@ -771,6 +1095,42 @@ internal sealed class StreamFlowController
             node = next;
         }
         return ready;
+    }
+
+    private SendState ValidateSendLease(in ResolvedSendCreditLease lease)
+    {
+        if (!TryValidateSendLease(lease, out var state))
+            throw CreateStreamClosedException();
+        return state;
+    }
+
+    private bool TryValidateSendLease(
+        in ResolvedSendCreditLease lease,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SendState? state)
+    {
+        state = lease.State as SendState;
+        return ReferenceEquals(lease.Owner, this) &&
+            state is not null &&
+            state.Attached &&
+            state.Lease == lease.Generation;
+    }
+
+    private ReceiveState ValidateReceiveLease(in ResolvedReceiveCreditLease lease)
+    {
+        if (!TryValidateReceiveLease(lease, out var state))
+            throw CreateStreamClosedException();
+        return state;
+    }
+
+    private bool TryValidateReceiveLease(
+        in ResolvedReceiveCreditLease lease,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ReceiveState? state)
+    {
+        state = lease.State as ReceiveState;
+        return ReferenceEquals(lease.Owner, this) &&
+            state is not null &&
+            state.Attached &&
+            state.Lease == lease.Generation;
     }
 
     private bool HasStreamCredit(long credit, int encodedBytes)
@@ -906,6 +1266,7 @@ internal sealed class StreamFlowController
     {
         public long Credit = initialCredit;
         public bool Completed;
+        public bool Attached;
         public Exception? AbortException;
         public long Lease;
         public SendState? Next;
@@ -916,6 +1277,8 @@ internal sealed class StreamFlowController
         public long Credit = initialCredit;
         public long PendingConsumed;
         public bool Completed;
+        public bool Attached;
+        public long Lease;
         public ReceiveState? Next;
 
         public void Clear()
@@ -923,6 +1286,7 @@ internal sealed class StreamFlowController
             Credit = 0;
             PendingConsumed = 0;
             Completed = false;
+            Attached = false;
             Next = null;
         }
     }
@@ -931,7 +1295,9 @@ internal sealed class StreamFlowController
         StreamFlowController owner,
         StreamKey key,
         int encodedBytes,
-        bool canCreateState = false)
+        bool canCreateState = false,
+        SendState? expectedState = null,
+        long expectedLease = 0L)
     {
         public readonly TaskCompletionSource<bool> Completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -939,6 +1305,8 @@ internal sealed class StreamFlowController
         public readonly StreamKey Key = key;
         public readonly int EncodedBytes = encodedBytes;
         public bool CanCreateState = canCreateState;
+        public SendState? ExpectedState = expectedState;
+        public long ExpectedLease = expectedLease;
         public LinkedListNode<CreditWaiter>? Node;
         public Exception? Rejection;
 
