@@ -343,7 +343,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-static-codec-core-v2")]
 
 namespace SharpLink.Generated
 {
