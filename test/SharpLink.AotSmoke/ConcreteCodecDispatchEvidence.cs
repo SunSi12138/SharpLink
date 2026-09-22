@@ -107,9 +107,19 @@ internal static class ConcreteCodecDispatchEvidence
             };
 
             var smallCodec = provider.GetCodec<ConcreteCodecSmallPayload>();
+            var listCodec = provider.GetCodec<List<ConcreteCodecSmallPayload>>();
             var nestedCodec = provider.GetCodec<ConcreteCodecNestedPayload>();
+            var concreteSmallCodec =
+                (global::SharpLink.Generated.__SharpLinkGeneratedCodec_67E80BAE07C9FD90)smallCodec;
+            var concreteListCodec =
+                (global::SharpLink.Generated.__SharpLinkGeneratedCodec_32D50A810713F692)listCodec;
+            var concreteNestedCodec =
+                (global::SharpLink.Generated.__SharpLinkGeneratedCodec_672D909E5627C22E)nestedCodec;
             var smallBytes = SerializeOnce(smallCodec, small, runtimeContext.Buffers);
+            var listBytes = SerializeOnce(listCodec, nested.Items, runtimeContext.Buffers);
             var nestedBytes = SerializeOnce(nestedCodec, nested, runtimeContext.Buffers);
+            var smallSequence = new ReadOnlySequence<byte>(smallBytes);
+            var listSequence = new ReadOnlySequence<byte>(listBytes);
             var nestedSequence = new ReadOnlySequence<byte>(nestedBytes);
             var writer = runtimeContext.Buffers.Rent();
             try
@@ -167,6 +177,61 @@ internal static class ConcreteCodecDispatchEvidence
                             var value = nestedCodec.Deserialize(in nestedSequence)
                                 ?? throw new InvalidOperationException("nested decode returned null");
                             Interlocked.Add(ref s_sink, value.Primary.Value + value.Items.Count);
+                        }),
+                    MeasureSyncCase(
+                        "request-deserialize-nested-generated-dto-concrete-entry",
+                        warmupOperations * 4,
+                        codecOperations,
+                        sampleCount,
+                        () =>
+                        {
+                            var value = concreteNestedCodec.Deserialize(in nestedSequence)
+                                ?? throw new InvalidOperationException("nested concrete decode returned null");
+                            Interlocked.Add(ref s_sink, value.Primary.Value + value.Items.Count);
+                        }),
+                    MeasureSyncCase(
+                        "list-deserialize-generated-dto-interface-entry",
+                        warmupOperations * 4,
+                        codecOperations,
+                        sampleCount,
+                        () =>
+                        {
+                            var value = listCodec.Deserialize(in listSequence)
+                                ?? throw new InvalidOperationException("list interface decode returned null");
+                            Interlocked.Add(ref s_sink, value.Count);
+                        }),
+                    MeasureSyncCase(
+                        "list-deserialize-generated-dto-concrete-entry",
+                        warmupOperations * 4,
+                        codecOperations,
+                        sampleCount,
+                        () =>
+                        {
+                            var value = concreteListCodec.Deserialize(in listSequence)
+                                ?? throw new InvalidOperationException("list concrete decode returned null");
+                            Interlocked.Add(ref s_sink, value.Count);
+                        }),
+                    MeasureSyncCase(
+                        "small-deserialize-generated-dto-interface-entry",
+                        warmupOperations * 4,
+                        codecOperations,
+                        sampleCount,
+                        () =>
+                        {
+                            var value = smallCodec.Deserialize(in smallSequence)
+                                ?? throw new InvalidOperationException("small interface decode returned null");
+                            Interlocked.Add(ref s_sink, value.Value);
+                        }),
+                    MeasureSyncCase(
+                        "small-deserialize-generated-dto-concrete-entry",
+                        warmupOperations * 4,
+                        codecOperations,
+                        sampleCount,
+                        () =>
+                        {
+                            var value = concreteSmallCodec.Deserialize(in smallSequence)
+                                ?? throw new InvalidOperationException("small concrete decode returned null");
+                            Interlocked.Add(ref s_sink, value.Value);
                         })
                 };
 
