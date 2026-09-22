@@ -432,6 +432,86 @@ internal sealed class ClientConnection :
         }
     }
 
+    public async Task SendGeneratedClientStreamAsync<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        in TCodec codec,
+        CancellationToken cancellationToken = default)
+        where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
+            throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
+
+        var staticCodec = codec;
+        try
+        {
+            await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.DeadlineExceeded,
+                        "RPC deadline exceeded during client stream production.");
+
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    break;
+
+                await Session.SendGeneratedClientStreamChunkAsync(
+                    requestId,
+                    streamId,
+                    enumerator.Current,
+                    staticCodec,
+                    deadline,
+                    _timeProvider,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                throw new SharpLinkException(
+                    SharpLinkErrorCode.DeadlineExceeded,
+                    "RPC deadline exceeded before client stream completion.");
+            Session.SendClientStreamComplete(
+                requestId,
+                streamId,
+                deadline,
+                _timeProvider,
+                cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            try
+            {
+                var protocolError = exception as SharpLinkException ?? new SharpLinkException(
+                    SharpLinkErrorCode.Internal,
+                    "Internal client stream error.",
+                    exception);
+                Session.SendClientStreamError(
+                    requestId,
+                    streamId,
+                    protocolError,
+                    deadline,
+                    _timeProvider,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (SharpLinkException sendException) when (sendException.Code is
+                SharpLinkErrorCode.DeadlineExceeded or
+                SharpLinkErrorCode.ConnectionClosed or
+                SharpLinkErrorCode.ResourceExhausted or
+                SharpLinkErrorCode.Unavailable)
+            {
+            }
+            throw;
+        }
+    }
+
     public ValueTask OnConsumerAbandonedAsync(
         long requestId,
         IStreamDispatchState? dispatchState)
