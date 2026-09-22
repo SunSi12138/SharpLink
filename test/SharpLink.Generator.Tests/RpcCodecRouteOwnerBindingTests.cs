@@ -228,9 +228,8 @@ public interface IStaticCoreContract : SharpLink.Sdk.IService
             "native generated DTOs must expose a readonly static Core");
         Ensure(generated.Contains(".StaticCore;", StringComparison.Ordinal),
             "generated proxy/stub construction must extract Core from the authoritative Codec instance");
-        Ensure(generated.Contains(".Core __codec_0;", StringComparison.Ordinal) &&
-               generated.Contains("__codec_0 = owner.__codec_0.StaticCore;", StringComparison.Ordinal),
-            "nested native generated Codec dependencies inside Core must retain the child static Core rather than the class wrapper");
+        Ensure(!generated.Contains("owner.__codec_0.StaticCore", StringComparison.Ordinal),
+            "production Core layout must stay owner-ref so nested generated Codec graphs are not recursively captured into async state machines");
         Ensure(!generated.Contains("GetCodec<global::CoreValue>().StaticCore", StringComparison.Ordinal),
             "static Core extraction must apply member access after the concrete Codec cast");
         Ensure(generated.Contains("InvokeGeneratedUnaryAsync<", StringComparison.Ordinal),

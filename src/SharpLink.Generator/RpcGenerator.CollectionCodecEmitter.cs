@@ -61,45 +61,16 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("    {");
-        if (model.Kind == GeneratedCodecKind.Dictionary)
-        {
-            sb.AppendLine($"        private readonly {GetCodecHotStorageType(model.KeyType!, model.KeyType!, concreteCodecTypes)} __keyCodec;");
-            sb.AppendLine($"        private readonly {GetCodecHotStorageType(model.ValueType!, model.ValueType!, concreteCodecTypes)} __valueCodec;");
-        }
-        else
-        {
-            sb.AppendLine($"        private readonly {GetCodecHotStorageType(model.ElementType!, model.ElementType!, concreteCodecTypes)} __elementCodec;");
-        }
+        sb.AppendLine($"        private readonly {model.CodecName} __owner;");
         sb.AppendLine();
-        sb.AppendLine($"        internal Core({model.CodecName} owner)");
-        sb.AppendLine("        {");
-        if (model.Kind == GeneratedCodecKind.Dictionary)
-        {
-            sb.AppendLine($"            __keyCodec = {GetCodecHotBoundExpression("owner.__keyCodec", model.KeyType!, concreteCodecTypes)};");
-            sb.AppendLine($"            __valueCodec = {GetCodecHotBoundExpression("owner.__valueCodec", model.ValueType!, concreteCodecTypes)};");
-        }
-        else
-        {
-            sb.AppendLine($"            __elementCodec = {GetCodecHotBoundExpression("owner.__elementCodec", model.ElementType!, concreteCodecTypes)};");
-        }
-        sb.AppendLine("        }");
+        sb.AppendLine($"        internal Core({model.CodecName} owner) => __owner = owner;");
         sb.AppendLine();
         sb.AppendLine($"        public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            ArgumentNullException.ThrowIfNull(writer);");
-        sb.AppendLine("            var rpcWriter = writer as IRpcByteBufferWriter ?? throw new InvalidOperationException(\"Generated collection Codecs require the SharpLink packet writer.\");");
-        var write = new StringBuilder();
-        AppendCollectionWrite(write, model);
-        sb.Append(Indent(write.ToString(), "    "));
-        sb.AppendLine("        }");
+        sb.AppendLine("            => __owner.Serialize(in value, writer);");
         sb.AppendLine();
         var returnType = model.IsReferenceType ? model.TypeName + "?" : model.TypeName;
         sb.AppendLine($"        public {returnType} Deserialize(in ReadOnlySequence<byte> buffer)");
-        sb.AppendLine("        {");
-        var read = new StringBuilder();
-        AppendCollectionRead(read, model);
-        sb.Append(Indent(read.ToString(), "    "));
-        sb.AppendLine("        }");
+        sb.AppendLine("            => __owner.Deserialize(in buffer);");
         sb.AppendLine();
         sb.AppendLine("        public bool CanExactSize => false;");
         sb.AppendLine($"        public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
@@ -107,7 +78,7 @@ public partial class RpcGenerator
         sb.AppendLine($"        public bool TryGetEncodedSize(in {model.TypeName} value, out int size, out IRpcSizedCodecSnapshot? snapshot)");
         sb.AppendLine("        { size = 0; snapshot = null; return false; }");
         sb.AppendLine($"        public void SerializeSized(in {model.TypeName} value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)");
-        sb.AppendLine("            => Serialize(in value, buffer);");
+        sb.AppendLine("            => __owner.Serialize(in value, buffer);");
         sb.AppendLine("        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot) { }");
         sb.AppendLine("    }");
     }

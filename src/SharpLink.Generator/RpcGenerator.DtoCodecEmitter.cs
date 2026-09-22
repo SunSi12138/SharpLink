@@ -70,19 +70,14 @@ public partial class RpcGenerator
         sb.AppendLine();
         AppendDtoDeserializeMethod(sb, model, complexIndexes);
         AppendDtoFactory(sb, model);
-        AppendDtoStaticCore(sb, model, complexMembers, complexIndexes, hasDirectString, hasComplex, concreteCodecTypes);
+        AppendDtoStaticCore(sb, model);
         sb.AppendLine("}");
         sb.AppendLine();
     }
 
     private static void AppendDtoStaticCore(
         StringBuilder sb,
-        DtoCodecAnalysisModel model,
-        DtoMemberAnalysisModel[] complexMembers,
-        Dictionary<string, int> complexIndexes,
-        bool hasDirectString,
-        bool hasComplex,
-        IReadOnlyDictionary<string, string> concreteCodecTypes)
+        DtoCodecAnalysisModel model)
     {
         sb.AppendLine();
         sb.AppendLine("    internal Core StaticCore => new(this);");
@@ -90,36 +85,17 @@ public partial class RpcGenerator
         sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("    {");
         sb.AppendLine($"        private readonly {model.CodecName} __owner;");
-        for (var index = 0; index < complexMembers.Length; index++)
-        {
-            var member = complexMembers[index];
-            sb.AppendLine(
-                $"        private readonly {GetCodecHotStorageType(member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)} __codec_{index};");
-        }
-        sb.AppendLine("        private readonly bool __canExactSize;");
         sb.AppendLine();
-        sb.AppendLine($"        internal Core({model.CodecName} owner)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            __owner = owner;");
-        for (var index = 0; index < complexMembers.Length; index++)
-        {
-            var member = complexMembers[index];
-            sb.AppendLine(
-                $"            __codec_{index} = {GetCodecHotBoundExpression($"owner.__codec_{index}", member.CodecLookupTypeName, concreteCodecTypes)};");
-        }
-        sb.AppendLine("            __canExactSize = owner.__canExactSize;");
-        sb.AppendLine("        }");
+        sb.AppendLine($"        internal Core({model.CodecName} owner) => __owner = owner;");
         sb.AppendLine();
-        sb.AppendLine("        public bool CanExactSize => __canExactSize;");
+        sb.AppendLine("        public bool CanExactSize => __owner.CanExactSize;");
         sb.AppendLine();
-
-        var serialize = new StringBuilder();
-        AppendDtoSerializeMethod(serialize, model, complexIndexes, hasDirectString, hasComplex);
-        var deserialize = new StringBuilder();
-        AppendDtoDeserializeMethod(deserialize, model, complexIndexes);
-        sb.Append(Indent(serialize.ToString(), "    "));
+        sb.AppendLine($"        public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");
+        sb.AppendLine("            => __owner.Serialize(in value, writer);");
         sb.AppendLine();
-        sb.Append(Indent(deserialize.ToString(), "    "));
+        var returnType = model.IsReferenceType ? model.TypeName + "?" : model.TypeName;
+        sb.AppendLine($"        public {returnType} Deserialize(in ReadOnlySequence<byte> buffer)");
+        sb.AppendLine("            => __owner.Deserialize(in buffer);");
         sb.AppendLine();
         sb.AppendLine($"        public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
         sb.AppendLine("            => __owner.TryGetEncodedSize(in value, out size);");

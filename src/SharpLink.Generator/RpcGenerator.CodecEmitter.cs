@@ -170,14 +170,6 @@ public partial class RpcGenerator
         return $"({resolved}).StaticCore";
     }
 
-    private static string GetCodecHotBoundExpression(
-        string boundExpression,
-        string codecLookupType,
-        IReadOnlyDictionary<string, string> concreteCodecTypes)
-        => TryGetStaticGeneratedCodecCoreType(codecLookupType, concreteCodecTypes, out _)
-            ? $"{boundExpression}.StaticCore"
-            : boundExpression;
-
     private static string GetWireType(int fixedSize) => fixedSize switch
     {
         1 => "RpcGeneratedWireType.Fixed1",
