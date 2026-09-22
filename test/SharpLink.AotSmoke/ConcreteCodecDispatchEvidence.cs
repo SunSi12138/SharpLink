@@ -115,95 +115,95 @@ internal static class ConcreteCodecDispatchEvidence
             try
             {
                 var cases = new List<EvidenceCase>
-            {
-                await MeasureAsyncCase(
-                    "small-generated-dto-unary",
-                    warmupOperations,
-                    rpcOperations,
-                    sampleCount,
-                    async () =>
-                    {
-                        var result = await rpc.EchoSmallAsync(small).ConfigureAwait(false);
-                        if (result.Value != small.Value || result.Timestamp != small.Timestamp)
-                            throw new InvalidOperationException("small unary result mismatch");
-                        Interlocked.Add(ref s_sink, result.Value);
-                    }).ConfigureAwait(false),
-                await MeasureAsyncCase(
-                    "nested-generated-dto-unary",
-                    warmupOperations,
-                    rpcOperations,
-                    sampleCount,
-                    async () =>
-                    {
-                        var result = await rpc.EchoNestedAsync(nested).ConfigureAwait(false);
-                        if (result.Primary.Value != 42 || result.Items.Count != 4)
-                            throw new InvalidOperationException("nested unary result mismatch");
-                        Interlocked.Add(ref s_sink, result.Items[3].Value);
-                    }).ConfigureAwait(false),
-                await MeasureOneWayAsync(
-                    rpc,
-                    small,
-                    warmupOperations,
-                    rpcOperations,
-                    sampleCount).ConfigureAwait(false),
-                MeasureSyncCase(
-                    "response-serialize-nested-generated-dto",
-                    warmupOperations * 4,
-                    codecOperations,
-                    sampleCount,
-                    () =>
-                    {
-                        writer.Clear();
-                        nestedCodec.Serialize(nested, writer);
-                        Interlocked.Add(ref s_sink, writer.WrittenCount);
-                    }),
-                MeasureSyncCase(
-                    "request-deserialize-nested-generated-dto",
-                    warmupOperations * 4,
-                    codecOperations,
-                    sampleCount,
-                    () =>
-                    {
-                        var value = nestedCodec.Deserialize(in nestedSequence)
-                            ?? throw new InvalidOperationException("nested decode returned null");
-                        Interlocked.Add(ref s_sink, value.Primary.Value + value.Items.Count);
-                    })
-            };
-
-            var manifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
-                .Single(item => item.OwnerAssembly == typeof(ConcreteCodecDispatchEvidence).Assembly);
-            var contract = manifest.Contracts.Single(item =>
-                item.ContractType == typeof(IConcreteCodecEvidenceRpc));
-            var allFactories = manifest.Codecs.Concat(manifest.ContractCodecs).ToArray();
-
-            return new EvidenceReport
-            {
-                Ref = Environment.GetEnvironmentVariable("SHARPLINK_EVIDENCE_REF") ?? "unknown",
-                Runtime = RuntimeFeature.IsDynamicCodeSupported ? "jit" : "nativeaot",
-                TieredCompilation = Environment.GetEnvironmentVariable("DOTNET_TieredCompilation") ?? "default",
-                TieredPgo = Environment.GetEnvironmentVariable("DOTNET_TieredPGO") ?? "default",
-                RuntimeVersion = Environment.Version.ToString(),
-                WarmupOperations = warmupOperations,
-                RpcOperations = rpcOperations,
-                CodecOperations = codecOperations,
-                SampleCount = sampleCount,
-                NativeImageSizeBytes = RuntimeFeature.IsDynamicCodeSupported
-                    ? null
-                    : GetProcessImageSize(),
-                RpcAssemblyHash = manifest.RpcAssemblyHash,
-                ContractId = contract.ContractId,
-                ContractFingerprint = contract.Fingerprint,
-                Methods = contract.Methods
-                    .OrderBy(static item => item.Name, StringComparer.Ordinal)
-                    .Select(static item => new MethodIdentity(
-                        item.Name,
-                        item.MethodId,
-                        item.Fingerprint))
-                    .ToArray(),
-                SmallCodecHash = FindCodecHash(allFactories, typeof(ConcreteCodecSmallPayload)),
-                NestedCodecHash = FindCodecHash(allFactories, typeof(ConcreteCodecNestedPayload)),
-                SmallWireSha256 = Hash(smallBytes),
-                NestedWireSha256 = Hash(nestedBytes),
+                {
+                    await MeasureAsyncCase(
+                        "small-generated-dto-unary",
+                        warmupOperations,
+                        rpcOperations,
+                        sampleCount,
+                        async () =>
+                        {
+                            var result = await rpc.EchoSmallAsync(small).ConfigureAwait(false);
+                            if (result.Value != small.Value || result.Timestamp != small.Timestamp)
+                                throw new InvalidOperationException("small unary result mismatch");
+                            Interlocked.Add(ref s_sink, result.Value);
+                        }).ConfigureAwait(false),
+                    await MeasureAsyncCase(
+                        "nested-generated-dto-unary",
+                        warmupOperations,
+                        rpcOperations,
+                        sampleCount,
+                        async () =>
+                        {
+                            var result = await rpc.EchoNestedAsync(nested).ConfigureAwait(false);
+                            if (result.Primary.Value != 42 || result.Items.Count != 4)
+                                throw new InvalidOperationException("nested unary result mismatch");
+                            Interlocked.Add(ref s_sink, result.Items[3].Value);
+                        }).ConfigureAwait(false),
+                    await MeasureOneWayAsync(
+                        rpc,
+                        small,
+                        warmupOperations,
+                        rpcOperations,
+                        sampleCount).ConfigureAwait(false),
+                    MeasureSyncCase(
+                        "response-serialize-nested-generated-dto",
+                        warmupOperations * 4,
+                        codecOperations,
+                        sampleCount,
+                        () =>
+                        {
+                            writer.Clear();
+                            nestedCodec.Serialize(nested, writer);
+                            Interlocked.Add(ref s_sink, writer.WrittenCount);
+                        }),
+                    MeasureSyncCase(
+                        "request-deserialize-nested-generated-dto",
+                        warmupOperations * 4,
+                        codecOperations,
+                        sampleCount,
+                        () =>
+                        {
+                            var value = nestedCodec.Deserialize(in nestedSequence)
+                                ?? throw new InvalidOperationException("nested decode returned null");
+                            Interlocked.Add(ref s_sink, value.Primary.Value + value.Items.Count);
+                        })
+                };
+    
+                var manifest = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
+                    .Single(item => item.OwnerAssembly == typeof(ConcreteCodecDispatchEvidence).Assembly);
+                var contract = manifest.Contracts.Single(item =>
+                    item.ContractType == typeof(IConcreteCodecEvidenceRpc));
+                var allFactories = manifest.Codecs.Concat(manifest.ContractCodecs).ToArray();
+    
+                return new EvidenceReport
+                {
+                    Ref = Environment.GetEnvironmentVariable("SHARPLINK_EVIDENCE_REF") ?? "unknown",
+                    Runtime = RuntimeFeature.IsDynamicCodeSupported ? "jit" : "nativeaot",
+                    TieredCompilation = Environment.GetEnvironmentVariable("DOTNET_TieredCompilation") ?? "default",
+                    TieredPgo = Environment.GetEnvironmentVariable("DOTNET_TieredPGO") ?? "default",
+                    RuntimeVersion = Environment.Version.ToString(),
+                    WarmupOperations = warmupOperations,
+                    RpcOperations = rpcOperations,
+                    CodecOperations = codecOperations,
+                    SampleCount = sampleCount,
+                    NativeImageSizeBytes = RuntimeFeature.IsDynamicCodeSupported
+                        ? null
+                        : GetProcessImageSize(),
+                    RpcAssemblyHash = manifest.RpcAssemblyHash,
+                    ContractId = contract.ContractId,
+                    ContractFingerprint = contract.Fingerprint,
+                    Methods = contract.Methods
+                        .OrderBy(static item => item.Name, StringComparer.Ordinal)
+                        .Select(static item => new MethodIdentity(
+                            item.Name,
+                            item.MethodId,
+                            item.Fingerprint))
+                        .ToArray(),
+                    SmallCodecHash = FindCodecHash(allFactories, typeof(ConcreteCodecSmallPayload)),
+                    NestedCodecHash = FindCodecHash(allFactories, typeof(ConcreteCodecNestedPayload)),
+                    SmallWireSha256 = Hash(smallBytes),
+                    NestedWireSha256 = Hash(nestedBytes),
                     Cases = cases
                 };
             }
