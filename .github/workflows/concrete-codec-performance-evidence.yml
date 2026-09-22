@@ -10,6 +10,7 @@ on:
     paths:
       - 'test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.cs'
       - 'test/SharpLink.AotSmoke/Program.cs'
+      - 'src/SharpLink.Generator/**'
       - '.github/workflows/concrete-codec-performance-evidence.yml'
   workflow_dispatch:
 
