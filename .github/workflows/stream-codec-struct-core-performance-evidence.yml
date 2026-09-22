@@ -1,4 +1,4 @@
-name: Stream Codec Struct Core Performance Evidence
+name: Phase C Static Struct Core Performance Evidence
 
 on:
   pull_request:
@@ -37,8 +37,8 @@ jobs:
           dotnet --info > "$EVIDENCE_ROOT/dotnet-info.txt"
           uname -a > "$EVIDENCE_ROOT/uname.txt"
           lscpu > "$EVIDENCE_ROOT/cpu.txt"
-          printf 'phase_a_dev=%s\nhead=%s\n' \
-            '172a4bab78ba117cf66832a234c7495076ff7961' \
+          printf 'phase_c_baseline=%s\nhead=%s\n' \
+            '56c643cd308f294cb03df79d9f1214fb8292affb' \
             "$EVIDENCE_SHA" \
             > "$EVIDENCE_ROOT/provenance.txt"
 
