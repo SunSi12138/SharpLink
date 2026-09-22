@@ -29,4 +29,35 @@ public interface IRpcGeneratedServerBridge
         long contractId,
         long methodId,
         CancellationToken cancellationToken);
+
+    /// <summary>Creates a generated inbound stream while preserving a statically known Codec type.</summary>
+    IAsyncEnumerable<T> CreateGeneratedInboundStream<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        in TCodec codec,
+        bool payloadNullable,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>
+        => CreateInboundStream(requestId, streamId, codec, payloadNullable, cancellationToken);
+
+    /// <summary>Pumps a generated outbound stream while preserving a statically known Codec type.</summary>
+    ValueTask PumpGeneratedOutboundStreamAsync<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        in TCodec codec,
+        bool payloadNullable,
+        long contractId,
+        long methodId,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>
+        => PumpOutboundStreamAsync(
+            requestId,
+            streamId,
+            stream,
+            codec,
+            payloadNullable,
+            contractId,
+            methodId,
+            cancellationToken);
 }
