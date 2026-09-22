@@ -533,6 +533,189 @@ jobs:
             done
           done
 
+      - name: Publish same-binary generated-binding JIT control
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish="$EVIDENCE_ROOT/jit/bin-generated-paired"
+          dotnet publish "$PROJECT" \
+            -c Release \
+            -r linux-x64 \
+            --self-contained false \
+            -p:PublishAot=false \
+            -p:EvidenceShape=generated-paired \
+            -o "$publish" \
+            -v minimal
+          test -f "$publish/SharpLink.StreamCodecStructCoreEvidence.dll"
+
+      - name: Run same-binary generated-binding JIT control
+        shell: bash
+        run: |
+          set -euo pipefail
+          assembly="$EVIDENCE_ROOT/jit/bin-generated-paired/SharpLink.StreamCodecStructCoreEvidence.dll"
+          orders=(iwp ipw wip wpi piw pwi)
+
+          for pgo in 0 1; do
+            repetition=0
+            for order in "${orders[@]}"; do
+              repetition=$((repetition + 1))
+              env \
+                DOTNET_ReadyToRun=0 \
+                DOTNET_TieredCompilation=1 \
+                DOTNET_TieredPGO="$pgo" \
+                DOTNET_TC_QuickJitForLoops=1 \
+                dotnet "$assembly" "$order" \
+                  "$EVIDENCE_ROOT/jit-generated-paired-pgo${pgo}-r${repetition}.json"
+            done
+          done
+
+      - name: Summarize same-binary generated-binding JIT control
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/stream-codec-struct-core")
+
+          def summarize(pgo):
+              docs = [
+                  json.loads(path.read_text())
+                  for path in sorted(root.glob(f"jit-generated-paired-pgo{pgo}-r*.json"))
+              ]
+              if len(docs) != 6:
+                  raise SystemExit(f"expected 6 paired JIT runs for PGO={pgo}, got {len(docs)}")
+
+              grouped = {}
+              for doc in docs:
+                  for row in doc["measurements"]:
+                      key = (row["mode"], row["payload"], row["operation"], row["streamLength"])
+                      grouped.setdefault(key, []).append(row)
+
+              def median(mode, payload, operation, length, metric):
+                  return statistics.median(
+                      row[metric] for row in grouped[(mode, payload, operation, length)]
+                  )
+
+              def gain(base, candidate):
+                  return (base - candidate) * 100.0 / base
+
+              keys = sorted({
+                  (payload, operation, length)
+                  for mode, payload, operation, length in grouped
+                  if mode == "interface"
+              })
+
+              comparisons = {}
+              for mode in ("wrapper-core", "prebound-core"):
+                  rows = {}
+                  for payload, operation, length in keys:
+                      b = median("interface", payload, operation, length, "nanosecondsPerItem")
+                      v = median(mode, payload, operation, length, "nanosecondsPerItem")
+                      bcpu = median("interface", payload, operation, length, "cpuNanosecondsPerItem")
+                      vcpu = median(mode, payload, operation, length, "cpuNanosecondsPerItem")
+                      balloc = median("interface", payload, operation, length, "allocatedBytesPerItem")
+                      valloc = median(mode, payload, operation, length, "allocatedBytesPerItem")
+                      rows[(payload, operation, length)] = {
+                          "wallGainPct": gain(b, v),
+                          "cpuGainPct": gain(bcpu, vcpu) if bcpu else 0.0,
+                          "allocDelta": valloc - balloc,
+                      }
+                  comparisons[mode] = rows
+
+              def med(mode, pred=lambda k: True, field="wallGainPct"):
+                  values = [v[field] for k, v in comparisons[mode].items() if pred(k)]
+                  return statistics.median(values) if values else None
+
+              out = {}
+              for mode in ("wrapper-core", "prebound-core"):
+                  out[mode] = {
+                      "overall": med(mode),
+                      "flat": med(mode, lambda k: k[0] == "int"),
+                      "generatedConcrete": med(mode, lambda k: k[0] == "generated-concrete64"),
+                      "generatedLike": med(mode, lambda k: k[0] == "generated-like64"),
+                      "sizedSerialize": med(mode, lambda k: k[1] == "stream-sized-serialize"),
+                      "deserialize": med(mode, lambda k: k[1] == "stream-deserialize"),
+                      "long100k": med(mode, lambda k: k[2] == 100000),
+                      "cpuOverall": med(mode, field="cpuGainPct"),
+                      "maxAllocDelta": max(v["allocDelta"] for v in comparisons[mode].values()),
+                  }
+
+              copy_cost = []
+              for key in keys:
+                  copy_cost.append(
+                      comparisons["prebound-core"][key]["wallGainPct"] -
+                      comparisons["wrapper-core"][key]["wallGainPct"]
+                  )
+              out["preboundVsWrapperMedianPct"] = statistics.median(copy_cost)
+              return out
+
+          result = {str(pgo): summarize(pgo) for pgo in (1, 0)}
+          (root / "generated-jit-paired-summary.json").write_text(
+              json.dumps(result, indent=2) + "\n"
+          )
+
+          def fmt(value):
+              return "n/a" if value is None else f"{value:+.2f}%"
+
+          lines = ["# Generated wrapper -> static Core JIT same-binary control", ""]
+          for pgo in (1, 0):
+              lines += [f"## Dynamic PGO {'ON' if pgo else 'OFF'}", ""]
+              for mode, title in (
+                  ("wrapper-core", "Wrapper -> Core once per stream"),
+                  ("prebound-core", "Prebound Core upper bound"),
+              ):
+                  d = result[str(pgo)][mode]
+                  lines += [
+                      f"### {title}",
+                      "",
+                      f"- overall vs interface: {fmt(d['overall'])}",
+                      f"- flat int vs interface: {fmt(d['flat'])}",
+                      f"- post-#727 generated-concrete64 vs interface: {fmt(d['generatedConcrete'])}",
+                      f"- fallback generated-like64 vs interface: {fmt(d['generatedLike'])}",
+                      f"- sized serialize vs interface: {fmt(d['sizedSerialize'])}",
+                      f"- deserialize vs interface: {fmt(d['deserialize'])}",
+                      f"- 100k rows: {fmt(d['long100k'])}",
+                      f"- CPU overall vs interface: {fmt(d['cpuOverall'])}",
+                      f"- max allocation delta: {d['maxAllocDelta']:+.3f} B/item",
+                      "",
+                  ]
+              lines += [
+                  "Median prebound-Core advantage over wrapper-per-stream Core: "
+                  f"{result[str(pgo)]['preboundVsWrapperMedianPct']:+.2f}%",
+                  "",
+              ]
+
+          (root / "generated-jit-paired-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Capture paired generated-binding JIT codegen
+        shell: bash
+        run: |
+          set -euo pipefail
+          assembly="$EVIDENCE_ROOT/jit/bin-generated-paired/SharpLink.StreamCodecStructCoreEvidence.dll"
+          for pgo in 0 1; do
+            raw="$RUNNER_TEMP/generated-jit-paired-pgo${pgo}-raw.txt"
+            output="$EVIDENCE_ROOT/generated-jit-paired-pgo${pgo}-disasm.txt"
+            env \
+              DOTNET_ReadyToRun=0 \
+              DOTNET_TieredCompilation=1 \
+              DOTNET_TieredPGO="$pgo" \
+              DOTNET_TC_QuickJitForLoops=1 \
+              DOTNET_JitDisasm="*" \
+              DOTNET_JitDisasmAssemblies="SharpLink.StreamCodecStructCoreEvidence" \
+              DOTNET_JitDisasmDiffable=1 \
+              dotnet "$assembly" iwp "$RUNNER_TEMP/generated-jit-paired-probe.json" \
+              > "$raw" 2>&1
+
+            grep -B3 -A180 -E \
+              'Assembly listing for method .*GeneratedCodecBindingEvidenceRunner.*(Pump|AotPaired).*' \
+              "$raw" > "$output" || true
+            test -s "$output"
+          done
+
       - name: Publish generated-binding NativeAOT variants
         shell: bash
         run: |
@@ -860,6 +1043,8 @@ jobs:
           cat "$EVIDENCE_ROOT/aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$EVIDENCE_ROOT/generated-jit-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$EVIDENCE_ROOT/generated-jit-paired-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$EVIDENCE_ROOT/generated-aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
