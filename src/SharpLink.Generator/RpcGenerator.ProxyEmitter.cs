@@ -166,23 +166,23 @@ public partial class RpcGenerator
         if (method.IsStreamReturn)
         {
             invocation = streamParameters.Length == 0
-                ? $"_channel.InvokeServerStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})"
-                : $"_channel.InvokeDuplexStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
+                ? $"_channel.InvokeGeneratedServerStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})"
+                : $"_channel.InvokeGeneratedDuplexStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
             sb.AppendLine($"        return {invocation};");
         }
         else if (method.IsOneWay)
         {
-            invocation = $"_channel.InvokeOneWayAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, in {streamsLocal}, default, {cancellationToken})";
+            invocation = $"_channel.InvokeGeneratedOneWayAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, in {streamsLocal}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: false);
         }
         else if (streamParameters.Length != 0)
         {
-            invocation = $"_channel.InvokeClientStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
+            invocation = $"_channel.InvokeGeneratedClientStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
         else
         {
-            invocation = $"_channel.InvokeUnaryAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})";
+            invocation = $"_channel.InvokeGeneratedUnaryAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
 
