@@ -24,17 +24,17 @@ internal sealed partial class SharpLinkClient
             ValueTask<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeUnaryWithTelemetryAsync(
+                invocation = InvokeGeneratedUnaryWithTelemetryAsync(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeUnaryInterceptedAsync(
+                invocation = InvokeGeneratedUnaryInterceptedAsync(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else if (control.RetryGeneration is { Enabled: true })
             {
-                invocation = InvokeUnaryWithOptionalRetryAsync(
+                invocation = InvokeGeneratedUnaryWithOptionalRetryAsync(
                     method, request, requestCodec, responseCodec, control, cancellationToken);
             }
             else
@@ -73,12 +73,12 @@ internal sealed partial class SharpLinkClient
             ValueTask invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeOneWayWithTelemetryAsync(
+                invocation = InvokeGeneratedOneWayWithTelemetryAsync(
                     method, request, requestCodec, streams, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeOneWayInterceptedAsync(
+                invocation = InvokeGeneratedOneWayInterceptedAsync(
                     method, request, requestCodec, streams, interceptors, control, cancellationToken);
             }
             else
@@ -120,12 +120,12 @@ internal sealed partial class SharpLinkClient
             ValueTask<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeClientStreamingWithTelemetryAsync(
+                invocation = InvokeGeneratedClientStreamingWithTelemetryAsync(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeClientStreamingInterceptedAsync(
+                invocation = InvokeGeneratedClientStreamingInterceptedAsync(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else
@@ -165,12 +165,12 @@ internal sealed partial class SharpLinkClient
             IAsyncEnumerable<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeServerStreamingWithTelemetry(
+                invocation = InvokeGeneratedServerStreamingWithTelemetry(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeServerStreamingIntercepted(
+                invocation = InvokeGeneratedServerStreamingIntercepted(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else
@@ -212,12 +212,12 @@ internal sealed partial class SharpLinkClient
             IAsyncEnumerable<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeDuplexStreamingWithTelemetry(
+                invocation = InvokeGeneratedDuplexStreamingWithTelemetry(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeDuplexStreamingIntercepted(
+                invocation = InvokeGeneratedDuplexStreamingIntercepted(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else
