@@ -148,6 +148,23 @@ jobs:
                 echo "JIT disassembly output was empty for $label $method" > "$output"
               fi
             done
+
+            local probe_output="$EVIDENCE_ROOT/codegen/$label-jit-dispatch-probe.txt"
+            (
+              cd "$root"
+              SHARPLINK_EVIDENCE_REF="$label-jit-dispatch-probe" \
+              COMPlus_TieredCompilation=0 \
+              COMPlus_JitDisasm="SharpLink.AotSmoke.ConcreteCodecDispatchEvidence:RunDispatchProbe*" \
+              COMPlus_JitStdOutFile="$probe_output" \
+              dotnet run -c Release --no-build -p:PublishAot=false \
+                --project test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj -- \
+                --concrete-codec-evidence 1 1 1 1 \
+                "$EVIDENCE_ROOT/jit/$label-jit-dispatch-probe.json" \
+                > /dev/null
+            )
+            if [[ ! -s "$probe_output" ]]; then
+              echo "JIT dispatch-probe disassembly output was empty for $label" > "$probe_output"
+            fi
           }
 
           disasm_one baseline "$BASELINE_ROOT"
@@ -172,12 +189,30 @@ jobs:
             map="$(find "$root/test/SharpLink.AotSmoke/obj" -name 'SharpLink.AotSmoke.map.xml' -print | head -n 1 || true)"
             if [[ -n "$map" ]]; then
               cp "$map" "$EVIDENCE_ROOT/codegen/$label-nativeaot-map.xml"
-              grep -E 'SharpLinkGeneratedCodec|ConcreteCodecNestedPayload|IRpcCodec' "$map"                 > "$EVIDENCE_ROOT/codegen/$label-nativeaot-map-filtered.txt" || true
+              grep -E 'SharpLinkGeneratedCodec|ConcreteCodecNestedPayload|ConcreteCodecDispatchEvidence|DispatchProbeCodec|IRpcCodec' "$map"                 > "$EVIDENCE_ROOT/codegen/$label-nativeaot-map-filtered.txt" || true
             fi
 
             local codec
             codec="$(cat "$EVIDENCE_ROOT/codegen/$label-generated-codec-name.txt")"
-            nm -C "$executable" | grep -E "$codec|IRpcCodec.*(Serialize|Deserialize)"               > "$EVIDENCE_ROOT/codegen/$label-nativeaot-symbols.txt" || true
+            nm -C "$executable" | grep -E "$codec|IRpcCodec.*(Serialize|Deserialize)|RunDispatchProbe|DispatchProbeCodec"               > "$EVIDENCE_ROOT/codegen/$label-nativeaot-symbols.txt" || true
+
+            for probe in \
+              RunDispatchProbeSerializeInterface \
+              RunDispatchProbeSerializeConcrete \
+              RunDispatchProbeDeserializeInterface \
+              RunDispatchProbeDeserializeConcrete; do
+              local probe_address
+              probe_address="$(nm -C "$executable" | awk -v probe="$probe" 'index($0, probe) { print $1; exit }')"
+              if [[ "$probe_address" =~ ^[0-9A-Fa-f]+$ ]]; then
+                local probe_address_value=$((16#$probe_address))
+                local probe_stop=$((probe_address_value + 768))
+                objdump -d -C --start-address="$probe_address_value" --stop-address="$probe_stop" "$executable" \
+                  > "$EVIDENCE_ROOT/codegen/$label-nativeaot-$probe.txt"
+              else
+                echo "NativeAOT symbol address unavailable for $probe" \
+                  > "$EVIDENCE_ROOT/codegen/$label-nativeaot-$probe.txt"
+              fi
+            done
 
             for method in Serialize Deserialize; do
               local address
