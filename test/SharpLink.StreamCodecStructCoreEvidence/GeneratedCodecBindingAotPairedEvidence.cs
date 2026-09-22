@@ -149,8 +149,7 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         List<AotPairedMeasurement> rows)
     {
         var child = new Payload16Codec();
-        var state = new Post727Nested64State(child, child, child, child);
-        var wrapper = new Post727StateRefNested64Codec(state);
+        var wrapper = new Post727Nested64Codec(child, child, child, child);
         IRpcCodec<Nested64> resolved = wrapper;
         var sized = (IRpcSizedCodec<Nested64>)resolved;
         var value = CreateValue<Nested64>();
@@ -389,7 +388,7 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         AotPairedMode mode,
         IRpcCodec<Nested64> fallback,
         IRpcSizedCodec<Nested64> sized,
-        Post727StateRefNested64Codec wrapper,
+        Post727Nested64Codec wrapper,
         Nested64 value,
         ScratchBufferWriter writer,
         int length,
@@ -405,13 +404,13 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
             case AotPairedMode.WrapperCore:
                 for (var stream = 0; stream < streamCount; stream++)
                 {
-                    var core = wrapper.Core;
+                    var core = wrapper.OwnerCore;
                     checksum += PumpSized<Nested64, Post727StateRefNested64Core>(
                         core, in value, writer, length);
                 }
                 break;
             case AotPairedMode.PreboundCore:
-                var core = wrapper.Core;
+                var core = wrapper.OwnerCore;
                 for (var stream = 0; stream < streamCount; stream++)
                     checksum += PumpSized<Nested64, Post727StateRefNested64Core>(
                         core, in value, writer, length);
@@ -426,7 +425,7 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
     private static long AotPairedStateRefNestedDeserialize(
         AotPairedMode mode,
         IRpcCodec<Nested64> fallback,
-        Post727StateRefNested64Codec wrapper,
+        Post727Nested64Codec wrapper,
         ReadOnlySequence<byte> payload,
         int length,
         int streamCount)
@@ -441,13 +440,13 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
             case AotPairedMode.WrapperCore:
                 for (var stream = 0; stream < streamCount; stream++)
                 {
-                    var core = wrapper.Core;
+                    var core = wrapper.OwnerCore;
                     checksum += PumpDeserialize<Nested64, Post727StateRefNested64Core>(
                         core, in payload, length);
                 }
                 break;
             case AotPairedMode.PreboundCore:
-                var core = wrapper.Core;
+                var core = wrapper.OwnerCore;
                 for (var stream = 0; stream < streamCount; stream++)
                     checksum += PumpDeserialize<Nested64, Post727StateRefNested64Core>(
                         core, in payload, length);
@@ -536,37 +535,79 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         IRpcCodec<Nested64>,
         IRpcSizedCodec<Nested64>
     {
-        private readonly Post727Nested64Core _core;
+        internal readonly Payload16Codec A;
+        internal readonly Payload16Codec B;
+        internal readonly Payload16Codec C;
+        internal readonly Payload16Codec D;
 
         internal Post727Nested64Codec(
             Payload16Codec a,
             Payload16Codec b,
             Payload16Codec c,
             Payload16Codec d)
-            => _core = new Post727Nested64Core(a, b, c, d);
+        {
+            A = a;
+            B = b;
+            C = c;
+            D = d;
+        }
 
-        internal Post727Nested64Core Core => _core;
+        internal Post727Nested64Core Core => new(A, B, C, D);
+        internal Post727StateRefNested64Core OwnerCore => new(this);
 
         public bool CanExactSize => true;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Serialize(in Nested64 value, IBufferWriter<byte> buffer)
-            => _core.Serialize(in value, buffer);
+        {
+            A.Serialize(in value.A, buffer);
+            B.Serialize(in value.B, buffer);
+            C.Serialize(in value.C, buffer);
+            D.Serialize(in value.D, buffer);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Nested64 Deserialize(in ReadOnlySequence<byte> buffer)
-            => _core.Deserialize(in buffer);
+            => new()
+            {
+                A = A.Deserialize(buffer.Slice(0, 16)),
+                B = B.Deserialize(buffer.Slice(16, 16)),
+                C = C.Deserialize(buffer.Slice(32, 16)),
+                D = D.Deserialize(buffer.Slice(48, 16))
+            };
+
         public bool TryGetEncodedSize(in Nested64 value, out int size)
-            => _core.TryGetEncodedSize(in value, out size);
+        {
+            size = 64;
+            return true;
+        }
+
         public bool TryGetEncodedSize(
             in Nested64 value,
             out int size,
             out IRpcSizedCodecSnapshot? snapshot)
-            => _core.TryGetEncodedSize(in value, out size, out snapshot);
+        {
+            size = 64;
+            snapshot = null;
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void SerializeSized(
             in Nested64 value,
             IBufferWriter<byte> buffer,
             int size,
             IRpcSizedCodecSnapshot? snapshot)
-            => _core.SerializeSized(in value, buffer, size, snapshot);
+        {
+            A.SerializeSized(in value.A, buffer, 16, null);
+            B.SerializeSized(in value.B, buffer, 16, null);
+            C.SerializeSized(in value.C, buffer, 16, null);
+            D.SerializeSized(in value.D, buffer, 16, null);
+        }
+
         public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
-            => _core.ReleaseSnapshot(snapshot);
+        {
+        }
     }
 
     private readonly struct Post727Nested64Core :
@@ -645,87 +686,34 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         }
     }
 
-    private sealed class Post727Nested64State
-    {
-        internal Post727Nested64State(
-            Payload16Codec a,
-            Payload16Codec b,
-            Payload16Codec c,
-            Payload16Codec d)
-        {
-            A = a;
-            B = b;
-            C = c;
-            D = d;
-        }
-
-        internal readonly Payload16Codec A;
-        internal readonly Payload16Codec B;
-        internal readonly Payload16Codec C;
-        internal readonly Payload16Codec D;
-    }
-
-    private sealed class Post727StateRefNested64Codec :
-        IRpcCodec<Nested64>,
-        IRpcSizedCodec<Nested64>
-    {
-        private readonly Post727StateRefNested64Core _core;
-
-        internal Post727StateRefNested64Codec(Post727Nested64State state)
-            => _core = new Post727StateRefNested64Core(state);
-
-        internal Post727StateRefNested64Core Core => _core;
-
-        public bool CanExactSize => true;
-        public void Serialize(in Nested64 value, IBufferWriter<byte> buffer)
-            => _core.Serialize(in value, buffer);
-        public Nested64 Deserialize(in ReadOnlySequence<byte> buffer)
-            => _core.Deserialize(in buffer);
-        public bool TryGetEncodedSize(in Nested64 value, out int size)
-            => _core.TryGetEncodedSize(in value, out size);
-        public bool TryGetEncodedSize(
-            in Nested64 value,
-            out int size,
-            out IRpcSizedCodecSnapshot? snapshot)
-            => _core.TryGetEncodedSize(in value, out size, out snapshot);
-        public void SerializeSized(
-            in Nested64 value,
-            IBufferWriter<byte> buffer,
-            int size,
-            IRpcSizedCodecSnapshot? snapshot)
-            => _core.SerializeSized(in value, buffer, size, snapshot);
-        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
-            => _core.ReleaseSnapshot(snapshot);
-    }
-
     private readonly struct Post727StateRefNested64Core :
         IRpcCodec<Nested64>,
         IRpcSizedCodec<Nested64>
     {
-        private readonly Post727Nested64State _state;
+        private readonly Post727Nested64Codec _owner;
 
-        internal Post727StateRefNested64Core(Post727Nested64State state)
-            => _state = state;
+        internal Post727StateRefNested64Core(Post727Nested64Codec owner)
+            => _owner = owner;
 
         public bool CanExactSize => true;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Serialize(in Nested64 value, IBufferWriter<byte> buffer)
         {
-            _state.A.Serialize(in value.A, buffer);
-            _state.B.Serialize(in value.B, buffer);
-            _state.C.Serialize(in value.C, buffer);
-            _state.D.Serialize(in value.D, buffer);
+            _owner.A.Serialize(in value.A, buffer);
+            _owner.B.Serialize(in value.B, buffer);
+            _owner.C.Serialize(in value.C, buffer);
+            _owner.D.Serialize(in value.D, buffer);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Nested64 Deserialize(in ReadOnlySequence<byte> buffer)
             => new()
             {
-                A = _state.A.Deserialize(buffer.Slice(0, 16)),
-                B = _state.B.Deserialize(buffer.Slice(16, 16)),
-                C = _state.C.Deserialize(buffer.Slice(32, 16)),
-                D = _state.D.Deserialize(buffer.Slice(48, 16))
+                A = _owner.A.Deserialize(buffer.Slice(0, 16)),
+                B = _owner.B.Deserialize(buffer.Slice(16, 16)),
+                C = _owner.C.Deserialize(buffer.Slice(32, 16)),
+                D = _owner.D.Deserialize(buffer.Slice(48, 16))
             };
 
         public bool TryGetEncodedSize(in Nested64 value, out int size)
@@ -751,10 +739,10 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
             int size,
             IRpcSizedCodecSnapshot? snapshot)
         {
-            _state.A.SerializeSized(in value.A, buffer, 16, null);
-            _state.B.SerializeSized(in value.B, buffer, 16, null);
-            _state.C.SerializeSized(in value.C, buffer, 16, null);
-            _state.D.SerializeSized(in value.D, buffer, 16, null);
+            _owner.A.SerializeSized(in value.A, buffer, 16, null);
+            _owner.B.SerializeSized(in value.B, buffer, 16, null);
+            _owner.C.SerializeSized(in value.C, buffer, 16, null);
+            _owner.D.SerializeSized(in value.D, buffer, 16, null);
         }
 
         public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
