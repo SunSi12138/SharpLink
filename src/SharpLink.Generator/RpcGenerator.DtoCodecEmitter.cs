@@ -85,9 +85,9 @@ public partial class RpcGenerator
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         sb.AppendLine();
-        sb.AppendLine("    internal Core Core => new(this);");
+        sb.AppendLine("    internal CoreValue Core => new(this);");
         sb.AppendLine();
-        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
+        sb.AppendLine($"    internal readonly struct CoreValue : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("    {");
         sb.AppendLine($"        private readonly {model.CodecName} __owner;");
         for (var index = 0; index < complexMembers.Length; index++)
@@ -98,7 +98,7 @@ public partial class RpcGenerator
         }
         sb.AppendLine("        private readonly bool __canExactSize;");
         sb.AppendLine();
-        sb.AppendLine($"        internal Core({model.CodecName} owner)");
+        sb.AppendLine($"        internal CoreValue({model.CodecName} owner)");
         sb.AppendLine("        {");
         sb.AppendLine("            __owner = owner;");
         for (var index = 0; index < complexMembers.Length; index++)
