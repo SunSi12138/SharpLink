@@ -898,9 +898,62 @@ jobs:
             | grep -E 'AotPaired|PumpInterfaceSized|PumpSized|PumpInterfaceDeserialize|PumpDeserialize|Generated(Int|Nested64)Core|Post727Nested64Core|Post727StateRefNested64Core' \
             > "$EVIDENCE_ROOT/aot-generated-paired-symbol-sizes.txt" || true
 
-          objdump -d "$executable" 2>/dev/null \
-            | grep -A120 -E '<.*AotPaired(Flat|Nested)(Sized|Deserialize)' \
-            > "$EVIDENCE_ROOT/aot-generated-paired-disasm.txt" || true
+          python3 - "$symbols" "$executable" "$EVIDENCE_ROOT/aot-generated-paired-disasm.txt" <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          symbols, executable, output = sys.argv[1:]
+          nm = subprocess.check_output(
+              ["nm", "-S", "-C", symbols],
+              text=True,
+              stderr=subprocess.DEVNULL,
+          )
+
+          wanted = []
+          for line in nm.splitlines():
+              parts = line.split(maxsplit=3)
+              if len(parts) != 4:
+                  continue
+              start, size, kind, name = parts
+              if kind.lower() != "t":
+                  continue
+              is_interface = (
+                  "PumpInterfaceSized<" in name or
+                  "PumpInterfaceDeserialize<" in name
+              ) and "Nested64" in name
+              is_core = (
+                  "PumpSized<" in name or
+                  "PumpDeserialize<" in name
+              ) and (
+                  "Post727Nested64Core" in name or
+                  "Post727StateRefNested64Core" in name
+              )
+              if is_interface or is_core:
+                  wanted.append((int(start, 16), int(size, 16), name))
+
+          chunks = []
+          for start, size, name in sorted(wanted):
+              end = start + size
+              disasm = subprocess.check_output(
+                  [
+                      "objdump",
+                      "-d",
+                      f"--start-address=0x{start:x}",
+                      f"--stop-address=0x{end:x}",
+                      executable,
+                  ],
+                  text=True,
+                  stderr=subprocess.DEVNULL,
+              )
+              chunks.append(
+                  f"===== {name} | start=0x{start:x} size={size} =====\n{disasm}"
+              )
+
+          pathlib.Path(output).write_text("\n".join(chunks))
+          if not chunks:
+              raise SystemExit("no paired AOT hot-loop symbols found")
+          PY
 
       - name: Run same-binary generated-binding NativeAOT control
         shell: bash
