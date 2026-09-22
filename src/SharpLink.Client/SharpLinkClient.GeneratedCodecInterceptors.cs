@@ -121,7 +121,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                var response = await Client.InvokeGeneratedUnaryWithOptionalRetryAsync(
+                var response = await Client.InvokeGeneratedUnaryWithOptionalRetryAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     _method, _request, _requestCodec, _responseCodec,
                     GetTerminalControl(context), context.CancellationToken).ConfigureAwait(false);
                 MarkTerminalSucceeded(context);
@@ -240,7 +240,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                var response = await Client.InvokeGeneratedClientStreamingCoreAsync(
+                var response = await Client.InvokeGeneratedClientStreamingCoreAsync<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     _method, _request, _requestCodec, _responseCodec, _streams,
                     GetTerminalControl(context), context.CancellationToken).ConfigureAwait(false);
                 MarkTerminalSucceeded(context);
@@ -289,7 +289,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                var stream = Client.InvokeGeneratedServerStreamingCore(
+                var stream = Client.InvokeGeneratedServerStreamingCore<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     _method, _request, _requestCodec, _responseCodec,
                     GetTerminalControl(context), context.CancellationToken);
                 MarkTerminalSucceeded(context);
@@ -348,7 +348,7 @@ internal sealed partial class SharpLinkClient
         {
             try
             {
-                var stream = Client.InvokeGeneratedDuplexStreamingCore(
+                var stream = Client.InvokeGeneratedDuplexStreamingCore<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     _method, _request, _requestCodec, _responseCodec, _streams,
                     GetTerminalControl(context), context.CancellationToken);
                 MarkTerminalSucceeded(context);

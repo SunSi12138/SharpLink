@@ -74,7 +74,7 @@ internal sealed class ServerGeneratedBridge(
         => new UserCodeEntryAsyncEnumerable<T>(
             this,
             requestId,
-            _protocolBridge.CreateGeneratedInboundStream(
+            _protocolBridge.CreateGeneratedInboundStream<T, TCodec>(
                 requestId,
                 streamId,
                 in codec,

@@ -19,9 +19,9 @@ internal sealed partial class SharpLinkClient
         try
         {
             var invocation = interceptors.Count != 0
-                ? InvokeGeneratedUnaryInterceptedAsync(
+                ? InvokeGeneratedUnaryInterceptedAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken)
-                : InvokeGeneratedUnaryWithOptionalRetryAsync(
+                : InvokeGeneratedUnaryWithOptionalRetryAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, control, cancellationToken);
             return ObserveCallAsync(invocation, scope);
         }
@@ -81,9 +81,9 @@ internal sealed partial class SharpLinkClient
         try
         {
             var invocation = interceptors.Count != 0
-                ? InvokeGeneratedClientStreamingInterceptedAsync(
+                ? InvokeGeneratedClientStreamingInterceptedAsync<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken)
-                : InvokeGeneratedClientStreamingCoreAsync(
+                : InvokeGeneratedClientStreamingCoreAsync<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     method, request, requestCodec, responseCodec, streams, control, cancellationToken);
             return ObserveCallAsync(invocation, scope);
         }
@@ -107,9 +107,9 @@ internal sealed partial class SharpLinkClient
     {
         var detailMode = control.TelemetryDetailMode;
         var stream = interceptors.Count != 0
-            ? InvokeGeneratedServerStreamingIntercepted(
+            ? InvokeGeneratedServerStreamingIntercepted<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                 method, request, requestCodec, responseCodec, interceptors, control, cancellationToken)
-            : InvokeGeneratedServerStreamingCore(
+            : InvokeGeneratedServerStreamingCore<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                 method, request, requestCodec, responseCodec, control, cancellationToken);
         return ObserveStream(method, stream, control.LifetimeSource, detailMode);
     }
@@ -129,9 +129,9 @@ internal sealed partial class SharpLinkClient
     {
         var detailMode = control.TelemetryDetailMode;
         var stream = interceptors.Count != 0
-            ? InvokeGeneratedDuplexStreamingIntercepted(
+            ? InvokeGeneratedDuplexStreamingIntercepted<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                 method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken)
-            : InvokeGeneratedDuplexStreamingCore(
+            : InvokeGeneratedDuplexStreamingCore<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                 method, request, requestCodec, responseCodec, streams, control, cancellationToken);
         return ObserveStream(method, stream, control.LifetimeSource, detailMode);
     }

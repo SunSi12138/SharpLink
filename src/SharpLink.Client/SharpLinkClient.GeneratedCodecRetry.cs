@@ -14,18 +14,18 @@ internal sealed partial class SharpLinkClient
     {
         if (method.Kind != RpcMethodKind.Unary || !method.IsIdempotent)
         {
-            return InvokeGeneratedUnaryCoreAsync(
+            return InvokeGeneratedUnaryCoreAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                 method, request, requestCodec, responseCodec, control, cancellationToken);
         }
 
         var generation = control.RetryGeneration ?? CaptureRetryGeneration();
         if (!generation.Enabled)
         {
-            return InvokeGeneratedUnaryCoreAsync(
+            return InvokeGeneratedUnaryCoreAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                 method, request, requestCodec, responseCodec, control, cancellationToken);
         }
 
-        return InvokeGeneratedUnaryWithRetryAsync(
+        return InvokeGeneratedUnaryWithRetryAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
             method, request, requestCodec, responseCodec, control, generation, cancellationToken);
     }
 
@@ -65,7 +65,7 @@ internal sealed partial class SharpLinkClient
             var attemptScope = StartClientAttemptTelemetry(control, method, attempt);
             try
             {
-                var response = await InvokeGeneratedUnaryRetryAttemptAsync(
+                var response = await InvokeGeneratedUnaryRetryAttemptAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method,
                     method.ContractId,
                     method.MethodId,
@@ -176,7 +176,7 @@ internal sealed partial class SharpLinkClient
             long requestId;
             try
             {
-                operation = connection.PendingCalls.RentGenerated(
+                operation = connection.PendingCalls.RentGenerated<TResponse, TResponseCodec>(
                     in responseCodec,
                     PendingCallKind.Unary,
                     control.Deadline,

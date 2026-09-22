@@ -15,7 +15,7 @@ internal sealed partial class PendingRequestTable
     {
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (TryRentGenerated(
+        if (TryRentGenerated<T, TCodec>(
                 in responseCodec,
                 kind,
                 deadline,

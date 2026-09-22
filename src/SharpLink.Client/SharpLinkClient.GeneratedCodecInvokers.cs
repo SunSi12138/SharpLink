@@ -24,22 +24,22 @@ internal sealed partial class SharpLinkClient
             ValueTask<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeGeneratedUnaryWithTelemetryAsync(
+                invocation = InvokeGeneratedUnaryWithTelemetryAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeGeneratedUnaryInterceptedAsync(
+                invocation = InvokeGeneratedUnaryInterceptedAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else if (control.RetryGeneration is { Enabled: true })
             {
-                invocation = InvokeGeneratedUnaryWithOptionalRetryAsync(
+                invocation = InvokeGeneratedUnaryWithOptionalRetryAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, control, cancellationToken);
             }
             else
             {
-                invocation = InvokeGeneratedUnaryCoreAsync(
+                invocation = InvokeGeneratedUnaryCoreAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, control, cancellationToken);
             }
 
@@ -120,17 +120,17 @@ internal sealed partial class SharpLinkClient
             ValueTask<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeGeneratedClientStreamingWithTelemetryAsync(
+                invocation = InvokeGeneratedClientStreamingWithTelemetryAsync<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeGeneratedClientStreamingInterceptedAsync(
+                invocation = InvokeGeneratedClientStreamingInterceptedAsync<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else
             {
-                invocation = InvokeGeneratedClientStreamingCoreAsync(
+                invocation = InvokeGeneratedClientStreamingCoreAsync<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     method, request, requestCodec, responseCodec, streams, control, cancellationToken);
             }
 
@@ -165,17 +165,17 @@ internal sealed partial class SharpLinkClient
             IAsyncEnumerable<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeGeneratedServerStreamingWithTelemetry(
+                invocation = InvokeGeneratedServerStreamingWithTelemetry<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeGeneratedServerStreamingIntercepted(
+                invocation = InvokeGeneratedServerStreamingIntercepted<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             }
             else
             {
-                invocation = InvokeGeneratedServerStreamingCore(
+                invocation = InvokeGeneratedServerStreamingCore<TRequest, TResponse, TRequestCodec, TResponseCodec>(
                     method, request, requestCodec, responseCodec, control, cancellationToken);
             }
 
@@ -212,17 +212,17 @@ internal sealed partial class SharpLinkClient
             IAsyncEnumerable<TResponse> invocation;
             if (SharpLinkTelemetry.ClientCallsEnabled)
             {
-                invocation = InvokeGeneratedDuplexStreamingWithTelemetry(
+                invocation = InvokeGeneratedDuplexStreamingWithTelemetry<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else if (interceptors.Count != 0)
             {
-                invocation = InvokeGeneratedDuplexStreamingIntercepted(
+                invocation = InvokeGeneratedDuplexStreamingIntercepted<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
             }
             else
             {
-                invocation = InvokeGeneratedDuplexStreamingCore(
+                invocation = InvokeGeneratedDuplexStreamingCore<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
                     method, request, requestCodec, responseCodec, streams, control, cancellationToken);
             }
 
@@ -256,7 +256,7 @@ internal sealed partial class SharpLinkClient
             connection = GetReadyConnection(method, retrySelection: null, outcome);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
-            var operation = connection.PendingCalls.RentGenerated(
+            var operation = connection.PendingCalls.RentGenerated<TResponse, TResponseCodec>(
                 in responseCodec,
                 PendingCallKind.Unary,
                 control.Deadline,
@@ -360,7 +360,7 @@ internal sealed partial class SharpLinkClient
             connection = GetReadyConnection(method, retrySelection: null, outcome);
             reservationOwned = true;
             EnsureLogicalCallProgress(control);
-            operation = connection.PendingCalls.RentGenerated(
+            operation = connection.PendingCalls.RentGenerated<TResponse, TResponseCodec>(
                 in responseCodec,
                 PendingCallKind.ClientStreaming,
                 control.Deadline,
