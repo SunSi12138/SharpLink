@@ -128,7 +128,7 @@ public partial class RpcGenerator
             $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
 
         if (GetPayloadParameters(method).Length != 0)
-            sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))}.Core __requestCodec_{suffix};");
+            sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))}.CoreValue __requestCodec_{suffix};");
         if (!method.IsOneWay)
             sb.AppendLine($"    private readonly {GetCodecHotStorageType(GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)} __responseCodec_{suffix};");
         var streamParameters = GetStreamParameters(method);
@@ -338,12 +338,12 @@ public partial class RpcGenerator
         sb.AppendLine($"        return new {requestType}({string.Join(", ", parameters.Select(static parameter => $"value_{parameter.Name}"))});");
         sb.AppendLine("    }");
         sb.AppendLine();
-        sb.AppendLine("    internal Core Core => new(this);");
+        sb.AppendLine("    internal CoreValue Core => new(this);");
         sb.AppendLine();
-        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{requestType}>");
+        sb.AppendLine($"    internal readonly struct CoreValue : IRpcCodec<{requestType}>");
         sb.AppendLine("    {");
         sb.AppendLine($"        private readonly {codecType} __owner;");
-        sb.AppendLine($"        internal Core({codecType} owner) => __owner = owner;");
+        sb.AppendLine($"        internal CoreValue({codecType} owner) => __owner = owner;");
         sb.AppendLine();
         sb.AppendLine($"        public void Serialize(in {requestType} value, IBufferWriter<byte> writer)");
         sb.AppendLine("            => __owner.Serialize(in value, writer);");
