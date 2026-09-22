@@ -513,13 +513,14 @@ internal sealed partial class SharpLinkClient
             TaskScheduler.Default);
     }
 
-    private async ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>(
+    private async ValueTask InvokeOneWayCoreAsync<TRequest, TRequestCodec, TStreams>(
         RpcMethodDescriptor method,
         TRequest request,
-        IRpcCodec<TRequest> requestCodec,
+        TRequestCodec requestCodec,
         TStreams streams,
         ResolvedCallControl control,
         CancellationToken cancellationToken)
+        where TRequestCodec : IRpcCodec<TRequest>
         where TStreams : struct, IRpcClientStreamWriter
     {
         var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
