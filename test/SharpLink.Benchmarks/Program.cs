@@ -93,6 +93,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--resolved-flow-state-evidence", StringComparison.Ordinal))
+        {
+            await ResolvedFlowStateEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--interceptor-attribution-evidence", StringComparison.Ordinal))
         {
             InterceptorAttributionEvidenceRunner.Run();
