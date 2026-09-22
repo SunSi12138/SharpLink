@@ -40,6 +40,7 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         var rows = new List<AotPairedMeasurement>();
         AddFlatAotPaired(order, rows);
         AddPost727ConcreteNestedAotPaired(order, rows);
+        AddPost727StateRefNestedAotPaired(order, rows);
         AddNestedAotPaired(order, rows);
         WriteAotPairedJson(output, args[0], rows);
     }
@@ -137,6 +138,45 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
                     "stream-deserialize",
                     length,
                     count => AotPairedPost727NestedDeserialize(
+                        mode, resolved, wrapper, payload, length, count));
+                rows.Add(ToAotPaired(mode, measured));
+            }
+        }
+    }
+
+    private static void AddPost727StateRefNestedAotPaired(
+        IReadOnlyList<AotPairedMode> order,
+        List<AotPairedMeasurement> rows)
+    {
+        var child = new Payload16Codec();
+        var state = new Post727Nested64State(child, child, child, child);
+        var wrapper = new Post727StateRefNested64Codec(state);
+        IRpcCodec<Nested64> resolved = wrapper;
+        var sized = (IRpcSizedCodec<Nested64>)resolved;
+        var value = CreateValue<Nested64>();
+        var payload = CreatePayload(in value);
+        var writer = new ScratchBufferWriter();
+
+        foreach (var length in StreamLengths)
+        {
+            foreach (var mode in order)
+            {
+                var measured = Measure(
+                    "generated-state-ref64",
+                    "stream-sized-serialize",
+                    length,
+                    count => AotPairedStateRefNestedSized(
+                        mode, resolved, sized, wrapper, value, writer, length, count));
+                rows.Add(ToAotPaired(mode, measured));
+            }
+
+            foreach (var mode in order)
+            {
+                var measured = Measure(
+                    "generated-state-ref64",
+                    "stream-deserialize",
+                    length,
+                    count => AotPairedStateRefNestedDeserialize(
                         mode, resolved, wrapper, payload, length, count));
                 rows.Add(ToAotPaired(mode, measured));
             }
@@ -345,6 +385,80 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long AotPairedStateRefNestedSized(
+        AotPairedMode mode,
+        IRpcCodec<Nested64> fallback,
+        IRpcSizedCodec<Nested64> sized,
+        Post727StateRefNested64Codec wrapper,
+        Nested64 value,
+        ScratchBufferWriter writer,
+        int length,
+        int streamCount)
+    {
+        long checksum = 0;
+        switch (mode)
+        {
+            case AotPairedMode.Interface:
+                for (var stream = 0; stream < streamCount; stream++)
+                    checksum += PumpInterfaceSized(fallback, sized, in value, writer, length);
+                break;
+            case AotPairedMode.WrapperCore:
+                for (var stream = 0; stream < streamCount; stream++)
+                {
+                    var core = wrapper.Core;
+                    checksum += PumpSized<Nested64, Post727StateRefNested64Core>(
+                        core, in value, writer, length);
+                }
+                break;
+            case AotPairedMode.PreboundCore:
+                var core = wrapper.Core;
+                for (var stream = 0; stream < streamCount; stream++)
+                    checksum += PumpSized<Nested64, Post727StateRefNested64Core>(
+                        core, in value, writer, length);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+        return checksum;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long AotPairedStateRefNestedDeserialize(
+        AotPairedMode mode,
+        IRpcCodec<Nested64> fallback,
+        Post727StateRefNested64Codec wrapper,
+        ReadOnlySequence<byte> payload,
+        int length,
+        int streamCount)
+    {
+        long checksum = 0;
+        switch (mode)
+        {
+            case AotPairedMode.Interface:
+                for (var stream = 0; stream < streamCount; stream++)
+                    checksum += PumpInterfaceDeserialize(fallback, in payload, length);
+                break;
+            case AotPairedMode.WrapperCore:
+                for (var stream = 0; stream < streamCount; stream++)
+                {
+                    var core = wrapper.Core;
+                    checksum += PumpDeserialize<Nested64, Post727StateRefNested64Core>(
+                        core, in payload, length);
+                }
+                break;
+            case AotPairedMode.PreboundCore:
+                var core = wrapper.Core;
+                for (var stream = 0; stream < streamCount; stream++)
+                    checksum += PumpDeserialize<Nested64, Post727StateRefNested64Core>(
+                        core, in payload, length);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+        return checksum;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private static long AotPairedNestedSized(
         AotPairedMode mode,
         IRpcCodec<Nested64> fallback,
@@ -531,6 +645,123 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         }
     }
 
+    private sealed class Post727Nested64State
+    {
+        internal Post727Nested64State(
+            Payload16Codec a,
+            Payload16Codec b,
+            Payload16Codec c,
+            Payload16Codec d)
+        {
+            A = a;
+            B = b;
+            C = c;
+            D = d;
+        }
+
+        internal readonly Payload16Codec A;
+        internal readonly Payload16Codec B;
+        internal readonly Payload16Codec C;
+        internal readonly Payload16Codec D;
+    }
+
+    private sealed class Post727StateRefNested64Codec :
+        IRpcCodec<Nested64>,
+        IRpcSizedCodec<Nested64>
+    {
+        private readonly Post727StateRefNested64Core _core;
+
+        internal Post727StateRefNested64Codec(Post727Nested64State state)
+            => _core = new Post727StateRefNested64Core(state);
+
+        internal Post727StateRefNested64Core Core => _core;
+
+        public bool CanExactSize => true;
+        public void Serialize(in Nested64 value, IBufferWriter<byte> buffer)
+            => _core.Serialize(in value, buffer);
+        public Nested64 Deserialize(in ReadOnlySequence<byte> buffer)
+            => _core.Deserialize(in buffer);
+        public bool TryGetEncodedSize(in Nested64 value, out int size)
+            => _core.TryGetEncodedSize(in value, out size);
+        public bool TryGetEncodedSize(
+            in Nested64 value,
+            out int size,
+            out IRpcSizedCodecSnapshot? snapshot)
+            => _core.TryGetEncodedSize(in value, out size, out snapshot);
+        public void SerializeSized(
+            in Nested64 value,
+            IBufferWriter<byte> buffer,
+            int size,
+            IRpcSizedCodecSnapshot? snapshot)
+            => _core.SerializeSized(in value, buffer, size, snapshot);
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+            => _core.ReleaseSnapshot(snapshot);
+    }
+
+    private readonly struct Post727StateRefNested64Core :
+        IRpcCodec<Nested64>,
+        IRpcSizedCodec<Nested64>
+    {
+        private readonly Post727Nested64State _state;
+
+        internal Post727StateRefNested64Core(Post727Nested64State state)
+            => _state = state;
+
+        public bool CanExactSize => true;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Serialize(in Nested64 value, IBufferWriter<byte> buffer)
+        {
+            _state.A.Serialize(in value.A, buffer);
+            _state.B.Serialize(in value.B, buffer);
+            _state.C.Serialize(in value.C, buffer);
+            _state.D.Serialize(in value.D, buffer);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public Nested64 Deserialize(in ReadOnlySequence<byte> buffer)
+            => new()
+            {
+                A = _state.A.Deserialize(buffer.Slice(0, 16)),
+                B = _state.B.Deserialize(buffer.Slice(16, 16)),
+                C = _state.C.Deserialize(buffer.Slice(32, 16)),
+                D = _state.D.Deserialize(buffer.Slice(48, 16))
+            };
+
+        public bool TryGetEncodedSize(in Nested64 value, out int size)
+        {
+            size = 64;
+            return true;
+        }
+
+        public bool TryGetEncodedSize(
+            in Nested64 value,
+            out int size,
+            out IRpcSizedCodecSnapshot? snapshot)
+        {
+            size = 64;
+            snapshot = null;
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SerializeSized(
+            in Nested64 value,
+            IBufferWriter<byte> buffer,
+            int size,
+            IRpcSizedCodecSnapshot? snapshot)
+        {
+            _state.A.SerializeSized(in value.A, buffer, 16, null);
+            _state.B.SerializeSized(in value.B, buffer, 16, null);
+            _state.C.SerializeSized(in value.C, buffer, 16, null);
+            _state.D.SerializeSized(in value.D, buffer, 16, null);
+        }
+
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+        {
+        }
+    }
+
     private static void WriteAotPairedJson(
         string output,
         string order,
@@ -540,6 +771,9 @@ internal static partial class GeneratedCodecBindingEvidenceRunner
         using var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
         writer.WriteStartObject();
         writer.WriteString("order", order);
+        writer.WriteNumber("generatedConcreteCoreBytes", Unsafe.SizeOf<Post727Nested64Core>());
+        writer.WriteNumber("generatedStateRefCoreBytes", Unsafe.SizeOf<Post727StateRefNested64Core>());
+        writer.WriteNumber("fallbackInterfaceChildCoreBytes", Unsafe.SizeOf<GeneratedNested64Core>());
         writer.WriteStartArray("measurements");
         foreach (var row in rows)
         {
