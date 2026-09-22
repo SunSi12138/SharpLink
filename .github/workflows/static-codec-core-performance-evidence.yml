@@ -118,7 +118,7 @@ jobs:
             )
           }
 
-          for round in 1 2; do
+          for round in 1 2 3 4; do
             if (( round % 2 == 1 )); then
               run_jit baseline "$BASELINE_ROOT" pgo-on 1 "$round"
               run_jit candidate "$CANDIDATE_ROOT" pgo-on 1 "$round"
@@ -189,11 +189,19 @@ jobs:
           fi
           run_aot() {
             local label="$1"
+            local round="$2"
             "$EVIDENCE_ROOT/aot/$label-publish/SharpLink.StaticCodecCoreEvidence" \
-              --rpc-evidence "$EVIDENCE_ROOT/aot/$label.json" $full_arg
+              --rpc-evidence "$EVIDENCE_ROOT/aot/$label-r$round.json" $full_arg
           }
-          run_aot baseline
-          run_aot candidate
+          for round in 1 2 3 4; do
+            if (( round % 2 == 1 )); then
+              run_aot baseline "$round"
+              run_aot candidate "$round"
+            else
+              run_aot candidate "$round"
+              run_aot baseline "$round"
+            fi
+          done
 
       - name: Summarize correctness, performance, allocation, and code size
         shell: bash
@@ -212,19 +220,21 @@ jobs:
 
           modes = {
               "JIT / Dynamic PGO ON": (
-                  [load(f"jit/baseline-pgo-on-r{r}.json") for r in (1, 2)],
-                  [load(f"jit/candidate-pgo-on-r{r}.json") for r in (1, 2)]),
+                  [load(f"jit/baseline-pgo-on-r{r}.json") for r in (1, 2, 3, 4)],
+                  [load(f"jit/candidate-pgo-on-r{r}.json") for r in (1, 2, 3, 4)]),
               "JIT / Dynamic PGO OFF": (
-                  [load(f"jit/baseline-pgo-off-r{r}.json") for r in (1, 2)],
-                  [load(f"jit/candidate-pgo-off-r{r}.json") for r in (1, 2)]),
-              "NativeAOT": ([load("aot/baseline.json")], [load("aot/candidate.json")]),
+                  [load(f"jit/baseline-pgo-off-r{r}.json") for r in (1, 2, 3, 4)],
+                  [load(f"jit/candidate-pgo-off-r{r}.json") for r in (1, 2, 3, 4)]),
+              "NativeAOT": (
+                  [load(f"aot/baseline-r{r}.json") for r in (1, 2, 3, 4)],
+                  [load(f"aot/candidate-r{r}.json") for r in (1, 2, 3, 4)]),
           }
 
           lines = [
               "# Static struct Codec Core production RPC evidence",
               "",
               "The candidate and dev baseline use the same evidence source and the real generated Proxy/Stub, Client, Runtime, Server and SharedMemory transport.",
-              "JIT rounds alternate baseline/candidate order on one hosted runner.",
+              "JIT and NativeAOT use four paired rounds and alternate baseline/candidate order on one hosted runner.",
               "",
           ]
 
@@ -241,8 +251,8 @@ jobs:
               lines += [
                   f"## {mode}",
                   "",
-                  "| case | dev ns/unit | candidate ns/unit | paired delta | dev CPU ns/unit | candidate CPU ns/unit | allocation delta B/unit | candidate P99 ns |",
-                  "|---|---:|---:|---:|---:|---:|---:|---:|",
+                  "| case | dev ns/unit | candidate ns/unit | paired delta | paired MAD | dev CPU ns/unit | candidate CPU ns/unit | allocation delta B/unit | candidate P99 ns |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
               ]
               for name in names:
                   before = [r[name] for r in before_rounds]
@@ -258,9 +268,11 @@ jobs:
                       (a["NanosecondsPerUnit"] / b["NanosecondsPerUnit"] - 1.0) * 100.0
                       for b, a in zip(before, after)
                   ]
+                  delta_median = statistics.median(deltas)
+                  delta_mad = statistics.median(abs(x - delta_median) for x in deltas)
                   lines.append(
                       f"| {name} | {ns_before:.2f} | {ns_after:.2f} | "
-                      f"{statistics.median(deltas):+.2f}% | {cpu_before:.2f} | {cpu_after:.2f} | "
+                      f"{delta_median:+.2f}% | {delta_mad:.2f} pp | {cpu_before:.2f} | {cpu_after:.2f} | "
                       f"{alloc_after - alloc_before:+.2f} | {p99:.0f} |")
               lines.append("")
 
