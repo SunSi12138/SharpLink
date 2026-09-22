@@ -8,6 +8,9 @@ internal sealed class StreamManager
     private readonly Lock _dispatchersInitializationGate = new();
     private readonly Action<long, ushort, int>? _acceptBytes;
     private readonly Action<long, ushort, int>? _bytesConsumed;
+    private readonly Func<long, ushort, StreamFlowController.ResolvedReceiveCreditLease>? _resolveReceiveCreditLease;
+    private readonly ResolvedStreamBytesCallback? _acceptResolvedBytes;
+    private readonly ResolvedStreamBytesCallback? _resolvedBytesConsumed;
     private readonly Action<long, ushort>? _streamCompleted;
     private readonly int _maxActiveStreams;
     private readonly Action<Exception>? _activeStreamCapacityExceeded;
@@ -48,13 +51,19 @@ internal sealed class StreamManager
         Action<long, ushort, int>? bytesConsumed,
         Action<long, ushort>? streamCompleted,
         int maxActiveStreams,
-        Action<Exception>? activeStreamCapacityExceeded)
+        Action<Exception>? activeStreamCapacityExceeded,
+        Func<long, ushort, StreamFlowController.ResolvedReceiveCreditLease>? resolveReceiveCreditLease = null,
+        ResolvedStreamBytesCallback? acceptResolvedBytes = null,
+        ResolvedStreamBytesCallback? resolvedBytesConsumed = null)
     {
         ArgumentNullException.ThrowIfNull(concurrencyOptions);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxActiveStreams);
         _concurrencyOptions = concurrencyOptions.CloneValidated();
         _acceptBytes = acceptBytes;
         _bytesConsumed = bytesConsumed;
+        _resolveReceiveCreditLease = resolveReceiveCreditLease;
+        _acceptResolvedBytes = acceptResolvedBytes;
+        _resolvedBytesConsumed = resolvedBytesConsumed;
         _streamCompleted = streamCompleted;
         _maxActiveStreams = maxActiveStreams;
         _activeStreamCapacityExceeded = activeStreamCapacityExceeded;
@@ -114,12 +123,44 @@ internal sealed class StreamManager
         }
 
         SharpLinkTelemetry.AddActiveStreams(1);
-        if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-            consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
-        if (!requestDispatchers.TryRegister(streamId, dispatcher))
+        var receiveCreditLease = default(StreamFlowController.ResolvedReceiveCreditLease);
+        try
         {
-            if (dispatcher is IStreamConsumptionAwareDispatcher failedRegistration)
-                failedRegistration.SetBytesConsumedCallback(null, 0, 0);
+            if (dispatcher is IResolvedStreamConsumptionAwareDispatcher resolvedConsumptionAware &&
+                _resolveReceiveCreditLease is not null &&
+                _resolvedBytesConsumed is not null)
+            {
+                receiveCreditLease = _resolveReceiveCreditLease(requestId, streamId);
+                if (receiveCreditLease.IsResolved)
+                {
+                    resolvedConsumptionAware.SetResolvedBytesConsumedCallback(
+                        _resolvedBytesConsumed,
+                        in receiveCreditLease);
+                }
+                else
+                {
+                    resolvedConsumptionAware.SetBytesConsumedCallback(
+                        _bytesConsumed,
+                        requestId,
+                        streamId);
+                }
+            }
+            else if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            {
+                consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
+            }
+        }
+        catch
+        {
+            SharpLinkTelemetry.AddActiveStreams(-1);
+            Interlocked.Decrement(ref _activeStreamCount);
+            RemoveEmptyRequest(requestId, requestDispatchers);
+            throw;
+        }
+
+        if (!requestDispatchers.TryRegister(streamId, dispatcher, receiveCreditLease))
+        {
+            ClearBytesConsumedCallback(dispatcher);
             SharpLinkTelemetry.AddActiveStreams(-1);
             Interlocked.Decrement(ref _activeStreamCount);
             RemoveEmptyRequest(requestId, requestDispatchers);
@@ -162,11 +203,8 @@ internal sealed class StreamManager
                 // A stable inbound route may still have a typed child owned by replay/consumer
                 // after the parent entry is removed. Preserve that child's callback so buffered
                 // late credit can reach the receive-flow tombstone until the child is disposed.
-                if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware &&
-                    dispatcher is not PreAdmissionStreamDispatcher)
-                {
-                    consumptionAware.SetBytesConsumedCallback(null, 0, 0);
-                }
+                if (dispatcher is not PreAdmissionStreamDispatcher)
+                    ClearBytesConsumedCallback(dispatcher);
                 PublishReceiveTerminal(requestId, streamId, entry);
             }
             finally
@@ -194,9 +232,17 @@ internal sealed class StreamManager
                 ThrowIfPeerTerminal(entry);
                 var dispatcher = entry.Dispatcher;
                 var encodedByteCount = Math.Max(1, checked((int)payload.Length));
-                if (_acceptBytes is not null && dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                if ((_acceptBytes is not null ||
+                        _acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved) &&
+                    dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 {
-                    _acceptBytes(requestId, streamId, encodedByteCount);
+                    if (_acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved)
+                    {
+                        var receiveCreditLease = entry.ReceiveCreditLease;
+                        _acceptResolvedBytes(in receiveCreditLease, encodedByteCount);
+                    }
+                    else
+                        _acceptBytes?.Invoke(requestId, streamId, encodedByteCount);
                     return CompleteDispatch(
                         entry,
                         dispatcher is IStreamDispatchLease leased
@@ -518,8 +564,7 @@ internal sealed class StreamManager
             var item = entries[index];
             try
             {
-                if (item.Entry.Dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-                    consumptionAware.SetBytesConsumedCallback(null, 0, 0);
+                ClearBytesConsumedCallback(item.Entry.Dispatcher);
                 _streamCompleted?.Invoke(requestId, item.StreamId);
             }
             catch (Exception completionException)
@@ -634,7 +679,13 @@ internal sealed class StreamManager
             ThrowIfPeerTerminal(entry);
             if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
             {
-                _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
+                if (_acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved)
+                {
+                    var receiveCreditLease = entry.ReceiveCreditLease;
+                    _acceptResolvedBytes(in receiveCreditLease, originalByteCount);
+                }
+                else
+                    _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
                 dispatch = CompleteDispatch(
                     entry,
                     preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount));
@@ -642,7 +693,13 @@ internal sealed class StreamManager
             }
             if (entry.Dispatcher is DiscardingStreamDispatcher discarding)
             {
-                _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
+                if (_acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved)
+                {
+                    var receiveCreditLease = entry.ReceiveCreditLease;
+                    _acceptResolvedBytes(in receiveCreditLease, originalByteCount);
+                }
+                else
+                    _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
                 dispatch = CompleteDispatch(
                     entry,
                     discarding.DispatchAsync(wirePayload, originalByteCount));
@@ -724,6 +781,17 @@ internal sealed class StreamManager
             throw new InvalidOperationException("Stream manager active stream count became negative.");
     }
 
+    private static void ClearBytesConsumedCallback(IStreamDispatcher dispatcher)
+    {
+        if (dispatcher is IResolvedStreamConsumptionAwareDispatcher resolved)
+        {
+            var emptyLease = default(StreamFlowController.ResolvedReceiveCreditLease);
+            resolved.SetResolvedBytesConsumedCallback(null, in emptyLease);
+        }
+        if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            consumptionAware.SetBytesConsumedCallback(null, 0, 0);
+    }
+
     private void RemoveEmptyRequest(long requestId, RequestDispatchers requestDispatchers)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
@@ -753,11 +821,14 @@ internal sealed class StreamManager
         private readonly Lock _gate = new();
         private readonly Dictionary<ushort, DispatcherEntry> _byStreamId = [];
 
-        public bool TryRegister(ushort streamId, IStreamDispatcher dispatcher)
+        public bool TryRegister(
+            ushort streamId,
+            IStreamDispatcher dispatcher,
+            StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease)
         {
             if (streamId == 0)
             {
-                var entry = new DispatcherEntry(dispatcher);
+                var entry = new DispatcherEntry(dispatcher, receiveCreditLease);
                 return Interlocked.CompareExchange(ref _defaultDispatcher, entry, null) is null;
             }
 
@@ -765,7 +836,7 @@ internal sealed class StreamManager
             {
                 if (_byStreamId.ContainsKey(streamId))
                     return false;
-                _byStreamId.Add(streamId, new DispatcherEntry(dispatcher));
+                _byStreamId.Add(streamId, new DispatcherEntry(dispatcher, receiveCreditLease));
                 return true;
             }
         }
@@ -1130,14 +1201,18 @@ internal sealed class StreamManager
         // Lazily shares the distinct drain/detach completions without growing common entries.
         private DispatcherEntryCompletions? _completions;
 
-        internal DispatcherEntry(IStreamDispatcher dispatcher)
+        internal DispatcherEntry(
+            IStreamDispatcher dispatcher,
+            StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease)
         {
             Dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+            ReceiveCreditLease = receiveCreditLease;
             if (dispatcher is IStreamDispatchLease lease)
                 lease.BindDispatchState(this);
         }
 
         internal IStreamDispatcher Dispatcher { get; }
+        internal StreamFlowController.ResolvedReceiveCreditLease ReceiveCreditLease { get; }
 
         public bool HasActiveDispatches => (Volatile.Read(ref _state) & CountMask) != 0;
 
@@ -1298,9 +1373,11 @@ internal sealed class StreamManager
     }
 }
 
-internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispatcher
+internal sealed class DiscardingStreamDispatcher : IResolvedStreamConsumptionAwareDispatcher
 {
     private Action<long, ushort, int>? _bytesConsumed;
+    private ResolvedStreamBytesCallback? _resolvedBytesConsumed;
+    private StreamFlowController.ResolvedReceiveCreditLease _receiveCreditLease;
     private long _requestId;
     private ushort _streamId;
 
@@ -1310,7 +1387,10 @@ internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispat
     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
     {
         _ = payload;
-        _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+        if (_resolvedBytesConsumed is { } resolved)
+            resolved(in _receiveCreditLease, encodedByteCount);
+        else
+            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
         return ValueTask.CompletedTask;
     }
 
@@ -1330,6 +1410,14 @@ internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispat
         _bytesConsumed = callback;
         _requestId = requestId;
         _streamId = streamId;
+    }
+
+    public void SetResolvedBytesConsumedCallback(
+        ResolvedStreamBytesCallback? callback,
+        in StreamFlowController.ResolvedReceiveCreditLease lease)
+    {
+        _resolvedBytesConsumed = callback;
+        _receiveCreditLease = lease;
     }
 }
 
