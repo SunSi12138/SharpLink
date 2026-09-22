@@ -117,6 +117,12 @@
       "path": "test/SharpLink.Benchmarks/ConnectionAdmissionEvidenceRunner.cs",
       "maxLoc": 1006,
       "reason": "KEEP for issue #529: this 1006-line runner is one connection-resource-envelope protocol over a shared gauge/process-sample model and one output document across TCP/TLS/auth/ready scenarios; a six-line threshold split would be mechanical and would fragment evidence review."
+    },
+    {
+      "domain": "source",
+      "path": "src/SharpLink.Runtime/PooledAsyncStreamDispatcher.StaticCodec.cs",
+      "maxLoc": 1635,
+      "reason": "Issue #747 keeps the existing pooled dispatcher lifetime/concurrency state machine byte-for-byte aligned while closing the generated hot path over <T,TCore>; separating only codec-specialized decode from this safety-critical lease/pool/terminal invariant would create a second lifecycle kernel. The static variant is intentionally audited alongside the existing dispatcher until a shared generic kernel can replace both without interface erasure."
     }
   ]
 }
