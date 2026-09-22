@@ -9,6 +9,7 @@ on:
       - issue-726-concrete-codec-types
     paths:
       - 'test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.cs'
+      - 'test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.DispatchProbe.cs'
       - 'test/SharpLink.AotSmoke/Program.cs'
       - 'src/SharpLink.Generator/**'
       - '.github/workflows/concrete-codec-performance-evidence.yml'
@@ -43,6 +44,7 @@ jobs:
           git worktree add --detach "$baseline" FETCH_HEAD
 
           cp test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.cs              "$baseline/test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.cs"
+          cp test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.DispatchProbe.cs              "$baseline/test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.DispatchProbe.cs"
           cp test/SharpLink.AotSmoke/Program.cs              "$baseline/test/SharpLink.AotSmoke/Program.cs"
 
           echo "BASELINE_ROOT=$baseline" >> "$GITHUB_ENV"
