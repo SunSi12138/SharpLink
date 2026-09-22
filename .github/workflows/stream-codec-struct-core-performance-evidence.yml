@@ -635,6 +635,7 @@ jobs:
                       "generatedStateRef": med(mode, lambda k: k[0] == "generated-state-ref64"),
                       "generatedLike": med(mode, lambda k: k[0] == "generated-like64"),
                       "sizedSerialize": med(mode, lambda k: k[1] == "stream-sized-serialize"),
+                      "unsizedSerialize": med(mode, lambda k: k[1] == "stream-unsized-serialize"),
                       "deserialize": med(mode, lambda k: k[1] == "stream-deserialize"),
                       "long100k": med(mode, lambda k: k[2] == 100000),
                       "cpuOverall": med(mode, field="cpuGainPct"),
@@ -675,6 +676,7 @@ jobs:
                       f"- post-#727 generated-state-ref64 (8B Core) vs interface: {fmt(d['generatedStateRef'])}",
                       f"- fallback generated-like64 vs interface: {fmt(d['generatedLike'])}",
                       f"- sized serialize vs interface: {fmt(d['sizedSerialize'])}",
+                      f"- unsized serialize vs interface: {fmt(d['unsizedSerialize'])}",
                       f"- deserialize vs interface: {fmt(d['deserialize'])}",
                       f"- 100k rows: {fmt(d['long100k'])}",
                       f"- CPU overall vs interface: {fmt(d['cpuOverall'])}",
@@ -895,7 +897,7 @@ jobs:
             symbols="$executable.dbg"
           fi
           nm -S -C "$symbols" 2>/dev/null \
-            | grep -E 'AotPaired|PumpInterfaceSized|PumpSized|PumpInterfaceDeserialize|PumpDeserialize|Generated(Int|Nested64)Core|Post727Nested64Core|Post727StateRefNested64Core' \
+            | grep -E 'AotPaired|PumpInterfaceSized|PumpSized|PumpInterfaceUnsizedPaired|PumpUnsizedPaired|PumpInterfaceDeserialize|PumpDeserialize|Generated(Int|Nested64)Core|Post727Nested64Core|Post727StateRefNested64Core' \
             > "$EVIDENCE_ROOT/aot-generated-paired-symbol-sizes.txt" || true
 
           python3 - "$symbols" "$executable" "$EVIDENCE_ROOT/aot-generated-paired-disasm.txt" <<'PY'
@@ -920,10 +922,12 @@ jobs:
                   continue
               is_interface = (
                   "PumpInterfaceSized<" in name or
+                  "PumpInterfaceUnsizedPaired<" in name or
                   "PumpInterfaceDeserialize<" in name
               ) and "Nested64" in name
               is_core = (
                   "PumpSized<" in name or
+                  "PumpUnsizedPaired<" in name or
                   "PumpDeserialize<" in name
               ) and (
                   "Post727Nested64Core" in name or
@@ -1039,6 +1043,7 @@ jobs:
                   "generatedStateRef": med(mode, lambda k: k[0] == "generated-state-ref64"),
                   "generatedLike": med(mode, lambda k: k[0] == "generated-like64"),
                   "sizedSerialize": med(mode, lambda k: k[1] == "stream-sized-serialize"),
+                  "unsizedSerialize": med(mode, lambda k: k[1] == "stream-unsized-serialize"),
                   "deserialize": med(mode, lambda k: k[1] == "stream-deserialize"),
                   "long100k": med(mode, lambda k: k[2] == 100000),
                   "cpuOverall": med(mode, field="cpuGainPct"),
@@ -1083,6 +1088,7 @@ jobs:
                   f"- post-#727 generated-state-ref64 (8B Core) vs interface: {fmt(d['generatedStateRef'])}",
                   f"- fallback generated-like64 (interface children) vs interface: {fmt(d['generatedLike'])}",
                   f"- sized serialize vs interface: {fmt(d['sizedSerialize'])}",
+                  f"- unsized serialize vs interface: {fmt(d['unsizedSerialize'])}",
                   f"- deserialize vs interface: {fmt(d['deserialize'])}",
                   f"- 100k streams/items rows: {fmt(d['long100k'])}",
                   f"- CPU overall vs interface: {fmt(d['cpuOverall'])}",
