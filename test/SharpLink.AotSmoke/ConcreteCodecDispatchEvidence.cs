@@ -284,6 +284,25 @@ internal static class ConcreteCodecDispatchEvidence
                         count => RunDispatchProbeDeserializeConcrete(
                             dispatchDeserializeConcrete,
                             in dispatchPayload,
+                            count)),
+                    MeasureTightLoopCase(
+                        "dispatch-only-deserialize-unused-interface",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeDeserializeUnusedInterface(
+                            dispatchDeserializeInterface,
+                            dispatchDeserializeInterfaceProbe,
+                            in dispatchPayload,
+                            count)),
+                    MeasureTightLoopCase(
+                        "dispatch-only-deserialize-unused-concrete",
+                        dispatchWarmupOperations,
+                        dispatchOperations,
+                        sampleCount,
+                        count => RunDispatchProbeDeserializeUnusedConcrete(
+                            dispatchDeserializeConcrete,
+                            in dispatchPayload,
                             count))
                 };
 
@@ -507,6 +526,31 @@ internal static class ConcreteCodecDispatchEvidence
         for (var index = 0; index < operations; index++)
             checksum += codec.Deserialize(in payload);
         return checksum ^ codec.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeDeserializeUnusedInterface(
+        IRpcCodec<int> codec,
+        DispatchProbeCodec concrete,
+        in ReadOnlySequence<byte> payload,
+        int operations)
+    {
+        concrete.Reset();
+        for (var index = 0; index < operations; index++)
+            _ = codec.Deserialize(in payload);
+        return concrete.State;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long RunDispatchProbeDeserializeUnusedConcrete(
+        DispatchProbeCodec codec,
+        in ReadOnlySequence<byte> payload,
+        int operations)
+    {
+        codec.Reset();
+        for (var index = 0; index < operations; index++)
+            _ = codec.Deserialize(in payload);
+        return codec.State;
     }
 
     private static async Task<EvidenceSample> MeasureAsyncSample(
@@ -748,7 +792,8 @@ internal static class ConcreteCodecDispatchEvidence
         [MethodImpl(MethodImplOptions.NoInlining)]
         public int Deserialize(in ReadOnlySequence<byte> buffer)
         {
-            _state = unchecked((_state * 31) + checked((int)buffer.Length) + 1);
+            _ = buffer;
+            _state = unchecked((_state * 31) + 42);
             return _state;
         }
     }
