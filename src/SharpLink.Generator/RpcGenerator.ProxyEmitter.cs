@@ -337,6 +337,20 @@ public partial class RpcGenerator
         sb.AppendLine("        if (reader.Remaining != 0) throw RpcGeneratedCodecWire.DataLoss(\"Request contains trailing data.\");");
         sb.AppendLine($"        return new {requestType}({string.Join(", ", parameters.Select(static parameter => $"value_{parameter.Name}"))});");
         sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    internal Core Core => new(this);");
+        sb.AppendLine();
+        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{requestType}>");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        private readonly {codecType} __owner;");
+        sb.AppendLine($"        internal Core({codecType} owner) => __owner = owner;");
+        sb.AppendLine();
+        sb.AppendLine($"        public void Serialize(in {requestType} value, IBufferWriter<byte> writer)");
+        sb.AppendLine("            => __owner.Serialize(in value, writer);");
+        sb.AppendLine();
+        sb.AppendLine($"        public {requestType} Deserialize(in ReadOnlySequence<byte> payload)");
+        sb.AppendLine("            => __owner.Deserialize(in payload);");
+        sb.AppendLine("    }");
         sb.AppendLine("}");
     }
 
@@ -353,9 +367,9 @@ public partial class RpcGenerator
         foreach (var stream in streams)
         {
             sb.AppendLine($"    private readonly {stream.DisplayType} _{stream.Name};");
-            sb.AppendLine($"    private readonly {GetCodecStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} __codec_{stream.Name};");
+            sb.AppendLine($"    private readonly {GetCodecHotStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} __codec_{stream.Name};");
         }
-        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(stream => $"{stream.DisplayType} {EscapeIdentifier(stream.Name)}, {GetCodecStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} __codec_{stream.Name}"))})");
+        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(stream => $"{stream.DisplayType} {EscapeIdentifier(stream.Name)}, {GetCodecHotStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} __codec_{stream.Name}"))})");
         sb.AppendLine("    {");
         foreach (var stream in streams)
         {
