@@ -94,7 +94,7 @@ public partial class RpcGenerator
         {
             var member = complexMembers[index];
             sb.AppendLine(
-                $"        private readonly {GetCodecStorageType(member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)} __codec_{index};");
+                $"        private readonly {GetCodecHotStorageType(member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)} __codec_{index};");
         }
         sb.AppendLine("        private readonly bool __canExactSize;");
         sb.AppendLine();
@@ -102,7 +102,11 @@ public partial class RpcGenerator
         sb.AppendLine("        {");
         sb.AppendLine("            __owner = owner;");
         for (var index = 0; index < complexMembers.Length; index++)
-            sb.AppendLine($"            __codec_{index} = owner.__codec_{index};");
+        {
+            var member = complexMembers[index];
+            sb.AppendLine(
+                $"            __codec_{index} = {GetCodecHotBoundExpression($"owner.__codec_{index}", member.CodecLookupTypeName, concreteCodecTypes)};");
+        }
         sb.AppendLine("            __canExactSize = owner.__canExactSize;");
         sb.AppendLine("        }");
         sb.AppendLine();
