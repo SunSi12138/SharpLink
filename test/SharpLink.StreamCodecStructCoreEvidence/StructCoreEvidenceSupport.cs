@@ -793,7 +793,7 @@ internal static partial class StructCoreEvidenceRunner
         writer.WriteNumber("rounds", Rounds);
         writer.WriteNumber("targetItemsPerRound", TargetItemsPerRound);
         writer.WriteStartArray("notes");
-        writer.WriteStringValue("production-interface models the post-#724 baseline: capability is already hoisted to stream scope while item calls stay interface-based.");
+        writer.WriteStringValue("production-interface models the post-#727 Phase C baseline: capability is already hoisted to stream scope while item calls stay interface-based.");
         writer.WriteStringValue("shell-interface keeps the same per-item interface calls but makes the class implementation forward into a readonly struct core.");
         writer.WriteStringValue("open-value performs one erased class/opener dispatch per stream, then runs the full item loop as Pump<T,TCore> with a concrete struct core passed by value.");
         writer.WriteStringValue("open-in is the same architecture but opens and passes TCore by readonly reference to measure struct-copy tradeoffs.");
