@@ -1,0 +1,286 @@
+name: Concrete Codec Performance Evidence
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - issue-726-concrete-codec-types
+    paths:
+      - 'test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.cs'
+      - 'test/SharpLink.AotSmoke/Program.cs'
+      - '.github/workflows/concrete-codec-performance-evidence.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: concrete-codec-performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  same-machine-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      EVIDENCE_ROOT: ${{ github.workspace }}/artifacts/performance/concrete-codec
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Prepare same-source baseline worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin dev --depth=1
+          baseline="$RUNNER_TEMP/sharplink-dev"
+          git worktree add --detach "$baseline" FETCH_HEAD
+
+          cp test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.cs              "$baseline/test/SharpLink.AotSmoke/ConcreteCodecDispatchEvidence.cs"
+          cp test/SharpLink.AotSmoke/Program.cs              "$baseline/test/SharpLink.AotSmoke/Program.cs"
+
+          echo "BASELINE_ROOT=$baseline" >> "$GITHUB_ENV"
+          echo "CANDIDATE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          mkdir -p "$EVIDENCE_ROOT/generated" "$EVIDENCE_ROOT/jit" "$EVIDENCE_ROOT/aot" "$EVIDENCE_ROOT/codegen"
+
+      - name: Build JIT baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          build_one() {
+            local label="$1"
+            local root="$2"
+            local generated="$EVIDENCE_ROOT/generated/$label"
+            mkdir -p "$generated"
+            dotnet restore "$root/test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj"
+            dotnet build "$root/test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj"               --no-restore -c Release -v minimal               -p:PublishAot=false               -p:EmitCompilerGeneratedFiles=true               -p:CompilerGeneratedFilesOutputPath="$generated"
+
+            stat -c '%s' "$root/test/SharpLink.AotSmoke/bin/Release/net10.0/SharpLink.AotSmoke.dll"               > "$EVIDENCE_ROOT/$label-managed-assembly-size.txt"
+
+            python3 - "$generated" "$EVIDENCE_ROOT/codegen/$label-generated-codec.txt"               "$EVIDENCE_ROOT/codegen/$label-generated-codec-name.txt" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          snippet_path = pathlib.Path(sys.argv[2])
+          name_path = pathlib.Path(sys.argv[3])
+          text = "\n".join(path.read_text() for path in root.rglob("*.cs"))
+          pattern = re.compile(
+              r"internal sealed class (?P<name>__SharpLinkGeneratedCodec_[0-9A-F]+) "
+              r": IRpcCodec<global::SharpLink\.AotSmoke\.ConcreteCodecNestedPayload>"
+          )
+          match = pattern.search(text)
+          if match is None:
+              raise SystemExit("nested generated Codec class not found")
+          name = match.group("name")
+          name_path.write_text(name + "\n")
+          start = match.start()
+          next_class = text.find("\ninternal sealed class ", match.end())
+          if next_class < 0:
+              next_class = min(len(text), start + 16000)
+          snippet_path.write_text(text[start:next_class])
+          PY
+          }
+
+          build_one baseline "$BASELINE_ROOT"
+          build_one candidate "$CANDIDATE_ROOT"
+
+          grep -E 'private readonly .*__codec_[0-9]+;'             "$EVIDENCE_ROOT/codegen/baseline-generated-codec.txt"             > "$EVIDENCE_ROOT/codegen/baseline-child-fields.txt" || true
+          grep -E 'private readonly .*__codec_[0-9]+;'             "$EVIDENCE_ROOT/codegen/candidate-generated-codec.txt"             > "$EVIDENCE_ROOT/codegen/candidate-child-fields.txt" || true
+
+      - name: Run JIT same-machine A/B with Dynamic PGO on and off
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_jit() {
+            local label="$1"
+            local root="$2"
+            local pgo_label="$3"
+            local pgo_value="$4"
+            local output="$EVIDENCE_ROOT/jit/$label-$pgo_label.json"
+            (
+              cd "$root"
+              SHARPLINK_EVIDENCE_REF="$label"               DOTNET_TieredCompilation=1               DOTNET_TieredPGO="$pgo_value"               DOTNET_TC_QuickJitForLoops=1               dotnet run -c Release --no-build -p:PublishAot=false                 --project test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj --                 --concrete-codec-evidence 20000 10000 100000 7 "$output"
+            )
+          }
+
+          run_jit baseline "$BASELINE_ROOT" pgo-on 1
+          run_jit candidate "$CANDIDATE_ROOT" pgo-on 1
+          run_jit candidate "$CANDIDATE_ROOT" pgo-off 0
+          run_jit baseline "$BASELINE_ROOT" pgo-off 0
+
+      - name: Capture targeted JIT disassembly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          disasm_one() {
+            local label="$1"
+            local root="$2"
+            local codec
+            codec="$(cat "$EVIDENCE_ROOT/codegen/$label-generated-codec-name.txt")"
+            for method in Serialize Deserialize; do
+              local output="$EVIDENCE_ROOT/codegen/$label-jit-$method.txt"
+              (
+                cd "$root"
+                SHARPLINK_EVIDENCE_REF="$label-jit-disasm"                 COMPlus_TieredCompilation=0                 COMPlus_JitDisasm="SharpLink.Generated.$codec:$method"                 COMPlus_JitStdOutFile="$output"                 dotnet run -c Release --no-build -p:PublishAot=false                   --project test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj --                   --concrete-codec-evidence 1 1 1 1                   "$EVIDENCE_ROOT/jit/$label-jit-disasm-$method.json"                   > /dev/null
+              )
+              if [[ ! -s "$output" ]]; then
+                echo "JIT disassembly output was empty for $label $method" > "$output"
+              fi
+            done
+          }
+
+          disasm_one baseline "$BASELINE_ROOT"
+          disasm_one candidate "$CANDIDATE_ROOT"
+
+      - name: Publish and run NativeAOT same-machine A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          publish_and_run() {
+            local label="$1"
+            local root="$2"
+            local publish="$EVIDENCE_ROOT/aot/$label-publish"
+            mkdir -p "$publish"
+            dotnet publish "$root/test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj"               -c Release -r linux-x64 --self-contained true -v minimal               -p:PublishAot=true               -p:StripSymbols=false               -p:IlcGenerateMapFile=true               -o "$publish"
+
+            local executable="$publish/SharpLink.AotSmoke"
+            stat -c '%s' "$executable" > "$EVIDENCE_ROOT/aot/$label-native-image-size.txt"
+            SHARPLINK_EVIDENCE_REF="$label"               "$executable" --concrete-codec-evidence 5000 10000 100000 7               "$EVIDENCE_ROOT/aot/$label.json"
+
+            local map
+            map="$(find "$root/test/SharpLink.AotSmoke/obj" -name 'SharpLink.AotSmoke.map.xml' -print | head -n 1 || true)"
+            if [[ -n "$map" ]]; then
+              cp "$map" "$EVIDENCE_ROOT/codegen/$label-nativeaot-map.xml"
+              grep -E 'SharpLinkGeneratedCodec|ConcreteCodecNestedPayload|IRpcCodec' "$map"                 > "$EVIDENCE_ROOT/codegen/$label-nativeaot-map-filtered.txt" || true
+            fi
+
+            local codec
+            codec="$(cat "$EVIDENCE_ROOT/codegen/$label-generated-codec-name.txt")"
+            nm -C "$executable" | grep -E "$codec|IRpcCodec.*(Serialize|Deserialize)"               > "$EVIDENCE_ROOT/codegen/$label-nativeaot-symbols.txt" || true
+
+            for method in Serialize Deserialize; do
+              local address
+              address="$(nm -C "$executable" | awk -v codec="$codec" -v method="$method"                 'index($0, codec) && index($0, method) { print $1; exit }')"
+              if [[ "$address" =~ ^[0-9A-Fa-f]+$ ]]; then
+                local start=$((16#$address))
+                local stop=$((start + 1024))
+                objdump -d -C --start-address="$start" --stop-address="$stop" "$executable"                   > "$EVIDENCE_ROOT/codegen/$label-nativeaot-$method.txt"
+              else
+                echo "NativeAOT symbol address unavailable for $codec:$method"                   > "$EVIDENCE_ROOT/codegen/$label-nativeaot-$method.txt"
+              fi
+            done
+          }
+
+          publish_and_run baseline "$BASELINE_ROOT"
+          publish_and_run candidate "$CANDIDATE_ROOT"
+
+      - name: Summarize identity, performance, allocation, and size
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE_ROOT" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          modes = {
+              "JIT / Dynamic PGO ON": (
+                  root / "jit/baseline-pgo-on.json",
+                  root / "jit/candidate-pgo-on.json"),
+              "JIT / Dynamic PGO OFF": (
+                  root / "jit/baseline-pgo-off.json",
+                  root / "jit/candidate-pgo-off.json"),
+              "NativeAOT": (
+                  root / "aot/baseline.json",
+                  root / "aot/candidate.json"),
+          }
+
+          lines = [
+              "# Concrete Codec dispatch evidence",
+              "",
+              "Same hosted runner; identical evidence source overlaid onto dev baseline and candidate.",
+              "",
+          ]
+          identity_reference = None
+          for mode, (baseline_path, candidate_path) in modes.items():
+              baseline = json.loads(baseline_path.read_text())
+              candidate = json.loads(candidate_path.read_text())
+              if baseline["identity"] != candidate["identity"]:
+                  raise SystemExit(f"wire/hash identity changed in {mode}")
+              if identity_reference is None:
+                  identity_reference = baseline["identity"]
+              elif baseline["identity"] != identity_reference:
+                  raise SystemExit(f"identity changed between evidence runtime modes in {mode}")
+
+              baseline_cases = {item["name"]: item for item in baseline["cases"]}
+              candidate_cases = {item["name"]: item for item in candidate["cases"]}
+              lines.extend([
+                  f"## {mode}",
+                  "",
+                  "| case | dev ns/op | candidate ns/op | delta | dev CPU ns/op | candidate CPU ns/op | delta | dev alloc B/op | candidate alloc B/op |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+              ])
+              for name in baseline_cases:
+                  before = baseline_cases[name]
+                  after = candidate_cases[name]
+                  ns_before = before["medianNanosecondsPerOperation"]
+                  ns_after = after["medianNanosecondsPerOperation"]
+                  cpu_before = before["medianCpuNanosecondsPerOperation"]
+                  cpu_after = after["medianCpuNanosecondsPerOperation"]
+                  alloc_before = before["medianAllocatedBytesPerOperation"]
+                  alloc_after = after["medianAllocatedBytesPerOperation"]
+                  ns_delta = (ns_after / ns_before - 1.0) * 100.0
+                  cpu_delta = (cpu_after / cpu_before - 1.0) * 100.0 if cpu_before else 0.0
+                  lines.append(
+                      f"| {name} | {ns_before:.2f} | {ns_after:.2f} | {ns_delta:+.2f}% "
+                      f"| {cpu_before:.2f} | {cpu_after:.2f} | {cpu_delta:+.2f}% "
+                      f"| {alloc_before:.2f} | {alloc_after:.2f} |"
+                  )
+              lines.append("")
+
+          managed_before = int((root / "baseline-managed-assembly-size.txt").read_text())
+          managed_after = int((root / "candidate-managed-assembly-size.txt").read_text())
+          native_before = int((root / "aot/baseline-native-image-size.txt").read_text())
+          native_after = int((root / "aot/candidate-native-image-size.txt").read_text())
+          lines.extend([
+              "## Size",
+              "",
+              f"- Managed AotSmoke assembly: dev {managed_before} B; candidate {managed_after} B; delta {managed_after - managed_before:+d} B.",
+              f"- NativeAOT image: dev {native_before} B; candidate {native_after} B; delta {native_after - native_before:+d} B.",
+              "",
+              "## Compatibility identity",
+              "",
+              "- wire bytes SHA-256, CodecHash, MethodId, ContractId, fingerprints and RpcAssemblyHash match exactly between dev and candidate in every mode.",
+              "",
+          ])
+          (root / "summary.md").write_text("\n".join(lines) + "\n")
+          print((root / "summary.md").read_text())
+          PY
+
+      - name: Publish summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$EVIDENCE_ROOT/summary.md" ]]; then
+            cat "$EVIDENCE_ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload concrete Codec evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: concrete-codec-performance-${{ github.sha }}
+          path: artifacts/performance/concrete-codec
+          if-no-files-found: error
