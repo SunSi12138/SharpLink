@@ -95,13 +95,13 @@ public partial class RpcGenerator
             var suffix = GetMethodSuffix(method);
             var payloadParameters = GetPayloadParameters(method);
             if (payloadParameters.Length != 0)
-                sb.AppendLine($"        __requestCodec_{suffix} = new {GetHelperTypeReference(model, GetRequestCodecType(model, method))}(__codecs);");
+                sb.AppendLine($"        __requestCodec_{suffix} = new {GetHelperTypeReference(model, GetRequestCodecType(model, method))}(__codecs).Core;");
             if (!method.IsOneWay)
-                sb.AppendLine($"        __responseCodec_{suffix} = {GetCodecResolveExpression("__codecs", GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)};");
+                sb.AppendLine($"        __responseCodec_{suffix} = {GetCodecHotResolveExpression("__codecs", GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)};");
             var streamParameters = GetStreamParameters(method);
             for (var index = 0; index < streamParameters.Length; index++)
             {
-                sb.AppendLine($"        __streamCodec_{suffix}_{index} = {GetCodecResolveExpression("__codecs", streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)};");
+                sb.AppendLine($"        __streamCodec_{suffix}_{index} = {GetCodecHotResolveExpression("__codecs", streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)};");
             }
         }
         sb.AppendLine("    }");
@@ -128,12 +128,12 @@ public partial class RpcGenerator
             $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
 
         if (GetPayloadParameters(method).Length != 0)
-            sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))} __requestCodec_{suffix};");
+            sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))}.Core __requestCodec_{suffix};");
         if (!method.IsOneWay)
-            sb.AppendLine($"    private readonly {GetCodecStorageType(GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)} __responseCodec_{suffix};");
+            sb.AppendLine($"    private readonly {GetCodecHotStorageType(GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)} __responseCodec_{suffix};");
         var streamParameters = GetStreamParameters(method);
         for (var index = 0; index < streamParameters.Length; index++)
-            sb.AppendLine($"    private readonly {GetCodecStorageType(streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)} __streamCodec_{suffix}_{index};");
+            sb.AppendLine($"    private readonly {GetCodecHotStorageType(streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)} __streamCodec_{suffix}_{index};");
     }
 
     private static void AppendProxyMethod(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
