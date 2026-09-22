@@ -513,15 +513,23 @@ jobs:
           set -euo pipefail
           for pgo in 0 1; do
             for shape in interface guarded-value guarded-ref direct; do
+              raw="$RUNNER_TEMP/generated-jit-pgo${pgo}-${shape}-raw.txt"
+              output="$EVIDENCE_ROOT/generated-jit-pgo${pgo}-${shape}-disasm.txt"
               env \
                 DOTNET_ReadyToRun=0 \
                 DOTNET_TieredCompilation=1 \
                 DOTNET_TieredPGO="$pgo" \
-                COMPlus_JitDisasm="GeneratedCodecBindingEvidenceRunner:*" \
-                COMPlus_JitDisasmDiffable=1 \
+                DOTNET_JitDisasm="*" \
+                DOTNET_JitDisasmAssemblies="SharpLink.StreamCodecStructCoreEvidence" \
+                DOTNET_JitDisasmDiffable=1 \
                 dotnet run -c Release --no-build --project "$PROJECT" -- \
                   --generated-binding --jit-probe "$shape" \
-                  > "$EVIDENCE_ROOT/generated-jit-pgo${pgo}-${shape}-disasm.txt" 2>&1
+                  > "$raw" 2>&1
+
+              grep -B3 -A140 -E \
+                'Assembly listing for method .*GeneratedCodecBindingEvidenceRunner.*(Pump|Run.*(Sized|Deserialize|Unary))' \
+                "$raw" > "$output" || true
+              test -s "$output"
             done
           done
 
