@@ -680,6 +680,168 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Publish same-binary generated-binding NativeAOT control
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish="$EVIDENCE_ROOT/aot/bin-generated-paired"
+          rm -rf test/SharpLink.StreamCodecStructCoreEvidence/bin \
+            test/SharpLink.StreamCodecStructCoreEvidence/obj
+
+          dotnet publish "$PROJECT" \
+            -c Release \
+            -r linux-x64 \
+            --self-contained true \
+            -p:PublishAot=true \
+            -p:EvidenceShape=generated-paired \
+            -o "$publish" \
+            -v minimal
+
+          executable="$publish/SharpLink.StreamCodecStructCoreEvidence"
+          test -x "$executable"
+          stat -c '%s' "$executable" > "$EVIDENCE_ROOT/aot-generated-paired-binary-bytes.txt"
+
+          symbols="$executable"
+          if [[ -f "$executable.dbg" ]]; then
+            symbols="$executable.dbg"
+          fi
+          nm -S -C "$symbols" 2>/dev/null \
+            | grep -E 'AotPaired|PumpInterfaceSized|PumpSized|PumpInterfaceDeserialize|PumpDeserialize|Generated(Int|Nested64)Core' \
+            > "$EVIDENCE_ROOT/aot-generated-paired-symbol-sizes.txt" || true
+
+          objdump -d "$executable" 2>/dev/null \
+            | grep -A120 -E '<.*AotPaired(Flat|Nested)(Sized|Deserialize)' \
+            > "$EVIDENCE_ROOT/aot-generated-paired-disasm.txt" || true
+
+      - name: Run same-binary generated-binding NativeAOT control
+        shell: bash
+        run: |
+          set -euo pipefail
+          executable="$EVIDENCE_ROOT/aot/bin-generated-paired/SharpLink.StreamCodecStructCoreEvidence"
+          orders=(iwp ipw wip wpi piw pwi)
+          repetition=0
+          for order in "${orders[@]}"; do
+            repetition=$((repetition + 1))
+            "$executable" "$order" "$EVIDENCE_ROOT/aot-generated-paired-r$repetition.json"
+          done
+
+      - name: Summarize same-binary generated-binding NativeAOT control
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/stream-codec-struct-core")
+          docs = [
+              json.loads(path.read_text())
+              for path in sorted(root.glob("aot-generated-paired-r*.json"))
+          ]
+          if len(docs) != 6:
+              raise SystemExit(f"expected 6 paired runs, got {len(docs)}")
+
+          grouped = {}
+          for doc in docs:
+              for row in doc["measurements"]:
+                  key = (row["mode"], row["payload"], row["operation"], row["streamLength"])
+                  grouped.setdefault(key, []).append(row)
+
+          def median(mode, payload, operation, length, metric):
+              rows = grouped[(mode, payload, operation, length)]
+              return statistics.median(row[metric] for row in rows)
+
+          def gain(base, candidate):
+              return (base - candidate) * 100.0 / base
+
+          modes = ("wrapper-core", "prebound-core")
+          keys = sorted({
+              (payload, operation, length)
+              for mode, payload, operation, length in grouped
+              if mode == "interface"
+          })
+
+          comparisons = {}
+          for mode in modes:
+              rows = {}
+              for payload, operation, length in keys:
+                  b = median("interface", payload, operation, length, "nanosecondsPerItem")
+                  v = median(mode, payload, operation, length, "nanosecondsPerItem")
+                  bcpu = median("interface", payload, operation, length, "cpuNanosecondsPerItem")
+                  vcpu = median(mode, payload, operation, length, "cpuNanosecondsPerItem")
+                  balloc = median("interface", payload, operation, length, "allocatedBytesPerItem")
+                  valloc = median(mode, payload, operation, length, "allocatedBytesPerItem")
+                  rows[(payload, operation, length)] = {
+                      "wallGainPct": gain(b, v),
+                      "cpuGainPct": gain(bcpu, vcpu) if bcpu else 0.0,
+                      "allocDelta": valloc - balloc,
+                  }
+              comparisons[mode] = rows
+
+          def med(mode, pred=lambda k: True, field="wallGainPct"):
+              vals = [v[field] for k, v in comparisons[mode].items() if pred(k)]
+              return statistics.median(vals) if vals else None
+
+          out = {}
+          for mode in modes:
+              out[mode] = {
+                  "overall": med(mode),
+                  "flat": med(mode, lambda k: k[0] == "int"),
+                  "generatedLike": med(mode, lambda k: k[0] == "generated-like64"),
+                  "sizedSerialize": med(mode, lambda k: k[1] == "stream-sized-serialize"),
+                  "deserialize": med(mode, lambda k: k[1] == "stream-deserialize"),
+                  "long100k": med(mode, lambda k: k[2] == 100000),
+                  "cpuOverall": med(mode, field="cpuGainPct"),
+                  "maxAllocDelta": max(v["allocDelta"] for v in comparisons[mode].values()),
+              }
+
+          copy_cost = []
+          for key in keys:
+              w = comparisons["wrapper-core"][key]["wallGainPct"]
+              p = comparisons["prebound-core"][key]["wallGainPct"]
+              copy_cost.append(p - w)
+          out["preboundVsWrapperMedianPct"] = statistics.median(copy_cost)
+
+          (root / "generated-aot-paired-summary.json").write_text(
+              json.dumps(out, indent=2) + "\n"
+          )
+
+          def fmt(v):
+              return "n/a" if v is None else f"{v:+.2f}%"
+
+          lines = [
+              "# Generated wrapper -> static Core NativeAOT same-binary control",
+              "",
+              "All three paths are compiled into the same native image. Six processes rotate all measurement orders.",
+              "",
+          ]
+          for mode, title in (
+              ("wrapper-core", "Wrapper -> Core once per stream"),
+              ("prebound-core", "Prebound Core upper bound"),
+          ):
+              d = out[mode]
+              lines += [
+                  f"## {title}",
+                  "",
+                  f"- overall vs interface: {fmt(d['overall'])}",
+                  f"- flat int vs interface: {fmt(d['flat'])}",
+                  f"- generated-like64 vs interface: {fmt(d['generatedLike'])}",
+                  f"- sized serialize vs interface: {fmt(d['sizedSerialize'])}",
+                  f"- deserialize vs interface: {fmt(d['deserialize'])}",
+                  f"- 100k streams/items rows: {fmt(d['long100k'])}",
+                  f"- CPU overall vs interface: {fmt(d['cpuOverall'])}",
+                  f"- max allocation delta: {d['maxAllocDelta']:+.3f} B/item",
+                  "",
+              ]
+          lines += [
+              f"Median prebound-Core advantage over wrapper-per-stream Core: {out['preboundVsWrapperMedianPct']:+.2f}%",
+              "",
+          ]
+
+          (root / "generated-aot-paired-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Publish evidence summary
         shell: bash
         run: |
@@ -690,6 +852,8 @@ jobs:
           cat "$EVIDENCE_ROOT/generated-jit-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$EVIDENCE_ROOT/generated-aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$EVIDENCE_ROOT/generated-aot-paired-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove native binaries from artifact
         if: always()
