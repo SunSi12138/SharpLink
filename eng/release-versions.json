@@ -72,20 +72,20 @@
     {
       "name": "Runtime ABI identity",
       "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
-      "pattern": "AbiIdentity = \"sharplink-2.0-api4-rpcchannel-codec-provider-v(\\d+)\"",
+      "pattern": "AbiIdentity = \\\"sharplink-2.0-api4-static-codec-core-v(\\\\d+)\\\"",
       "published": null,
-      "current": 1,
-      "policy": "initial",
-      "reason": "First released version; historical development artifact headers are not rewritten."
+      "current": 2,
+      "policy": "increment",
+      "reason": "Generated/runtime bridge ABI now includes compile-time static Codec Core entry points."
     },
     {
       "name": "Generator ABI identity",
       "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
-      "pattern": "GeneratedAbiIdentity = \"sharplink-2.0-api4-rpcchannel-codec-provider-v(\\d+)\"",
+      "pattern": "GeneratedAbiIdentity = \\\"sharplink-2.0-api4-static-codec-core-v(\\\\d+)\\\"",
       "published": null,
-      "current": 1,
-      "policy": "initial",
-      "reason": "First released version; historical development artifact headers are not rewritten."
+      "current": 2,
+      "policy": "increment",
+      "reason": "Generated artifacts now bind static Codec Core types across RPC hot paths."
     },
     {
       "name": "Diagnostic snapshot",
