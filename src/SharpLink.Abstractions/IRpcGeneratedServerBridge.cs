@@ -50,7 +50,7 @@ public interface IRpcGeneratedServerBridge
         long contractId,
         long methodId,
         CancellationToken cancellationToken)
-        where TCodec : IRpcCodec<T>
+        where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
         => PumpOutboundStreamAsync(
             requestId,
             streamId,
