@@ -39,14 +39,15 @@ internal sealed partial class RpcSession
             cancellationToken).ConfigureAwait(false);
     }
 
-    internal ValueTask SendUnsizedStreamChunkAsync<T>(
+    internal ValueTask SendUnsizedStreamChunkAsync<T, TCodec>(
         long requestId,
         ushort streamId,
         T item,
-        IRpcCodec<T> codec,
+        TCodec codec,
         CancellationToken cancellationToken,
         RpcDeadline deadline = default,
         TimeProvider? deadlineTimeProvider = null)
+        where TCodec : IRpcCodec<T>
     {
         ArgumentNullException.ThrowIfNull(codec);
         return SerializeUnsizedStreamChunk(
@@ -81,14 +82,15 @@ internal sealed partial class RpcSession
         => Volatile.Read(ref _preCreditSerializedBudget)?
             .CompleteStream(requestId, streamId, exception);
 
-    private ValueTask SerializeUnsizedStreamChunk<T>(
+    private ValueTask SerializeUnsizedStreamChunk<T, TCodec>(
         long requestId,
         ushort streamId,
         T item,
-        IRpcCodec<T> codec,
+        TCodec codec,
         CancellationToken cancellationToken,
         RpcDeadline deadline,
         TimeProvider? deadlineTimeProvider)
+        where TCodec : IRpcCodec<T>
     {
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
