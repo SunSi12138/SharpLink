@@ -57,7 +57,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal API 4 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 4, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-2.0-api4-rpcchannel-codec-provider-v1", StringComparison.Ordinal),
+               manifest.Contains("sharplink-2.0-api4-static-codec-core-v2", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
@@ -188,11 +188,11 @@ public sealed class HelloService : IHelloService
         var proxy = generated.FirstOrDefault(static text => text.Contains("private sealed class __Proxy_"));
         if (proxy is null)
             throw new Exception("Expected generated proxy source.");
-        Ensure(proxy.Contains("InvokeUnaryAsync"), "Unary invoker");
-        Ensure(proxy.Contains("InvokeOneWayAsync"), "OneWay invoker");
-        Ensure(proxy.Contains("InvokeClientStreamingAsync"), "ClientStreaming invoker");
-        Ensure(proxy.Contains("InvokeServerStreamingAsync"), "ServerStreaming invoker");
-        Ensure(proxy.Contains("InvokeDuplexStreamingAsync"), "DuplexStreaming invoker");
+        Ensure(proxy.Contains("InvokeGeneratedUnaryAsync"), "Unary invoker");
+        Ensure(proxy.Contains("InvokeGeneratedOneWayAsync"), "OneWay invoker");
+        Ensure(proxy.Contains("InvokeGeneratedClientStreamingAsync"), "ClientStreaming invoker");
+        Ensure(proxy.Contains("InvokeGeneratedServerStreamingAsync"), "ServerStreaming invoker");
+        Ensure(proxy.Contains("InvokeGeneratedDuplexStreamingAsync"), "DuplexStreaming invoker");
         Ensure(allGenerated.Contains("readonly struct __IHelloService_SharpLinkRequest_"), "Generated request struct");
         Ensure(proxy.Contains("private readonly global::__IHelloService_SharpLinkRequestCodec_"), "Generated request codec");
         Ensure(allGenerated.Contains("Span<byte> tmp_"), "Segmented fixed-width arguments must use stack scratch");
