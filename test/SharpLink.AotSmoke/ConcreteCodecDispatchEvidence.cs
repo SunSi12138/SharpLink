@@ -463,7 +463,7 @@ internal static class ConcreteCodecDispatchEvidence
         int operations)
     {
         concrete.Reset();
-        const int value = 42;
+        var value = 42;
         for (var index = 0; index < operations; index++)
             codec.Serialize(in value, writer);
         return concrete.State;
@@ -476,7 +476,7 @@ internal static class ConcreteCodecDispatchEvidence
         int operations)
     {
         codec.Reset();
-        const int value = 42;
+        var value = 42;
         for (var index = 0; index < operations; index++)
             codec.Serialize(in value, writer);
         return codec.State;
