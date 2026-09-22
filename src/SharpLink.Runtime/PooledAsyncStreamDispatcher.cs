@@ -4,7 +4,7 @@ namespace SharpLink.Runtime;
 /// <typeparam name="T">The decoded stream item type.</typeparam>
 /// <remarks>Dispose the enumerator to release buffered items and return the dispatcher to its pool.</remarks>
 internal sealed class PooledAsyncStreamDispatcher<T> :
-    IResolvedStreamConsumptionAwareDispatcher,
+    IStreamConsumptionAwareDispatcher,
     IStreamDispatchLease,
     IStreamLocalAbortDispatcher,
     IAsyncEnumerable<T>,
@@ -471,12 +471,13 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlStreamId = streamId;
     }
 
-    public void SetResolvedBytesConsumedCallback(
+    public bool TrySetResolvedBytesConsumedCallback(
         ResolvedStreamBytesCallback? callback,
         in StreamFlowController.ResolvedReceiveCreditLease lease)
     {
         _resolvedBytesConsumed = callback;
         _receiveCreditLease = lease;
+        return true;
     }
 
     void IStreamLocalAbortDispatcher.CompleteLocalAbort(Exception? exception)
