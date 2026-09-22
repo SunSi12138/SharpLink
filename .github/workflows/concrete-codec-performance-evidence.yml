@@ -312,6 +312,49 @@ jobs:
                   )
               lines.append("")
 
+              dispatch_pairs = [
+                  ("Serialize",
+                   "dispatch-only-serialize-interface",
+                   "dispatch-only-serialize-concrete"),
+                  ("Deserialize",
+                   "dispatch-only-deserialize-interface",
+                   "dispatch-only-deserialize-concrete"),
+              ]
+              lines.extend([
+                  "### Isolated dispatch microkernel",
+                  "",
+                  "The probe uses the same sealed Codec instance shape and a no-inline minimal method body. "
+                  "Each timed sample invokes one tight loop; there is no delegate call per Codec invocation.",
+                  "",
+                  "| operation | dev interface ns/call | dev concrete ns/call | dev concrete delta | candidate interface ns/call | candidate concrete ns/call | candidate concrete delta |",
+                  "|---|---:|---:|---:|---:|---:|---:|",
+              ])
+              for operation, interface_name, concrete_name in dispatch_pairs:
+                  def summarize_dispatch(cases_by_round):
+                      interface_rows = [items[interface_name] for items in cases_by_round]
+                      concrete_rows = [items[concrete_name] for items in cases_by_round]
+                      interface_ns = statistics.median(
+                          item["medianNanosecondsPerOperation"] for item in interface_rows)
+                      concrete_ns = statistics.median(
+                          item["medianNanosecondsPerOperation"] for item in concrete_rows)
+                      paired = [
+                          (right["medianNanosecondsPerOperation"] /
+                           left["medianNanosecondsPerOperation"] - 1.0) * 100.0
+                          for left, right in zip(interface_rows, concrete_rows)
+                      ]
+                      return interface_ns, concrete_ns, statistics.median(paired)
+
+                  dev_interface, dev_concrete, dev_delta = summarize_dispatch(
+                      baseline_cases_by_round)
+                  candidate_interface, candidate_concrete, candidate_delta = summarize_dispatch(
+                      candidate_cases_by_round)
+                  lines.append(
+                      f"| {operation} | {dev_interface:.3f} | {dev_concrete:.3f} "
+                      f"| {dev_delta:+.2f}% | {candidate_interface:.3f} | "
+                      f"{candidate_concrete:.3f} | {candidate_delta:+.2f}% |"
+                  )
+              lines.append("")
+
           managed_before = int((root / "baseline-managed-assembly-size.txt").read_text())
           managed_after = int((root / "candidate-managed-assembly-size.txt").read_text())
           native_before = int((root / "aot/baseline-native-image-size.txt").read_text())
