@@ -44,15 +44,16 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
     }
 
     private readonly global::SharpLink.Generated.__SharpLinkGeneratedCodec_E73FF795487FA4FB __codec_0;
+    private readonly IRpcSizedCodec<global::System.Collections.Generic.List<string>>? __sizedCodec_0;
     private readonly bool __canExactSize;
 
     internal __SharpLinkGeneratedCodec_A2C1A7F2F97244B4(IRpcCodecProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
         __codec_0 = (global::SharpLink.Generated.__SharpLinkGeneratedCodec_E73FF795487FA4FB)provider.GetCodec<global::System.Collections.Generic.List<string>>();
+        __sizedCodec_0 = (object)__codec_0 as IRpcSizedCodec<global::System.Collections.Generic.List<string>>;
         __canExactSize = true;
-        if ((object)__codec_0 is not IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sizedCodec_0 ||
-            !__sizedCodec_0.CanExactSize)
+        if (__sizedCodec_0 is null || !__sizedCodec_0.CanExactSize)
             __canExactSize = false;
     }
 
@@ -137,7 +138,8 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
 
     private void ReleaseCapturedChildren(__SizedSnapshot snapshot)
     {
-        if ((object)__codec_0 is IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0 && snapshot.__nestedSnapshot_0 is not null)
+        var __sized_0 = __sizedCodec_0;
+        if (__sized_0 is not null && snapshot.__nestedSnapshot_0 is not null)
             __sized_0.ReleaseSnapshot(snapshot.__nestedSnapshot_0);
     }
 
@@ -151,7 +153,8 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         size = 2;
         size = checked(size + (value.Name is null ? 1 : 5 + __SharpLinkGeneratedUtf16.GetByteCount(value.Name)));
         size = checked(size + 4 + 4);
-        if ((object)__codec_0 is not IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0 ||
+        var __sized_0 = __sizedCodec_0;
+        if (__sized_0 is null ||
             !__sized_0.CanExactSize ||
             !__sized_0.TryGetEncodedSize(value.Tags, out var __nestedSize_0))
         {
@@ -176,7 +179,8 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         __snapshot.__stringByteCount_0 = __snapshot.__string_0 is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_0);
         __snapshot.__fixed_1 = value.Count;
         __snapshot.__complex_2 = value.Tags;
-        if ((object)__codec_0 is not IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0 ||
+        var __sized_0 = __sizedCodec_0;
+        if (__sized_0 is null ||
             !__sized_0.CanExactSize ||
             !__sized_0.TryGetEncodedSize(__snapshot.__complex_2, out __snapshot.__nestedSize_0, out __snapshot.__nestedSnapshot_0))
         {
@@ -218,7 +222,8 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         RpcGeneratedCodecWire.WriteUnmanaged<int>(buffer, __snapshot.__fixed_1);
         RpcGeneratedCodecWire.WriteFieldKey(buffer, 381526208U, RpcGeneratedWireType.LengthDelimited);
         var lengthToken_0 = RpcGeneratedCodecWire.BeginLength(rpcWriter);
-        if ((object)__codec_0 is IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0)
+        var __sized_0 = __sizedCodec_0;
+        if (__sized_0 is not null)
             __sized_0.SerializeSized(__snapshot.__complex_2, buffer, __snapshot.__nestedSize_0, __snapshot.__nestedSnapshot_0);
         else
             __codec_0.Serialize(__snapshot.__complex_2!, buffer);
