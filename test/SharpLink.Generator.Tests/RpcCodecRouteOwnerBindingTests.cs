@@ -216,9 +216,9 @@ public interface IStaticCoreContract : SharpLink.Sdk.IService
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
 
-        Ensure(generated.Contains("internal readonly struct CoreValue : IRpcCodec<global::CoreValue>, IRpcSizedCodec<global::CoreValue>", StringComparison.Ordinal),
+        Ensure(generated.Contains("internal readonly struct Core : IRpcCodec<global::CoreValue>, IRpcSizedCodec<global::CoreValue>", StringComparison.Ordinal),
             "native generated DTOs must expose a readonly static Core");
-        Ensure(generated.Contains(".Core;", StringComparison.Ordinal),
+        Ensure(generated.Contains(".StaticCore;", StringComparison.Ordinal),
             "generated proxy/stub construction must extract Core from the authoritative Codec instance");
         Ensure(generated.Contains("InvokeGeneratedUnaryAsync", StringComparison.Ordinal),
             "Unary must use the generated static Codec bridge");
