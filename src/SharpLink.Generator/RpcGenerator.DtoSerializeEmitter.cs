@@ -170,7 +170,7 @@ public partial class RpcGenerator
                 var index = complexIndexes[member.Name];
                 sb.AppendLine($"{indent}RpcGeneratedCodecWire.WriteFieldKey(writer, {fieldId}, RpcGeneratedWireType.LengthDelimited);");
                 sb.AppendLine($"{indent}var lengthToken_{index} = RpcGeneratedCodecWire.BeginLength(rpcWriter);");
-                sb.AppendLine($"{indent}__codec_{index}.Serialize({value}, writer);");
+                sb.AppendLine($"{indent}__codec_{index}.Serialize({value}!, writer);");
                 sb.AppendLine($"{indent}RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_{index});");
                 break;
         }
