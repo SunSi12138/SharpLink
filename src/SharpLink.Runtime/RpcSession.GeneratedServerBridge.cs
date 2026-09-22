@@ -27,6 +27,32 @@ internal sealed partial class RpcSession
         }
     }
 
+    internal IAsyncEnumerable<T> CreateGeneratedInboundStream<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        TCodec codec,
+        bool payloadNullable,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>
+    {
+        ArgumentNullException.ThrowIfNull(codec);
+        var dispatcher = PooledAsyncStreamDispatcher<T, TCodec>.Rent(
+            cancellationToken,
+            in codec,
+            payloadNullable);
+        try
+        {
+            StreamManager.Register(requestId, streamId, dispatcher);
+            return dispatcher;
+        }
+        catch (Exception registrationException)
+        {
+            dispatcher.Complete(registrationException);
+            SharpLinkAsyncCleanup.DisposeSynchronously(dispatcher);
+            throw;
+        }
+    }
+
     internal async ValueTask PumpGeneratedOutboundStreamAsync<T>(
         long requestId,
         ushort streamId,
@@ -92,6 +118,114 @@ internal sealed partial class RpcSession
                     item,
                     codec,
                     exactSizeCodec,
+                    deadline,
+                    deadlineTimeProvider,
+                    lifetimeCancellation.Token);
+                if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
+                {
+                    await send.ConfigureAwait(false);
+                }
+                else
+                {
+                    var sendTask = send.AsTask();
+                    if (!await SharpLinkTimer.WaitAsync(
+                            sendTask,
+                            deadline,
+                            deadlineTimeProvider,
+                            lifetimeCancellation.Token).ConfigureAwait(false))
+                    {
+                        deadlineWon = true;
+                        TryCancelGeneratedLifetime(lifetimeCancellation);
+                        _ = ObserveAbandonedGeneratedSendAsync(sendTask);
+                        throw CreateGeneratedStreamDeadlineExceededException();
+                    }
+                    await sendTask.ConfigureAwait(false);
+                }
+            }
+
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+            SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
+        }
+        finally
+        {
+            TryCancelGeneratedLifetime(lifetimeCancellation);
+            try
+            {
+                var dispose = enumerator.DisposeAsync();
+                if (deadlineWon && !dispose.IsCompletedSuccessfully)
+                    _ = ObserveAbandonedGeneratedDisposeAsync(dispose);
+                else
+                    await dispose.ConfigureAwait(false);
+            }
+            catch when (deadlineWon)
+            {
+                // The monotonic deadline is already terminal; a user enumerator that ignores
+                // cancellation cannot delay the RPC while its disposal completes.
+            }
+        }
+    }
+
+    internal async ValueTask PumpGeneratedStaticOutboundStreamAsync<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        TCodec codec,
+        bool payloadNullable,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
+    {
+        ArgumentNullException.ThrowIfNull(stream);
+        ArgumentNullException.ThrowIfNull(codec);
+
+        var callContext = SharpLinkCallContext.Current;
+        var deadline = callContext?.LocalRpcDeadline ?? default;
+        var deadlineTimeProvider = callContext?.DeadlineTimeProvider;
+        using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
+        var deadlineWon = false;
+        try
+        {
+            while (true)
+            {
+                var moveNext = enumerator.MoveNextAsync();
+                bool hasNext;
+                if (!deadline.HasValue || deadlineTimeProvider is null || moveNext.IsCompletedSuccessfully)
+                {
+                    hasNext = await moveNext.ConfigureAwait(false);
+                }
+                else
+                {
+                    var moveNextTask = moveNext.AsTask();
+                    if (!await SharpLinkTimer.WaitAsync(
+                            moveNextTask,
+                            deadline,
+                            deadlineTimeProvider,
+                            lifetimeCancellation.Token).ConfigureAwait(false))
+                    {
+                        deadlineWon = true;
+                        TryCancelGeneratedLifetime(lifetimeCancellation);
+                        _ = ObserveAbandonedGeneratedMoveNextAsync(moveNextTask);
+                        throw CreateGeneratedStreamDeadlineExceededException();
+                    }
+                    hasNext = await moveNextTask.ConfigureAwait(false);
+                }
+
+                if (!hasNext)
+                    break;
+
+                var item = enumerator.Current;
+                if (!payloadNullable && default(T) is null && item is null)
+                {
+                    throw new SharpLinkException(
+                        SharpLinkErrorCode.Internal,
+                        "A non-nullable RPC stream response was null.");
+                }
+
+                var send = SendGeneratedStaticStreamChunkAsync(
+                    requestId,
+                    streamId,
+                    item,
+                    codec,
                     deadline,
                     deadlineTimeProvider,
                     lifetimeCancellation.Token);
@@ -224,6 +358,41 @@ internal sealed partial class RpcSession
         catch { }
     }
 
+    private ValueTask SendGeneratedStaticStreamChunkAsync<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        T item,
+        TCodec codec,
+        RpcDeadline deadline,
+        TimeProvider? deadlineTimeProvider,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
+    {
+        if (codec.CanExactSize &&
+            codec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
+        {
+            return SendStreamChunkKnownSizeAsync(
+                requestId,
+                streamId,
+                item,
+                codec,
+                knownEncodedBytes,
+                sizedSnapshot,
+                cancellationToken,
+                deadline,
+                deadlineTimeProvider);
+        }
+
+        return SendUnsizedStreamChunkAsync(
+            requestId,
+            streamId,
+            item,
+            codec,
+            cancellationToken,
+            deadline,
+            deadlineTimeProvider);
+    }
+
     // Keep the generated-server path concrete and codec-bound. Exact-size codecs retain the
     // credit-before-serialize path; only the universal unsized fallback enters the session-owned
     // pre-credit serialized-memory admission helper.
@@ -262,16 +431,17 @@ internal sealed partial class RpcSession
             deadlineTimeProvider);
     }
 
-    internal async ValueTask SendStreamChunkKnownSizeAsync<T>(
+    internal async ValueTask SendStreamChunkKnownSizeAsync<T, TCodec>(
         long requestId,
         ushort streamId,
         T item,
-        IRpcSizedCodec<T> sizedCodec,
+        TCodec sizedCodec,
         int encodedBytes,
         IRpcSizedCodecSnapshot? sizedSnapshot,
         CancellationToken cancellationToken,
         RpcDeadline deadline = default,
         TimeProvider? deadlineTimeProvider = null)
+        where TCodec : IRpcSizedCodec<T>
     {
         var creditBytes = Math.Max(1, encodedBytes);
         var creditAcquired = false;
@@ -364,6 +534,20 @@ internal sealed class RpcSessionGeneratedServerBridge(RpcSession session) : IRpc
             payloadNullable,
             cancellationToken);
 
+    public IAsyncEnumerable<T> CreateGeneratedInboundStream<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        in TCodec codec,
+        bool payloadNullable,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>
+        => session.CreateGeneratedInboundStream(
+            requestId,
+            streamId,
+            codec,
+            payloadNullable,
+            cancellationToken);
+
     public ValueTask PumpOutboundStreamAsync<T>(
         long requestId,
         ushort streamId,
@@ -374,6 +558,24 @@ internal sealed class RpcSessionGeneratedServerBridge(RpcSession session) : IRpc
         long methodId,
         CancellationToken cancellationToken)
         => session.PumpGeneratedOutboundStreamAsync(
+            requestId,
+            streamId,
+            stream,
+            codec,
+            payloadNullable,
+            cancellationToken);
+
+    public ValueTask PumpGeneratedOutboundStreamAsync<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        in TCodec codec,
+        bool payloadNullable,
+        long contractId,
+        long methodId,
+        CancellationToken cancellationToken)
+        where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
+        => session.PumpGeneratedStaticOutboundStreamAsync(
             requestId,
             streamId,
             stream,
