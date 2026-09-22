@@ -132,7 +132,7 @@ internal sealed class ServerGeneratedBridge(
         long requestId,
         ushort streamId,
         IAsyncEnumerable<T> stream,
-        in TCodec codec,
+        TCodec codec,
         bool payloadNullable,
         long contractId,
         long methodId,

@@ -107,7 +107,7 @@ public partial class RpcGenerator
         sb.AppendLine("    }");
 
         foreach (var method in model.Methods)
-            AppendProxyMethod(sb, model, method);
+            AppendProxyMethod(sb, model, method, concreteCodecTypes);
     }
 
     private static void AppendProxyFields(
@@ -136,7 +136,11 @@ public partial class RpcGenerator
             sb.AppendLine($"    private readonly {GetCodecHotStorageType(streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)} __streamCodec_{suffix}_{index};");
     }
 
-    private static void AppendProxyMethod(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
+    private static void AppendProxyMethod(
+        StringBuilder sb,
+        RpcInterfaceModel model,
+        RpcMethodModel method,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         var suffix = GetMethodSuffix(method);
         var parameterList = string.Join(", ", method.Parameters.Select(parameter => $"{parameter.DisplayType} {EscapeIdentifier(parameter.Name)}"));
@@ -144,6 +148,13 @@ public partial class RpcGenerator
         var streamParameters = GetStreamParameters(method);
         var requestType = payloadParameters.Length == 0 ? "RpcEmptyRequest" : GetHelperTypeReference(model, GetRequestType(model, method));
         var requestCodec = payloadParameters.Length == 0 ? "RpcEmptyRequestCodec.Instance" : $"__requestCodec_{suffix}";
+        var requestCodecType = payloadParameters.Length == 0
+            ? "RpcEmptyRequestCodec"
+            : GetHelperTypeReference(model, GetRequestCodecType(model, method)) + ".Core";
+        var responseType = GetResponseType(method);
+        var responseCodecType = method.IsOneWay
+            ? string.Empty
+            : GetCodecHotStorageType(responseType, GetResponseCodecLookupType(method), concreteCodecTypes);
         var requestValue = payloadParameters.Length == 0
             ? "default(RpcEmptyRequest)"
             : $"new {requestType}({string.Join(", ", payloadParameters.Select(static parameter => EscapeIdentifier(parameter.Name)))})";
@@ -166,23 +177,23 @@ public partial class RpcGenerator
         if (method.IsStreamReturn)
         {
             invocation = streamParameters.Length == 0
-                ? $"_channel.InvokeGeneratedServerStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})"
-                : $"_channel.InvokeGeneratedDuplexStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
+                ? $"_channel.InvokeGeneratedServerStreamingAsync<{requestType}, {responseType}, {requestCodecType}, {responseCodecType}>(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})"
+                : $"_channel.InvokeGeneratedDuplexStreamingAsync<{requestType}, {responseType}, {requestCodecType}, {responseCodecType}, {streamsType}>(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
             sb.AppendLine($"        return {invocation};");
         }
         else if (method.IsOneWay)
         {
-            invocation = $"_channel.InvokeGeneratedOneWayAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, in {streamsLocal}, default, {cancellationToken})";
+            invocation = $"_channel.InvokeGeneratedOneWayAsync<{requestType}, {requestCodecType}, {streamsType}>(__method_{suffix}, in {requestLocal}, {requestCodec}, in {streamsLocal}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: false);
         }
         else if (streamParameters.Length != 0)
         {
-            invocation = $"_channel.InvokeGeneratedClientStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
+            invocation = $"_channel.InvokeGeneratedClientStreamingAsync<{requestType}, {responseType}, {requestCodecType}, {responseCodecType}, {streamsType}>(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
         else
         {
-            invocation = $"_channel.InvokeGeneratedUnaryAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})";
+            invocation = $"_channel.InvokeGeneratedUnaryAsync<{requestType}, {responseType}, {requestCodecType}, {responseCodecType}>(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
 

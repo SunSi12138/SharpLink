@@ -165,7 +165,7 @@ public partial class RpcGenerator
             codecLookupType,
             concreteCodecTypes);
         return TryGetStaticGeneratedCodecCoreType(codecLookupType, concreteCodecTypes, out _)
-            ? resolved + ".StaticCore"
+            ? $"({resolved}).StaticCore"
             : resolved;
     }
 

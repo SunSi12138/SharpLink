@@ -50,7 +50,7 @@ namespace SharpLink.Abstractions
     public interface IRpcClientStreamSink
     {
         System.Threading.Tasks.Task SendClientStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, System.Threading.CancellationToken cancellationToken = default);
-        System.Threading.Tasks.Task SendGeneratedClientStreamAsync<T, TCodec>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, in TCodec codec, System.Threading.CancellationToken cancellationToken = default)
+        System.Threading.Tasks.Task SendGeneratedClientStreamAsync<T, TCodec>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, TCodec codec, System.Threading.CancellationToken cancellationToken = default)
             where TCodec : SharpLink.Abstractions.IRpcCodec<T>, SharpLink.Abstractions.IRpcSizedCodec<T>;
     }
     public interface IRpcClientStreamWriter
@@ -99,7 +99,7 @@ namespace SharpLink.Abstractions
             where TCodec : SharpLink.Abstractions.IRpcCodec<T>;
         System.Collections.Generic.IAsyncEnumerable<T> CreateInboundStream<T>(long requestId, ushort streamId, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, System.Threading.CancellationToken cancellationToken);
         void EnsureUserCodeEntry(long requestId);
-        System.Threading.Tasks.ValueTask PumpGeneratedOutboundStreamAsync<T, TCodec>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, in TCodec codec, bool payloadNullable, long contractId, long methodId, System.Threading.CancellationToken cancellationToken)
+        System.Threading.Tasks.ValueTask PumpGeneratedOutboundStreamAsync<T, TCodec>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, TCodec codec, bool payloadNullable, long contractId, long methodId, System.Threading.CancellationToken cancellationToken)
             where TCodec : SharpLink.Abstractions.IRpcCodec<T>, SharpLink.Abstractions.IRpcSizedCodec<T>;
         System.Threading.Tasks.ValueTask PumpOutboundStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, long contractId, long methodId, System.Threading.CancellationToken cancellationToken);
     }
