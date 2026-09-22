@@ -368,6 +368,7 @@ internal sealed class ClientConnection :
                 exactSizeCodec = null;
 
             await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
+            var sendCreditLease = default(StreamFlowController.ResolvedSendCreditLease);
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -379,7 +380,7 @@ internal sealed class ClientConnection :
                 if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
                     break;
 
-                await Session.SendClientStreamChunkAsync(
+                sendCreditLease = await Session.SendClientStreamChunkWithCreditLeaseAsync(
                     requestId,
                     streamId,
                     enumerator.Current,
@@ -387,7 +388,8 @@ internal sealed class ClientConnection :
                     exactSizeCodec,
                     deadline,
                     _timeProvider,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    sendCreditLease).ConfigureAwait(false);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
