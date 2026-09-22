@@ -342,14 +342,93 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine($"    internal readonly struct CoreValue : IRpcCodec<{requestType}>");
         sb.AppendLine("    {");
-        sb.AppendLine($"        private readonly {codecType} __owner;");
-        sb.AppendLine($"        internal CoreValue({codecType} owner) => __owner = owner;");
+        foreach (var parameter in complex)
+            sb.AppendLine($"        private readonly {GetCodecHotStorageType(parameter.DisplayType, parameter.Type, concreteCodecTypes)} __codec_{parameter.Name};");
+        sb.AppendLine();
+        sb.AppendLine($"        internal CoreValue({codecType} owner)");
+        sb.AppendLine("        {");
+        foreach (var parameter in complex)
+        {
+            var expression = TryGetStaticGeneratedCodecCoreType(parameter.Type, concreteCodecTypes, out _)
+                ? $"owner.__codec_{parameter.Name}.Core"
+                : $"owner.__codec_{parameter.Name}";
+            sb.AppendLine($"            __codec_{parameter.Name} = {expression};");
+        }
+        sb.AppendLine("        }");
         sb.AppendLine();
         sb.AppendLine($"        public void Serialize(in {requestType} value, IBufferWriter<byte> writer)");
-        sb.AppendLine("            => __owner.Serialize(in value, writer);");
+        sb.AppendLine("        {");
+        if (blittable.Length != 0)
+        {
+            var total = string.Join(" + ", blittable.Select(parameter => GetInlineSizeToken(parameter.Type)));
+            sb.AppendLine($"            var fixedSize = {total};");
+            sb.AppendLine("            var fixedSpan = writer.GetSpan(fixedSize);");
+            sb.AppendLine("            var fixedOffset = 0;");
+            foreach (var parameter in blittable)
+            {
+                var size = GetInlineSizeToken(parameter.Type);
+                if (IsBooleanType(parameter.Type))
+                    sb.AppendLine($"            fixedSpan[fixedOffset] = value.{EscapeIdentifier(parameter.Name)} ? (byte)1 : (byte)0;");
+                else
+                    sb.AppendLine($"            Unsafe.WriteUnaligned(ref System.Runtime.InteropServices.MemoryMarshal.GetReference(fixedSpan.Slice(fixedOffset, {size})), value.{EscapeIdentifier(parameter.Name)});");
+                sb.AppendLine($"            fixedOffset += {size};");
+            }
+            sb.AppendLine("            writer.Advance(fixedSize);");
+        }
+        if (complex.Length != 0)
+            sb.AppendLine("            var rpcWriter = writer as IRpcByteBufferWriter ?? throw new InvalidOperationException(\"Generated request codecs require the SharpLink packet writer.\");");
+        for (var index = 0; index < complex.Length; index++)
+        {
+            var parameter = complex[index];
+            sb.AppendLine($"            var lengthOffset_{index} = rpcWriter.WrittenCount;");
+            sb.AppendLine("            writer.Advance(sizeof(int));");
+            sb.AppendLine($"            var start_{index} = rpcWriter.WrittenCount;");
+            sb.AppendLine($"            __codec_{parameter.Name}.Serialize(value.{EscapeIdentifier(parameter.Name)}!, writer);");
+            sb.AppendLine($"            var length_{index} = rpcWriter.WrittenCount - start_{index};");
+            sb.AppendLine($"            var written_{index} = rpcWriter.WrittenSpan;");
+            sb.AppendLine($"            BinaryPrimitives.WriteInt32LittleEndian(written_{index}.Slice(lengthOffset_{index}, sizeof(int)), length_{index});");
+        }
+        sb.AppendLine("        }");
         sb.AppendLine();
         sb.AppendLine($"        public {requestType} Deserialize(in ReadOnlySequence<byte> payload)");
-        sb.AppendLine("            => __owner.Deserialize(in payload);");
+        sb.AppendLine("        {");
+        sb.AppendLine("            var reader = new SequenceReader<byte>(payload);");
+        foreach (var parameter in blittable)
+        {
+            var size = GetInlineSizeToken(parameter.Type);
+            if (IsBooleanType(parameter.Type))
+            {
+                sb.AppendLine($"            if (!reader.TryRead(out var marker_{parameter.Name}) || marker_{parameter.Name} is not (0 or 1))");
+                sb.AppendLine($"                throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' has an invalid Boolean marker.\");");
+                sb.AppendLine($"            var value_{parameter.Name} = marker_{parameter.Name} == 1;");
+                continue;
+            }
+            sb.AppendLine($"            if (reader.Remaining < {size}) throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' is truncated.\");");
+            sb.AppendLine($"            {parameter.Type} value_{parameter.Name};");
+            sb.AppendLine($"            if (reader.UnreadSpan.Length >= {size})");
+            sb.AppendLine($"                value_{parameter.Name} = Unsafe.ReadUnaligned<{parameter.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(reader.UnreadSpan));");
+            sb.AppendLine("            else");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                Span<byte> temporary_{parameter.Name} = stackalloc byte[{size}];");
+            sb.AppendLine($"                if (!reader.TryCopyTo(temporary_{parameter.Name})) throw RpcGeneratedCodecWire.DataLoss(\"Request field is truncated.\");");
+            sb.AppendLine($"                value_{parameter.Name} = Unsafe.ReadUnaligned<{parameter.Type}>(in System.Runtime.InteropServices.MemoryMarshal.GetReference(temporary_{parameter.Name}));");
+            sb.AppendLine("            }");
+            sb.AppendLine($"            reader.Advance({size});");
+        }
+        foreach (var parameter in complex)
+        {
+            sb.AppendLine($"            if (!reader.TryReadLittleEndian(out int length_{parameter.Name}) || length_{parameter.Name} < 0 || reader.Remaining < length_{parameter.Name})");
+            sb.AppendLine($"                throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' has an invalid length.\");");
+            sb.AppendLine($"            var payload_{parameter.Name} = reader.UnreadSequence.Slice(0, length_{parameter.Name});");
+            var nullGuard = parameter.IsValueType || parameter.IsNullableReference
+                ? ""
+                : $" ?? throw RpcGeneratedCodecWire.DataLoss(\"Request field '{parameter.Name}' is null.\")";
+            sb.AppendLine($"            var value_{parameter.Name} = __codec_{parameter.Name}.Deserialize(payload_{parameter.Name}){nullGuard};");
+            sb.AppendLine($"            reader.Advance(length_{parameter.Name});");
+        }
+        sb.AppendLine("            if (reader.Remaining != 0) throw RpcGeneratedCodecWire.DataLoss(\"Request contains trailing data.\");");
+        sb.AppendLine($"            return new {requestType}({string.Join(", ", parameters.Select(static parameter => $"value_{parameter.Name}"))});");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine("}");
     }
