@@ -20,6 +20,35 @@ public class SendStreamChunkKnownSizeTests
             "the sized path must emit a byte-for-byte identical StreamData frame");
     }
 
+
+    [Test]
+    public async Task StaticCoreSizedPumpShouldReleaseSnapshotExactlyOnce()
+    {
+        var (session, input, output) = CreateFlowControlledSession(streamWindow: 64, connectionWindow: 256);
+        await using var _ = session;
+        var tracker = new StaticSnapshotTracker();
+        var codec = new StaticSizedIntCore(tracker);
+
+        await new RpcSessionGeneratedServerBridge(session).PumpGeneratedOutboundStreamAsync(
+            73,
+            0,
+            SingleValue(23),
+            in codec,
+            payloadNullable: false,
+            contractId: 101,
+            methodId: 202,
+            CancellationToken.None);
+
+        var frames = await ReadFramePayloadsAsync(session, output, expectedRequestId: 73);
+        Ensure(frames.Count == 2, "static Core pump must emit one data frame and one terminal frame");
+        Ensure(tracker.Created == 1, "static Core sizing must create exactly one snapshot");
+        Ensure(tracker.Serialized == 1, "static Core sized serialization must consume the snapshot exactly once");
+        Ensure(tracker.Released == 1, "static Core sized serialization must release the snapshot exactly once");
+
+        await output.Reader.CompleteAsync();
+        await input.Writer.CompleteAsync();
+    }
+
     [Test]
     public async Task SizeMismatchShouldFailSafelyAndRefundCreditExactlyOnce()
     {
@@ -382,6 +411,69 @@ public class SendStreamChunkKnownSizeTests
         var span = buffer.GetSpan(sizeof(int));
         BinaryPrimitives.WriteInt32LittleEndian(span, value);
         buffer.Advance(sizeof(int));
+    }
+
+    private sealed class StaticSnapshotTracker
+    {
+        internal int Created;
+        internal int Serialized;
+        internal int Released;
+    }
+
+    private sealed class StaticSnapshot(StaticSnapshotTracker tracker) : IRpcSizedCodecSnapshot
+    {
+        internal StaticSnapshotTracker Tracker { get; } = tracker;
+        internal int Released;
+    }
+
+    private readonly struct StaticSizedIntCore(StaticSnapshotTracker tracker) :
+        IRpcCodec<int>,
+        IRpcSizedCodec<int>
+    {
+        public bool CanExactSize => true;
+
+        public void Serialize(in int value, IBufferWriter<byte> buffer) => WriteInt(value, buffer);
+
+        public int Deserialize(in ReadOnlySequence<byte> buffer)
+            => BinaryPrimitives.ReadInt32LittleEndian(buffer.FirstSpan);
+
+        public bool TryGetEncodedSize(in int value, out int size)
+        {
+            size = sizeof(int);
+            return true;
+        }
+
+        public bool TryGetEncodedSize(
+            in int value,
+            out int size,
+            out IRpcSizedCodecSnapshot? snapshot)
+        {
+            Interlocked.Increment(ref tracker.Created);
+            size = sizeof(int);
+            snapshot = new StaticSnapshot(tracker);
+            return true;
+        }
+
+        public void SerializeSized(
+            in int value,
+            IBufferWriter<byte> buffer,
+            int size,
+            IRpcSizedCodecSnapshot? snapshot)
+        {
+            if (snapshot is not StaticSnapshot captured || !ReferenceEquals(captured.Tracker, tracker))
+                throw new InvalidOperationException("static Core sized serialization lost its snapshot");
+            Interlocked.Increment(ref tracker.Serialized);
+            WriteInt(value, buffer);
+        }
+
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+        {
+            if (snapshot is not StaticSnapshot captured || !ReferenceEquals(captured.Tracker, tracker))
+                throw new InvalidOperationException("static Core snapshot release received the wrong snapshot");
+            if (Interlocked.Exchange(ref captured.Released, 1) != 0)
+                throw new InvalidOperationException("static Core snapshot was released more than once");
+            Interlocked.Increment(ref tracker.Released);
+        }
     }
 
     private sealed class NonSizedIntCodec : IRpcCodec<int>
