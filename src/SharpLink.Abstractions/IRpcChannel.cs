@@ -229,6 +229,16 @@ public interface IRpcClientStreamSink
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Sends a generated client stream while preserving a statically known Codec type.</summary>
+    Task SendGeneratedClientStreamAsync<T, TCodec>(
+        long requestId,
+        ushort streamId,
+        IAsyncEnumerable<T> stream,
+        in TCodec codec,
+        CancellationToken cancellationToken = default)
+        where TCodec : IRpcCodec<T>
+        => SendClientStreamAsync(requestId, streamId, stream, codec, cancellationToken);
 }
 
 /// <summary>Zero-allocation stream writer used by methods without client streams.</summary>
@@ -297,4 +307,68 @@ public interface IRpcChannel : IRpcClientStreamSink
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter;
+
+    /// <summary>Invokes a generated unary RPC while preserving statically known Codec types.</summary>
+    ValueTask<TResponse> InvokeGeneratedUnaryAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
+        RpcMethodDescriptor method,
+        in TRequest request,
+        in TRequestCodec requestCodec,
+        in TResponseCodec responseCodec,
+        SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken = default)
+        where TRequestCodec : IRpcCodec<TRequest>
+        where TResponseCodec : IRpcCodec<TResponse>
+        => InvokeUnaryAsync(method, in request, requestCodec, responseCodec, metadata, cancellationToken);
+
+    /// <summary>Invokes a generated one-way RPC while preserving a statically known request Codec type.</summary>
+    ValueTask InvokeGeneratedOneWayAsync<TRequest, TRequestCodec, TStreams>(
+        RpcMethodDescriptor method,
+        in TRequest request,
+        in TRequestCodec requestCodec,
+        in TStreams streams,
+        SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken = default)
+        where TRequestCodec : IRpcCodec<TRequest>
+        where TStreams : struct, IRpcClientStreamWriter
+        => InvokeOneWayAsync(method, in request, requestCodec, in streams, metadata, cancellationToken);
+
+    /// <summary>Invokes a generated client-streaming RPC while preserving statically known Codec types.</summary>
+    ValueTask<TResponse> InvokeGeneratedClientStreamingAsync<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
+        RpcMethodDescriptor method,
+        in TRequest request,
+        in TRequestCodec requestCodec,
+        in TResponseCodec responseCodec,
+        in TStreams streams,
+        SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken = default)
+        where TRequestCodec : IRpcCodec<TRequest>
+        where TResponseCodec : IRpcCodec<TResponse>
+        where TStreams : struct, IRpcClientStreamWriter
+        => InvokeClientStreamingAsync(method, in request, requestCodec, responseCodec, in streams, metadata, cancellationToken);
+
+    /// <summary>Invokes a generated server-streaming RPC while preserving statically known Codec types.</summary>
+    IAsyncEnumerable<TResponse> InvokeGeneratedServerStreamingAsync<TRequest, TResponse, TRequestCodec, TResponseCodec>(
+        RpcMethodDescriptor method,
+        in TRequest request,
+        in TRequestCodec requestCodec,
+        in TResponseCodec responseCodec,
+        SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken = default)
+        where TRequestCodec : IRpcCodec<TRequest>
+        where TResponseCodec : IRpcCodec<TResponse>
+        => InvokeServerStreamingAsync(method, in request, requestCodec, responseCodec, metadata, cancellationToken);
+
+    /// <summary>Invokes a generated duplex-streaming RPC while preserving statically known Codec types.</summary>
+    IAsyncEnumerable<TResponse> InvokeGeneratedDuplexStreamingAsync<TRequest, TResponse, TRequestCodec, TResponseCodec, TStreams>(
+        RpcMethodDescriptor method,
+        in TRequest request,
+        in TRequestCodec requestCodec,
+        in TResponseCodec responseCodec,
+        in TStreams streams,
+        SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken = default)
+        where TRequestCodec : IRpcCodec<TRequest>
+        where TResponseCodec : IRpcCodec<TResponse>
+        where TStreams : struct, IRpcClientStreamWriter
+        => InvokeDuplexStreamingAsync(method, in request, requestCodec, responseCodec, in streams, metadata, cancellationToken);
 }
