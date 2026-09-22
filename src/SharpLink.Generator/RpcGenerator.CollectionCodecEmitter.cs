@@ -59,7 +59,7 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine("    internal Core Core => new(this);");
         sb.AppendLine();
-        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>");
+        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("    {");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
@@ -100,6 +100,15 @@ public partial class RpcGenerator
         AppendCollectionRead(read, model);
         sb.Append(Indent(read.ToString(), "    "));
         sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        public bool CanExactSize => false;");
+        sb.AppendLine($"        public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
+        sb.AppendLine("        { size = 0; return false; }");
+        sb.AppendLine($"        public bool TryGetEncodedSize(in {model.TypeName} value, out int size, out IRpcSizedCodecSnapshot? snapshot)");
+        sb.AppendLine("        { size = 0; snapshot = null; return false; }");
+        sb.AppendLine($"        public void SerializeSized(in {model.TypeName} value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)");
+        sb.AppendLine("            => Serialize(in value, buffer);");
+        sb.AppendLine("        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot) { }");
         sb.AppendLine("    }");
     }
 
