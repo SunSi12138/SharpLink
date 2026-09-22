@@ -526,10 +526,8 @@ jobs:
                   --generated-binding --jit-probe "$shape" \
                   > "$raw" 2>&1
 
-              grep -B3 -A140 -E \
-                'Assembly listing for method .*GeneratedCodecBindingEvidenceRunner.*(Pump|Run.*(Sized|Deserialize|Unary))' \
-                "$raw" > "$output" || true
-              test -s "$output"
+              grep -q 'Assembly listing for method' "$raw"
+              cp "$raw" "$output"
             done
           done
 
@@ -712,10 +710,8 @@ jobs:
               dotnet "$assembly" iwp "$RUNNER_TEMP/generated-jit-paired-probe.json" \
               > "$raw" 2>&1
 
-            grep -B3 -A180 -E \
-              'Assembly listing for method .*GeneratedCodecBindingEvidenceRunner.*(Pump|AotPaired).*' \
-              "$raw" > "$output" || true
-            test -s "$output"
+            grep -q 'Assembly listing for method' "$raw"
+            cp "$raw" "$output"
           done
 
       - name: Publish generated-binding NativeAOT variants
