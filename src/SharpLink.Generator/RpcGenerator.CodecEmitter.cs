@@ -151,7 +151,7 @@ public partial class RpcGenerator
         IReadOnlyDictionary<string, string> concreteCodecTypes)
         => TryGetStaticGeneratedCodecCoreType(codecLookupType, concreteCodecTypes, out var coreType)
             ? coreType
-            : GetCodecStorageType(payloadType, codecLookupType, concreteCodecTypes);
+            : $"IRpcCodec<{payloadType}>";
 
     private static string GetCodecHotResolveExpression(
         string providerExpression,
@@ -159,15 +159,24 @@ public partial class RpcGenerator
         string codecLookupType,
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
+        if (!TryGetStaticGeneratedCodecCoreType(codecLookupType, concreteCodecTypes, out _))
+            return $"{providerExpression}.GetCodec<{payloadType}>()";
+
         var resolved = GetCodecResolveExpression(
             providerExpression,
             payloadType,
             codecLookupType,
             concreteCodecTypes);
-        return TryGetStaticGeneratedCodecCoreType(codecLookupType, concreteCodecTypes, out _)
-            ? $"({resolved}).StaticCore"
-            : resolved;
+        return $"({resolved}).StaticCore";
     }
+
+    private static string GetCodecHotBoundExpression(
+        string boundExpression,
+        string codecLookupType,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
+        => TryGetStaticGeneratedCodecCoreType(codecLookupType, concreteCodecTypes, out _)
+            ? $"{boundExpression}.StaticCore"
+            : boundExpression;
 
     private static string GetWireType(int fixedSize) => fixedSize switch
     {
