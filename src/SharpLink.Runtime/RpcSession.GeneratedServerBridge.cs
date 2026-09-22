@@ -35,7 +35,8 @@ internal sealed partial class RpcSession
         CancellationToken cancellationToken)
         where TCodec : IRpcCodec<T>
     {
-        ArgumentNullException.ThrowIfNull(codec);
+        if (default(TCodec) is null)
+            ArgumentNullException.ThrowIfNull(codec);
         var dispatcher = PooledAsyncStreamDispatcher<T, TCodec>.Rent(
             cancellationToken,
             in codec,
@@ -175,7 +176,8 @@ internal sealed partial class RpcSession
         where TCodec : IRpcCodec<T>, IRpcSizedCodec<T>
     {
         ArgumentNullException.ThrowIfNull(stream);
-        ArgumentNullException.ThrowIfNull(codec);
+        if (default(TCodec) is null)
+            ArgumentNullException.ThrowIfNull(codec);
 
         var callContext = SharpLinkCallContext.Current;
         var deadline = callContext?.LocalRpcDeadline ?? default;

@@ -12,8 +12,10 @@ internal sealed partial class SharpLinkClient
         where TRequestCodec : IRpcCodec<TRequest>
         where TResponseCodec : IRpcCodec<TResponse>
     {
-        ArgumentNullException.ThrowIfNull(requestCodec);
-        ArgumentNullException.ThrowIfNull(responseCodec);
+        if (default(TRequestCodec) is null)
+            ArgumentNullException.ThrowIfNull(requestCodec);
+        if (default(TResponseCodec) is null)
+            ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
@@ -62,7 +64,8 @@ internal sealed partial class SharpLinkClient
         where TRequestCodec : IRpcCodec<TRequest>
         where TStreams : struct, IRpcClientStreamWriter
     {
-        ArgumentNullException.ThrowIfNull(requestCodec);
+        if (default(TRequestCodec) is null)
+            ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
@@ -108,8 +111,10 @@ internal sealed partial class SharpLinkClient
         where TResponseCodec : IRpcCodec<TResponse>
         where TStreams : struct, IRpcClientStreamWriter
     {
-        ArgumentNullException.ThrowIfNull(requestCodec);
-        ArgumentNullException.ThrowIfNull(responseCodec);
+        if (default(TRequestCodec) is null)
+            ArgumentNullException.ThrowIfNull(requestCodec);
+        if (default(TResponseCodec) is null)
+            ArgumentNullException.ThrowIfNull(responseCodec);
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
@@ -156,8 +161,10 @@ internal sealed partial class SharpLinkClient
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
-        ArgumentNullException.ThrowIfNull(requestCodec);
-        ArgumentNullException.ThrowIfNull(responseCodec);
+        if (default(TRequestCodec) is null)
+            ArgumentNullException.ThrowIfNull(requestCodec);
+        if (default(TResponseCodec) is null)
+            ArgumentNullException.ThrowIfNull(responseCodec);
         EnsureLogicalCallProgress(control);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
@@ -203,8 +210,10 @@ internal sealed partial class SharpLinkClient
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: false, interceptors);
-        ArgumentNullException.ThrowIfNull(requestCodec);
-        ArgumentNullException.ThrowIfNull(responseCodec);
+        if (default(TRequestCodec) is null)
+            ArgumentNullException.ThrowIfNull(requestCodec);
+        if (default(TResponseCodec) is null)
+            ArgumentNullException.ThrowIfNull(responseCodec);
         EnsureLogicalCallProgress(control);
         Interlocked.Increment(ref _activeLogicalInvocations);
         try

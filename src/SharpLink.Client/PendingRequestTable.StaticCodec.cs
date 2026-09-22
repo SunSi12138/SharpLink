@@ -13,7 +13,8 @@ internal sealed partial class PendingRequestTable
         bool responseNullable = false)
         where TCodec : IRpcCodec<T>
     {
-        ArgumentNullException.ThrowIfNull(responseCodec);
+        if (default(TCodec) is null)
+            ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRentGenerated<T, TCodec>(
                 in responseCodec,

@@ -27,7 +27,8 @@ internal sealed class RpcRequestOperation<T, TCodec> : IValueTaskSource<T>, IRpc
         bool hasResponsePayload = true,
         bool responseNullable = false)
     {
-        ArgumentNullException.ThrowIfNull(codec);
+        if (default(TCodec) is null)
+            ArgumentNullException.ThrowIfNull(codec);
         Id = id;
         _codec = codec;
         _hasResponsePayload = hasResponsePayload;

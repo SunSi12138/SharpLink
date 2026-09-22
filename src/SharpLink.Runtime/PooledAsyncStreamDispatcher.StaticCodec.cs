@@ -128,7 +128,8 @@ internal sealed class PooledAsyncStreamDispatcher<T, TCodec> :
         in TCodec codec,
         bool payloadNullable)
     {
-        ArgumentNullException.ThrowIfNull(codec);
+        if (default(TCodec) is null)
+            ArgumentNullException.ThrowIfNull(codec);
         if (!Pool.TryPop(out var dispatcher))
             dispatcher = new PooledAsyncStreamDispatcher<T, TCodec>();
         else
