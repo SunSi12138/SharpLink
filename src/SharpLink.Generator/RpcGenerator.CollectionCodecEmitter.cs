@@ -46,8 +46,61 @@ public partial class RpcGenerator
         AppendCollectionRead(sb, model);
         sb.AppendLine("    }");
         AppendFactory(sb, model);
+        AppendCollectionStaticCore(sb, model, concreteCodecTypes);
         sb.AppendLine("}");
         sb.AppendLine();
+    }
+
+    private static void AppendCollectionStaticCore(
+        StringBuilder sb,
+        GeneratedCodecModel model,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
+    {
+        sb.AppendLine();
+        sb.AppendLine("    internal Core Core => new(this);");
+        sb.AppendLine();
+        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>");
+        sb.AppendLine("    {");
+        if (model.Kind == GeneratedCodecKind.Dictionary)
+        {
+            sb.AppendLine($"        private readonly {GetCodecStorageType(model.KeyType!, model.KeyType!, concreteCodecTypes)} __keyCodec;");
+            sb.AppendLine($"        private readonly {GetCodecStorageType(model.ValueType!, model.ValueType!, concreteCodecTypes)} __valueCodec;");
+        }
+        else
+        {
+            sb.AppendLine($"        private readonly {GetCodecStorageType(model.ElementType!, model.ElementType!, concreteCodecTypes)} __elementCodec;");
+        }
+        sb.AppendLine();
+        sb.AppendLine($"        internal Core({model.CodecName} owner)");
+        sb.AppendLine("        {");
+        if (model.Kind == GeneratedCodecKind.Dictionary)
+        {
+            sb.AppendLine("            __keyCodec = owner.__keyCodec;");
+            sb.AppendLine("            __valueCodec = owner.__valueCodec;");
+        }
+        else
+        {
+            sb.AppendLine("            __elementCodec = owner.__elementCodec;");
+        }
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine($"        public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            ArgumentNullException.ThrowIfNull(writer);");
+        sb.AppendLine("            var rpcWriter = writer as IRpcByteBufferWriter ?? throw new InvalidOperationException(\"Generated collection Codecs require the SharpLink packet writer.\");");
+        var write = new StringBuilder();
+        AppendCollectionWrite(write, model);
+        sb.Append(Indent(write.ToString(), "    "));
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        var returnType = model.IsReferenceType ? model.TypeName + "?" : model.TypeName;
+        sb.AppendLine($"        public {returnType} Deserialize(in ReadOnlySequence<byte> buffer)");
+        sb.AppendLine("        {");
+        var read = new StringBuilder();
+        AppendCollectionRead(read, model);
+        sb.Append(Indent(read.ToString(), "    "));
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
     }
 
     private static void AppendCollectionWrite(StringBuilder sb, GeneratedCodecModel model)
