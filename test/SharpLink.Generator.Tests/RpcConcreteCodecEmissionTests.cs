@@ -64,6 +64,8 @@ public interface IConcreteCodecContract : SharpLink.Sdk.IService
                 line.Contains("private readonly global::SharpLink.Generated.__SharpLinkGeneratedCodec_", StringComparison.Ordinal) &&
                 line.Contains("__codec_value", StringComparison.Ordinal)),
             "generated request Codec dependencies must retain the concrete generated Codec type");
+        Ensure(generated.Contains("__codec_value = owner.__codec_value.StaticCore;", StringComparison.Ordinal),
+            "generated request static Core must retain a nested generated child Core rather than the provider-facing class Codec");
         Ensure(lines.Any(static line =>
                 line.Contains("private readonly global::SharpLink.Generated.__SharpLinkGeneratedCodec_", StringComparison.Ordinal) &&
                 line.Contains("__codec_0", StringComparison.Ordinal)),
