@@ -189,6 +189,8 @@ public sealed class RouteAdapter : TestRouteAdapterBase
     public Task NativeGeneratedCodecsShouldUseStaticCoreAcrossAllRpcShapes()
     {
         var source = BuildRouteSource("""
+#nullable enable
+
 public sealed class CoreChild
 {
     public int Value { get; set; }
