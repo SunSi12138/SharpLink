@@ -142,7 +142,7 @@ public partial class RpcGenerator
                 member.CodecLookupTypeName,
                 concreteCodecTypes);
             sb.AppendLine($"        private readonly {childStorageType} __codec_{index};");
-            if (!member.Nullable &&
+            if (member.NonNullableReference &&
                 TryGetStaticGeneratedCodecCoreType(
                     member.CodecLookupTypeName,
                     concreteCodecTypes,
@@ -169,7 +169,7 @@ public partial class RpcGenerator
         {
             var member = complexMembers[index];
             sb.AppendLine($"            __codec_{index} = owner.__codec_{index};");
-            if (member.Nullable ||
+            if (!member.NonNullableReference ||
                 !TryGetStaticGeneratedCodecCoreType(
                     member.CodecLookupTypeName,
                     concreteCodecTypes,
