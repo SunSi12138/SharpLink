@@ -168,7 +168,9 @@ public partial class RpcGenerator
         coreMethods.AppendLine();
         AppendDtoEncodedSizeMethod(coreMethods, model, complexIndexes, appendSnapshotType: false);
         coreMethods.AppendLine();
-        AppendDtoDeserializeMethod(coreMethods, model, complexIndexes);
+        var coreReturnType = model.IsReferenceType ? model.TypeName + "?" : model.TypeName;
+        coreMethods.AppendLine($"    public {coreReturnType} Deserialize(in ReadOnlySequence<byte> buffer)");
+        coreMethods.AppendLine("        => __owner.Deserialize(in buffer);");
         sb.Append(Indent(coreMethods.ToString(), "    "));
         sb.AppendLine("    }");
     }

@@ -239,6 +239,15 @@ public interface IStaticCoreContract : SharpLink.Sdk.IService
             "small production Core graphs must capture the authoritative concrete child Codec directly");
         Ensure(!generated.Contains("owner.__codec_0.StaticCore", StringComparison.Ordinal),
             "hybrid Core layout must not recursively capture nested generated Core structs into async state machines");
+        var smallCoreStart = generated.IndexOf(
+            "internal readonly struct Core : IRpcCodec<global::CoreValue>, IRpcSizedCodec<global::CoreValue>",
+            StringComparison.Ordinal);
+        var smallCoreEnd = generated.IndexOf("\n    }\n}", smallCoreStart, StringComparison.Ordinal);
+        Ensure(smallCoreStart >= 0 && smallCoreEnd > smallCoreStart,
+            "small native generated DTO Core must have a complete generated body");
+        var smallCore = generated.Substring(smallCoreStart, smallCoreEnd - smallCoreStart);
+        Ensure(smallCore.Contains("=> __owner.Deserialize(in buffer);", StringComparison.Ordinal),
+            "hybrid DTO Core must keep static routing while delegating deserialize to the authoritative concrete owner");
         var wideCoreStart = generated.IndexOf(
             "internal readonly struct Core : IRpcCodec<global::CoreWideValue>, IRpcSizedCodec<global::CoreWideValue>",
             StringComparison.Ordinal);

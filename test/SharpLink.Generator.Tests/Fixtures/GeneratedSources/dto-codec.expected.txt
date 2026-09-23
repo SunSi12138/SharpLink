@@ -487,54 +487,7 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         }
 
         public global::FixturePayload? Deserialize(in ReadOnlySequence<byte> buffer)
-        {
-            var reader = new SequenceReader<byte>(buffer);
-            if (!RpcGeneratedCodecWire.ReadPresence(ref reader))
-            {
-                RpcGeneratedCodecWire.EnsureFullyConsumed(reader);
-                return null;
-            }
-            string local_Name = default!;
-            var seen_Name = false;
-            int local_Count = default!;
-            global::System.Collections.Generic.List<string> local_Tags = default!;
-            while (RpcGeneratedCodecWire.TryReadField(ref reader, out var fieldId, out var wireType))
-            {
-                switch (fieldId)
-                {
-                    case 7U:
-                        seen_Name = true;
-                        if (wireType == RpcGeneratedWireType.Null)
-                            local_Name = null!;
-                        else
-                        {
-                            RpcGeneratedCodecWire.EnsureWireType(wireType, RpcGeneratedWireType.LengthDelimited);
-                            local_Name = RpcGeneratedCodecWire.ReadString(ref reader);
-                        }
-                        break;
-                    case 31963284U:
-                        RpcGeneratedCodecWire.EnsureWireType(wireType, RpcGeneratedWireType.Fixed4);
-                        local_Count = RpcGeneratedCodecWire.ReadUnmanaged<int>(ref reader);
-                        break;
-                    case 381526208U:
-                        RpcGeneratedCodecWire.EnsureWireType(wireType, RpcGeneratedWireType.LengthDelimited);
-                        local_Tags = __codec_0.Deserialize(RpcGeneratedCodecWire.ReadLengthDelimited(ref reader))!;
-                        break;
-                    default:
-                        RpcGeneratedCodecWire.SkipField(ref reader, wireType);
-                        break;
-                }
-            }
-            RpcGeneratedCodecWire.EnsureFullyConsumed(reader);
-            if (!seen_Name)
-                throw RpcGeneratedCodecWire.DataLoss("Missing required RPC member 'Name'.");
-            return new global::FixturePayload()
-            {
-                Name = local_Name,
-                Count = local_Count,
-                Tags = local_Tags
-            };
-        }
+            => __owner.Deserialize(in buffer);
     }
 }
 
