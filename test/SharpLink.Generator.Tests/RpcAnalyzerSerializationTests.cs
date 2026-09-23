@@ -70,8 +70,8 @@ public interface IValidatedValueService : SharpLink.Sdk.IService
 """);
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
-        Ensure(CountOccurrences(generated, "marker_enabled is not (0 or 1)") == 2,
-            "proxy and stub request decoders must reject non-canonical Boolean markers");
+        Ensure(CountOccurrences(generated, "marker_enabled is not (0 or 1)") == 3,
+            "class, static Core, and Stub request decoders must reject non-canonical Boolean markers");
         Ensure(generated.Contains("value.enabled ? (byte)1 : (byte)0", StringComparison.Ordinal),
             "the request encoder must canonicalize Boolean values");
         foreach (var type in new[]
@@ -133,24 +133,24 @@ public interface IHelloService : SharpLink.Sdk.IService
 
         Ensure(CountOccurrences(generated, "internal static class __SharpLinkGeneratedUtf16") == 1,
             "one assembly-private UTF-16 helper must be shared by all eligible generated Codecs");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.GetByteCount(__string_") == 85,
-            "each direct string must compute its exact UTF-16 byte count once in the direct reservation path");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.GetByteCount(__string_") == 170,
+            "class and static Core must each compute its exact UTF-16 byte count once in the direct reservation path");
         Ensure(CountOccurrences(generated, "checked(value.Length * sizeof(char))") == 1,
             "the known-size helper must compute UTF-16 bytes in O(1) without an encoding traversal");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.WriteStringKnownSize(writer, __string_") == 85,
-            "each direct string must reuse its cached value and byte count in the direct write path");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_") == 85,
-            "each direct string must be captured once for the snapshot sizing path");
-        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.WriteStringKnownSize(buffer, __snapshot.__string_") == 85,
-            "each direct string must reuse its snapshot value and byte count in the sized write path");
-        Ensure(CountOccurrences(generated, "if (writer is IRpcByteBufferWriter __rpcWriter)") == 4,
-            "each eligible DTO must gate whole-payload reservation on the SharpLink packet writer");
-        Ensure(CountOccurrences(generated, "__rpcWriter.GetSpan(checked(__encodedSize + 4));") == 4,
-            "each eligible DTO must make one capacity request including existing varuint request slack");
-        Ensure(CountOccurrences(generated, "__rpcWriter.Advance(0);") == 4,
-            "the discarded reservation must complete its buffer lease");
-        Ensure(CountOccurrences(generated, "var __encodedSize =") == 4,
-            "each eligible DTO must compute one checked encoded size");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.WriteStringKnownSize(writer, __string_") == 170,
+            "class and static Core must each reuse its cached value and byte count in the direct write path");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_") == 170,
+            "class and static Core must each be captured once for the snapshot sizing path");
+        Ensure(CountOccurrences(generated, "__SharpLinkGeneratedUtf16.WriteStringKnownSize(buffer, __snapshot.__string_") == 170,
+            "class and static Core must each reuse its snapshot value and byte count in the sized write path");
+        Ensure(CountOccurrences(generated, "if (writer is IRpcByteBufferWriter __rpcWriter)") == 8,
+            "class and static Core must each gate whole-payload reservation on the SharpLink packet writer");
+        Ensure(CountOccurrences(generated, "__rpcWriter.GetSpan(checked(__encodedSize + 4));") == 8,
+            "class and static Core must each make one capacity request including existing varuint request slack");
+        Ensure(CountOccurrences(generated, "__rpcWriter.Advance(0);") == 8,
+            "class and static Core discarded reservations must complete their buffer lease");
+        Ensure(CountOccurrences(generated, "var __encodedSize =") == 8,
+            "class and static Core must each compute one checked encoded size");
         Ensure(!generated.Contains("RpcGeneratedCodecWire.WriteString(writer, value.Field", StringComparison.Ordinal),
             "eligible DTOs must not call the public string primitive after pre-sizing");
         Ensure(!generated.Contains("UTF8Encoding", StringComparison.Ordinal) &&
@@ -563,14 +563,14 @@ public interface ISemanticService : SharpLink.Sdk.IService
         Ensure(generated.Contains("RpcGeneratedCodecWire.WriteDateTimeOffset(writer, value.DateTimeOffset)", StringComparison.Ordinal) &&
                generated.Contains("RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)", StringComparison.Ordinal),
             "DateTimeOffset member must use its canonical fixed writer and validated reader");
-        Ensure(CountOccurrences(generated, "RpcGeneratedCodecWire.ReadBoolean(ref reader)") == 2 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadRune(ref reader)") == 2 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDecimal(ref reader)") == 2 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateOnly(ref reader)") == 2 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTime(ref reader)") == 2 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadTimeOnly(ref reader)") == 2 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)") == 2,
-            "nullable semantic members must use the same validated readers");
+        Ensure(CountOccurrences(generated, "RpcGeneratedCodecWire.ReadBoolean(ref reader)") == 4 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadRune(ref reader)") == 4 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDecimal(ref reader)") == 4 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateOnly(ref reader)") == 4 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTime(ref reader)") == 4 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadTimeOnly(ref reader)") == 4 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)") == 4,
+            "class and static Core nullable semantic members must use the same validated readers");
         return Task.CompletedTask;
     }
 
