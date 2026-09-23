@@ -438,16 +438,19 @@ jobs:
               "Duplex100x16",
               "Duplex100x4096",
           )
+          transports = ("tcp", "sharedmemory")
 
-          def load(label, scenario):
+          def load(label, transport, scenario):
               rows = [
                   json.loads(path.read_text())
-                  for path in sorted((root / "e2e").glob(f"{label}-r*-{scenario}.json"))
+                  for path in sorted((root / "e2e").glob(f"{transport}-{label}-r*-{scenario}.json"))
               ]
-              if len(rows) != 5:
-                  raise SystemExit(f"expected 5 {label}/{scenario} rows, got {len(rows)}")
+              if len(rows) != 3:
+                  raise SystemExit(
+                      f"expected 3 {transport}/{label}/{scenario} rows, got {len(rows)}"
+                  )
               if any(row["validationFailures"] != 0 for row in rows):
-                  raise SystemExit(f"validation failure in {label}/{scenario}")
+                  raise SystemExit(f"validation failure in {transport}/{label}/{scenario}")
               return rows
 
           def med(rows, key):
@@ -457,46 +460,50 @@ jobs:
           lines = [
               "# Latest dev vs resolved flow-state candidate",
               "",
-              "| Scenario | Items/s | CPU efficiency | P50 | P99 | Alloc/item |",
-              "|---|---:|---:|---:|---:|---:|",
+              "| Transport | Scenario | Items/s | CPU efficiency | P50 | P99 | Alloc/item |",
+              "|---|---|---:|---:|---:|---:|---:|",
           ]
-          primary = []
+          primary = {transport: [] for transport in transports}
 
-          for scenario in scenarios:
-              base = load("baseline", scenario)
-              cand = load("candidate", scenario)
-              b_items = med(base, "throughputItemsPerSecond")
-              c_items = med(cand, "throughputItemsPerSecond")
-              b_cpu = med(base, "cpuUsPerOperation")
-              c_cpu = med(cand, "cpuUsPerOperation")
-              b_p50 = med(base, "p50Us")
-              c_p50 = med(cand, "p50Us")
-              b_p99 = med(base, "p99Us")
-              c_p99 = med(cand, "p99Us")
-              b_alloc = med(base, "allocatedBytesPerItem")
-              c_alloc = med(cand, "allocatedBytesPerItem")
+          for transport in transports:
+              for scenario in scenarios:
+                  base = load("baseline", transport, scenario)
+                  cand = load("candidate", transport, scenario)
+                  b_items = med(base, "throughputItemsPerSecond")
+                  c_items = med(cand, "throughputItemsPerSecond")
+                  b_cpu = med(base, "cpuUsPerOperation")
+                  c_cpu = med(cand, "cpuUsPerOperation")
+                  b_p50 = med(base, "p50Us")
+                  c_p50 = med(cand, "p50Us")
+                  b_p99 = med(base, "p99Us")
+                  c_p99 = med(cand, "p99Us")
+                  b_alloc = med(base, "allocatedBytesPerItem")
+                  c_alloc = med(cand, "allocatedBytesPerItem")
 
-              row = {
-                  "itemsPct": (c_items / b_items - 1.0) * 100.0,
-                  "cpuEfficiencyPct": (b_cpu / c_cpu - 1.0) * 100.0,
-                  "p50Pct": (c_p50 / b_p50 - 1.0) * 100.0,
-                  "p99Pct": (c_p99 / b_p99 - 1.0) * 100.0,
-                  "allocItemDelta": c_alloc - b_alloc,
-              }
-              summary[scenario] = row
-              if scenario != "Server1x16":
-                  primary.append(row["itemsPct"])
+                  row = {
+                      "itemsPct": (c_items / b_items - 1.0) * 100.0,
+                      "cpuEfficiencyPct": (b_cpu / c_cpu - 1.0) * 100.0,
+                      "p50Pct": (c_p50 / b_p50 - 1.0) * 100.0,
+                      "p99Pct": (c_p99 / b_p99 - 1.0) * 100.0,
+                      "allocItemDelta": c_alloc - b_alloc,
+                  }
+                  summary[f"{transport}/{scenario}"] = row
+                  if scenario != "Server1x16":
+                      primary[transport].append(row["itemsPct"])
+                  lines.append(
+                      f"| {transport} | {scenario} | {row['itemsPct']:+.2f}% | "
+                      f"{row['cpuEfficiencyPct']:+.2f}% | {row['p50Pct']:+.2f}% | "
+                      f"{row['p99Pct']:+.2f}% | {row['allocItemDelta']:+.2f} B |"
+                  )
+
+          lines += [""]
+          for transport in transports:
               lines.append(
-                  f"| {scenario} | {row['itemsPct']:+.2f}% | "
-                  f"{row['cpuEfficiencyPct']:+.2f}% | {row['p50Pct']:+.2f}% | "
-                  f"{row['p99Pct']:+.2f}% | {row['allocItemDelta']:+.2f} B |"
+                  f"- {transport} median throughput delta across 100-item scenarios: "
+                  f"{statistics.median(primary[transport]):+.2f}%"
               )
+          lines.append("")
 
-          lines += [
-              "",
-              f"Median throughput delta across 100-item scenarios: {statistics.median(primary):+.2f}%",
-              "",
-          ]
           (root / "e2e-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
           (root / "e2e-summary.md").write_text("\n".join(lines) + "\n")
           print("\n".join(lines))
