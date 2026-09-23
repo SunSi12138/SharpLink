@@ -282,7 +282,7 @@ public partial class RpcGenerator
         foreach (var parameter in complex)
         {
             sb.AppendLine($"        __codec_{parameter.Name} = {GetCodecResolveExpression("codecs", parameter.DisplayType, parameter.Type, concreteCodecTypes)};");
-            sb.AppendLine($"        __sizedCodec_{parameter.Name} = __codec_{parameter.Name} as IRpcSizedCodec<{parameter.DisplayType}>;");
+            sb.AppendLine($"        __sizedCodec_{parameter.Name} = (object)__codec_{parameter.Name} as IRpcSizedCodec<{parameter.DisplayType}>;");
         }
         if (complex.Length != 0)
         {
