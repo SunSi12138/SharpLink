@@ -529,6 +529,109 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Run production c8 stream-load A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ROOT/c8"
+
+          run_one() {
+            local label="$1"
+            local root="$2"
+            local sha="$3"
+            local repetition="$4"
+            local transport="$5"
+            local stream_size="$6"
+            local output="$ROOT/c8/$transport-size$stream_size-$label-r$repetition.json"
+            local log="$ROOT/logs/c8-$transport-size$stream_size-$label-r$repetition.log"
+            (
+              cd "$root"
+              env SHARPLINK_BENCHMARK_SHA="$sha" DOTNET_ReadyToRun=0 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 DOTNET_TC_QuickJitForLoops=1                 taskset -c "$CPU_LIST" dotnet run -c Release --no-build --no-restore -p:PublishAot=false                 --project test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj --                 --mode local --transport "$transport" --operation all                 --stream-size "$stream_size" --concurrency 8                 --warmup 1 --duration 2 --recording off --json-output "$output" > "$log"
+            )
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              revisions=(
+                "baseline:$BASELINE_ROOT:$BASELINE_SHA"
+                "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
+              )
+            else
+              revisions=(
+                "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
+                "baseline:$BASELINE_ROOT:$BASELINE_SHA"
+              )
+            fi
+
+            for transport in tcp sharedmemory; do
+              for stream_size in 1 10000; do
+                for spec in "${revisions[@]}"; do
+                  IFS=: read -r label root sha <<< "$spec"
+                  run_one "$label" "$root" "$sha" "$repetition" "$transport" "$stream_size"
+                done
+              done
+            done
+          done
+
+      - name: Summarize production c8 stream-load A/B
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/resolved-flow-state")
+          transports = ("tcp", "sharedmemory")
+          sizes = (1, 10000)
+          operations = ("c2s", "s2c", "duplex")
+
+          def load(label, transport, size):
+              paths = sorted((root / "c8").glob(f"{transport}-size{size}-{label}-r*.json"))
+              if len(paths) != 3:
+                  raise SystemExit(
+                      f"expected 3 {transport}/size{size}/{label} reports, got {len(paths)}"
+                  )
+              by_operation = {operation: [] for operation in operations}
+              for path in paths:
+                  report = json.loads(path.read_text())
+                  for row in report["Results"]:
+                      operation = row["Operation"]
+                      if operation not in by_operation:
+                          continue
+                      if row["Failure"] != 0 or row["ValidationFailure"] != 0:
+                          raise SystemExit(
+                              f"stream-load failure in {path}: {operation}"
+                          )
+                      by_operation[operation].append(row)
+              return by_operation
+
+          lines = [
+              "# Production stream-load c8 A/B",
+              "",
+              "| Transport | Items/stream | Shape | Streams/s delta |",
+              "|---|---:|---|---:|",
+          ]
+          summary = {}
+          for transport in transports:
+              for size in sizes:
+                  base = load("baseline", transport, size)
+                  cand = load("candidate", transport, size)
+                  for operation in operations:
+                      b = statistics.median(row["Qps"] for row in base[operation])
+                      c = statistics.median(row["Qps"] for row in cand[operation])
+                      delta = (c / b - 1.0) * 100.0
+                      key = f"{transport}/size{size}/{operation}"
+                      summary[key] = delta
+                      lines.append(
+                          f"| {transport} | {size} | {operation} | {delta:+.2f}% |"
+                      )
+
+          (root / "c8-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          (root / "c8-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Publish evidence summary
         shell: bash
         run: |
@@ -539,6 +642,8 @@ jobs:
           cat "$ROOT/counter-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$ROOT/e2e-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$ROOT/c8-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload evidence
         if: always()
