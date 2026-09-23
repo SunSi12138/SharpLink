@@ -274,7 +274,40 @@ public partial class RpcGenerator
         foreach (var parameter in complex)
             sb.AppendLine($"        __codec_{parameter.Name} = {GetCodecResolveExpression("codecs", parameter.DisplayType, parameter.Type, concreteCodecTypes)};");
         sb.AppendLine("    }");
+        sb.AppendLine();
 
+        AppendGeneratedRequestCodecMethods(sb, requestType, parameters, blittable, complex);
+
+        sb.AppendLine();
+        sb.AppendLine("    internal Core StaticCore => new(this);");
+        sb.AppendLine();
+        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{requestType}>");
+        sb.AppendLine("    {");
+        foreach (var parameter in complex)
+            sb.AppendLine($"        private readonly {GetCodecStorageType(parameter.DisplayType, parameter.Type, concreteCodecTypes)} __codec_{parameter.Name};");
+        if (complex.Length != 0)
+            sb.AppendLine();
+        sb.AppendLine($"        internal Core({codecType} owner)");
+        sb.AppendLine("        {");
+        foreach (var parameter in complex)
+            sb.AppendLine($"            __codec_{parameter.Name} = owner.__codec_{parameter.Name};");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+
+        var coreMethods = new StringBuilder();
+        AppendGeneratedRequestCodecMethods(coreMethods, requestType, parameters, blittable, complex);
+        sb.Append(Indent(coreMethods.ToString(), "    "));
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+    }
+
+    private static void AppendGeneratedRequestCodecMethods(
+        StringBuilder sb,
+        string requestType,
+        RpcParameterModel[] parameters,
+        RpcParameterModel[] blittable,
+        RpcParameterModel[] complex)
+    {
         sb.AppendLine($"    public void Serialize(in {requestType} value, IBufferWriter<byte> writer)");
         sb.AppendLine("    {");
         if (blittable.Length != 0)
@@ -348,22 +381,6 @@ public partial class RpcGenerator
         sb.AppendLine("        if (reader.Remaining != 0) throw RpcGeneratedCodecWire.DataLoss(\"Request contains trailing data.\");");
         sb.AppendLine($"        return new {requestType}({string.Join(", ", parameters.Select(static parameter => $"value_{parameter.Name}"))});");
         sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    internal Core StaticCore => new(this);");
-        sb.AppendLine();
-        sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{requestType}>");
-        sb.AppendLine("    {");
-        sb.AppendLine($"        private readonly {codecType} __owner;");
-        sb.AppendLine();
-        sb.AppendLine($"        internal Core({codecType} owner) => __owner = owner;");
-        sb.AppendLine();
-        sb.AppendLine($"        public void Serialize(in {requestType} value, IBufferWriter<byte> writer)");
-        sb.AppendLine("            => __owner.Serialize(in value, writer);");
-        sb.AppendLine();
-        sb.AppendLine($"        public {requestType} Deserialize(in ReadOnlySequence<byte> payload)");
-        sb.AppendLine("            => __owner.Deserialize(in payload);");
-        sb.AppendLine("    }");
-        sb.AppendLine("}");
     }
 
     private static void AppendGeneratedStreams(
