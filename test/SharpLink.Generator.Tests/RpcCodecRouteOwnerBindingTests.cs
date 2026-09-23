@@ -202,16 +202,28 @@ public sealed class CoreValue
 
 public sealed class CoreWideValue
 {
+    [SharpLink.Sdk.RpcRequired]
     public CoreChild Left { get; set; } = new();
+
+    [SharpLink.Sdk.RpcRequired]
     public CoreChild Right { get; set; } = new();
 }
 
 public sealed class CoreVeryWideValue
 {
+    [SharpLink.Sdk.RpcRequired]
     public CoreChild A { get; set; } = new();
+
+    [SharpLink.Sdk.RpcRequired]
     public CoreChild B { get; set; } = new();
+
+    [SharpLink.Sdk.RpcRequired]
     public CoreChild C { get; set; } = new();
+
+    [SharpLink.Sdk.RpcRequired]
     public CoreChild D { get; set; } = new();
+
+    [SharpLink.Sdk.RpcRequired]
     public CoreChild E { get; set; } = new();
 }
 
