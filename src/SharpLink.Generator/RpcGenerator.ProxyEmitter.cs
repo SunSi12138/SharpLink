@@ -307,7 +307,7 @@ public partial class RpcGenerator
             blittable,
             complex,
             useHotChildCores: false,
-            concreteCodecTypes);
+            concreteCodecTypes: concreteCodecTypes);
 
         sb.AppendLine();
         sb.AppendLine("    internal Core StaticCore => new(this);");
@@ -369,7 +369,7 @@ public partial class RpcGenerator
             blittable,
             complex,
             useHotChildCores: true,
-            concreteCodecTypes);
+            concreteCodecTypes: concreteCodecTypes);
         sb.Append(Indent(coreMethods.ToString(), "    "));
         sb.AppendLine("    }");
         sb.AppendLine("}");
