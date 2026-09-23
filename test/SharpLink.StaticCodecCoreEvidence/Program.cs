@@ -1,5 +1,4 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -408,13 +407,18 @@ internal static partial class Program
         bool constant)
     {
         using var writer = new SharpLink.Runtime.PooledByteBufferWriter(256);
-        return MeasureLocalLoop(iterations, iteration =>
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
         {
             var value = EvidencePayloads.Get16(constant ? 0 : iteration);
             writer.Clear();
             codec.Serialize(in value, writer);
-            return unchecked((long)writer.WrittenCount * 31 + value.A);
-        });
+            checksum = unchecked(checksum * 31 + ((long)writer.WrittenCount * 31 + value.A));
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -424,91 +428,125 @@ internal static partial class Program
         bool constant)
     {
         using var writer = new SharpLink.Runtime.PooledByteBufferWriter(256);
-        return MeasureLocalLoop(iterations, iteration =>
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
         {
             var value = EvidencePayloads.Get16(constant ? 0 : iteration);
             writer.Clear();
             codec.Serialize(in value, writer);
-            return unchecked((long)writer.WrittenCount * 31 + value.A);
-        });
+            checksum = unchecked(checksum * 31 + ((long)writer.WrittenCount * 31 + value.A));
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static LocalCodecSample MeasureCore16SizeInterface(
         IRpcSizedCodec<Core16> codec,
         int iterations)
-        => MeasureLocalLoop(iterations, iteration =>
+    {
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
         {
             var value = EvidencePayloads.Get16(iteration);
             if (!codec.TryGetEncodedSize(in value, out var size))
                 throw new InvalidOperationException("Core16 must support exact sizing.");
-            return unchecked((long)size * 31 + value.A);
-        });
+            checksum = unchecked(checksum * 31 + ((long)size * 31 + value.A));
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static LocalCodecSample MeasureCore16SizeCore(
         global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core codec,
         int iterations)
-        => MeasureLocalLoop(iterations, iteration =>
+    {
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
         {
             var value = EvidencePayloads.Get16(iteration);
             if (!codec.TryGetEncodedSize(in value, out var size))
                 throw new InvalidOperationException("Core16 Core must support exact sizing.");
-            return unchecked((long)size * 31 + value.A);
-        });
+            checksum = unchecked(checksum * 31 + ((long)size * 31 + value.A));
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static LocalCodecSample MeasureSnapshotSizeInterface(
         IRpcSizedCodec<CoreSnapshot> codec,
         int iterations)
-        => MeasureLocalLoop(iterations, iteration =>
+    {
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
         {
             var value = EvidencePayloads.GetSnapshot(iteration);
             if (!codec.TryGetEncodedSize(in value, out var size, out var snapshot))
                 throw new InvalidOperationException("CoreSnapshot must support exact sizing.");
             try
             {
-                return unchecked((long)size * 31 + value.Id);
+                checksum = unchecked(checksum * 31 + ((long)size * 31 + value.Id));
             }
             finally
             {
                 codec.ReleaseSnapshot(snapshot);
             }
-        });
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static LocalCodecSample MeasureSnapshotSizeCore(
         global::SharpLink.Generated.__SharpLinkGeneratedCodec_27DAE40D1F078250.Core codec,
         int iterations)
-        => MeasureLocalLoop(iterations, iteration =>
+    {
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
         {
             var value = EvidencePayloads.GetSnapshot(iteration);
             if (!codec.TryGetEncodedSize(in value, out var size, out var snapshot))
                 throw new InvalidOperationException("CoreSnapshot Core must support exact sizing.");
             try
             {
-                return unchecked((long)size * 31 + value.Id);
+                checksum = unchecked(checksum * 31 + ((long)size * 31 + value.Id));
             }
             finally
             {
                 codec.ReleaseSnapshot(snapshot);
             }
-        });
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
+    }
 
-    private static LocalCodecSample MeasureLocalLoop(int iterations, Func<int, long> operation)
+    private static void PrepareLocalMeasurement()
     {
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+    }
 
-        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
-        long checksum = 0;
-        var started = Stopwatch.GetTimestamp();
-        for (var iteration = 0; iteration < iterations; iteration++)
-            checksum = unchecked(checksum * 31 + operation(iteration));
+    private static LocalCodecSample CompleteLocalMeasurement(
+        long started,
+        long allocatedBefore,
+        int iterations,
+        long checksum)
+    {
         var elapsed = Stopwatch.GetTimestamp() - started;
         var allocatedAfter = GC.GetTotalAllocatedBytes(precise: true);
-
         return new LocalCodecSample(
             TicksToNanoseconds(elapsed) / iterations,
             (allocatedAfter - allocatedBefore) / (double)iterations,
