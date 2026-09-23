@@ -7,7 +7,7 @@ public partial class RpcGenerator
         GeneratedCodecModel model,
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
-        sb.AppendLine($"internal sealed class {model.CodecName} : IRpcCodec<{model.TypeName}>");
+        sb.AppendLine($"internal sealed class {model.CodecName} : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("{");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
@@ -18,6 +18,7 @@ public partial class RpcGenerator
         {
             sb.AppendLine($"    private readonly {GetCodecStorageType(model.ElementType!, model.ElementType!, concreteCodecTypes)} __elementCodec;");
         }
+        sb.AppendLine("    private readonly global::System.Collections.Concurrent.ConcurrentBag<__SizedSnapshot> __sizedSnapshots = new();");
         sb.AppendLine();
         sb.AppendLine($"    internal {model.CodecName}(IRpcCodecProvider provider)");
         sb.AppendLine("    {");
@@ -45,6 +46,16 @@ public partial class RpcGenerator
         sb.AppendLine("    {");
         AppendCollectionRead(sb, model);
         sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    public bool CanExactSize => StaticCore.CanExactSize;");
+        sb.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
+        sb.AppendLine("        => StaticCore.TryGetEncodedSize(in value, out size);");
+        sb.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size, out IRpcSizedCodecSnapshot? snapshot)");
+        sb.AppendLine("        => StaticCore.TryGetEncodedSize(in value, out size, out snapshot);");
+        sb.AppendLine($"    public void SerializeSized(in {model.TypeName} value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)");
+        sb.AppendLine("        => StaticCore.SerializeSized(in value, buffer, size, snapshot);");
+        sb.AppendLine("    public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)");
+        sb.AppendLine("        => StaticCore.ReleaseSnapshot(snapshot);");
         AppendFactory(sb, model);
         AppendCollectionStaticCore(sb, model, concreteCodecTypes);
         sb.AppendLine("}");
@@ -57,38 +68,62 @@ public partial class RpcGenerator
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         sb.AppendLine();
+        AppendCollectionSnapshotType(sb, model);
+        sb.AppendLine();
         sb.AppendLine("    internal Core StaticCore => new(this);");
         sb.AppendLine();
         sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("    {");
+        sb.AppendLine($"        private readonly {model.CodecName} __owner;");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine($"        private readonly {GetCodecStorageType(model.KeyType!, model.KeyType!, concreteCodecTypes)} __keyCodec;");
-            sb.AppendLine($"        private readonly {GetCodecStorageType(model.ValueType!, model.ValueType!, concreteCodecTypes)} __valueCodec;");
+            AppendCollectionCoreCodecField(sb, model.KeyType!, "__keyCodec", concreteCodecTypes);
+            AppendCollectionCoreCodecField(sb, model.ValueType!, "__valueCodec", concreteCodecTypes);
         }
         else
         {
-            sb.AppendLine($"        private readonly {GetCodecStorageType(model.ElementType!, model.ElementType!, concreteCodecTypes)} __elementCodec;");
+            AppendCollectionCoreCodecField(sb, model.ElementType!, "__elementCodec", concreteCodecTypes);
         }
+        sb.AppendLine("        private readonly bool __canExactSize;");
         sb.AppendLine();
         sb.AppendLine($"        internal Core({model.CodecName} owner)");
         sb.AppendLine("        {");
+        sb.AppendLine("            __owner = owner;");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine("            __keyCodec = owner.__keyCodec;");
-            sb.AppendLine("            __valueCodec = owner.__valueCodec;");
+            AppendCollectionCoreCodecBinding(sb, model.KeyType!, "__keyCodec", concreteCodecTypes);
+            AppendCollectionCoreCodecBinding(sb, model.ValueType!, "__valueCodec", concreteCodecTypes);
+            sb.AppendLine($"            __canExactSize = {GetCollectionCapabilityExpression(model.KeyType!, "__keyCodec", concreteCodecTypes)} && {GetCollectionCapabilityExpression(model.ValueType!, "__valueCodec", concreteCodecTypes)};");
         }
         else
         {
-            sb.AppendLine("            __elementCodec = owner.__elementCodec;");
+            AppendCollectionCoreCodecBinding(sb, model.ElementType!, "__elementCodec", concreteCodecTypes);
+            sb.AppendLine($"            __canExactSize = {GetCollectionCapabilityExpression(model.ElementType!, "__elementCodec", concreteCodecTypes)};");
         }
         sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        private __SizedSnapshot RentSnapshot() => __owner.RentSnapshot();");
+        sb.AppendLine("        private void ReturnSnapshot(__SizedSnapshot snapshot) => __owner.ReturnSnapshot(snapshot);");
         sb.AppendLine();
 
         var coreMethods = new StringBuilder();
         coreMethods.AppendLine($"    public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");
         coreMethods.AppendLine("    {");
         coreMethods.AppendLine("        ArgumentNullException.ThrowIfNull(writer);");
+        coreMethods.AppendLine("        if (__canExactSize && writer is IRpcByteBufferWriter __exactWriter && !RpcGeneratedCodecSizing.IsSuppressed &&");
+        coreMethods.AppendLine("            TryGetEncodedSize(in value, out var __exactSize, out var __sizedSnapshot))");
+        coreMethods.AppendLine("        {");
+        coreMethods.AppendLine("            try");
+        coreMethods.AppendLine("            {");
+        coreMethods.AppendLine("                __exactWriter.GetSpan(checked(__exactSize + 4));");
+        coreMethods.AppendLine("                __exactWriter.Advance(0);");
+        coreMethods.AppendLine("                RpcGeneratedCodecSizing.Enter();");
+        coreMethods.AppendLine("                try { SerializeSized(in value, writer, __exactSize, __sizedSnapshot); }");
+        coreMethods.AppendLine("                finally { RpcGeneratedCodecSizing.Exit(); }");
+        coreMethods.AppendLine("            }");
+        coreMethods.AppendLine("            finally { ReleaseSnapshot(__sizedSnapshot); }");
+        coreMethods.AppendLine("            return;");
+        coreMethods.AppendLine("        }");
         coreMethods.AppendLine("        var rpcWriter = writer as IRpcByteBufferWriter ?? throw new InvalidOperationException(\"Generated collection Codecs require the SharpLink packet writer.\");");
         AppendCollectionWrite(coreMethods, model);
         coreMethods.AppendLine("    }");
@@ -99,14 +134,7 @@ public partial class RpcGenerator
         AppendCollectionRead(coreMethods, model);
         coreMethods.AppendLine("    }");
         coreMethods.AppendLine();
-        coreMethods.AppendLine("    public bool CanExactSize => false;");
-        coreMethods.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
-        coreMethods.AppendLine("    { size = 0; return false; }");
-        coreMethods.AppendLine($"    public bool TryGetEncodedSize(in {model.TypeName} value, out int size, out IRpcSizedCodecSnapshot? snapshot)");
-        coreMethods.AppendLine("    { size = 0; snapshot = null; return false; }");
-        coreMethods.AppendLine($"    public void SerializeSized(in {model.TypeName} value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)");
-        coreMethods.AppendLine("        => Serialize(in value, buffer);");
-        coreMethods.AppendLine("    public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot) { }");
+        AppendCollectionCoreSizing(coreMethods, model, concreteCodecTypes);
         sb.Append(Indent(coreMethods.ToString(), "    "));
         sb.AppendLine("    }");
     }
