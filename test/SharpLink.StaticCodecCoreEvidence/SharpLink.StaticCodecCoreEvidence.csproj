@@ -5,6 +5,7 @@
     <IsPackable>false</IsPackable>
     <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <DefineConstants Condition="'$(StaticCoreCandidateEvidence)' == 'true'">$(DefineConstants);STATIC_CORE_CANDIDATE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
