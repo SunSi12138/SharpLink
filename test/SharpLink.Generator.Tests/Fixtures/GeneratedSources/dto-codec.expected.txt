@@ -537,9 +537,10 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
     }
 }
 
-internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<global::System.Collections.Generic.List<string>>
+internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<global::System.Collections.Generic.List<string>>, IRpcSizedCodec<global::System.Collections.Generic.List<string>>
 {
     private readonly IRpcCodec<string> __elementCodec;
+    private readonly global::System.Collections.Concurrent.ConcurrentBag<__SizedSnapshot> __sizedSnapshots = new();
 
     internal __SharpLinkGeneratedCodec_E73FF795487FA4FB(IRpcCodecProvider provider)
     {
@@ -600,6 +601,16 @@ internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<glo
         return result;
     }
 
+    public bool CanExactSize => StaticCore.CanExactSize;
+    public bool TryGetEncodedSize(in global::System.Collections.Generic.List<string> value, out int size)
+        => StaticCore.TryGetEncodedSize(in value, out size);
+    public bool TryGetEncodedSize(in global::System.Collections.Generic.List<string> value, out int size, out IRpcSizedCodecSnapshot? snapshot)
+        => StaticCore.TryGetEncodedSize(in value, out size, out snapshot);
+    public void SerializeSized(in global::System.Collections.Generic.List<string> value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
+        => StaticCore.SerializeSized(in value, buffer, size, snapshot);
+    public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+        => StaticCore.ReleaseSnapshot(snapshot);
+
     internal sealed class Factory : IRpcGeneratedCodecFactory
     {
         public Type TargetType => typeof(global::System.Collections.Generic.List<string>);
@@ -615,16 +626,58 @@ internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<glo
         public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<global::System.Collections.Generic.List<string>>;
     }
 
+    private sealed class __SizedSnapshot : IRpcSizedCodecSnapshot
+    {
+        internal string[] __items = global::System.Array.Empty<string>();
+        internal int[] __nestedSizes = global::System.Array.Empty<int>();
+        internal IRpcSizedCodecSnapshot?[] __nestedSnapshots = global::System.Array.Empty<IRpcSizedCodecSnapshot?>();
+        internal int __count;
+
+        internal void EnsureCapacity(int count)
+        {
+            if (__items.Length >= count) return;
+            var capacity = global::System.Math.Max(count, global::System.Math.Max(4, __items.Length * 2));
+            global::System.Array.Resize(ref __items, capacity);
+            global::System.Array.Resize(ref __nestedSizes, capacity);
+            global::System.Array.Resize(ref __nestedSnapshots, capacity);
+        }
+
+        internal void Reset()
+        {
+            if (__count != 0)
+            {
+                global::System.Array.Clear(__items, 0, __count);
+                global::System.Array.Clear(__nestedSnapshots, 0, __count);
+            }
+            __count = 0;
+        }
+    }
+
+    private __SizedSnapshot RentSnapshot()
+        => __sizedSnapshots.TryTake(out var snapshot) ? snapshot : new __SizedSnapshot();
+    private void ReturnSnapshot(__SizedSnapshot snapshot)
+    {
+        snapshot.Reset();
+        __sizedSnapshots.Add(snapshot);
+    }
+
     internal Core StaticCore => new(this);
 
     internal readonly struct Core : IRpcCodec<global::System.Collections.Generic.List<string>>, IRpcSizedCodec<global::System.Collections.Generic.List<string>>
     {
+        private readonly __SharpLinkGeneratedCodec_E73FF795487FA4FB __owner;
         private readonly IRpcCodec<string> __elementCodec;
+        private readonly bool __canExactSize;
 
         internal Core(__SharpLinkGeneratedCodec_E73FF795487FA4FB owner)
         {
+            __owner = owner;
             __elementCodec = owner.__elementCodec;
+            __canExactSize = true;
         }
+
+        private __SizedSnapshot RentSnapshot() => __owner.RentSnapshot();
+        private void ReturnSnapshot(__SizedSnapshot snapshot) => __owner.ReturnSnapshot(snapshot);
 
         public void Serialize(in global::System.Collections.Generic.List<string> value, IBufferWriter<byte> writer)
         {
@@ -679,13 +732,97 @@ internal sealed class __SharpLinkGeneratedCodec_E73FF795487FA4FB : IRpcCodec<glo
             return result;
         }
 
-        public bool CanExactSize => false;
+        public bool CanExactSize => __canExactSize;
+
+        private static int GetCountSize(int count, bool isNull)
+        {
+            if (isNull) return 1;
+            if ((uint)count > RpcGeneratedCodecWire.MaximumCollectionItems)
+                throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, $"Generated collection contains more than {RpcGeneratedCodecWire.MaximumCollectionItems} items.");
+            var marker = checked((uint)count + 1U);
+            var bytes = 1;
+            while (marker >= 0x80) { bytes++; marker >>= 7; }
+            return bytes;
+        }
+
         public bool TryGetEncodedSize(in global::System.Collections.Generic.List<string> value, out int size)
-        { size = 0; return false; }
+        {
+            if (value is null) { size = 1; return true; }
+            var __count = value.Count;
+            size = GetCountSize(__count, false);
+            for (var __index = 0; __index < __count; __index++)
+            {
+                if (value[__index] is { } __stringValue_elementCodec && __stringValue_elementCodec.Length > (RpcGeneratedCodecWire.MaximumStringPayloadBytes / sizeof(char)))
+                    throw new ArgumentOutOfRangeException("value", "Serialized payload exceeds the protocol maximum.");
+                var __nestedSize = value[__index] is null ? sizeof(int) : checked(sizeof(int) + value[__index].Length * sizeof(char));
+                size = checked(size + sizeof(uint) + __nestedSize);
+            }
+            return true;
+        }
+
         public bool TryGetEncodedSize(in global::System.Collections.Generic.List<string> value, out int size, out IRpcSizedCodecSnapshot? snapshot)
-        { size = 0; snapshot = null; return false; }
+        {
+            if (value is null) { size = 1; snapshot = null; return true; }
+            var __count = value.Count;
+            size = GetCountSize(__count, false);
+            snapshot = null;
+            var __snapshot = RentSnapshot();
+            var __keepSnapshot = false;
+            __snapshot.EnsureCapacity(__count);
+            try
+            {
+                for (var __index = 0; __index < __count; __index++)
+                {
+                    __snapshot.__items[__index] = value[__index];
+                    __snapshot.__count = __index + 1;
+                    if (__snapshot.__items[__index] is { } __stringValue_elementCodec && __stringValue_elementCodec.Length > (RpcGeneratedCodecWire.MaximumStringPayloadBytes / sizeof(char)))
+                        throw new ArgumentOutOfRangeException("value", "Serialized payload exceeds the protocol maximum.");
+                    __snapshot.__nestedSizes[__index] = __snapshot.__items[__index] is null ? sizeof(int) : checked(sizeof(int) + __snapshot.__items[__index].Length * sizeof(char));
+                    __snapshot.__nestedSnapshots[__index] = null;
+                    size = checked(size + sizeof(uint) + __snapshot.__nestedSizes[__index]);
+                }
+                snapshot = __snapshot;
+                __keepSnapshot = true;
+                return true;
+            }
+            finally
+            {
+                if (!__keepSnapshot)
+                {
+                    try { ReleaseCapturedChildren(__snapshot); }
+                    finally { ReturnSnapshot(__snapshot); }
+                }
+            }
+        }
+
+        private void ReleaseCapturedChildren(__SizedSnapshot snapshot)
+        {
+            for (var __index = 0; __index < snapshot.__count; __index++)
+            {
+            }
+        }
+
         public void SerializeSized(in global::System.Collections.Generic.List<string> value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
-            => Serialize(in value, buffer);
-        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot) { }
+        {
+            ArgumentNullException.ThrowIfNull(buffer);
+            if (value is null) { RpcGeneratedCodecWire.WriteCollectionCount(buffer, 0, true); return; }
+            if (snapshot is not __SizedSnapshot __snapshot)
+                throw new ArgumentException("Generated collection sized serialization requires its captured snapshot.", nameof(snapshot));
+            RpcGeneratedCodecWire.WriteCollectionCount(buffer, __snapshot.__count, false);
+            for (var __index = 0; __index < __snapshot.__count; __index++)
+            {
+                var __length = buffer.GetSpan(sizeof(uint));
+                global::System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(__length, checked((uint)__snapshot.__nestedSizes[__index]));
+                buffer.Advance(sizeof(uint));
+                __elementCodec.Serialize(__snapshot.__items[__index]!, buffer);
+            }
+        }
+
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+        {
+            if (snapshot is not __SizedSnapshot __snapshot) return;
+            try { ReleaseCapturedChildren(__snapshot); }
+            finally { ReturnSnapshot(__snapshot); }
+        }
     }
 }
