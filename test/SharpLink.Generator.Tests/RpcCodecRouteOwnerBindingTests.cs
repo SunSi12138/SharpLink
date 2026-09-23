@@ -206,11 +206,21 @@ public sealed class CoreWideValue
     public CoreChild Right { get; set; } = new();
 }
 
+public sealed class CoreVeryWideValue
+{
+    public CoreChild A { get; set; } = new();
+    public CoreChild B { get; set; } = new();
+    public CoreChild C { get; set; } = new();
+    public CoreChild D { get; set; } = new();
+    public CoreChild E { get; set; } = new();
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface IStaticCoreContract : SharpLink.Sdk.IService
 {
     ValueTask<CoreValue> Echo(CoreValue value, CancellationToken cancellationToken);
     ValueTask<CoreWideValue> EchoWide(CoreWideValue value, CancellationToken cancellationToken);
+    ValueTask<CoreVeryWideValue> EchoVeryWide(CoreVeryWideValue value, CancellationToken cancellationToken);
 
     [SharpLink.Sdk.Oneway]
     ValueTask Notify(CoreValue value, CancellationToken cancellationToken);
@@ -255,10 +265,27 @@ public interface IStaticCoreContract : SharpLink.Sdk.IService
         var wideCoreEnd = generated.IndexOf("\n    }\n}", wideCoreStart, StringComparison.Ordinal);
         Ensure(wideCoreEnd > wideCoreStart, "large DTO Core must have a complete generated body");
         var wideCore = generated.Substring(wideCoreStart, wideCoreEnd - wideCoreStart);
-        Ensure(wideCore.Contains("=> __owner.Serialize(in value, writer);", StringComparison.Ordinal),
-            "large generated DTO Core must use the bounded owner-ref layout");
-        Ensure(!wideCore.Contains("__codec_0 = owner.__codec_0;", StringComparison.Ordinal),
-            "large generated DTO Core must not retain child state across async operations");
+        Ensure(wideCore.Contains("__codec_0 = owner.__codec_0;", StringComparison.Ordinal) &&
+            wideCore.Contains("__codec_1 = owner.__codec_1;", StringComparison.Ordinal),
+            "bounded multi-child DTO Core must retain concrete child Codec references");
+        Ensure(!wideCore.Contains("owner.__codec_0.StaticCore", StringComparison.Ordinal) &&
+            !wideCore.Contains("owner.__codec_1.StaticCore", StringComparison.Ordinal),
+            "bounded multi-child DTO Core must not recursively embed nested Core structs");
+        Ensure(wideCore.Contains("__sizedCodec_0 => __codec_0;", StringComparison.Ordinal) &&
+            wideCore.Contains("__sizedCodec_1 => __codec_1;", StringComparison.Ordinal),
+            "non-nullable static children must reuse the concrete Codec reference for sizing");
+
+        var veryWideCoreStart = generated.IndexOf(
+            "internal readonly struct Core : IRpcCodec<global::CoreVeryWideValue>, IRpcSizedCodec<global::CoreVeryWideValue>",
+            StringComparison.Ordinal);
+        Ensure(veryWideCoreStart >= 0, "very-wide generated DTOs must still expose a static Core");
+        var veryWideCoreEnd = generated.IndexOf("\n    }\n}", veryWideCoreStart, StringComparison.Ordinal);
+        Ensure(veryWideCoreEnd > veryWideCoreStart, "very-wide DTO Core must have a complete generated body");
+        var veryWideCore = generated.Substring(veryWideCoreStart, veryWideCoreEnd - veryWideCoreStart);
+        Ensure(veryWideCore.Contains("=> __owner.Serialize(in value, writer);", StringComparison.Ordinal),
+            "DTOs above the concrete-child bound must retain the compact owner-ref layout");
+        Ensure(!veryWideCore.Contains("__codec_0 = owner.__codec_0;", StringComparison.Ordinal),
+            "DTOs above the concrete-child bound must not retain child state across async operations");
         Ensure(!generated.Contains("GetCodec<global::CoreValue>().StaticCore", StringComparison.Ordinal),
             "static Core extraction must apply member access after the concrete Codec cast");
         Ensure(generated.Contains("InvokeGeneratedUnaryAsync<", StringComparison.Ordinal),
