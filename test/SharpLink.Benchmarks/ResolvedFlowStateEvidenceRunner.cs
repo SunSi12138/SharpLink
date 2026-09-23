@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Runtime;
@@ -26,6 +27,13 @@ internal static class ResolvedFlowStateEvidenceRunner
     {
         var repetitions = GetPositiveOption(args, "--repetitions", 3);
         var contentionItems = GetPositiveOption(args, "--contention-items", 10_000);
+        var scenarioFilter = GetOption(args, "--scenario");
+        var modeFilter = GetOption(args, "--mode");
+        var activeStreamsFilter = GetOptionalPositiveOption(args, "--active-streams");
+        var itemsPerStreamFilter = GetOptionalPositiveOption(args, "--items-per-stream");
+        var skipContention = HasOption(args, "--skip-contention");
+        if (modeFilter is not null && modeFilter is not ("key" or "resolved"))
+            throw new ArgumentException("--mode must be key or resolved.", nameof(args));
         var outputPath = GetOption(args, "--output") ?? Path.Combine(
             "artifacts",
             "performance",
@@ -35,75 +43,140 @@ internal static class ResolvedFlowStateEvidenceRunner
 
         foreach (var activeStreams in SActiveStreams)
         {
+            if (activeStreamsFilter is not null && activeStreams != activeStreamsFilter)
+                continue;
             foreach (var itemsPerStream in SItemsPerStream)
             {
+                if (itemsPerStreamFilter is not null && itemsPerStream != itemsPerStreamFilter)
+                    continue;
                 foreach (var resolved in new[] { false, true })
                 {
-                    results.Add(Measure(
-                        "send-no-wait",
-                        resolved,
-                        activeStreams,
-                        itemsPerStream,
-                        repetitions,
-                        () => RunSendNoWait(activeStreams, itemsPerStream, resolved)));
-                    results.Add(Measure(
-                        "receive-accept",
-                        resolved,
-                        activeStreams,
-                        itemsPerStream,
-                        repetitions,
-                        () => RunReceiveAccept(activeStreams, itemsPerStream, resolved)));
-                    results.Add(Measure(
-                        "receive-consume",
-                        resolved,
-                        activeStreams,
-                        itemsPerStream,
-                        repetitions,
-                        () => RunReceiveConsume(activeStreams, itemsPerStream, resolved)));
-                    results.Add(Measure(
-                        "receive-pair",
-                        resolved,
-                        activeStreams,
-                        itemsPerStream,
-                        repetitions,
-                        () => RunReceivePair(activeStreams, itemsPerStream, resolved)));
-                    results.Add(Measure(
-                        "short-stream-control",
-                        resolved,
-                        activeStreams,
-                        itemsPerStream,
-                        repetitions,
-                        () => RunShortReceiveLifecycle(activeStreams, itemsPerStream, resolved)));
+                    if (modeFilter is not null &&
+                        !string.Equals(modeFilter, resolved ? "resolved" : "key", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (MatchesScenario(scenarioFilter, "send-no-wait"))
+                    {
+                        results.Add(Measure(
+                            "send-no-wait",
+                            resolved,
+                            activeStreams,
+                            itemsPerStream,
+                            repetitions,
+                            () => RunSendNoWait(activeStreams, itemsPerStream, resolved)));
+                    }
+                    if (MatchesScenario(scenarioFilter, "send-periodic-window-update"))
+                    {
+                        results.Add(Measure(
+                            "send-periodic-window-update",
+                            resolved,
+                            activeStreams,
+                            itemsPerStream,
+                            repetitions,
+                            () => RunSendPeriodicWindowUpdate(activeStreams, itemsPerStream, resolved)));
+                    }
+                    if (MatchesScenario(scenarioFilter, "send-starved-control"))
+                    {
+                        results.Add(Measure(
+                            "send-starved-control",
+                            resolved,
+                            activeStreams,
+                            itemsPerStream,
+                            repetitions,
+                            () => RunSendStarvedControl(activeStreams, itemsPerStream, resolved)));
+                    }
+                    if (MatchesScenario(scenarioFilter, "receive-accept"))
+                    {
+                        results.Add(Measure(
+                            "receive-accept",
+                            resolved,
+                            activeStreams,
+                            itemsPerStream,
+                            repetitions,
+                            () => RunReceiveAccept(activeStreams, itemsPerStream, resolved)));
+                    }
+                    if (MatchesScenario(scenarioFilter, "receive-consume"))
+                    {
+                        results.Add(Measure(
+                            "receive-consume",
+                            resolved,
+                            activeStreams,
+                            itemsPerStream,
+                            repetitions,
+                            () => RunReceiveConsume(activeStreams, itemsPerStream, resolved)));
+                    }
+                    if (MatchesScenario(scenarioFilter, "receive-pair"))
+                    {
+                        results.Add(Measure(
+                            "receive-pair",
+                            resolved,
+                            activeStreams,
+                            itemsPerStream,
+                            repetitions,
+                            () => RunReceivePair(activeStreams, itemsPerStream, resolved)));
+                    }
+                    if (MatchesScenario(scenarioFilter, "short-stream-control"))
+                    {
+                        results.Add(Measure(
+                            "short-stream-control",
+                            resolved,
+                            activeStreams,
+                            itemsPerStream,
+                            repetitions,
+                            () => RunShortReceiveLifecycle(activeStreams, itemsPerStream, resolved)));
+                    }
                 }
             }
         }
 
-        foreach (var activeStreams in new[] { 32, 128 })
+        if (!skipContention)
         {
-            foreach (var resolved in new[] { false, true })
+            foreach (var activeStreams in new[] { 32, 128 })
             {
-                results.Add(await MeasureContentionAsync(
-                    "send-contention",
-                    resolved,
-                    activeStreams,
-                    contentionItems,
-                    () => RunSendContentionAsync(activeStreams, contentionItems, resolved))
-                    .ConfigureAwait(false));
-                results.Add(await MeasureContentionAsync(
-                    "receive-pair-contention",
-                    resolved,
-                    activeStreams,
-                    contentionItems,
-                    () => RunReceiveContentionAsync(activeStreams, contentionItems, resolved))
-                    .ConfigureAwait(false));
+                if (activeStreamsFilter is not null && activeStreams != activeStreamsFilter)
+                    continue;
+                foreach (var resolved in new[] { false, true })
+                {
+                    if (modeFilter is not null &&
+                        !string.Equals(modeFilter, resolved ? "resolved" : "key", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (MatchesScenario(scenarioFilter, "send-contention"))
+                    {
+                        results.Add(await MeasureContentionAsync(
+                            "send-contention",
+                            resolved,
+                            activeStreams,
+                            contentionItems,
+                            () => RunSendContentionAsync(activeStreams, contentionItems, resolved))
+                            .ConfigureAwait(false));
+                    }
+                    if (MatchesScenario(scenarioFilter, "receive-pair-contention"))
+                    {
+                        results.Add(await MeasureContentionAsync(
+                            "receive-pair-contention",
+                            resolved,
+                            activeStreams,
+                            contentionItems,
+                            () => RunReceiveContentionAsync(activeStreams, contentionItems, resolved))
+                            .ConfigureAwait(false));
+                    }
+                }
             }
         }
+
+        if (results.Count == 0)
+            throw new InvalidOperationException("The selected resolved-flow-state evidence filters produced no rows.");
 
         var fullPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         await File.WriteAllTextAsync(
             fullPath,
-            JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true }))
+            JsonSerializer.Serialize(results, ResolvedFlowStateEvidenceJsonContext.Default.ListResolvedFlowStateEvidenceResult))
             .ConfigureAwait(false);
         Console.WriteLine($"Resolved flow-state evidence: {fullPath}");
     }
@@ -122,12 +195,14 @@ internal static class ResolvedFlowStateEvidenceRunner
         GC.Collect();
 
         var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var lockContentionsBefore = Monitor.LockContentionCount;
         var started = Stopwatch.GetTimestamp();
         long checksum = 0;
         for (var repetition = 0; repetition < repetitions; repetition++)
             checksum = checked(checksum + operation());
         var elapsed = Stopwatch.GetElapsedTime(started);
         var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+        var lockContentions = Monitor.LockContentionCount - lockContentionsBefore;
         GC.KeepAlive(checksum);
 
         var items = checked((long)repetitions * activeStreams * itemsPerStream);
@@ -139,6 +214,7 @@ internal static class ResolvedFlowStateEvidenceRunner
             repetitions,
             allocated / (double)items,
             elapsed.TotalNanoseconds / items,
+            lockContentions / (double)items,
             checksum);
         Print(result);
         return result;
@@ -157,10 +233,12 @@ internal static class ResolvedFlowStateEvidenceRunner
         GC.Collect();
 
         var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        var lockContentionsBefore = Monitor.LockContentionCount;
         var started = Stopwatch.GetTimestamp();
         var checksum = await operation().ConfigureAwait(false);
         var elapsed = Stopwatch.GetElapsedTime(started);
         var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+        var lockContentions = Monitor.LockContentionCount - lockContentionsBefore;
         var items = checked((long)activeStreams * itemsPerStream);
         var result = new ResolvedFlowStateEvidenceResult(
             scenario,
@@ -170,6 +248,7 @@ internal static class ResolvedFlowStateEvidenceRunner
             Repetitions: 1,
             allocated / (double)items,
             elapsed.TotalNanoseconds / items,
+            lockContentions / (double)items,
             checksum);
         Print(result);
         return result;
@@ -209,6 +288,94 @@ internal static class ResolvedFlowStateEvidenceRunner
                 checksum += EncodedBytes;
             }
         }
+        return checksum;
+    }
+
+    private static long RunSendPeriodicWindowUpdate(
+        int activeStreams,
+        int itemsPerStream,
+        bool resolved)
+    {
+        const int updateEvery = 8;
+        var streamWindow = EncodedBytes * updateEvery;
+        var controller = CreateController(
+            streamWindow,
+            checked(streamWindow * activeStreams));
+        var leases = new StreamFlowController.ResolvedSendCreditLease[activeStreams];
+
+        for (var stream = 0; stream < activeStreams; stream++)
+        {
+            var requestId = stream + 1L;
+            if (!controller.TryAcquireSendCredit(requestId, 1, EncodedBytes))
+                throw new InvalidOperationException("periodic WindowUpdate setup failed");
+            controller.ApplyWindowUpdate(requestId, 1, EncodedBytes);
+            leases[stream] = controller.ResolveSendCreditLease(requestId, 1);
+        }
+
+        long checksum = 0;
+        for (var item = 0; item < itemsPerStream; item++)
+        {
+            for (var stream = 0; stream < activeStreams; stream++)
+            {
+                var requestId = stream + 1L;
+                var acquired = resolved
+                    ? controller.TryAcquireSendCredit(in leases[stream], EncodedBytes)
+                    : controller.TryAcquireSendCredit(requestId, 1, EncodedBytes);
+                if (!acquired)
+                    throw new InvalidOperationException("periodic WindowUpdate path unexpectedly blocked");
+                checksum += EncodedBytes;
+            }
+
+            if ((item + 1) % updateEvery == 0)
+            {
+                for (var stream = 0; stream < activeStreams; stream++)
+                    controller.ApplyWindowUpdate(stream + 1L, 1, streamWindow);
+            }
+        }
+
+        return checksum;
+    }
+
+    private static long RunSendStarvedControl(
+        int activeStreams,
+        int itemsPerStream,
+        bool resolved)
+    {
+        var controller = CreateController(
+            streamWindow: EncodedBytes,
+            connectionWindow: checked(EncodedBytes * activeStreams));
+        var leases = new StreamFlowController.ResolvedSendCreditLease[activeStreams];
+
+        for (var stream = 0; stream < activeStreams; stream++)
+        {
+            var requestId = stream + 1L;
+            if (!controller.TryAcquireSendCredit(requestId, 1, EncodedBytes))
+                throw new InvalidOperationException("starved setup failed");
+            leases[stream] = controller.ResolveSendCreditLease(requestId, 1);
+        }
+
+        long checksum = 0;
+        for (var item = 0; item < itemsPerStream; item++)
+        {
+            for (var stream = 0; stream < activeStreams; stream++)
+            {
+                var requestId = stream + 1L;
+                var unexpectedlyAcquired = resolved
+                    ? controller.TryAcquireSendCredit(in leases[stream], EncodedBytes)
+                    : controller.TryAcquireSendCredit(requestId, 1, EncodedBytes);
+                if (unexpectedlyAcquired)
+                    throw new InvalidOperationException("credit-starved control unexpectedly acquired credit");
+
+                controller.ApplyWindowUpdate(requestId, 1, EncodedBytes);
+                var acquired = resolved
+                    ? controller.TryAcquireSendCredit(in leases[stream], EncodedBytes)
+                    : controller.TryAcquireSendCredit(requestId, 1, EncodedBytes);
+                if (!acquired)
+                    throw new InvalidOperationException("credit-starved control failed after WindowUpdate");
+                checksum += EncodedBytes;
+            }
+        }
+
         return checksum;
     }
 
@@ -461,17 +628,40 @@ internal static class ResolvedFlowStateEvidenceRunner
         return parsed > 0 ? parsed : throw new ArgumentOutOfRangeException(name);
     }
 
+    private static int? GetOptionalPositiveOption(string[] args, string name)
+    {
+        var raw = GetOption(args, name);
+        if (raw is null)
+            return null;
+        var parsed = int.Parse(raw, CultureInfo.InvariantCulture);
+        return parsed > 0 ? parsed : throw new ArgumentOutOfRangeException(name);
+    }
+
+    private static bool HasOption(string[] args, string name)
+    {
+        for (var index = 0; index < args.Length; index++)
+        {
+            if (string.Equals(args[index], name, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool MatchesScenario(string? filter, string scenario)
+        => filter is null || string.Equals(filter, scenario, StringComparison.Ordinal);
+
     private static void Print(ResolvedFlowStateEvidenceResult result)
     {
         Console.WriteLine(string.Format(
             CultureInfo.InvariantCulture,
-            "case={0} mode={1} c={2} items={3} B/item={4:F3} ns/item={5:F3} checksum={6}",
+            "case={0} mode={1} c={2} items={3} B/item={4:F3} ns/item={5:F3} lock-contentions/item={6:F6} checksum={7}",
             result.Scenario,
             result.Mode,
             result.ActiveStreams,
             result.ItemsPerStream,
             result.AllocatedBytesPerItem,
             result.NanosecondsPerItem,
+            result.LockContentionsPerItem,
             result.Checksum));
     }
 }
@@ -484,4 +674,9 @@ internal sealed record ResolvedFlowStateEvidenceResult(
     int Repetitions,
     double AllocatedBytesPerItem,
     double NanosecondsPerItem,
+    double LockContentionsPerItem,
     long Checksum);
+
+[JsonSerializable(typeof(List<ResolvedFlowStateEvidenceResult>))]
+[JsonSourceGenerationOptions(WriteIndented = true)]
+internal partial class ResolvedFlowStateEvidenceJsonContext : JsonSerializerContext;
