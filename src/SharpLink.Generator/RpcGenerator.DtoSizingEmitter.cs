@@ -164,7 +164,6 @@ public partial class RpcGenerator
             sb.AppendLine("        }");
         }
 
-        sb.AppendLine("        var __snapshot = RentSnapshot();");
         var baseSize = model.IsReferenceType ? 2 : 1;
         foreach (var member in model.Members)
         {
@@ -174,6 +173,11 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine($"        size = {baseSize.ToString(InvariantCulture)};");
+        sb.AppendLine("        snapshot = null;");
+        sb.AppendLine("        var __snapshot = RentSnapshot();");
+        sb.AppendLine("        var __keepSnapshot = false;");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
         for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
         {
             var member = model.Members[memberIndex];
@@ -181,40 +185,37 @@ public partial class RpcGenerator
             switch (member.Kind)
             {
                 case GeneratedMemberKind.String:
-                    sb.AppendLine($"        __snapshot.__string_{memberIndex} = {value};");
+                    sb.AppendLine($"            __snapshot.__string_{memberIndex} = {value};");
                     sb.AppendLine(
-                        $"        __snapshot.__stringByteCount_{memberIndex} = __snapshot.__string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_{memberIndex});");
+                        $"            __snapshot.__stringByteCount_{memberIndex} = __snapshot.__string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_{memberIndex});");
                     break;
                 case GeneratedMemberKind.Fixed:
-                    sb.AppendLine($"        __snapshot.__fixed_{memberIndex} = {value};");
+                    sb.AppendLine($"            __snapshot.__fixed_{memberIndex} = {value};");
                     break;
                 case GeneratedMemberKind.NullableFixed:
-                    sb.AppendLine($"        __snapshot.__nullable_{memberIndex} = {value};");
+                    sb.AppendLine($"            __snapshot.__nullable_{memberIndex} = {value};");
                     break;
                 case GeneratedMemberKind.Complex:
                     {
-                        sb.AppendLine($"        __snapshot.__complex_{memberIndex} = {value};");
+                        sb.AppendLine($"            __snapshot.__complex_{memberIndex} = {value};");
                         var index = complexIndexes[member.Name];
-                        sb.AppendLine($"        var __sized_{index} = __sizedCodec_{index};");
+                        sb.AppendLine($"            var __sized_{index} = __sizedCodec_{index};");
                         sb.AppendLine(
-                            $"        if (__sized_{index} is null ||");
-                        sb.AppendLine($"            !__sized_{index}.CanExactSize ||");
+                            $"            if (__sized_{index} is null ||");
+                        sb.AppendLine($"                !__sized_{index}.CanExactSize ||");
                         sb.AppendLine(
-                            $"            !__sized_{index}.TryGetEncodedSize(__snapshot.__complex_{memberIndex}, out __snapshot.__nestedSize_{index}, out __snapshot.__nestedSnapshot_{index}))");
-                        sb.AppendLine("        {");
-                        sb.AppendLine("            size = 0;");
-                        sb.AppendLine("            snapshot = null;");
-                        sb.AppendLine("            ReleaseCapturedChildren(__snapshot);");
-                        sb.AppendLine("            ReturnSnapshot(__snapshot);");
-                        sb.AppendLine("            return false;");
-                        sb.AppendLine("        }");
+                            $"                !__sized_{index}.TryGetEncodedSize(__snapshot.__complex_{memberIndex}, out __snapshot.__nestedSize_{index}, out __snapshot.__nestedSnapshot_{index}))");
+                        sb.AppendLine("            {");
+                        sb.AppendLine("                size = 0;");
+                        sb.AppendLine("                return false;");
+                        sb.AppendLine("            }");
                         break;
                     }
             }
         }
 
-        sb.AppendLine("        checked");
-        sb.AppendLine("        {");
+        sb.AppendLine("            checked");
+        sb.AppendLine("            {");
         for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
         {
             var member = model.Members[memberIndex];
@@ -225,7 +226,7 @@ public partial class RpcGenerator
                         var nullSize = GetFieldKeySize(member.FieldId, 0);
                         var valueOverhead = GetFieldKeySize(member.FieldId, 6) + sizeof(uint);
                         sb.AppendLine(
-                            $"            size += __snapshot.__string_{memberIndex} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __snapshot.__stringByteCount_{memberIndex};");
+                            $"                size += __snapshot.__string_{memberIndex} is null ? {nullSize.ToString(InvariantCulture)} : {valueOverhead.ToString(InvariantCulture)} + __snapshot.__stringByteCount_{memberIndex};");
                         break;
                     }
                 case GeneratedMemberKind.NullableFixed:
@@ -233,7 +234,7 @@ public partial class RpcGenerator
                         var nullSize = GetFieldKeySize(member.FieldId, 0);
                         var valueSize = GetFieldKeySize(member.FieldId, GetFixedWireTypeValue(member.FixedSize)) + member.FixedSize;
                         sb.AppendLine(
-                            $"            size += __snapshot.__nullable_{memberIndex}.HasValue ? {valueSize.ToString(InvariantCulture)} : {nullSize.ToString(InvariantCulture)};");
+                            $"                size += __snapshot.__nullable_{memberIndex}.HasValue ? {valueSize.ToString(InvariantCulture)} : {nullSize.ToString(InvariantCulture)};");
                         break;
                     }
                 case GeneratedMemberKind.Complex:
@@ -241,14 +242,30 @@ public partial class RpcGenerator
                         var index = complexIndexes[member.Name];
                         var keySize = GetFieldKeySize(member.FieldId, 6);
                         sb.AppendLine(
-                            $"            size += {keySize.ToString(InvariantCulture)} + sizeof(uint) + __snapshot.__nestedSize_{index};");
+                            $"                size += {keySize.ToString(InvariantCulture)} + sizeof(uint) + __snapshot.__nestedSize_{index};");
                         break;
                     }
             }
         }
+        sb.AppendLine("            }");
+        sb.AppendLine("            snapshot = __snapshot;");
+        sb.AppendLine("            __keepSnapshot = true;");
+        sb.AppendLine("            return true;");
         sb.AppendLine("        }");
-        sb.AppendLine("        snapshot = __snapshot;");
-        sb.AppendLine("        return true;");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (!__keepSnapshot)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                try");
+        sb.AppendLine("                {");
+        sb.AppendLine("                    ReleaseCapturedChildren(__snapshot);");
+        sb.AppendLine("                }");
+        sb.AppendLine("                finally");
+        sb.AppendLine("                {");
+        sb.AppendLine("                    ReturnSnapshot(__snapshot);");
+        sb.AppendLine("                }");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -460,8 +477,14 @@ public partial class RpcGenerator
         sb.AppendLine("    {");
         sb.AppendLine("        if (snapshot is not __SizedSnapshot __snapshot)");
         sb.AppendLine("            return;");
-        sb.AppendLine("        ReleaseCapturedChildren(__snapshot);");
-        sb.AppendLine("        ReturnSnapshot(__snapshot);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            ReleaseCapturedChildren(__snapshot);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            ReturnSnapshot(__snapshot);");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
     }
 
