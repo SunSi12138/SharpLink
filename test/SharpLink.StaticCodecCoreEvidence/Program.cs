@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -301,6 +302,7 @@ internal static partial class Program
         IRpcCodec<Core16> codec16Interface = codec16Class;
         IRpcSizedCodec<Core16> codec16SizedInterface = codec16Class;
         var codec16Core = codec16Class.StaticCore;
+        var core16Payload = CreateCore16Payload(codec16Interface);
 
         var snapshotClass =
             (global::SharpLink.Generated.__SharpLinkGeneratedCodec_27DAE40D1F078250)
@@ -321,6 +323,11 @@ internal static partial class Program
                 iterations => MeasureCore16SerializeInterface(codec16Interface, iterations, constant: true),
                 iterations => MeasureCore16SerializeCore(codec16Core, iterations, constant: true)),
             MeasureLocalPair(
+                "generated-core16-deserialize",
+                Unsafe.SizeOf<global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core>(),
+                iterations => MeasureCore16DeserializeInterface(codec16Interface, core16Payload, iterations),
+                iterations => MeasureCore16DeserializeCore(codec16Core, core16Payload, iterations)),
+            MeasureLocalPair(
                 "generated-core16-size-varying",
                 Unsafe.SizeOf<global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core>(),
                 iterations => MeasureCore16SizeInterface(codec16SizedInterface, iterations),
@@ -329,7 +336,12 @@ internal static partial class Program
                 "generated-snapshot-size-varying",
                 Unsafe.SizeOf<global::SharpLink.Generated.__SharpLinkGeneratedCodec_27DAE40D1F078250.Core>(),
                 iterations => MeasureSnapshotSizeInterface(snapshotInterface, iterations),
-                iterations => MeasureSnapshotSizeCore(snapshotCore, iterations))
+                iterations => MeasureSnapshotSizeCore(snapshotCore, iterations)),
+            MeasureLocalPair(
+                "generated-snapshot-sized-serialize-varying",
+                Unsafe.SizeOf<global::SharpLink.Generated.__SharpLinkGeneratedCodec_27DAE40D1F078250.Core>(),
+                iterations => MeasureSnapshotSizedSerializeInterface(snapshotInterface, iterations),
+                iterations => MeasureSnapshotSizedSerializeCore(snapshotCore, iterations))
         ];
 #else
         return [];
@@ -442,6 +454,50 @@ internal static partial class Program
         return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
     }
 
+    private static ReadOnlySequence<byte> CreateCore16Payload(IRpcCodec<Core16> codec)
+    {
+        using var writer = new SharpLink.Runtime.PooledByteBufferWriter(256);
+        var value = EvidencePayloads.Get16(17);
+        codec.Serialize(in value, writer);
+        return new ReadOnlySequence<byte>(writer.WrittenMemory.ToArray());
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureCore16DeserializeInterface(
+        IRpcCodec<Core16> codec,
+        ReadOnlySequence<byte> payload,
+        int iterations)
+    {
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
+        {
+            var value = codec.Deserialize(in payload);
+            checksum = unchecked(checksum * 31 + value.A + value.D);
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureCore16DeserializeCore(
+        global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core codec,
+        ReadOnlySequence<byte> payload,
+        int iterations)
+    {
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
+        {
+            var value = codec.Deserialize(in payload);
+            checksum = unchecked(checksum * 31 + value.A + value.D);
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static LocalCodecSample MeasureCore16SizeInterface(
         IRpcSizedCodec<Core16> codec,
@@ -523,6 +579,64 @@ internal static partial class Program
             try
             {
                 checksum = unchecked(checksum * 31 + ((long)size * 31 + value.Id));
+            }
+            finally
+            {
+                codec.ReleaseSnapshot(snapshot);
+            }
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureSnapshotSizedSerializeInterface(
+        IRpcSizedCodec<CoreSnapshot> codec,
+        int iterations)
+    {
+        using var writer = new SharpLink.Runtime.PooledByteBufferWriter(2048);
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
+        {
+            var value = EvidencePayloads.GetSnapshot(iteration);
+            if (!codec.TryGetEncodedSize(in value, out var size, out var snapshot))
+                throw new InvalidOperationException("CoreSnapshot must support exact sizing.");
+            try
+            {
+                writer.Clear();
+                codec.SerializeSized(in value, writer, size, snapshot);
+                checksum = unchecked(checksum * 31 + writer.WrittenCount + value.Id);
+            }
+            finally
+            {
+                codec.ReleaseSnapshot(snapshot);
+            }
+        }
+        return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureSnapshotSizedSerializeCore(
+        global::SharpLink.Generated.__SharpLinkGeneratedCodec_27DAE40D1F078250.Core codec,
+        int iterations)
+    {
+        using var writer = new SharpLink.Runtime.PooledByteBufferWriter(2048);
+        PrepareLocalMeasurement();
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
+        {
+            var value = EvidencePayloads.GetSnapshot(iteration);
+            if (!codec.TryGetEncodedSize(in value, out var size, out var snapshot))
+                throw new InvalidOperationException("CoreSnapshot Core must support exact sizing.");
+            try
+            {
+                writer.Clear();
+                codec.SerializeSized(in value, writer, size, snapshot);
+                checksum = unchecked(checksum * 31 + writer.WrittenCount + value.Id);
             }
             finally
             {
