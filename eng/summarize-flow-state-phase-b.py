@@ -24,7 +24,12 @@ def validate(rows):
             raise ValueError(f"Checksum mismatch: {key}")
         if r["Family"] == "full-controller" and r["ConnectionGateEntriesPerItem"] != 2:
             raise ValueError(f"B0 must not claim fewer acquisitions/item: {key}")
-        if r["Family"] in ("send-owner-model", "send-publication-model"):
+        if r["Family"] in ("send-owner-model", "send-publication-model", "send-fused-admission-model"):
+            if r["Family"] == "send-fused-admission-model":
+                if (r["Variant"] != "B2-grant-4096" or
+                        r["Shape"] not in ("split-writer-admission", "direct-writer-admission") or
+                        r.get("ReusableCommandsAllocated") != 0 or r.get("QueueBackpressureWaits") != 0):
+                    raise ValueError(f"Invalid direct-publication boundary or hidden allocation: {key}")
             if r["Family"] == "send-publication-model":
                 if (r["Variant"] != "B2-grant-4096" or r["Shape"] not in ("legacy-commit", "writer-owned") or
                         r.get("ReusableCommandsAllocated") != 0 or r.get("QueueBackpressureWaits") != 0):

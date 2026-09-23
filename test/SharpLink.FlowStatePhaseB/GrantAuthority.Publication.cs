@@ -8,6 +8,44 @@ internal sealed partial class GrantAuthority
     // This is still a model contract: it does not attach to a production SendPump.
     internal readonly record struct Publication(Receipt Receipt);
 
+    // The caller is the prospective writer and must settle every successful result,
+    // even if close/cancellation occurs before it consumes the result. Ownership is
+    // intended to linearize with credit admission, not with the continuation.
+    internal ValueTask<Publication> AcquirePublicationAsync(Lease lease, int bytes, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(bytes, _maxItemBytes);
+        var state = lease.State ?? throw new InvalidOperationException("Unresolved lease.");
+        lock (state.Gate)
+        {
+            Validate(lease);
+            if (state.Closed) throw new InvalidOperationException("Closed stream.");
+            if (state.Pending != 0 || state.AcquirePending || state.PublicationActive)
+                throw new InvalidOperationException("Settle the previous receipt/acquire first.");
+            if (Volatile.Read(ref _pressure) == 0 && state.Grant >= bytes && state.Credit >= bytes)
+            {
+                state.Grant -= bytes;
+                state.Credit -= bytes;
+                state.Pending = bytes;
+                var receipt = new Receipt(lease, ++state.Sequence, bytes);
+                PinPublication(state);
+                return ValueTask.FromResult(new Publication(receipt));
+            }
+            return AcquirePublicationOnOwnerLocked(lease, bytes, token);
+        }
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private ValueTask<Publication> AcquirePublicationOnOwnerLocked(Lease lease, int bytes, CancellationToken token)
+    {
+        var command = lease.State.AcquireCommand;
+        var result = command.PreparePublication(lease, bytes, token);
+        lease.State.AcquirePending = true;
+        Interlocked.Increment(ref AcquireSubmissions);
+        return SubmitReusable(command, result);
+    }
+
     internal Publication BeginPublication(Receipt receipt)
     {
         var state = receipt.Lease.State ?? throw new InvalidOperationException("Unresolved receipt.");
@@ -17,12 +55,19 @@ internal sealed partial class GrantAuthority
             if (state.Closed || state.PublicationActive || state.Pending != receipt.Bytes ||
                 state.Sequence != receipt.Sequence || receipt.Bytes <= 0)
                 throw new InvalidOperationException("Receipt already settled or revoked.");
-            state.PublicationActive = true;
-            state.PublicationUncredited = state.PublicationBytes = state.Pending;
-            state.Outstanding += state.Pending;
-            state.Pending = 0;
+            PinPublication(state);
             return new Publication(receipt);
         }
+    }
+
+    // Must be called while holding the stream gate, immediately after admission
+    // or after validating an ordinary receipt. No writer completion can precede it.
+    private static void PinPublication(State state)
+    {
+        state.PublicationActive = true;
+        state.PublicationUncredited = state.PublicationBytes = state.Pending;
+        state.Outstanding += state.Pending;
+        state.Pending = 0;
     }
 
     // accepted=false requires the writer to know that no byte became peer-visible.

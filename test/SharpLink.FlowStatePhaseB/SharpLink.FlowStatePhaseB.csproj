@@ -4,7 +4,7 @@
     <IsPackable>false</IsPackable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);REUSABLE_OWNER_COMMANDS</DefineConstants>
+    <DefineConstants>$(DefineConstants);REUSABLE_OWNER_COMMANDS;DIRECT_PUBLICATION_ADMISSION</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />

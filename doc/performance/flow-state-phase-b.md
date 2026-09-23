@@ -228,3 +228,48 @@ For heads after `3d4be885`, the allocating-reference completion-control still
 compares the frozen `4d7335c8` model with the full current candidate; it therefore
 includes later model changes, not just completion reuse in isolation. The
 recorded `3d4be885` result remains tied to its own exact source and CI artifact.
+
+## Direct writer-admission increment
+
+`AcquirePublicationAsync` is an explicit writer-facing operation. It binds the
+publication pin in the **same stream critical section as credit admission**.
+The ordinary `AcquireAsync` + `BeginPublication` contract remains available;
+they are not silently fused for callers that only requested a revocable receipt.
+A direct caller must consume and settle any successfully admitted publication,
+even when cancellation, close or termination wins before its continuation runs.
+
+The normal local path now enters the stream gate once for admission/pinning and
+once for settlement, instead of separate acquire/begin/finish entries. This is
+an authored local critical-section inventory, not a measurement of all Lock,
+Channel or value-source internals. It adds no shared RMW or owner command to the
+item path. Credit bounds, extra-grant sizing and waiter scheduling are unchanged.
+
+The refill command exposes either a Receipt or Publication `IValueTaskSource`
+view of the **same** preallocated operation. No await-wrapper Task is needed for
+the typed conversion. The owner pins before completing the source; GetResult
+only unwraps that already-pinned result and consumes the original token. Holding
+a completed result must keep its ownership alive across close and early credit.
+A first implementation that deferred Begin until GetResult failed the new
+held-result/close test deterministically and was replaced before submission.
+
+Thirteen new model checks cover direct held completion, admission/close order,
+post-admission cancellation, bounded-queue cancellation, connection FIFO,
+stream-blocked-head fairness, alternating receipt/publication views, oversized
+borrow/refund, concurrent callers, terminal settlement, differential ledgers and
+100,000 actual pooled generations. They supplement the original 41 checks;
+neither this count nor the real A/B0 suite proves full production integration.
+
+The `fused-admission-control` job compares exact writer-owned reference
+`141608ce1c256c0e92d0c5611491cb24af419cda` with the candidate. Identical Program
+and FusedPublicationProbe sources run on each side; only the compile-time choice
+of split Acquire/Begin versus direct admission differs. Both sides execute the
+same Finish and 64-item peer-update schedule. JIT PGO ON/OFF and NativeAOT run
+c1/c8/c32/c128, 16 B/4 KiB, lengths 1/4096, four samples per case and two launches
+in AB/BA order. The validator requires all 24 reports / 768 rows and retains
+regressions. Length 1 follows the same 64-item warmup: it is a warmed short-tail
+control, **not a cold one-item stream** or evidence of cold allocation parity.
+
+This control measures local admission overhead with real pin accounting, not
+writer/transport execution. Real SendPump integration, key-only wire updates,
+receive batching and complete production latency/fairness/allocation acceptance
+are still open. Positive model timing does not change the PR's Draft status.

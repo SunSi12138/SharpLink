@@ -17,6 +17,7 @@ internal static partial class Checks
 
     internal static async Task RunAsync()
     {
+        await RunFusedPublicationAsync();
         await Case("grant accounting and unsent exactly-once", async () =>
         {
             await using var owner = new GrantAuthority(1024, 2048, 256);

@@ -110,7 +110,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         catch { Interlocked.Decrement(ref QueueSubmissions); throw; }
     }
 
-    private ValueTask<T> SubmitReusable<T>(ReusableOwnerCommand<T> command, ValueTask<T> result)
+    private ValueTask<T> SubmitReusable<T>(IOwnerCommand command, ValueTask<T> result)
     {
         Interlocked.Increment(ref QueueSubmissions);
         if (_commands.Writer.TryWrite(command)) return result;
@@ -118,7 +118,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         return WaitForQueueAsync(command, result);
     }
 
-    private async ValueTask<T> WaitForQueueAsync<T>(ReusableOwnerCommand<T> command, ValueTask<T> result)
+    private async ValueTask<T> WaitForQueueAsync<T>(IOwnerCommand command, ValueTask<T> result)
     {
         try { await _commands.Writer.WriteAsync(command).ConfigureAwait(false); }
         catch (Exception error)
@@ -234,7 +234,9 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
             _free -= extra;
             state.Grant += extra;
         }
-        return new Receipt(request.Lease, ++state.Sequence, request.Bytes);
+        var receipt = new Receipt(request.Lease, ++state.Sequence, request.Bytes);
+        if (request.WriterOwned) PinPublication(state);
+        return receipt;
     }
 
     private void AdmitOrQueue(AcquireCommand request)

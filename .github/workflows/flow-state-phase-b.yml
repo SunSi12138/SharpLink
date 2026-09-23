@@ -7,6 +7,7 @@ on:
       - '.github/workflows/flow-state-phase-b.yml'
       - 'eng/*flow-state-phase-b.py'
       - 'eng/compare-flow-state-completions.py'
+      - 'eng/*flow-state-fused.py'
       - 'eng/compare-flow-state-publication.py'
       - 'test/SharpLink.FlowStatePhaseB/**'
       - 'doc/performance/flow-state-phase-b.md'
@@ -29,7 +30,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup-dotnet
       - name: Validate frozen sources and generator guards
-        run: python3 eng/test-flow-state-phase-b.py
+        run: |
+          python3 eng/test-flow-state-phase-b.py
+          python3 eng/test-flow-state-fused.py
       - name: Apply B0 only to this disposable validation checkout
         run: python3 eng/prepare-flow-state-phase-b.py --apply-b0-to-worktree
       - name: Restore and build the real unit-test assembly
@@ -65,6 +68,7 @@ jobs:
       - name: Build research host and run model/attribution guards
         run: |
           python3 eng/test-flow-state-phase-b.py
+          python3 eng/test-flow-state-fused.py
           dotnet restore test/SharpLink.FlowStatePhaseB/SharpLink.FlowStatePhaseB.csproj
           dotnet build test/SharpLink.FlowStatePhaseB/SharpLink.FlowStatePhaseB.csproj -c Release --no-restore
           dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --self-test
@@ -185,5 +189,89 @@ jobs:
         with:
           name: flow-state-completions-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/completion-control
+          if-no-files-found: error
+          retention-days: 30
+
+  fused-admission-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASELINE_SHA: 141608ce1c256c0e92d0c5611491cb24af419cda
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ROOT: ${{ github.workspace }}/artifacts/fused-admission
+      DOTNET_PROCESSOR_COUNT: '4'
+      DOTNET_ReadyToRun: '0'
+      DOTNET_TieredCompilation: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Prepare exact revisions with identical harnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ROOT"
+          before="$RUNNER_TEMP/flow-state-split-publication"
+          git worktree add --detach "$before" "$BASELINE_SHA"
+          for source in Program.cs FusedPublicationProbe.cs; do
+            cp "test/SharpLink.FlowStatePhaseB/$source" "$before/test/SharpLink.FlowStatePhaseB/$source"
+            cmp "test/SharpLink.FlowStatePhaseB/$source" "$before/test/SharpLink.FlowStatePhaseB/$source"
+            sha256sum "test/SharpLink.FlowStatePhaseB/$source" >> "$ROOT/harness-sha256.txt"
+          done
+          echo "BEFORE_ROOT=$before" >> "$GITHUB_ENV"
+          echo "CPU_LIST=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0))[:4])))')" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json, os, pathlib
+          pathlib.Path(os.environ['ROOT'], 'provenance.json').write_text(json.dumps({
+              'baseline': os.environ['BASELINE_SHA'], 'candidate': os.environ['CANDIDATE_SHA']}))
+          PY
+          dotnet --info > "$ROOT/dotnet.txt"
+          lscpu > "$ROOT/cpu.txt"
+      - name: Build both JIT and NativeAOT hosts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in "$BEFORE_ROOT" "$GITHUB_WORKSPACE"; do
+            project="$source/test/SharpLink.FlowStatePhaseB/SharpLink.FlowStatePhaseB.csproj"
+            dotnet restore "$project"
+            dotnet build "$project" -c Release --no-restore
+            dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=true -o "$source/artifacts/fused-native"
+          done
+      - name: AB/BA explicit writer ownership control
+        shell: bash
+        run: |
+          set -euo pipefail
+          for runtime in pgo0 pgo1 aot; do
+            for size in 1 4096; do
+              for launch in 1 2; do
+                order=(before after)
+                if (( launch == 2 )); then order=(after before); fi
+                for label in "${order[@]}"; do
+                  source="$BEFORE_ROOT"
+                  if [[ "$label" == after ]]; then source="$GITHUB_WORKSPACE"; fi
+                  output="$ROOT/$runtime-$size-r$launch-$label.json"
+                  log="$ROOT/$runtime-$size-r$launch-$label.log"
+                  args=(--fused-publication-only --items "$size" --repetitions 4 --output "$output")
+                  if [[ "$runtime" == aot ]]; then
+                    taskset -c "$CPU_LIST" "$source/artifacts/fused-native/SharpLink.FlowStatePhaseB" "${args[@]}" > "$log" 2>&1
+                  else
+                    env DOTNET_TieredPGO="${runtime#pgo}" taskset -c "$CPU_LIST" dotnet run --project "$source/test/SharpLink.FlowStatePhaseB" -c Release --no-build -- "${args[@]}" > "$log" 2>&1
+                  fi
+                done
+              done
+            done
+          done
+      - name: Validate complete matched reports without hiding regressions
+        run: |
+          python3 eng/compare-flow-state-fused.py "$ROOT"
+          cat "$ROOT/fused-comparison.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain comparison including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flow-state-fused-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/fused-admission
           if-no-files-found: error
           retention-days: 30

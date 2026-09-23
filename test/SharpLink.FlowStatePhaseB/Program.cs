@@ -18,7 +18,9 @@ internal static class Program
         var diagnose = args.Contains("--diagnose");
         var rows = new List<Result>();
 #if REUSABLE_OWNER_COMMANDS
-        if (args.Contains("--publication-only"))
+        if (args.Contains("--fused-publication-only"))
+            await FusedPublicationProbe.RunAsync(items, repetitions, rows);
+        else if (args.Contains("--publication-only"))
             await PublicationProbe.RunAsync(items, repetitions, rows);
         else
 #endif

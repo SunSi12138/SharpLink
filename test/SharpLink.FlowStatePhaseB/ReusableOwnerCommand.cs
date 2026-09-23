@@ -23,6 +23,11 @@ internal abstract class ReusableOwnerCommand<T> : IOwnerCommand, IValueTaskSourc
     internal bool IsBusy => Volatile.Read(ref _busy);
 
     protected ValueTask<T> Begin(CancellationToken token = default, Action<object?>? wake = null, object? owner = null)
+        => new(this, BeginToken(token, wake, owner));
+
+    // The same reusable operation may expose a different typed view of its result.
+    // Exactly one view is returned to the caller; both views share consumption ownership.
+    protected short BeginToken(CancellationToken token = default, Action<object?>? wake = null, object? owner = null)
     {
         lock (_completionGate)
         {
@@ -31,7 +36,7 @@ internal abstract class ReusableOwnerCommand<T> : IOwnerCommand, IValueTaskSourc
             _consumed = false;
             Volatile.Write(ref _busy, true);
             _registration = wake is null ? default : token.UnsafeRegister(wake, owner);
-            return new ValueTask<T>(this, _source.Version);
+            return _source.Version;
         }
     }
 

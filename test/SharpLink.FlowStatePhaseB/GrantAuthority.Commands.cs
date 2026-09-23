@@ -1,15 +1,18 @@
+using System.Threading.Tasks.Sources;
+
 namespace SharpLink.FlowStatePhaseB;
 
 // Typed refill and update messages hold their own completion lifetimes. These
 // are preallocated per stream; cold control operations deliberately remain Tasks.
 internal sealed partial class GrantAuthority
 {
-    internal sealed class AcquireCommand : ReusableOwnerCommand<Receipt>
+    internal sealed class AcquireCommand : ReusableOwnerCommand<Receipt>, IValueTaskSource<Publication>
     {
         private readonly GrantAuthority _owner;
         internal Lease Lease;
         internal int Bytes;
         internal CancellationToken Token;
+        internal bool WriterOwned;
         internal readonly LinkedListNode<AcquireCommand> Node;
 
         internal AcquireCommand(GrantAuthority owner)
@@ -25,8 +28,22 @@ internal sealed partial class GrantAuthority
             Lease = lease;
             Bytes = bytes;
             Token = token;
+            WriterOwned = false;
             return result;
         }
+
+        internal ValueTask<Publication> PreparePublication(Lease lease, int bytes, CancellationToken token)
+        {
+            var version = BeginToken(token, static state => ((GrantAuthority)state!).WakeCanceledWaiters(), _owner);
+            Lease = lease;
+            Bytes = bytes;
+            Token = token;
+            WriterOwned = true;
+            return new ValueTask<Publication>(this, version);
+        }
+
+        Publication IValueTaskSource<Publication>.GetResult(short token)
+            => new(GetResult(token)); // ownership was bound at Reserve, before completion
 
         public override void Execute() => _owner.AdmitOrQueue(this);
 
