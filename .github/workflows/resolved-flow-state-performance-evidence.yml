@@ -286,83 +286,83 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command -v perf >/dev/null
-          sudo sysctl -w kernel.perf_event_paranoid=-1 >/dev/null || true
+
+          if ! command -v valgrind >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq valgrind
+          fi
 
           jit_dll="$CANDIDATE_ROOT/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"
           aot_bin="$ROOT/aot/bin/SharpLink.Benchmarks"
-          events="instructions,branches,branch-misses,cycles,context-switches"
 
-          LC_ALL=C perf stat -x, -e "$events" -o "$ROOT/counters/jit-key.csv" -- taskset -c "$CPU_LIST" dotnet "$jit_dll" --resolved-flow-state-evidence --scenario receive-pair --mode key --active-streams 128 --items-per-stream 100000 --repetitions 5 --skip-contention --output "$ROOT/counters/jit-key.json" > "$ROOT/logs/counter-jit-key.log"
-          LC_ALL=C perf stat -x, -e "$events" -o "$ROOT/counters/jit-resolved.csv" -- taskset -c "$CPU_LIST" dotnet "$jit_dll" --resolved-flow-state-evidence --scenario receive-pair --mode resolved --active-streams 128 --items-per-stream 100000 --repetitions 5 --skip-contention --output "$ROOT/counters/jit-resolved.json" > "$ROOT/logs/counter-jit-resolved.log"
-          LC_ALL=C perf stat -x, -e "$events" -o "$ROOT/counters/aot-key.csv" -- taskset -c "$CPU_LIST" "$aot_bin" --scenario receive-pair --mode key --active-streams 128 --items-per-stream 100000 --repetitions 5 --skip-contention --output "$ROOT/counters/aot-key.json" > "$ROOT/logs/counter-aot-key.log"
-          LC_ALL=C perf stat -x, -e "$events" -o "$ROOT/counters/aot-resolved.csv" -- taskset -c "$CPU_LIST" "$aot_bin" --scenario receive-pair --mode resolved --active-streams 128 --items-per-stream 100000 --repetitions 5 --skip-contention --output "$ROOT/counters/aot-resolved.json" > "$ROOT/logs/counter-aot-resolved.log"
+          run_callgrind() {
+            local runtime="$1"
+            local mode="$2"
+            local output="$ROOT/counters/callgrind-$runtime-$mode.out"
+            local result="$ROOT/counters/$runtime-$mode.json"
+            local log="$ROOT/logs/counter-$runtime-$mode.log"
+
+            if [[ "$runtime" == "jit" ]]; then
+              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output"                 dotnet "$jit_dll" --resolved-flow-state-evidence                 --scenario receive-pair --mode "$mode" --active-streams 32                 --items-per-stream 10000 --repetitions 2 --skip-contention                 --output "$result" > "$log" 2>&1
+            else
+              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output"                 "$aot_bin" --scenario receive-pair --mode "$mode" --active-streams 32                 --items-per-stream 10000 --repetitions 2 --skip-contention                 --output "$result" > "$log" 2>&1
+            fi
+          }
+
+          run_callgrind jit key
+          run_callgrind jit resolved
+          run_callgrind aot key
+          run_callgrind aot resolved
 
           python3 - <<'PY'
           import pathlib
 
           root = pathlib.Path("artifacts/performance/resolved-flow-state")
-          events = ("instructions", "branches", "branch-misses", "cycles", "context-switches")
-          items = 6 * 128 * 100000
+          # Runner executes one warm-up operation plus two measured repetitions.
+          items = 3 * 32 * 10000
 
           def load(path):
-              found = {}
-              unavailable = []
+              events = None
+              summary = None
               for line in path.read_text().splitlines():
-                  if not line or line.startswith("#"):
-                      continue
-                  parts = [part.strip() for part in line.split(",")]
-                  for event in events:
-                      if event not in parts:
-                          continue
-                      raw = parts[0].replace(" ", "")
-                      if raw.startswith("<"):
-                          unavailable.append(event)
-                          continue
-                      found[event] = float(raw)
-              missing = [event for event in events if event not in found]
-              return found, sorted(set(unavailable + missing))
+                  if line.startswith("events: "):
+                      events = line.split()[1:]
+                  elif line.startswith("summary: "):
+                      summary = [int(value) for value in line.split()[1:]]
+              if events is None or summary is None:
+                  raise SystemExit(f"missing Callgrind events/summary: {path}")
+              values = dict(zip(events, summary))
+              if "Ir" not in values or "Bc" not in values or "Bi" not in values:
+                  raise SystemExit(f"missing instruction/branch counters: {path}")
+              return values
 
           data = {}
-          unavailable = {}
           for runtime in ("jit", "aot"):
               for mode in ("key", "resolved"):
-                  row, missing = load(root / "counters" / f"{runtime}-{mode}.csv")
-                  data[(runtime, mode)] = row
-                  if missing:
-                      unavailable[(runtime, mode)] = missing
+                  data[(runtime, mode)] = load(
+                      root / "counters" / f"callgrind-{runtime}-{mode}.out"
+                  )
 
           lines = [
-              "# Receive-pair c128 hardware-counter attribution",
+              "# Receive-pair c32 instruction/branch attribution",
               "",
+              "GitHub hosted runners do not expose the hardware PMU, so CI uses "
+              "Valgrind/Callgrind dynamic instruction and branch simulation.",
+              "",
+              "| Runtime | Mode | Instructions/item | Branches/item | Branch mispredicts/item |",
+              "|---|---|---:|---:|---:|",
           ]
-          if unavailable:
-              lines += [
-                  "Hardware PMU counters are unavailable on this GitHub-hosted runner; "
-                  "the workflow records this limitation and continues with the portable "
-                  "microkernel and end-to-end evidence.",
-                  "",
-              ]
-              for (runtime, mode), missing in sorted(unavailable.items()):
-                  lines.append(f"- {runtime}/{mode}: unavailable {', '.join(missing)}")
-          else:
-              lines += [
-                  "Counts include one warm-up operation; startup is amortized over 76.8M items.",
-                  "",
-                  "| Runtime | Mode | Instructions/item | Branches/item | Branch misses/item | Cycles/item | Context switches |",
-                  "|---|---|---:|---:|---:|---:|---:|",
-              ]
-              for runtime in ("jit", "aot"):
-                  for mode in ("key", "resolved"):
-                      row = data[(runtime, mode)]
-                      lines.append(
-                          f"| {runtime} | {mode} | "
-                          f"{row['instructions'] / items:.2f} | "
-                          f"{row['branches'] / items:.2f} | "
-                          f"{row['branch-misses'] / items:.4f} | "
-                          f"{row['cycles'] / items:.2f} | "
-                          f"{int(row['context-switches'])} |"
-                      )
+          for runtime in ("jit", "aot"):
+              for mode in ("key", "resolved"):
+                  row = data[(runtime, mode)]
+                  branches = row["Bc"] + row["Bi"]
+                  misses = row.get("Bcm", 0) + row.get("Bim", 0)
+                  lines.append(
+                      f"| {runtime} | {mode} | "
+                      f"{row['Ir'] / items:.2f} | "
+                      f"{branches / items:.2f} | "
+                      f"{misses / items:.4f} |"
+                  )
 
           lines += [
               "",
