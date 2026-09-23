@@ -963,7 +963,7 @@ namespace SharpLink.Abstractions
     }
     public static class SharpLinkGeneratedManifestVersions
     {
-        public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v1";
+        public const string AbiIdentity = "sharplink-2.0-api4-static-codec-core-v2";
         public const int Api = 4;
         public const int Protocol = 2;
     }
