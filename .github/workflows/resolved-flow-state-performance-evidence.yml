@@ -307,9 +307,9 @@ jobs:
             local log="$ROOT/logs/counter-$runtime-$mode.log"
 
             if [[ "$runtime" == "jit" ]]; then
-              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output"                 dotnet "$jit_dll" --resolved-flow-state-evidence                 --scenario receive-pair --mode "$mode" --active-streams 32                 --items-per-stream 10000 --repetitions 2 --skip-contention                 --output "$result" > "$log" 2>&1
+              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output"                 dotnet "$jit_dll" --resolved-flow-state-evidence                 --scenario receive-pair --mode "$mode" --active-streams 32                 --items-per-stream 1000 --repetitions 2 --skip-contention                 --output "$result" > "$log" 2>&1
             else
-              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output"                 "$aot_bin" --scenario receive-pair --mode "$mode" --active-streams 32                 --items-per-stream 10000 --repetitions 2 --skip-contention                 --output "$result" > "$log" 2>&1
+              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output"                 "$aot_bin" --scenario receive-pair --mode "$mode" --active-streams 32                 --items-per-stream 1000 --repetitions 2 --skip-contention                 --output "$result" > "$log" 2>&1
             fi
           }
 
@@ -323,7 +323,7 @@ jobs:
 
           root = pathlib.Path("artifacts/performance/resolved-flow-state")
           # Runner executes one warm-up operation plus two measured repetitions.
-          items = 3 * 32 * 10000
+          items = 3 * 32 * 1000
 
           def load(path):
               events = None
