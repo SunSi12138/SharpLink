@@ -1,0 +1,100 @@
+name: Flow State Phase B Research
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/flow-state-phase-b.yml'
+      - 'eng/*flow-state-phase-b.py'
+      - 'test/SharpLink.FlowStatePhaseB/**'
+      - 'doc/performance/flow-state-phase-b.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-state-phase-b-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  split-gate-correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Validate frozen sources and generator guards
+        run: python3 eng/test-flow-state-phase-b.py
+      - name: Apply B0 only to this disposable validation checkout
+        run: python3 eng/prepare-flow-state-phase-b.py --apply-b0-to-worktree
+      - name: Restore and build the real unit-test assembly
+        run: |
+          dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore
+      - name: Run all existing flow-controller acceptance tests on B0
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --treenode-filter '/*/*/StreamFlowControllerTests/*'
+      - name: Run complete unit suite with split gates
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ROOT: ${{ github.workspace }}/artifacts/phase-b
+      DOTNET_PROCESSOR_COUNT: '4'
+      DOTNET_ReadyToRun: '0'
+      DOTNET_TieredCompilation: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record exact provenance and CPU affinity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ROOT/env"
+          printf 'review_head=%s\nphase_a=65892a1d9cef5a79b6afb865e667935a4b5b5e33\n' '${{ github.event.pull_request.head.sha || github.sha }}' > "$ROOT/env/revisions.txt"
+          git rev-parse HEAD >> "$ROOT/env/revisions.txt"
+          dotnet --info > "$ROOT/env/dotnet.txt"
+          lscpu > "$ROOT/env/cpu.txt"
+          echo "CPU_LIST=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0))[:4])))')" >> "$GITHUB_ENV"
+      - name: Build research host and run model/attribution guards
+        run: |
+          python3 eng/test-flow-state-phase-b.py
+          dotnet restore test/SharpLink.FlowStatePhaseB/SharpLink.FlowStatePhaseB.csproj
+          dotnet build test/SharpLink.FlowStatePhaseB/SharpLink.FlowStatePhaseB.csproj -c Release --no-restore
+          dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --self-test
+      - name: JIT PGO on and off evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pgo in 0 1; do
+            export DOTNET_TieredPGO="$pgo"
+            taskset -c "$CPU_LIST" dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --b0-only --items 10000 --repetitions 2 --output "$ROOT/b0-pgo$pgo.json"
+            taskset -c "$CPU_LIST" dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --grants-only --items 1024 --repetitions 2 --output "$ROOT/grants-pgo$pgo.json"
+          done
+          taskset -c "$CPU_LIST" dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --b0-only --diagnose --items 1000 --repetitions 1 --output "$ROOT/b0-diagnostic.json"
+      - name: Publish and validate NativeAOT research host
+        run: |
+          dotnet publish test/SharpLink.FlowStatePhaseB -c Release -r linux-x64 -p:PublishAot=true -o artifacts/phase-b-native
+          artifacts/phase-b-native/SharpLink.FlowStatePhaseB --self-test
+      - name: NativeAOT evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          taskset -c "$CPU_LIST" artifacts/phase-b-native/SharpLink.FlowStatePhaseB --b0-only --items 10000 --repetitions 2 --output "$ROOT/b0-nativeaot.json"
+          taskset -c "$CPU_LIST" artifacts/phase-b-native/SharpLink.FlowStatePhaseB --grants-only --items 1024 --repetitions 2 --output "$ROOT/grants-nativeaot.json"
+      - name: Validate all evidence and publish summary
+        run: |
+          python3 eng/summarize-flow-state-phase-b.py "$ROOT"
+          cat "$ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flow-state-phase-b-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/phase-b
+          if-no-files-found: error
+          retention-days: 30
