@@ -4,7 +4,7 @@ namespace SharpLink.Runtime;
 /// Coordinates negotiated byte credits for every stream and for the owning connection.
 /// The uncontended path is allocation-free; waiters are allocated only after credit is exhausted.
 /// </summary>
-internal sealed class StreamFlowController
+internal sealed partial class StreamFlowController
 {
     private const int MaxPendingSendStateWaiters = 1;
     private const int MaxPooledReceiveStates = 128;
@@ -184,28 +184,6 @@ internal sealed class StreamFlowController
         }
     }
 
-    internal ResolvedSendCreditLease ResolveSendCreditLease(long requestId, ushort streamId)
-    {
-        var key = new StreamKey(requestId, streamId);
-        lock (_gate)
-        {
-            ThrowIfTerminated();
-            if (!_sendStates.TryGetValue(key, out var state) ||
-                state.Completed ||
-                state.AbortException is not null)
-            {
-                return default;
-            }
-
-            return new ResolvedSendCreditLease(
-                this,
-                key.RequestId,
-                key.StreamId,
-                state,
-                state.Lease);
-        }
-    }
-
     internal ValueTask AcquireSendCreditAsync(
         in ResolvedSendCreditLease lease,
         int encodedBytes,
@@ -280,6 +258,7 @@ internal sealed class StreamFlowController
 
         var key = new StreamKey(requestId, streamId);
         SendState? state;
+        long expectedLease;
         lock (_gate)
         {
             ThrowIfTerminated();
@@ -306,12 +285,13 @@ internal sealed class StreamFlowController
                     return ValueTask.CompletedTask;
                 }
             }
+            expectedLease = state?.Lease ?? 0L;
         }
 
         return AcquireContendedSendCreditAsync(
             key,
             state,
-            state?.Lease ?? 0L,
+            expectedLease,
             encodedBytes,
             cancellationToken);
     }

@@ -147,19 +147,11 @@ internal sealed partial class RpcSession
             return AwaitResolvedSendCreditAsync(pending, lease);
         }
 
-        var unresolved = controller.AcquireSendCreditAsync(
+        return controller.AcquireSendCreditLeaseAsync(
             requestId,
             streamId,
             encodedBytes,
             cancellationToken);
-        if (unresolved.IsCompletedSuccessfully)
-        {
-            unresolved.GetAwaiter().GetResult();
-            return new ValueTask<StreamFlowController.ResolvedSendCreditLease>(
-                controller.ResolveSendCreditLease(requestId, streamId));
-        }
-
-        return AwaitUnresolvedSendCreditAsync(unresolved, controller, requestId, streamId);
     }
 
     private static async ValueTask<StreamFlowController.ResolvedSendCreditLease>
@@ -169,17 +161,6 @@ internal sealed partial class RpcSession
     {
         await pending.ConfigureAwait(false);
         return lease;
-    }
-
-    private static async ValueTask<StreamFlowController.ResolvedSendCreditLease>
-        AwaitUnresolvedSendCreditAsync(
-            ValueTask pending,
-            StreamFlowController controller,
-            long requestId,
-            ushort streamId)
-    {
-        await pending.ConfigureAwait(false);
-        return controller.ResolveSendCreditLease(requestId, streamId);
     }
 
     internal bool TryAcquireStreamSendCredit(
@@ -202,9 +183,7 @@ internal sealed partial class RpcSession
             return controller.TryAcquireSendCredit(in lease, encodedBytes);
         }
 
-        var acquired = controller.TryAcquireSendCredit(requestId, streamId, encodedBytes);
-        resolvedLease = controller.ResolveSendCreditLease(requestId, streamId);
-        return acquired;
+        return controller.TryAcquireSendCreditLease(requestId, streamId, encodedBytes, out resolvedLease);
     }
 
     internal void ReturnUnsentStreamCredit(
