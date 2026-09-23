@@ -5,7 +5,8 @@ public partial class RpcGenerator
     private static void AppendDtoCodec(
         StringBuilder sb,
         DtoCodecAnalysisModel model,
-        IReadOnlyDictionary<string, string> concreteCodecTypes)
+        IReadOnlyDictionary<string, string> concreteCodecTypes,
+        HashSet<string> leafDtoTypes)
     {
         var complexMembers = model.Members
             .Where(static member => member.Kind == GeneratedMemberKind.Complex)
@@ -77,7 +78,8 @@ public partial class RpcGenerator
             complexIndexes,
             hasDirectString,
             hasComplex,
-            concreteCodecTypes);
+            concreteCodecTypes,
+            leafDtoTypes);
         sb.AppendLine("}");
         sb.AppendLine();
     }
@@ -89,14 +91,23 @@ public partial class RpcGenerator
         Dictionary<string, int> complexIndexes,
         bool hasDirectString,
         bool hasComplex,
-        IReadOnlyDictionary<string, string> concreteCodecTypes)
+        IReadOnlyDictionary<string, string> concreteCodecTypes,
+        HashSet<string> leafDtoTypes)
     {
-        // Keep async/pending-operation state bounded while preserving the concrete child
-        // Codec graph for common generated DTOs. Store concrete sealed child Codec references
-        // rather than recursively embedding child Cores so nested DTO depth does not inflate
-        // the Core exponentially. Larger fan-out graphs keep the authoritative owner-only Core.
-        const int MaxConcreteChildCodecFields = 4;
-        var useHybridCore = complexMembers.Length <= MaxConcreteChildCodecFields;
+        // Preserve the old compact layout by default. Expand a multi-child Core only when
+        // every child is a non-nullable, statically generated leaf DTO. This captures the
+        // concrete-child specialization seen in Phase C without recursively pulling nested
+        // graphs, collections, adapters, or fallback interfaces into async/pending state.
+        const int MaxConcreteLeafChildCodecFields = 4;
+        var useHybridCore = complexMembers.Length <= 1 ||
+            complexMembers.Length <= MaxConcreteLeafChildCodecFields &&
+            complexMembers.All(member =>
+                member.NonNullableReference &&
+                leafDtoTypes.Contains(member.CodecLookupTypeName) &&
+                TryGetStaticGeneratedCodecCoreType(
+                    member.CodecLookupTypeName,
+                    concreteCodecTypes,
+                    out _));
 
         sb.AppendLine();
         sb.AppendLine("    internal Core StaticCore => new(this);");
