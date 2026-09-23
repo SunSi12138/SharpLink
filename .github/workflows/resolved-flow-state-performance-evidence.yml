@@ -360,7 +360,7 @@ jobs:
           print("\n".join(lines))
           PY
 
-      - name: Run end-to-end TCP streaming A/B
+      - name: Run end-to-end TCP and SharedMemory streaming A/B
         shell: bash
         run: |
           set -euo pipefail
@@ -374,6 +374,7 @@ jobs:
             Duplex100x16
             Duplex100x4096
           )
+          transports=(tcp sharedmemory)
 
           run_one() {
             local label="$1"
@@ -381,30 +382,27 @@ jobs:
             local sha="$3"
             local repetition="$4"
             local scenario="$5"
-            local output="$ROOT/e2e/${label}-r${repetition}-${scenario}.json"
-            local log="$ROOT/logs/e2e-${label}-r${repetition}-${scenario}.log"
+            local transport="$6"
+            local output="$ROOT/e2e/$transport-$label-r$repetition-$scenario.json"
+            local log="$ROOT/logs/e2e-$transport-$label-r$repetition-$scenario.log"
             (
               cd "$root"
-              env                 SHARPLINK_BENCHMARK_SHA="$sha"                 DOTNET_ReadyToRun=0                 DOTNET_TieredCompilation=1                 DOTNET_TieredPGO=1                 DOTNET_TC_QuickJitForLoops=1                 taskset -c "$CPU_LIST" dotnet run                   -c Release --no-build --no-restore                   -p:PublishAot=false                   --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --                   --generated-abi-streaming-evidence                   "$scenario" 30 5 200000 "$output" > "$log"
+              env SHARPLINK_BENCHMARK_SHA="$sha" DOTNET_ReadyToRun=0 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 DOTNET_TC_QuickJitForLoops=1 taskset -c "$CPU_LIST" dotnet run -c Release --no-build --no-restore -p:PublishAot=false --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- --generated-abi-streaming-evidence "$scenario" 30 5 200000 "$output" "$transport" > "$log"
             )
           }
 
-          for repetition in 1 2 3 4 5; do
+          for repetition in 1 2 3; do
             if (( repetition % 2 == 1 )); then
               revisions=(
                 "baseline:$BASELINE_ROOT:$BASELINE_SHA"
                 "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
               )
-            else
-              revisions=(
-                "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
-                "baseline:$BASELINE_ROOT:$BASELINE_SHA"
-              )
-            fi
-
-            if (( repetition % 2 == 1 )); then
               order=("${scenarios[@]}")
             else
+              revisions=(
+                "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
+                "baseline:$BASELINE_ROOT:$BASELINE_SHA"
+              )
               order=(
                 Duplex100x4096 Duplex100x16
                 Client100x4096 Client100x16
@@ -412,10 +410,12 @@ jobs:
               )
             fi
 
-            for scenario in "${order[@]}"; do
-              for spec in "${revisions[@]}"; do
-                IFS=: read -r label root sha <<< "$spec"
-                run_one "$label" "$root" "$sha" "$repetition" "$scenario"
+            for transport in "${transports[@]}"; do
+              for scenario in "${order[@]}"; do
+                for spec in "${revisions[@]}"; do
+                  IFS=: read -r label root sha <<< "$spec"
+                  run_one "$label" "$root" "$sha" "$repetition" "$scenario" "$transport"
+                done
               done
             done
           done
