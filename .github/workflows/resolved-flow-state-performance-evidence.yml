@@ -307,6 +307,7 @@ jobs:
 
           def load(path):
               found = {}
+              unavailable = []
               for line in path.read_text().splitlines():
                   if not line or line.startswith("#"):
                       continue
@@ -316,37 +317,52 @@ jobs:
                           continue
                       raw = parts[0].replace(" ", "")
                       if raw.startswith("<"):
-                          raise SystemExit(f"hardware counter unavailable for {event}: {path}")
+                          unavailable.append(event)
+                          continue
                       found[event] = float(raw)
               missing = [event for event in events if event not in found]
-              if missing:
-                  raise SystemExit(f"missing counters {missing}: {path}")
-              return found
+              return found, sorted(set(unavailable + missing))
 
           data = {}
+          unavailable = {}
           for runtime in ("jit", "aot"):
               for mode in ("key", "resolved"):
-                  data[(runtime, mode)] = load(root / "counters" / f"{runtime}-{mode}.csv")
+                  row, missing = load(root / "counters" / f"{runtime}-{mode}.csv")
+                  data[(runtime, mode)] = row
+                  if missing:
+                      unavailable[(runtime, mode)] = missing
 
           lines = [
               "# Receive-pair c128 hardware-counter attribution",
               "",
-              "Counts include one warm-up operation; startup is amortized over 76.8M items.",
-              "",
-              "| Runtime | Mode | Instructions/item | Branches/item | Branch misses/item | Cycles/item | Context switches |",
-              "|---|---|---:|---:|---:|---:|---:|",
           ]
-          for runtime in ("jit", "aot"):
-              for mode in ("key", "resolved"):
-                  row = data[(runtime, mode)]
-                  lines.append(
-                      f"| {runtime} | {mode} | "
-                      f"{row['instructions'] / items:.2f} | "
-                      f"{row['branches'] / items:.2f} | "
-                      f"{row['branch-misses'] / items:.4f} | "
-                      f"{row['cycles'] / items:.2f} | "
-                      f"{int(row['context-switches'])} |"
-                  )
+          if unavailable:
+              lines += [
+                  "Hardware PMU counters are unavailable on this GitHub-hosted runner; "
+                  "the workflow records this limitation and continues with the portable "
+                  "microkernel and end-to-end evidence.",
+                  "",
+              ]
+              for (runtime, mode), missing in sorted(unavailable.items()):
+                  lines.append(f"- {runtime}/{mode}: unavailable {', '.join(missing)}")
+          else:
+              lines += [
+                  "Counts include one warm-up operation; startup is amortized over 76.8M items.",
+                  "",
+                  "| Runtime | Mode | Instructions/item | Branches/item | Branch misses/item | Cycles/item | Context switches |",
+                  "|---|---|---:|---:|---:|---:|---:|",
+              ]
+              for runtime in ("jit", "aot"):
+                  for mode in ("key", "resolved"):
+                      row = data[(runtime, mode)]
+                      lines.append(
+                          f"| {runtime} | {mode} | "
+                          f"{row['instructions'] / items:.2f} | "
+                          f"{row['branches'] / items:.2f} | "
+                          f"{row['branch-misses'] / items:.4f} | "
+                          f"{row['cycles'] / items:.2f} | "
+                          f"{int(row['context-switches'])} |"
+                      )
 
           lines += [
               "",
