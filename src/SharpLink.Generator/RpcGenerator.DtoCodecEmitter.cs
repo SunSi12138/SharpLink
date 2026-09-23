@@ -142,14 +142,15 @@ public partial class RpcGenerator
                 member.CodecLookupTypeName,
                 concreteCodecTypes);
             sb.AppendLine($"        private readonly {childStorageType} __codec_{index};");
-            if (TryGetStaticGeneratedCodecCoreType(
+            if (!member.Nullable &&
+                TryGetStaticGeneratedCodecCoreType(
                     member.CodecLookupTypeName,
                     concreteCodecTypes,
                     out _))
             {
-                // The concrete generated class already implements IRpcSizedCodec<T>.
-                // Alias the sizing path to the same reference instead of retaining a second
-                // interface reference in every async/pending Core copy.
+                // For non-nullable statically generated children the concrete class already
+                // implements the exact IRpcSizedCodec<T> shape. Nullable members retain the
+                // interface-typed sizing field so nullable annotations are preserved.
                 sb.AppendLine($"        private {childStorageType} __sizedCodec_{index} => __codec_{index};");
             }
             else
@@ -168,7 +169,8 @@ public partial class RpcGenerator
         {
             var member = complexMembers[index];
             sb.AppendLine($"            __codec_{index} = owner.__codec_{index};");
-            if (!TryGetStaticGeneratedCodecCoreType(
+            if (member.Nullable ||
+                !TryGetStaticGeneratedCodecCoreType(
                     member.CodecLookupTypeName,
                     concreteCodecTypes,
                     out _))
