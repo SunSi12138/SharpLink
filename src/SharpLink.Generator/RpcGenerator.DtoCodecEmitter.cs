@@ -70,14 +70,26 @@ public partial class RpcGenerator
         sb.AppendLine();
         AppendDtoDeserializeMethod(sb, model, complexIndexes);
         AppendDtoFactory(sb, model);
-        AppendDtoStaticCore(sb, model);
+        AppendDtoStaticCore(
+            sb,
+            model,
+            complexMembers,
+            complexIndexes,
+            hasDirectString,
+            hasComplex,
+            concreteCodecTypes);
         sb.AppendLine("}");
         sb.AppendLine();
     }
 
     private static void AppendDtoStaticCore(
         StringBuilder sb,
-        DtoCodecAnalysisModel model)
+        DtoCodecAnalysisModel model,
+        DtoMemberAnalysisModel[] complexMembers,
+        Dictionary<string, int> complexIndexes,
+        bool hasDirectString,
+        bool hasComplex,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         sb.AppendLine();
         sb.AppendLine("    internal Core StaticCore => new(this);");
@@ -85,29 +97,40 @@ public partial class RpcGenerator
         sb.AppendLine($"    internal readonly struct Core : IRpcCodec<{model.TypeName}>, IRpcSizedCodec<{model.TypeName}>");
         sb.AppendLine("    {");
         sb.AppendLine($"        private readonly {model.CodecName} __owner;");
+        for (var index = 0; index < complexMembers.Length; index++)
+        {
+            var member = complexMembers[index];
+            sb.AppendLine(
+                $"        private readonly {GetCodecStorageType(member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)} __codec_{index};");
+            sb.AppendLine(
+                $"        private readonly IRpcSizedCodec<{member.TypeName}>? __sizedCodec_{index};");
+        }
+        sb.AppendLine("        private readonly bool __canExactSize;");
         sb.AppendLine();
-        sb.AppendLine($"        internal Core({model.CodecName} owner) => __owner = owner;");
+        sb.AppendLine($"        internal Core({model.CodecName} owner)");
+        sb.AppendLine("        {");
+        sb.AppendLine("            __owner = owner;");
+        for (var index = 0; index < complexMembers.Length; index++)
+        {
+            sb.AppendLine($"            __codec_{index} = owner.__codec_{index};");
+            sb.AppendLine($"            __sizedCodec_{index} = owner.__sizedCodec_{index};");
+        }
+        sb.AppendLine("            __canExactSize = owner.__canExactSize;");
+        sb.AppendLine("        }");
         sb.AppendLine();
-        sb.AppendLine("        public bool CanExactSize => __owner.CanExactSize;");
+        sb.AppendLine("        private __SizedSnapshot RentSnapshot() => __owner.RentSnapshot();");
+        sb.AppendLine("        private void ReturnSnapshot(__SizedSnapshot snapshot) => __owner.ReturnSnapshot(snapshot);");
         sb.AppendLine();
-        sb.AppendLine($"        public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");
-        sb.AppendLine("            => __owner.Serialize(in value, writer);");
+        sb.AppendLine("        public bool CanExactSize => __canExactSize;");
         sb.AppendLine();
-        var returnType = model.IsReferenceType ? model.TypeName + "?" : model.TypeName;
-        sb.AppendLine($"        public {returnType} Deserialize(in ReadOnlySequence<byte> buffer)");
-        sb.AppendLine("            => __owner.Deserialize(in buffer);");
-        sb.AppendLine();
-        sb.AppendLine($"        public bool TryGetEncodedSize(in {model.TypeName} value, out int size)");
-        sb.AppendLine("            => __owner.TryGetEncodedSize(in value, out size);");
-        sb.AppendLine();
-        sb.AppendLine($"        public bool TryGetEncodedSize(in {model.TypeName} value, out int size, out IRpcSizedCodecSnapshot? snapshot)");
-        sb.AppendLine("            => __owner.TryGetEncodedSize(in value, out size, out snapshot);");
-        sb.AppendLine();
-        sb.AppendLine($"        public void SerializeSized(in {model.TypeName} value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)");
-        sb.AppendLine("            => __owner.SerializeSized(in value, buffer, size, snapshot);");
-        sb.AppendLine();
-        sb.AppendLine("        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)");
-        sb.AppendLine("            => __owner.ReleaseSnapshot(snapshot);");
+
+        var coreMethods = new StringBuilder();
+        AppendDtoSerializeMethod(coreMethods, model, complexIndexes, hasDirectString, hasComplex);
+        coreMethods.AppendLine();
+        AppendDtoEncodedSizeMethod(coreMethods, model, complexIndexes, appendSnapshotType: false);
+        coreMethods.AppendLine();
+        AppendDtoDeserializeMethod(coreMethods, model, complexIndexes);
+        sb.Append(Indent(coreMethods.ToString(), "    "));
         sb.AppendLine("    }");
     }
 }
