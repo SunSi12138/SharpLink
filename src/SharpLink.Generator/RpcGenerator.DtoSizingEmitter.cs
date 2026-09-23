@@ -128,9 +128,11 @@ public partial class RpcGenerator
     private static void AppendDtoEncodedSizeMethod(
         StringBuilder sb,
         DtoCodecAnalysisModel model,
-        Dictionary<string, int> complexIndexes)
+        Dictionary<string, int> complexIndexes,
+        bool appendSnapshotType = true)
     {
-        AppendDtoSnapshotType(sb, model, complexIndexes);
+        if (appendSnapshotType)
+            AppendDtoSnapshotType(sb, model, complexIndexes);
 
         sb.AppendLine("    private void ReleaseCapturedChildren(__SizedSnapshot snapshot)");
         sb.AppendLine("    {");
