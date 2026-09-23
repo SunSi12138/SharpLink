@@ -78,8 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           project="$CANDIDATE_ROOT/test/SharpLink.ResolvedFlowStateAotEvidence/SharpLink.ResolvedFlowStateAotEvidence.csproj"
-          dotnet restore "$project" -r linux-x64
-          dotnet publish "$project" -c Release -r linux-x64 --no-restore -p:PublishAot=true -p:StripSymbols=false -o "$ROOT/aot/bin" -v minimal
+          dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=true -p:StripSymbols=false -o "$ROOT/aot/bin" -v minimal
 
       - name: Run resolved-state microkernel
         shell: bash
