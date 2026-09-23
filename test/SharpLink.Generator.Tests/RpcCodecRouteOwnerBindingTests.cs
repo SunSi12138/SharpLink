@@ -200,10 +200,17 @@ public sealed class CoreValue
     public CoreChild Child { get; set; } = new();
 }
 
+public sealed class CoreWideValue
+{
+    public CoreChild Left { get; set; } = new();
+    public CoreChild Right { get; set; } = new();
+}
+
 [SharpLink.Sdk.RpcContract]
 public interface IStaticCoreContract : SharpLink.Sdk.IService
 {
     ValueTask<CoreValue> Echo(CoreValue value, CancellationToken cancellationToken);
+    ValueTask<CoreWideValue> EchoWide(CoreWideValue value, CancellationToken cancellationToken);
 
     [SharpLink.Sdk.Oneway]
     ValueTask Notify(CoreValue value, CancellationToken cancellationToken);
@@ -232,6 +239,17 @@ public interface IStaticCoreContract : SharpLink.Sdk.IService
             "small production Core graphs must capture the authoritative concrete child Codec directly");
         Ensure(!generated.Contains("owner.__codec_0.StaticCore", StringComparison.Ordinal),
             "hybrid Core layout must not recursively capture nested generated Core structs into async state machines");
+        var wideCoreStart = generated.IndexOf(
+            "internal readonly struct Core : IRpcCodec<global::CoreWideValue>, IRpcSizedCodec<global::CoreWideValue>",
+            StringComparison.Ordinal);
+        Ensure(wideCoreStart >= 0, "large native generated DTOs must still expose a static Core");
+        var wideCoreEnd = generated.IndexOf("\n    }\n}", wideCoreStart, StringComparison.Ordinal);
+        Ensure(wideCoreEnd > wideCoreStart, "large DTO Core must have a complete generated body");
+        var wideCore = generated.Substring(wideCoreStart, wideCoreEnd - wideCoreStart);
+        Ensure(wideCore.Contains("=> __owner.Serialize(in value, writer);", StringComparison.Ordinal),
+            "large generated DTO Core must use the bounded owner-ref layout");
+        Ensure(!wideCore.Contains("__codec_0 = owner.__codec_0;", StringComparison.Ordinal),
+            "large generated DTO Core must not retain child state across async operations");
         Ensure(!generated.Contains("GetCodec<global::CoreValue>().StaticCore", StringComparison.Ordinal),
             "static Core extraction must apply member access after the concrete Codec cast");
         Ensure(generated.Contains("InvokeGeneratedUnaryAsync<", StringComparison.Ordinal),
