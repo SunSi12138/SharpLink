@@ -60,6 +60,7 @@ public static class Program
         Console.WriteLine("  --min-connections 1 --max-connections 1");
         Console.WriteLine("  --profile balanced|lowlatency|throughput");
         Console.WriteLine("  --max-send-queue-bytes 67108864 (optional bounded throughput-test override)");
+        Console.WriteLine("  --stream-receive-window-bytes 8192 --connection-receive-window-bytes 65536 (optional flow-control overrides)");
         Console.WriteLine("  --shm-name sharplink-stream-loadtest --shm-capacity 8388608 --shm-spin-count 8");
         Console.WriteLine("  --detailed-shm-evidence (diagnostic counters; do not use for formal timing)");
         Console.WriteLine("  --recording off|formal|diagnostic|validation-dual");
@@ -86,6 +87,8 @@ public static class Program
             $"[Config] concurrency=[{string.Join(',', options.ConcurrencyConfig)}] " +
             $"pool={options.MinConnections}/{options.MaxConnections} profile={options.PerformanceProfile} " +
             $"sendQueue={options.MaxSendQueueBytes?.ToString() ?? "profile-default"}B " +
+            $"streamWindow={options.StreamReceiveWindowBytes?.ToString() ?? "profile-default"}B " +
+            $"connectionWindow={options.ConnectionReceiveWindowBytes?.ToString() ?? "profile-default"}B " +
             $"delay={options.ConsumerDelayMilliseconds}ms earlyBreak={options.EarlyBreakAfter} " +
             $"pause={options.PauseAfter}/{options.PauseMilliseconds}ms " +
             $"recording={options.RecordingMode} sampleCapacity={options.MaximumRecordedOperations} " +
@@ -610,6 +613,10 @@ public static class Program
     {
         if (options.MaxSendQueueBytes is { } maxSendQueueBytes)
             runtime.FlowControl.MaxSendQueueBytes = maxSendQueueBytes;
+        if (options.StreamReceiveWindowBytes is { } streamReceiveWindowBytes)
+            runtime.FlowControl.StreamReceiveWindowBytes = streamReceiveWindowBytes;
+        if (options.ConnectionReceiveWindowBytes is { } connectionReceiveWindowBytes)
+            runtime.FlowControl.ConnectionReceiveWindowBytes = connectionReceiveWindowBytes;
     }
 }
 
@@ -644,6 +651,8 @@ public sealed class StreamLoadOptions
     public int PauseMilliseconds { get; private init; }
     public SharpLinkPerformanceProfile PerformanceProfile { get; private init; } = SharpLinkPerformanceProfile.Balanced;
     public int? MaxSendQueueBytes { get; private init; }
+    public int? StreamReceiveWindowBytes { get; private init; }
+    public int? ConnectionReceiveWindowBytes { get; private init; }
     public int UnaryWorkers { get; private init; }
     public double UnaryPauseMicroseconds { get; private init; } = 1000;
     public string? JsonOutputPath { get; private init; }
@@ -715,6 +724,17 @@ public sealed class StreamLoadOptions
         var maxSendQueueBytes = ParseOptionalInt(map, "max-send-queue-bytes");
         if (maxSendQueueBytes is <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxSendQueueBytes));
+        var streamReceiveWindowBytes = ParseOptionalInt(map, "stream-receive-window-bytes");
+        var connectionReceiveWindowBytes = ParseOptionalInt(map, "connection-receive-window-bytes");
+        if (streamReceiveWindowBytes is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(streamReceiveWindowBytes));
+        if (connectionReceiveWindowBytes is <= 0)
+            throw new ArgumentOutOfRangeException(nameof(connectionReceiveWindowBytes));
+        if (streamReceiveWindowBytes is { } streamWindow &&
+            connectionReceiveWindowBytes is { } connectionWindow && connectionWindow < streamWindow)
+        {
+            throw new ArgumentException("The connection receive window cannot be smaller than the stream receive window.");
+        }
         var unaryWorkers = int.Parse(map.GetValueOrDefault("unary-workers", "0"));
         if (unaryWorkers < 0)
             throw new ArgumentOutOfRangeException(nameof(unaryWorkers));
@@ -779,6 +799,8 @@ public sealed class StreamLoadOptions
             PauseMilliseconds = ParseNonNegative(map, "pause-ms"),
             PerformanceProfile = profile,
             MaxSendQueueBytes = maxSendQueueBytes,
+            StreamReceiveWindowBytes = streamReceiveWindowBytes,
+            ConnectionReceiveWindowBytes = connectionReceiveWindowBytes,
             UnaryWorkers = unaryWorkers,
             UnaryPauseMicroseconds = unaryPauseMicroseconds,
             JsonOutputPath = map.GetValueOrDefault("json-output"),

@@ -12,6 +12,8 @@ on:
       - 'test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs'
       - 'test/SharpLink.Benchmarks/Program.cs'
       - 'test/SharpLink.ResolvedFlowStateAotEvidence/**'
+      - 'test/SharpLink.StreamLoadTest/**'
+      - 'test/SharpLink.StreamLoadTest.Tests/**'
   workflow_dispatch:
 
 permissions:
@@ -57,6 +59,8 @@ jobs:
           git worktree add --detach "$candidate" "$CANDIDATE_SHA"
           # Keep the measurement harness identical while linking it against each revision.
           cp "$candidate/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs" "$baseline/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
+          cp "$candidate/test/SharpLink.StreamLoadTest/Program.cs" "$baseline/test/SharpLink.StreamLoadTest/Program.cs"
+          sha256sum "$candidate/test/SharpLink.StreamLoadTest/Program.cs" > "$ROOT/env/stream-load-harness.sha256"
           echo "BASELINE_ROOT=$baseline" >> "$GITHUB_ENV"
           echo "CANDIDATE_ROOT=$candidate" >> "$GITHUB_ENV"
 
@@ -556,11 +560,14 @@ jobs:
           print("\n".join(lines))
           PY
 
-      - name: Run production c8 stream-load A/B
+      - name: Run bounded-window c8 stream-load A/B
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$ROOT/c8"
+          # Int32 items use byte credits, while the dispatcher also has a 4096-item cap.
+          # The default 1 MiB window can overflow that cap on either revision. Measure
+          # long streams with identical explicit windows; do not raise the runtime cap.
 
           run_one() {
             local label="$1"
@@ -573,7 +580,7 @@ jobs:
             local log="$ROOT/logs/c8-$transport-size$stream_size-$label-r$repetition.log"
             (
               cd "$root"
-              env SHARPLINK_BENCHMARK_SHA="$sha" DOTNET_ReadyToRun=0 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 DOTNET_TC_QuickJitForLoops=1                 taskset -c "$CPU_LIST" dotnet run -c Release --no-build --no-restore -p:PublishAot=false                 --project test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj --                 --mode local --transport "$transport" --operation all                 --stream-size "$stream_size" --concurrency 8                 --warmup 1 --duration 2 --recording off --json-output "$output" > "$log"
+              env SHARPLINK_COMMIT="$sha" DOTNET_ReadyToRun=0 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 DOTNET_TC_QuickJitForLoops=1                 taskset -c "$CPU_LIST" dotnet run -c Release --no-build --no-restore -p:PublishAot=false                 --project test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj --                 --mode local --transport "$transport" --operation all                 --stream-size "$stream_size" --concurrency 8                 --stream-receive-window-bytes 8192 --connection-receive-window-bytes 65536                 --warmup 1 --duration 2 --recording off --json-output "$output" > "$log"
             )
           }
 
@@ -600,11 +607,13 @@ jobs:
             done
           done
 
-      - name: Summarize production c8 stream-load A/B
+      - name: Summarize bounded-window c8 stream-load A/B
         shell: bash
         run: |
           python3 - <<'PY'
           import json
+          import math
+          import os
           import pathlib
           import statistics
 
@@ -614,6 +623,7 @@ jobs:
           operations = ("c2s", "s2c", "duplex")
 
           def load(label, transport, size):
+              expected_sha = os.environ["BASELINE_SHA" if label == "baseline" else "CANDIDATE_SHA"]
               paths = sorted((root / "c8").glob(f"{transport}-size{size}-{label}-r*.json"))
               if len(paths) != 3:
                   raise SystemExit(
@@ -622,19 +632,41 @@ jobs:
               by_operation = {operation: [] for operation in operations}
               for path in paths:
                   report = json.loads(path.read_text())
+                  if report.get("SourceCommit") != expected_sha:
+                      raise SystemExit(
+                          f"source commit mismatch in {path}: "
+                          f"expected {expected_sha}, got {report.get('SourceCommit')}"
+                      )
+                  configuration = report["Configuration"]
+                  if (configuration.get("StreamReceiveWindowBytes") != 8192 or
+                          configuration.get("ConnectionReceiveWindowBytes") != 65536 or
+                          configuration.get("StreamSize") != size or
+                          configuration.get("ConcurrencyConfig") != [8]):
+                      raise SystemExit(f"c8 workload configuration mismatch in {path}")
+                  seen_operations = set()
                   for row in report["Results"]:
                       operation = row["Operation"]
                       if operation not in by_operation:
                           continue
-                      if row["Failure"] != 0 or row["ValidationFailure"] != 0:
+                      if operation in seen_operations:
+                          raise SystemExit(f"duplicate stream-load operation in {path}: {operation}")
+                      seen_operations.add(operation)
+                      if (row["Failure"] != 0 or row["ValidationFailure"] != 0 or
+                              row["Cancelled"] != 0):
                           raise SystemExit(
                               f"stream-load failure in {path}: {operation}"
                           )
+                      if row["Success"] <= 0 or not math.isfinite(row["Qps"]) or row["Qps"] <= 0:
+                          raise SystemExit(f"invalid stream-load sample in {path}: {operation}")
                       by_operation[operation].append(row)
+                  if seen_operations != set(operations):
+                      raise SystemExit(f"missing stream-load operations in {path}")
               return by_operation
 
           lines = [
-              "# Production stream-load c8 A/B",
+              "# Bounded-window stream-load c8 A/B",
+              "",
+              "Production runtime with explicit 8 KiB stream / 64 KiB connection windows; not a default-window result.",
               "",
               "| Transport | Items/stream | Shape | Streams/s delta |",
               "|---|---:|---|---:|",

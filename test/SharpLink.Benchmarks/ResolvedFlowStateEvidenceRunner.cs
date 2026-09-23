@@ -137,34 +137,29 @@ internal static class ResolvedFlowStateEvidenceRunner
             {
                 if (activeStreamsFilter is not null && activeStreams != activeStreamsFilter)
                     continue;
-                foreach (var resolved in new[] { false, true })
+                if (MatchesScenario(scenarioFilter, "send-contention"))
                 {
-                    if (modeFilter is not null &&
-                        !string.Equals(modeFilter, resolved ? "resolved" : "key", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    if (MatchesScenario(scenarioFilter, "send-contention"))
-                    {
-                        results.Add(await MeasureContentionAsync(
-                            "send-contention",
-                            resolved,
-                            activeStreams,
-                            contentionItems,
-                            () => RunSendContentionAsync(activeStreams, contentionItems, resolved))
-                            .ConfigureAwait(false));
-                    }
-                    if (MatchesScenario(scenarioFilter, "receive-pair-contention"))
-                    {
-                        results.Add(await MeasureContentionAsync(
-                            "receive-pair-contention",
-                            resolved,
-                            activeStreams,
-                            contentionItems,
-                            () => RunReceiveContentionAsync(activeStreams, contentionItems, resolved))
-                            .ConfigureAwait(false));
-                    }
+                    await MeasureContentionAsync(
+                        "send-contention",
+                        activeStreams,
+                        contentionItems,
+                        repetitions,
+                        modeFilter,
+                        results,
+                        resolved => RunSendContentionAsync(activeStreams, contentionItems, resolved))
+                        .ConfigureAwait(false);
+                }
+                if (MatchesScenario(scenarioFilter, "receive-pair-contention"))
+                {
+                    await MeasureContentionAsync(
+                        "receive-pair-contention",
+                        activeStreams,
+                        contentionItems,
+                        repetitions,
+                        modeFilter,
+                        results,
+                        resolved => RunReceiveContentionAsync(activeStreams, contentionItems, resolved))
+                        .ConfigureAwait(false);
                 }
             }
         }
@@ -220,38 +215,81 @@ internal static class ResolvedFlowStateEvidenceRunner
         return result;
     }
 
-    private static async Task<ResolvedFlowStateEvidenceResult> MeasureContentionAsync(
+    private static async Task MeasureContentionAsync(
         string scenario,
-        bool resolved,
         int activeStreams,
         int itemsPerStream,
-        Func<Task<long>> operation)
+        int repetitions,
+        string? modeFilter,
+        List<ResolvedFlowStateEvidenceResult> results,
+        Func<bool, Task<long>> operation)
     {
-        _ = await operation().ConfigureAwait(false);
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
+        bool[] modes = modeFilter switch
+        {
+            "key" => [false],
+            "resolved" => [true],
+            _ => [false, true]
+        };
 
-        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
-        var lockContentionsBefore = Monitor.LockContentionCount;
-        var started = Stopwatch.GetTimestamp();
-        var checksum = await operation().ConfigureAwait(false);
-        var elapsed = Stopwatch.GetElapsedTime(started);
-        var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
-        var lockContentions = Monitor.LockContentionCount - lockContentionsBefore;
-        var items = checked((long)activeStreams * itemsPerStream);
-        var result = new ResolvedFlowStateEvidenceResult(
-            scenario,
-            resolved ? "resolved" : "key",
-            activeStreams,
-            itemsPerStream,
-            Repetitions: 1,
-            allocated / (double)items,
-            elapsed.TotalNanoseconds / items,
-            lockContentions / (double)items,
-            checksum);
-        Print(result);
-        return result;
+        // One contention repetition contains both AB and BA orders. Report the actual
+        // number of samples per mode (2 * repetitions), including when a mode is filtered.
+        var samplesPerMode = checked(repetitions * 2);
+        var items = checked((long)samplesPerMode * activeStreams * itemsPerStream);
+        var elapsedNanoseconds = new double[2];
+        var allocatedBytes = new long[2];
+        var lockContentions = new long[2];
+        var checksums = new long[2];
+
+        // Warm both variants before measuring either, without adding warmup work to totals.
+        foreach (var resolved in modes)
+            _ = await operation(resolved).ConfigureAwait(false);
+
+        for (var repetition = 0; repetition < repetitions; repetition++)
+        {
+            for (var order = 0; order < 2; order++)
+            {
+                for (var index = 0; index < modes.Length; index++)
+                {
+                    var resolved = modes[order == 0 ? index : modes.Length - index - 1];
+                    var slot = resolved ? 1 : 0;
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+
+                    var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+                    var lockContentionsBefore = Monitor.LockContentionCount;
+                    var started = Stopwatch.GetTimestamp();
+                    var checksum = await operation(resolved).ConfigureAwait(false);
+                    var elapsed = Stopwatch.GetElapsedTime(started);
+                    var allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+                    var contended = Monitor.LockContentionCount - lockContentionsBefore;
+
+                    elapsedNanoseconds[slot] += elapsed.TotalNanoseconds;
+                    allocatedBytes[slot] = checked(allocatedBytes[slot] + allocated);
+                    lockContentions[slot] = checked(lockContentions[slot] + contended);
+                    checksums[slot] = checked(checksums[slot] + checksum);
+                }
+            }
+        }
+
+        // Keep one row per (scenario, mode, concurrency, length): existing summaries must
+        // not overwrite earlier samples as they would with duplicate per-sample rows.
+        foreach (var resolved in modes)
+        {
+            var slot = resolved ? 1 : 0;
+            var result = new ResolvedFlowStateEvidenceResult(
+                scenario,
+                resolved ? "resolved" : "key",
+                activeStreams,
+                itemsPerStream,
+                samplesPerMode,
+                allocatedBytes[slot] / (double)items,
+                elapsedNanoseconds[slot] / items,
+                lockContentions[slot] / (double)items,
+                checksums[slot]);
+            Print(result);
+            results.Add(result);
+        }
     }
 
     private static long RunSendNoWait(int activeStreams, int itemsPerStream, bool resolved)
