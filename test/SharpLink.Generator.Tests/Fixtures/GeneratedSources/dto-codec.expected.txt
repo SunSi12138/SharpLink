@@ -173,30 +173,47 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
             snapshot = null;
             return true;
         }
-        var __snapshot = RentSnapshot();
         size = 10;
-        __snapshot.__string_0 = value.Name;
-        __snapshot.__stringByteCount_0 = __snapshot.__string_0 is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_0);
-        __snapshot.__fixed_1 = value.Count;
-        __snapshot.__complex_2 = value.Tags;
-        var __sized_0 = __sizedCodec_0;
-        if (__sized_0 is null ||
-            !__sized_0.CanExactSize ||
-            !__sized_0.TryGetEncodedSize(__snapshot.__complex_2, out __snapshot.__nestedSize_0, out __snapshot.__nestedSnapshot_0))
+        snapshot = null;
+        var __snapshot = RentSnapshot();
+        var __keepSnapshot = false;
+        try
         {
-            size = 0;
-            snapshot = null;
-            ReleaseCapturedChildren(__snapshot);
-            ReturnSnapshot(__snapshot);
-            return false;
+            __snapshot.__string_0 = value.Name;
+            __snapshot.__stringByteCount_0 = __snapshot.__string_0 is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_0);
+            __snapshot.__fixed_1 = value.Count;
+            __snapshot.__complex_2 = value.Tags;
+            var __sized_0 = __sizedCodec_0;
+            if (__sized_0 is null ||
+                !__sized_0.CanExactSize ||
+                !__sized_0.TryGetEncodedSize(__snapshot.__complex_2, out __snapshot.__nestedSize_0, out __snapshot.__nestedSnapshot_0))
+            {
+                size = 0;
+                return false;
+            }
+            checked
+            {
+                size += __snapshot.__string_0 is null ? 1 : 5 + __snapshot.__stringByteCount_0;
+                size += 5 + sizeof(uint) + __snapshot.__nestedSize_0;
+            }
+            snapshot = __snapshot;
+            __keepSnapshot = true;
+            return true;
         }
-        checked
+        finally
         {
-            size += __snapshot.__string_0 is null ? 1 : 5 + __snapshot.__stringByteCount_0;
-            size += 5 + sizeof(uint) + __snapshot.__nestedSize_0;
+            if (!__keepSnapshot)
+            {
+                try
+                {
+                    ReleaseCapturedChildren(__snapshot);
+                }
+                finally
+                {
+                    ReturnSnapshot(__snapshot);
+                }
+            }
         }
-        snapshot = __snapshot;
-        return true;
     }
 
     public void SerializeSized(in global::FixturePayload value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
@@ -235,8 +252,14 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
     {
         if (snapshot is not __SizedSnapshot __snapshot)
             return;
-        ReleaseCapturedChildren(__snapshot);
-        ReturnSnapshot(__snapshot);
+        try
+        {
+            ReleaseCapturedChildren(__snapshot);
+        }
+        finally
+        {
+            ReturnSnapshot(__snapshot);
+        }
     }
 
     public global::FixturePayload? Deserialize(in ReadOnlySequence<byte> buffer)
@@ -420,30 +443,47 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
                 snapshot = null;
                 return true;
             }
-            var __snapshot = RentSnapshot();
             size = 10;
-            __snapshot.__string_0 = value.Name;
-            __snapshot.__stringByteCount_0 = __snapshot.__string_0 is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_0);
-            __snapshot.__fixed_1 = value.Count;
-            __snapshot.__complex_2 = value.Tags;
-            var __sized_0 = __sizedCodec_0;
-            if (__sized_0 is null ||
-                !__sized_0.CanExactSize ||
-                !__sized_0.TryGetEncodedSize(__snapshot.__complex_2, out __snapshot.__nestedSize_0, out __snapshot.__nestedSnapshot_0))
+            snapshot = null;
+            var __snapshot = RentSnapshot();
+            var __keepSnapshot = false;
+            try
             {
-                size = 0;
-                snapshot = null;
-                ReleaseCapturedChildren(__snapshot);
-                ReturnSnapshot(__snapshot);
-                return false;
+                __snapshot.__string_0 = value.Name;
+                __snapshot.__stringByteCount_0 = __snapshot.__string_0 is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_0);
+                __snapshot.__fixed_1 = value.Count;
+                __snapshot.__complex_2 = value.Tags;
+                var __sized_0 = __sizedCodec_0;
+                if (__sized_0 is null ||
+                    !__sized_0.CanExactSize ||
+                    !__sized_0.TryGetEncodedSize(__snapshot.__complex_2, out __snapshot.__nestedSize_0, out __snapshot.__nestedSnapshot_0))
+                {
+                    size = 0;
+                    return false;
+                }
+                checked
+                {
+                    size += __snapshot.__string_0 is null ? 1 : 5 + __snapshot.__stringByteCount_0;
+                    size += 5 + sizeof(uint) + __snapshot.__nestedSize_0;
+                }
+                snapshot = __snapshot;
+                __keepSnapshot = true;
+                return true;
             }
-            checked
+            finally
             {
-                size += __snapshot.__string_0 is null ? 1 : 5 + __snapshot.__stringByteCount_0;
-                size += 5 + sizeof(uint) + __snapshot.__nestedSize_0;
+                if (!__keepSnapshot)
+                {
+                    try
+                    {
+                        ReleaseCapturedChildren(__snapshot);
+                    }
+                    finally
+                    {
+                        ReturnSnapshot(__snapshot);
+                    }
+                }
             }
-            snapshot = __snapshot;
-            return true;
         }
 
         public void SerializeSized(in global::FixturePayload value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
@@ -482,8 +522,14 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         {
             if (snapshot is not __SizedSnapshot __snapshot)
                 return;
-            ReleaseCapturedChildren(__snapshot);
-            ReturnSnapshot(__snapshot);
+            try
+            {
+                ReleaseCapturedChildren(__snapshot);
+            }
+            finally
+            {
+                ReturnSnapshot(__snapshot);
+            }
         }
 
         public global::FixturePayload? Deserialize(in ReadOnlySequence<byte> buffer)
