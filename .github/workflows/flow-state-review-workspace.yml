@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: flow-state-review-workspace-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   workspace:
     if: github.event.pull_request.number == 742
@@ -22,9 +26,7 @@ jobs:
           persist-credentials: false
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet
-      - name: Restore review dependencies
-        run: dotnet restore Sharplink.slnx
-      - name: Export tracked sources and public build dependencies
+      - name: Export tracked review sources
         shell: bash
         run: |
           set -euo pipefail
@@ -35,6 +37,24 @@ jobs:
           git diff 56c643cd308f294cb03df79d9f1214fb8292affb HEAD > "$out/candidate.patch"
           git rev-parse HEAD > "$out/candidate-sha.txt"
           dotnet --info > "$out/dotnet-info.txt"
+      - name: Upload review sources
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flow-state-review-sources-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/flow-state-review/*-source.tar.gz
+            ${{ runner.temp }}/flow-state-review/*.patch
+            ${{ runner.temp }}/flow-state-review/*.txt
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Restore review dependencies
+        run: dotnet restore Sharplink.slnx
+      - name: Export public build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/flow-state-review"
           dotnet_root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
           sdk="$(dotnet --version)"
           paths=(dotnet "sdk/$sdk")
@@ -45,15 +65,40 @@ jobs:
               fi
             done
           done
-          # Deliberately exclude checkout credentials, .git, runner environment and NuGet config.
+          # Only public SDK/package payloads; never export .git, credentials or NuGet config.
           tar -C "$dotnet_root" -czf "$out/dotnet-toolchain.tar.gz" "${paths[@]}"
           tar -C "$HOME/.nuget" -czf "$out/nuget-packages.tar.gz" packages
           sha256sum "$out"/*.tar.gz > "$out/archive-sha256.txt"
-      - name: Upload isolated review inputs
+          split -b 450M "$out/nuget-packages.tar.gz" "$out/nuget-packages.part-"
+          test ! -f "$out/nuget-packages.part-ac"
+          if [[ -f "$out/nuget-packages.part-ab" ]]; then
+            echo 'HAS_SECOND_PACKAGE_PART=true' >> "$GITHUB_ENV"
+          fi
+          ls -lh "$out"
+      - name: Upload review toolchain
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: flow-state-review-workspace-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/flow-state-review
+          name: flow-state-review-dotnet-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/flow-state-review/dotnet-toolchain.tar.gz
+            ${{ runner.temp }}/flow-state-review/archive-sha256.txt
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload review packages first part
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flow-state-review-packages-aa-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/flow-state-review/nuget-packages.part-aa
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload review packages second part
+        if: env.HAS_SECOND_PACKAGE_PART == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flow-state-review-packages-ab-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/flow-state-review/nuget-packages.part-ab
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
