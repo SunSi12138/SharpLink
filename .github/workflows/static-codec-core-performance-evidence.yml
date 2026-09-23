@@ -15,6 +15,17 @@ on:
       - 'src/SharpLink.Runtime/**'
       - 'src/SharpLink.Server/**'
       - '.github/workflows/static-codec-core-performance-evidence.yml'
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'test/SharpLink.StaticCodecCoreEvidence/**'
+      - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.Client/**'
+      - 'src/SharpLink.Generator/**'
+      - 'src/SharpLink.Runtime/**'
+      - 'src/SharpLink.Server/**'
+      - '.github/workflows/static-codec-core-performance-evidence.yml'
   workflow_dispatch:
     inputs:
       full:
