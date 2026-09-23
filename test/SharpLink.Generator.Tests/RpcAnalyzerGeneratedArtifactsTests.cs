@@ -195,6 +195,12 @@ public sealed class HelloService : IHelloService
         Ensure(proxy.Contains("InvokeGeneratedDuplexStreamingAsync"), "DuplexStreaming invoker");
         Ensure(allGenerated.Contains("readonly struct __IHelloService_SharpLinkRequest_"), "Generated request struct");
         Ensure(proxy.Contains("private readonly global::__IHelloService_SharpLinkRequestCodec_"), "Generated request codec");
+        Ensure(allGenerated.Contains("IRpcSizedCodec<__IHelloService_SharpLinkRequest_", StringComparison.Ordinal),
+            "generated request Codec and static Core must expose exact-size capability");
+        Ensure(allGenerated.Contains("private sealed class __SizedSnapshot : IRpcSizedCodecSnapshot", StringComparison.Ordinal) &&
+               allGenerated.Contains("if (!__keepSnapshot)", StringComparison.Ordinal) &&
+               allGenerated.Contains("ReleaseCapturedChildren(__snapshot);", StringComparison.Ordinal),
+            "generated request sizing must pool snapshots and clean them up on failed or throwing nested sizing");
         Ensure(allGenerated.Contains("Span<byte> tmp_"), "Segmented fixed-width arguments must use stack scratch");
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
