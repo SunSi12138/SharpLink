@@ -72,7 +72,11 @@ jobs:
           for root in "$BASELINE_ROOT" "$CANDIDATE_ROOT"; do
             project="$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
             dotnet restore "$project"
-            dotnet build "$project" -c Release --no-restore               -p:PublishAot=false -m:1 /nodeReuse:false -v minimal
+            dotnet build "$project" -c Release --no-restore -p:PublishAot=false -m:1 /nodeReuse:false -v minimal
+
+            stream_project="$root/test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj"
+            dotnet restore "$stream_project"
+            dotnet build "$stream_project" -c Release --no-restore -p:PublishAot=false -m:1 /nodeReuse:false -v minimal
           done
 
       - name: Build NativeAOT evidence host
