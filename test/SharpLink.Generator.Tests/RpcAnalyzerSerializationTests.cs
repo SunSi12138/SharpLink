@@ -563,14 +563,14 @@ public interface ISemanticService : SharpLink.Sdk.IService
         Ensure(generated.Contains("RpcGeneratedCodecWire.WriteDateTimeOffset(writer, value.DateTimeOffset)", StringComparison.Ordinal) &&
                generated.Contains("RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)", StringComparison.Ordinal),
             "DateTimeOffset member must use its canonical fixed writer and validated reader");
-        Ensure(CountOccurrences(generated, "RpcGeneratedCodecWire.ReadBoolean(ref reader)") == 4 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadRune(ref reader)") == 4 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDecimal(ref reader)") == 4 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateOnly(ref reader)") == 4 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTime(ref reader)") == 4 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadTimeOnly(ref reader)") == 4 &&
-               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)") == 4,
-            "class and static Core nullable semantic members must use the same validated readers");
+        Ensure(CountOccurrences(generated, "RpcGeneratedCodecWire.ReadBoolean(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadRune(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDecimal(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateOnly(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTime(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadTimeOnly(ref reader)") == 2 &&
+               CountOccurrences(generated, "RpcGeneratedCodecWire.ReadDateTimeOffset(ref reader)") == 2,
+            "authoritative DTO deserializers must use the validated semantic readers exactly once per generated Codec");
         return Task.CompletedTask;
     }
 
