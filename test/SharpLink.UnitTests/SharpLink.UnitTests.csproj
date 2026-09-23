@@ -17,6 +17,15 @@
     <ProjectReference Include="..\SharpLink.StaticCodecOwnerTest.Contracts\SharpLink.StaticCodecOwnerTest.Contracts.csproj" />
   </ItemGroup>
 
+  <!-- Link only the isolated credit model to exercise it at the real SendPump
+       boundary. Do not reference the research executable or its duplicate A/B0 controllers. -->
+  <ItemGroup>
+    <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.cs" Link="PhaseB/GrantAuthority.cs" />
+    <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Commands.cs" Link="PhaseB/GrantAuthority.Commands.cs" />
+    <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Publication.cs" Link="PhaseB/GrantAuthority.Publication.cs" />
+    <Compile Include="../SharpLink.FlowStatePhaseB/ReusableOwnerCommand.cs" Link="PhaseB/ReusableOwnerCommand.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="TUnit" />
   </ItemGroup>

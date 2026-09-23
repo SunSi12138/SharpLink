@@ -5,6 +5,7 @@ import itertools
 import json
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location("fused", Path(__file__).with_name("compare-flow-state-fused.py"))
@@ -27,6 +28,21 @@ class FusedEvidenceTests(unittest.TestCase):
                     QueueOperationsPerItem=2 * handoffs, RuntimeAtomicRmwPerItem=None, Instrumented=False,
                     Checksum=streams * length * size, ReusableCommandsAllocated=0, QueueBackpressureWaits=0))
             (root / f"{runtime}-{length}-r{launch}-{label}.json").write_text(json.dumps(rows))
+
+    def test_real_writer_boundary_uses_the_same_model_sources(self):
+        root = Path(__file__).resolve().parents[1]
+        project = root / "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
+        xml = ET.parse(project)
+        includes = [item.attrib["Include"] for item in xml.findall(".//Compile")
+                    if "SharpLink.FlowStatePhaseB/" in item.attrib.get("Include", "")]
+        expected = ["GrantAuthority.cs", "GrantAuthority.Commands.cs", "GrantAuthority.Publication.cs", "ReusableOwnerCommand.cs"]
+        self.assertEqual(set(includes), {"../SharpLink.FlowStatePhaseB/" + name for name in expected})
+        self.assertEqual(len(includes), len(expected))
+        for source in includes:
+            self.assertTrue((project.parent / source).is_file())
+        references = [item.attrib["Include"].replace("\\", "/") for item in xml.findall(".//ProjectReference")]
+        self.assertIn("../../src/SharpLink.Runtime/SharpLink.Runtime.csproj", references)
+        self.assertFalse(any("SharpLink.FlowStatePhaseB.csproj" in path for path in references))
 
     def test_complete_matrix_retains_regression(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -10,7 +10,10 @@ on:
       - 'eng/*flow-state-fused.py'
       - 'eng/compare-flow-state-publication.py'
       - 'test/SharpLink.FlowStatePhaseB/**'
+      - 'test/SharpLink.UnitTests/Runtime/PhaseBWriterBoundary*.cs'
+      - 'test/SharpLink.UnitTests/SharpLink.UnitTests.csproj'
       - 'doc/performance/flow-state-phase-b.md'
+      - 'doc/performance/flow-state-phase-b-writer-boundary.md'
   workflow_dispatch:
 
 permissions:
@@ -41,6 +44,8 @@ jobs:
           dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore
       - name: Run all existing flow-controller acceptance tests on B0
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --treenode-filter '/*/*/StreamFlowControllerTests/*'
+      - name: Run real SendPump Phase B publication boundaries
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --treenode-filter '/*/*/PhaseBWriterBoundaryTests/*'
       - name: Run complete unit suite with split gates
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
