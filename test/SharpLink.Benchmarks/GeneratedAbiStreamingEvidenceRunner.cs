@@ -27,14 +27,17 @@ internal static class GeneratedAbiStreamingEvidenceRunner
 
     public static async Task RunAsync(string[] args)
     {
-        if (args.Length != 5)
+        if (args.Length is not (5 or 6))
         {
             throw new ArgumentException(
                 "Usage: --generated-abi-streaming-evidence <scenario> " +
-                "<warmup-operations> <measurement-seconds> <max-operations> <output-json>");
+                "<warmup-operations> <measurement-seconds> <max-operations> <output-json> [tcp|sharedmemory]");
         }
 
         var scenario = Enum.Parse<GeneratedAbiStreamingScenario>(args[0], ignoreCase: true);
+        var transport = args.Length == 6 ? args[5] : "tcp";
+        if (transport is not ("tcp" or "sharedmemory"))
+            throw new ArgumentException("Transport must be tcp or sharedmemory.", nameof(args));
         var warmupOperations = int.Parse(args[1], CultureInfo.InvariantCulture);
         var measurementSeconds = double.Parse(args[2], CultureInfo.InvariantCulture);
         var maxOperations = int.Parse(args[3], CultureInfo.InvariantCulture);
@@ -43,7 +46,7 @@ internal static class GeneratedAbiStreamingEvidenceRunner
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(measurementSeconds, 0);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxOperations);
 
-        await using var benchmark = await GeneratedAbiStreamingCase.CreateAsync(scenario)
+        await using var benchmark = await GeneratedAbiStreamingCase.CreateAsync(scenario, transport)
             .ConfigureAwait(false);
         var firstStarted = Stopwatch.GetTimestamp();
         var firstResult = await benchmark.InvokeAsync().ConfigureAwait(false);
@@ -96,6 +99,7 @@ internal static class GeneratedAbiStreamingEvidenceRunner
         var resultDocument = new GeneratedAbiStreamingEvidenceResult
         {
             Commit = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_SHA") ?? "unknown",
+            Transport = transport,
             Scenario = scenario.ToString(),
             Shape = benchmark.Shape,
             ItemCount = benchmark.ItemCount,
@@ -175,13 +179,16 @@ internal static class GeneratedAbiStreamingEvidenceRunner
         markdown.AppendLine($"- Tiered compilation / PGO: `{SingleValue(results.Select(static item => $"{item.TieredCompilation}/{item.TieredPgo}"))}`");
         markdown.AppendLine($"- Raw runs: {results.Count}; validation failures: {results.Sum(static item => item.ValidationFailures)}");
         markdown.AppendLine();
-        markdown.AppendLine("| Scenario | Runs | Items | Item bytes | Ops/s | Items/s | P50 us | P99 us | CPU us/op | Alloc B/op | Alloc B/item |");
-        markdown.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
-        foreach (var group in results.GroupBy(static item => item.Scenario).OrderBy(static group => group.Key))
+        markdown.AppendLine("| Transport | Scenario | Runs | Items | Item bytes | Ops/s | Items/s | P50 us | P99 us | CPU us/op | Alloc B/op | Alloc B/item |");
+        markdown.AppendLine("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+        foreach (var group in results
+                     .GroupBy(static item => (item.Transport, item.Scenario))
+                     .OrderBy(static group => group.Key.Transport, StringComparer.Ordinal)
+                     .ThenBy(static group => group.Key.Scenario, StringComparer.Ordinal))
         {
             var items = group.ToArray();
             markdown.AppendLine(
-                $"| {group.Key} | {items.Length} | {SingleValue(items.Select(static item => item.ItemCount))} | " +
+                $"| {group.Key.Transport} | {group.Key.Scenario} | {items.Length} | {SingleValue(items.Select(static item => item.ItemCount))} | " +
                 $"{SingleValue(items.Select(static item => item.ItemBytes))} | " +
                 $"{Median(items.Select(static item => item.ThroughputOperationsPerSecond)):F1} | " +
                 $"{Median(items.Select(static item => item.ThroughputItemsPerSecond)):F1} | " +
@@ -300,9 +307,15 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
     public Func<ValueTask<long>> InvokeAsync { get; }
 
     public static async Task<GeneratedAbiStreamingCase> CreateAsync(
-        GeneratedAbiStreamingScenario scenario)
+        GeneratedAbiStreamingScenario scenario,
+        string transport = "tcp")
     {
-        var environment = await BenchmarkEnvironment.CreateAsync().ConfigureAwait(false);
+        var environment = transport switch
+        {
+            "tcp" => await BenchmarkEnvironment.CreateAsync().ConfigureAwait(false),
+            "sharedmemory" => await BenchmarkEnvironment.CreateSharedMemoryAsync().ConfigureAwait(false),
+            _ => throw new ArgumentOutOfRangeException(nameof(transport), transport, null)
+        };
         try
         {
             var (shape, itemCount, itemBytes) = GetDimensions(scenario);
@@ -378,6 +391,7 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
 internal sealed class GeneratedAbiStreamingEvidenceResult
 {
     public string Commit { get; init; } = string.Empty;
+    public string Transport { get; init; } = "tcp";
     public string Scenario { get; init; } = string.Empty;
     public string Shape { get; init; } = string.Empty;
     public int ItemCount { get; init; }
