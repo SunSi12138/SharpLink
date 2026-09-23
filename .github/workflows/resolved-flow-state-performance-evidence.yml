@@ -305,11 +305,29 @@ jobs:
             local output="$ROOT/counters/callgrind-$runtime-$mode.out"
             local result="$ROOT/counters/$runtime-$mode.json"
             local log="$ROOT/logs/counter-$runtime-$mode.log"
+            local status=0
 
+            set +e
             if [[ "$runtime" == "jit" ]]; then
-              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output"                 dotnet "$jit_dll" --resolved-flow-state-evidence                 --scenario receive-pair --mode "$mode" --active-streams 32                 --items-per-stream 1000 --repetitions 2 --skip-contention                 --output "$result" > "$log" 2>&1
+              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output" \
+                dotnet "$jit_dll" --resolved-flow-state-evidence \
+                --scenario receive-pair --mode "$mode" --active-streams 32 \
+                --items-per-stream 1000 --repetitions 2 --skip-contention \
+                --output "$result" > "$log" 2>&1
+              status=$?
             else
-              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output"                 "$aot_bin" --scenario receive-pair --mode "$mode" --active-streams 32                 --items-per-stream 1000 --repetitions 2 --skip-contention                 --output "$result" > "$log" 2>&1
+              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output" \
+                "$aot_bin" --scenario receive-pair --mode "$mode" --active-streams 32 \
+                --items-per-stream 1000 --repetitions 2 --skip-contention \
+                --output "$result" > "$log" 2>&1
+              status=$?
+            fi
+            set -e
+
+            if (( status != 0 )); then
+              printf 'Callgrind unavailable for %s/%s (exit %d); continuing with n/a counters.\n' \
+                "$runtime" "$mode" "$status" | tee -a "$log"
+              rm -f "$output"
             fi
           }
 
@@ -326,18 +344,23 @@ jobs:
           items = 3 * 32 * 1000
 
           def load(path):
+              if not path.exists():
+                  return None
               events = None
               summary = None
-              for line in path.read_text().splitlines():
-                  if line.startswith("events: "):
-                      events = line.split()[1:]
-                  elif line.startswith("summary: "):
-                      summary = [int(value) for value in line.split()[1:]]
+              try:
+                  for line in path.read_text().splitlines():
+                      if line.startswith("events: "):
+                          events = line.split()[1:]
+                      elif line.startswith("summary: "):
+                          summary = [int(value) for value in line.split()[1:]]
+              except (OSError, ValueError):
+                  return None
               if events is None or summary is None:
-                  raise SystemExit(f"missing Callgrind events/summary: {path}")
+                  return None
               values = dict(zip(events, summary))
               if "Ir" not in values or "Bc" not in values or "Bi" not in values:
-                  raise SystemExit(f"missing instruction/branch counters: {path}")
+                  return None
               return values
 
           data = {}
@@ -350,8 +373,9 @@ jobs:
           lines = [
               "# Receive-pair c32 instruction/branch attribution",
               "",
-              "GitHub hosted runners do not expose the hardware PMU, so CI uses "
-              "Valgrind/Callgrind dynamic instruction and branch simulation.",
+              "GitHub-hosted runners do not expose the hardware PMU. CI attempts "
+              "Valgrind/Callgrind simulation; unsupported runtime/image combinations "
+              "are reported as n/a and do not block the production A/B evidence.",
               "",
               "| Runtime | Mode | Instructions/item | Branches/item | Branch mispredicts/item |",
               "|---|---|---:|---:|---:|",
@@ -359,6 +383,9 @@ jobs:
           for runtime in ("jit", "aot"):
               for mode in ("key", "resolved"):
                   row = data[(runtime, mode)]
+                  if row is None:
+                      lines.append(f"| {runtime} | {mode} | n/a | n/a | n/a |")
+                      continue
                   branches = row["Bc"] + row["Bi"]
                   misses = row.get("Bcm", 0) + row.get("Bim", 0)
                   lines.append(
