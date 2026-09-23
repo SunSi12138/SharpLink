@@ -57,7 +57,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
     internal readonly record struct Lease(State State, long Generation);
     internal readonly record struct Receipt(Lease Lease, long Sequence, int Bytes);
     internal readonly record struct Ledger(long Free, long Unspent, long Pending,
-        long Outstanding, int Waiters, int Retained);
+        long Outstanding, int Waiters, int Retained, int Publications);
 
     internal sealed class State
     {
@@ -82,6 +82,9 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         internal long Outstanding;
         internal long Sequence;
         internal int Pending;
+        internal bool PublicationActive;
+        internal int PublicationUncredited;
+        internal int PublicationBytes;
     }
 
     private sealed class ActionCommand(Action action) : IOwnerCommand
@@ -166,6 +169,8 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
             state.Credit = _streamWindow;
             state.Grant = state.Outstanding = state.Sequence = 0;
             state.Pending = 0;
+            state.PublicationActive = false;
+            state.PublicationUncredited = state.PublicationBytes = 0;
             _states.Add(key, state);
             return new Lease(state, state.Generation);
         }
@@ -189,7 +194,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         {
             Validate(lease);
             if (state.Closed) throw new InvalidOperationException("Closed stream.");
-            if (state.Pending != 0 || state.AcquirePending)
+            if (state.Pending != 0 || state.AcquirePending || state.PublicationActive)
                 throw new InvalidOperationException("Settle the previous receipt/acquire first.");
             if (Volatile.Read(ref _pressure) == 0 && state.Grant >= bytes && state.Credit >= bytes)
             {
@@ -392,16 +397,23 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
             // Never credit unspent grants or an unsent receipt as peer-consumed bytes.
             // This model uses generation-tagged updates, NOT the key-only wire API.
             var returned = Math.Min(state.Outstanding, bytes);
+            // Ordered model updates consume earlier committed bytes before this
+            // writer's in-flight publication. The publication pin survives even when
+            // all its bytes are credited before the writer reports completion.
+            var earlier = state.Outstanding - state.PublicationUncredited;
+            if (returned > earlier) state.PublicationUncredited -= checked((int)(returned - earlier));
             state.Outstanding -= returned;
             state.Credit += returned;
             _free += returned;
-            if (state.Closed && state.Outstanding == 0) Retire(state);
+            TryRetireClosed(state);
             return true;
         }
     }
 
     private void Retire(State state)
     {
+        if (state.PublicationActive || state.Pending != 0 || state.Outstanding != 0 || state.Grant != 0)
+            throw new InvalidOperationException("Cannot recycle a state with live credit or publication ownership.");
         state.Attached = false;
         _states.Remove(state.Key);
         if (_pool.Count < _maxStreams) _pool.Push(state);
@@ -417,7 +429,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
             _free += state.Grant + state.Pending;
             state.Credit += state.Pending;
             state.Grant = state.Pending = 0;
-            if (state.Outstanding == 0) Retire(state);
+            TryRetireClosed(state);
             return true;
         }
     });
@@ -425,6 +437,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
     internal Task<Ledger> SnapshotAsync() => OnOwnerAsync(() =>
     {
         long grants = 0, pending = 0, outstanding = 0;
+        var publications = 0;
         foreach (var state in _states.Values)
         {
             lock (state.Gate)
@@ -432,13 +445,19 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
                 grants += state.Grant;
                 pending += state.Pending;
                 outstanding += state.Outstanding;
+                if (state.PublicationActive) publications++;
+                if (state.PublicationUncredited < 0 || state.PublicationUncredited > state.Outstanding ||
+                    !state.PublicationActive && state.PublicationUncredited != 0 ||
+                    state.PublicationActive && (state.Pending != 0 || state.PublicationBytes <= 0) ||
+                    !state.PublicationActive && state.PublicationBytes != 0)
+                    throw new InvalidOperationException("Publication ownership invariant failed.");
                 if (state.Credit + state.Pending + state.Outstanding != _streamWindow)
                     throw new InvalidOperationException("Stream conservation failed.");
             }
         }
         if (_free + grants + pending + outstanding != _connectionWindow)
             throw new InvalidOperationException("Connection conservation failed.");
-        return new Ledger(_free, grants, pending, outstanding, _waiters.Count, _states.Count);
+        return new Ledger(_free, grants, pending, outstanding, _waiters.Count, _states.Count, publications);
     });
 
     public async ValueTask DisposeAsync()
@@ -446,7 +465,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         await OnOwnerAsync(() =>
         {
             Volatile.Write(ref _pressure, 1);
-            _terminal = true;
+            Volatile.Write(ref _terminal, true);
             RevokeUnspent();
             foreach (var state in _states.Values)
                 lock (state.Gate) state.Closed = true;

@@ -48,10 +48,10 @@ The grant model is **not a drop-in production controller**. In particular:
 - Updates are generation-tagged model events, not key-only wire WindowUpdate
   messages. Real wire tombstone routing/duplicate update behavior still needs
   differential integration tests.
-- It permits one unsettled receipt and one pending acquire per stream. This
-  is an explicit model restriction, not proof of all production multi-handle
-  interleavings or publication/abort races. Close revokes an unpublished
-  model receipt; it does not prove safe retirement after a real writer owns it.
+- It permits one unsettled receipt/publication and one pending acquire per
+  stream. This is an explicit model restriction, not proof of all production
+  multi-handle interleavings. Explicit writer ownership is now modeled below;
+  a real SendPump/transport has not been connected to that contract.
 - Pending state-capacity admission and the exact production abort/error
   contract are not implemented. Adaptive grant sizing is not implemented.
 - Refill/update commands and their completion sources are preallocated per stream.
@@ -174,3 +174,57 @@ allocation improvement is not a speed or production acceptance claim.
 Use `--grants-only --streams 128 --item-bytes 16` for the narrowed control.
 The full default c1/c8/c32/c128, 16 B/4 KiB matrix remains unchanged. Connection
 handoff counts include all peer updates and the 64-item warmup's residual grant.
+
+## Writer publication ownership increment
+
+Credit admission is not equivalent to writer completion. `BeginPublication`
+transfers an admitted receipt from unpublished pending bytes to outstanding
+bytes and installs a generation/sequence/size-bound writer pin under the same
+stream gate as Close. If Close wins first, Begin rejects; if Begin wins first,
+Close may reclaim unused grants, but not the writer-owned bytes. This is still
+an isolated accounting model, not a production SendPump integration.
+
+`FinishPublicationAsync(accepted: true)` releases writer ownership, not credit.
+`accepted: false` is legal only when the writer proves no bytes became peer
+visible. It refunds that debit once; a closed stream returns the unused refund
+to the connection owner even if earlier committed bytes are still outstanding.
+Ambiguous transport failure must terminate the connection, not be translated to
+`accepted: false`. Receipt size and generation/sequence identity are checked
+before releasing the pin.
+
+Ordered, generation-tagged model WindowUpdates consume earlier committed bytes
+before an active publication's uncredited bytes. Peer credit can arrive before
+the writer continuation runs. Even when every byte has been credited, a closed
+state remains pinned and cannot be recycled until the writer settles. A
+publication already credited by the peer cannot also be refunded as unsent.
+This does not establish parity with the production key-only wire protocol,
+including its duplicate/clamped WindowUpdate behavior.
+
+The existing ledger remains unchanged: outstanding includes the uncredited
+writer-owned subset; pin counts are lifetime ownership, not a second debit.
+Normal Begin/Finish uses only the existing per-stream gate and adds no owner
+command, completion allocation or connection-wide RMW. A closed-state refund,
+retirement or pressure reconciliation uses the existing allocating cold owner
+path. After connection termination there is no further admission or reuse; the
+last writer releases its local pin without restarting the closed owner queue.
+
+Thirteen new checks bring the model suite to 41. They exercise early peer credit,
+close-before/after-Begin, rejection with earlier bytes outstanding, duplicate
+and altered receipts, concurrent settlement, foreign/stale generations, terminal
+completion, local coordination counts, and 100,000 real pool reuse generations.
+Two additional boundary tests were first run red (closed refund retention and
+altered-size settlement) before the corresponding fixes. These tests do not
+replace the real runtime's flow-control and publication tests.
+
+`--publication-only` measures the same candidate with immediate legacy Commit
+versus explicit Begin/Finish. The full c1/c8/c32/c128, 16 B/4 KiB matrix uses
+4 KiB grants and the same every-64-items update schedule. The CI requires three
+exact-head reports (JIT PGO off/on and NativeAOT), 96 matched rows, two AB/BA
+samples per shape, and complete publication settlement. This is an added-cost
+control, not an end-to-end performance win. Its timings cannot be replaced by
+the preceding completion-control results, which used immediate Commit.
+
+For heads after `3d4be885`, the allocating-reference completion-control still
+compares the frozen `4d7335c8` model with the full current candidate; it therefore
+includes later model changes, not just completion reuse in isolation. The
+recorded `3d4be885` result remains tied to its own exact source and CI artifact.

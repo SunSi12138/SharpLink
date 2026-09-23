@@ -240,6 +240,7 @@ internal static partial class Checks
             await Reject(() => { b0.AcceptReceived(in a, 1); return Task.CompletedTask; });
         });
         await RunReusableAsync();
+        await RunPublicationAsync();
         Console.WriteLine($"Phase B focused checks: {Passed} passed.");
     }
 

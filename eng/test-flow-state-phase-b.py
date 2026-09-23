@@ -20,6 +20,7 @@ def load(name):
 prepare = load("prepare-flow-state-phase-b")
 summary = load("summarize-flow-state-phase-b")
 comparison = load("compare-flow-state-completions")
+publication = load("compare-flow-state-publication")
 
 
 class PhaseBEvidenceTests(unittest.TestCase):
@@ -126,6 +127,52 @@ class PhaseBEvidenceTests(unittest.TestCase):
             self.make_comparison(root)
             (root / "provenance.json").write_text(json.dumps({"baseline": "b"*40, "candidate": "a"*40}))
             with self.assertRaises(ValueError): comparison.compare(root)
+
+    def make_publication_reports(self, root):
+        for runtime in ("pgo0", "pgo1", "nativeaot"):
+            rows = []
+            for streams, size, shape, repetition in itertools.product((1, 8, 32, 128), (16, 4096), ("legacy-commit", "writer-owned"), (0, 1)):
+                calls = (size / 4096) + (1 / 64)
+                row = self.row()
+                row.update(Family="send-publication-model", Variant="B2-grant-4096", Shape=shape,
+                           ActiveStreams=streams, Workers=streams, ItemBytes=size, ItemsPerStream=4096,
+                           Repetition=repetition, Checksum=streams*4096*size, OwnerHandoffsPerItem=calls,
+                           QueueOperationsPerItem=2*calls, ReusableCommandsAllocated=0, QueueBackpressureWaits=0)
+                rows.append(row)
+            (root / f"publication-{runtime}.json").write_text(json.dumps(rows))
+
+    def test_publication_requires_full_jit_native_matrix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_publication_reports(root)
+            self.assertIn("not transport", publication.compare(root))
+            (root / "publication-nativeaot.json").unlink()
+            with self.assertRaises(ValueError): publication.compare(root)
+
+    def test_publication_rejects_missing_shape_and_unknown_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_publication_reports(root)
+            path = root / "publication-pgo0.json"
+            rows = json.loads(path.read_text())
+            path.write_text(json.dumps(rows[:-1]))
+            with self.assertRaises(ValueError): publication.compare(root)
+            path.write_text(json.dumps(rows))
+            (root / "publication-stale.json").write_text("[]")
+            with self.assertRaises(ValueError): publication.compare(root)
+
+    def test_publication_rejects_changed_costs_and_workload(self):
+        for field, value in (("OwnerHandoffsPerItem", 1), ("ReusableCommandsAllocated", 1),
+                             ("QueueBackpressureWaits", 1), ("Shape", "made-up"),
+                             ("ItemsPerStream", 1), ("Workers", 0), ("Family", "unknown")):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_publication_reports(root)
+                path = root / "publication-pgo1.json"
+                rows = json.loads(path.read_text())
+                rows[0][field] = value
+                path.write_text(json.dumps(rows))
+                with self.assertRaises(ValueError): publication.compare(root)
 
     def test_valid_control(self):
         self.assertEqual(summary.validate([self.row()]), 1)

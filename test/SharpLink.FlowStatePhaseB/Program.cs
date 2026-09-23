@@ -17,12 +17,19 @@ internal static class Program
         var output = Read(args, "--output") ?? "phase-b.json";
         var diagnose = args.Contains("--diagnose");
         var rows = new List<Result>();
-        if (!args.Contains("--grants-only"))
-            DirectionalProbe.Run(items, repetitions, diagnose, rows);
-        if (!args.Contains("--b0-only"))
-            await GrantProbe.RunAsync(items, repetitions, rows,
-                ReadOptionalInt(args, "--streams", [1, 8, 32, 128]),
-                ReadOptionalInt(args, "--item-bytes", [16, 4096]));
+#if REUSABLE_OWNER_COMMANDS
+        if (args.Contains("--publication-only"))
+            await PublicationProbe.RunAsync(items, repetitions, rows);
+        else
+#endif
+        {
+            if (!args.Contains("--grants-only"))
+                DirectionalProbe.Run(items, repetitions, diagnose, rows);
+            if (!args.Contains("--b0-only"))
+                await GrantProbe.RunAsync(items, repetitions, rows,
+                    ReadOptionalInt(args, "--streams", [1, 8, 32, 128]),
+                    ReadOptionalInt(args, "--item-bytes", [16, 4096]));
+        }
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
         await File.WriteAllTextAsync(output, JsonSerializer.Serialize(rows, EvidenceJson.Default.ListResult));
         Console.WriteLine($"Wrote {rows.Count} rows to {output}");

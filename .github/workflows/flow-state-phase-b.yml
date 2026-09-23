@@ -7,6 +7,7 @@ on:
       - '.github/workflows/flow-state-phase-b.yml'
       - 'eng/*flow-state-phase-b.py'
       - 'eng/compare-flow-state-completions.py'
+      - 'eng/compare-flow-state-publication.py'
       - 'test/SharpLink.FlowStatePhaseB/**'
       - 'doc/performance/flow-state-phase-b.md'
   workflow_dispatch:
@@ -75,6 +76,7 @@ jobs:
             export DOTNET_TieredPGO="$pgo"
             taskset -c "$CPU_LIST" dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --b0-only --items 10000 --repetitions 2 --output "$ROOT/b0-pgo$pgo.json"
             taskset -c "$CPU_LIST" dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --grants-only --items 1024 --repetitions 2 --output "$ROOT/grants-pgo$pgo.json"
+            taskset -c "$CPU_LIST" dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --publication-only --items 4096 --repetitions 2 --output "$ROOT/publication-pgo$pgo.json"
           done
           taskset -c "$CPU_LIST" dotnet run --project test/SharpLink.FlowStatePhaseB -c Release --no-build -- --b0-only --diagnose --items 1000 --repetitions 1 --output "$ROOT/b0-diagnostic.json"
       - name: Publish and validate NativeAOT research host
@@ -87,9 +89,12 @@ jobs:
           set -euo pipefail
           taskset -c "$CPU_LIST" artifacts/phase-b-native/SharpLink.FlowStatePhaseB --b0-only --items 10000 --repetitions 2 --output "$ROOT/b0-nativeaot.json"
           taskset -c "$CPU_LIST" artifacts/phase-b-native/SharpLink.FlowStatePhaseB --grants-only --items 1024 --repetitions 2 --output "$ROOT/grants-nativeaot.json"
+          taskset -c "$CPU_LIST" artifacts/phase-b-native/SharpLink.FlowStatePhaseB --publication-only --items 4096 --repetitions 2 --output "$ROOT/publication-nativeaot.json"
       - name: Validate all evidence and publish summary
         run: |
           python3 eng/summarize-flow-state-phase-b.py "$ROOT"
+          python3 eng/compare-flow-state-publication.py "$ROOT"
+          cat "$ROOT/publication-comparison.md" >> "$GITHUB_STEP_SUMMARY"
           cat "$ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Retain raw evidence even on failure
         if: always()

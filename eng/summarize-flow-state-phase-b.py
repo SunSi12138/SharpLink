@@ -24,7 +24,11 @@ def validate(rows):
             raise ValueError(f"Checksum mismatch: {key}")
         if r["Family"] == "full-controller" and r["ConnectionGateEntriesPerItem"] != 2:
             raise ValueError(f"B0 must not claim fewer acquisitions/item: {key}")
-        if r["Family"] == "send-owner-model":
+        if r["Family"] in ("send-owner-model", "send-publication-model"):
+            if r["Family"] == "send-publication-model":
+                if (r["Variant"] != "B2-grant-4096" or r["Shape"] not in ("legacy-commit", "writer-owned") or
+                        r.get("ReusableCommandsAllocated") != 0 or r.get("QueueBackpressureWaits") != 0):
+                    raise ValueError(f"Invalid publication boundary or hidden ownership costs: {key}")
             grant_items = {"B1-item-queue": 1, "B2-grant-256": max(1, 256 // r["ItemBytes"]),
                            "B2-grant-1024": max(1, 1024 // r["ItemBytes"]),
                            "B2-grant-4096": max(1, 4096 // r["ItemBytes"])}[r["Variant"]]
