@@ -92,7 +92,7 @@ public partial class RpcGenerator
             sb.AppendLine("        internal void EnsureCapacity(int count)");
             sb.AppendLine("        {");
             sb.AppendLine("            if (__keys.Length >= count) return;");
-            sb.AppendLine("            var capacity = Math.Max(count, Math.Max(4, __keys.Length * 2));");
+            sb.AppendLine("            var capacity = global::System.Math.Max(count, global::System.Math.Max(4, __keys.Length * 2));");
             sb.AppendLine("            global::System.Array.Resize(ref __keys, capacity);");
             sb.AppendLine("            global::System.Array.Resize(ref __values, capacity);");
             sb.AppendLine("            global::System.Array.Resize(ref __keySizes, capacity);");
@@ -123,7 +123,7 @@ public partial class RpcGenerator
             sb.AppendLine("        internal void EnsureCapacity(int count)");
             sb.AppendLine("        {");
             sb.AppendLine("            if (__items.Length >= count) return;");
-            sb.AppendLine("            var capacity = Math.Max(count, Math.Max(4, __items.Length * 2));");
+            sb.AppendLine("            var capacity = global::System.Math.Max(count, global::System.Math.Max(4, __items.Length * 2));");
             sb.AppendLine("            global::System.Array.Resize(ref __items, capacity);");
             sb.AppendLine("            global::System.Array.Resize(ref __nestedSizes, capacity);");
             sb.AppendLine("            global::System.Array.Resize(ref __nestedSnapshots, capacity);");
@@ -440,10 +440,11 @@ public partial class RpcGenerator
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         var indent = new string(' ', spaces);
+        var suffix = codecField.TrimStart('_');
         if (IsCollectionStringType(typeName))
         {
-            sb.AppendLine($"{indent}if ({valueExpression} is {{ }} __stringValue && __stringValue.Length > (RpcGeneratedCodecWire.MaximumStringPayloadBytes / sizeof(char)))");
-            sb.AppendLine($"{indent}    throw new ArgumentOutOfRangeException(nameof({valueExpression}), \"Serialized payload exceeds the protocol maximum.\");");
+            sb.AppendLine($"{indent}if ({valueExpression} is {{ }} __stringValue_{suffix} && __stringValue_{suffix}.Length > (RpcGeneratedCodecWire.MaximumStringPayloadBytes / sizeof(char)))");
+            sb.AppendLine($"{indent}    throw new ArgumentOutOfRangeException(\"value\", \"Serialized payload exceeds the protocol maximum.\");");
             sb.AppendLine($"{indent}var {sizeVariable} = {valueExpression} is null ? sizeof(int) : checked(sizeof(int) + {valueExpression}.Length * sizeof(char));");
             return;
         }
@@ -459,8 +460,8 @@ public partial class RpcGenerator
         else
         {
             var sized = GetCollectionSizedFieldName(codecField);
-            sb.AppendLine($"{indent}var __sized = {sized};");
-            sb.AppendLine($"{indent}if (__sized is null || !__sized.CanExactSize || !__sized.TryGetEncodedSize({valueExpression}!, out var {sizeVariable}))");
+            sb.AppendLine($"{indent}var __sized_{suffix} = {sized};");
+            sb.AppendLine($"{indent}if (__sized_{suffix} is null || !__sized_{suffix}.CanExactSize || !__sized_{suffix}.TryGetEncodedSize({valueExpression}!, out var {sizeVariable}))");
         }
         sb.AppendLine($"{indent}{{ size = 0; return false; }}");
     }
@@ -476,10 +477,11 @@ public partial class RpcGenerator
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         var indent = new string(' ', spaces);
+        var suffix = codecField.TrimStart('_');
         if (IsCollectionStringType(typeName))
         {
-            sb.AppendLine($"{indent}if ({valueExpression} is {{ }} __stringValue && __stringValue.Length > (RpcGeneratedCodecWire.MaximumStringPayloadBytes / sizeof(char)))");
-            sb.AppendLine($"{indent}    throw new ArgumentOutOfRangeException(nameof({valueExpression}), \"Serialized payload exceeds the protocol maximum.\");");
+            sb.AppendLine($"{indent}if ({valueExpression} is {{ }} __stringValue_{suffix} && __stringValue_{suffix}.Length > (RpcGeneratedCodecWire.MaximumStringPayloadBytes / sizeof(char)))");
+            sb.AppendLine($"{indent}    throw new ArgumentOutOfRangeException(\"value\", \"Serialized payload exceeds the protocol maximum.\");");
             sb.AppendLine($"{indent}{sizeTarget} = {valueExpression} is null ? sizeof(int) : checked(sizeof(int) + {valueExpression}.Length * sizeof(char));");
             sb.AppendLine($"{indent}{snapshotTarget} = null;");
             return;
@@ -497,8 +499,8 @@ public partial class RpcGenerator
         else
         {
             var sized = GetCollectionSizedFieldName(codecField);
-            sb.AppendLine($"{indent}var __sized = {sized};");
-            sb.AppendLine($"{indent}if (__sized is null || !__sized.CanExactSize || !__sized.TryGetEncodedSize({valueExpression}!, out {sizeTarget}, out {snapshotTarget}))");
+            sb.AppendLine($"{indent}var __sized_{suffix} = {sized};");
+            sb.AppendLine($"{indent}if (__sized_{suffix} is null || !__sized_{suffix}.CanExactSize || !__sized_{suffix}.TryGetEncodedSize({valueExpression}!, out {sizeTarget}, out {snapshotTarget}))");
         }
         sb.AppendLine($"{indent}{{ size = 0; return false; }}");
     }
