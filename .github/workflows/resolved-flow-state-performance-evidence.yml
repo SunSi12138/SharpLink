@@ -280,6 +280,84 @@ jobs:
           print("\n".join(lines))
           PY
 
+      - name: Capture instruction and branch attribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v perf >/dev/null
+          sudo sysctl -w kernel.perf_event_paranoid=-1 >/dev/null || true
+
+          jit_dll="$CANDIDATE_ROOT/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"
+          aot_bin="$ROOT/aot/bin/SharpLink.Benchmarks"
+          events="instructions,branches,branch-misses,cycles,context-switches"
+
+          LC_ALL=C perf stat -x, -e "$events" -o "$ROOT/counters/jit-key.csv" -- taskset -c "$CPU_LIST" dotnet "$jit_dll" --resolved-flow-state-evidence --scenario receive-pair --mode key --active-streams 128 --items-per-stream 100000 --repetitions 5 --skip-contention --output "$ROOT/counters/jit-key.json" > "$ROOT/logs/counter-jit-key.log"
+          LC_ALL=C perf stat -x, -e "$events" -o "$ROOT/counters/jit-resolved.csv" -- taskset -c "$CPU_LIST" dotnet "$jit_dll" --resolved-flow-state-evidence --scenario receive-pair --mode resolved --active-streams 128 --items-per-stream 100000 --repetitions 5 --skip-contention --output "$ROOT/counters/jit-resolved.json" > "$ROOT/logs/counter-jit-resolved.log"
+          LC_ALL=C perf stat -x, -e "$events" -o "$ROOT/counters/aot-key.csv" -- taskset -c "$CPU_LIST" "$aot_bin" --scenario receive-pair --mode key --active-streams 128 --items-per-stream 100000 --repetitions 5 --skip-contention --output "$ROOT/counters/aot-key.json" > "$ROOT/logs/counter-aot-key.log"
+          LC_ALL=C perf stat -x, -e "$events" -o "$ROOT/counters/aot-resolved.csv" -- taskset -c "$CPU_LIST" "$aot_bin" --scenario receive-pair --mode resolved --active-streams 128 --items-per-stream 100000 --repetitions 5 --skip-contention --output "$ROOT/counters/aot-resolved.json" > "$ROOT/logs/counter-aot-resolved.log"
+
+          python3 - <<'PY'
+          import pathlib
+
+          root = pathlib.Path("artifacts/performance/resolved-flow-state")
+          events = ("instructions", "branches", "branch-misses", "cycles", "context-switches")
+          items = 6 * 128 * 100000
+
+          def load(path):
+              found = {}
+              for line in path.read_text().splitlines():
+                  if not line or line.startswith("#"):
+                      continue
+                  parts = [part.strip() for part in line.split(",")]
+                  for event in events:
+                      if event not in parts:
+                          continue
+                      raw = parts[0].replace(" ", "")
+                      if raw.startswith("<"):
+                          raise SystemExit(f"hardware counter unavailable for {event}: {path}")
+                      found[event] = float(raw)
+              missing = [event for event in events if event not in found]
+              if missing:
+                  raise SystemExit(f"missing counters {missing}: {path}")
+              return found
+
+          data = {}
+          for runtime in ("jit", "aot"):
+              for mode in ("key", "resolved"):
+                  data[(runtime, mode)] = load(root / "counters" / f"{runtime}-{mode}.csv")
+
+          lines = [
+              "# Receive-pair c128 hardware-counter attribution",
+              "",
+              "Counts include one warm-up operation; startup is amortized over 76.8M items.",
+              "",
+              "| Runtime | Mode | Instructions/item | Branches/item | Branch misses/item | Cycles/item | Context switches |",
+              "|---|---|---:|---:|---:|---:|---:|",
+          ]
+          for runtime in ("jit", "aot"):
+              for mode in ("key", "resolved"):
+                  row = data[(runtime, mode)]
+                  lines.append(
+                      f"| {runtime} | {mode} | "
+                      f"{row['instructions'] / items:.2f} | "
+                      f"{row['branches'] / items:.2f} | "
+                      f"{row['branch-misses'] / items:.4f} | "
+                      f"{row['cycles'] / items:.2f} | "
+                      f"{int(row['context-switches'])} |"
+                  )
+
+          lines += [
+              "",
+              "Static hot-path lookup attribution for receive-pair:",
+              "",
+              "- keyed path: 2 stream-state dictionary lookups/item; 2 flow-controller gate entries/item",
+              "- resolved path: 0 stream-state dictionary lookups/item after one lifecycle resolve; 2 flow-controller gate entries/item",
+              "",
+          ]
+          (root / "counter-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
       - name: Run end-to-end TCP streaming A/B
         shell: bash
         run: |
@@ -428,6 +506,8 @@ jobs:
           cat "$ROOT/micro-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$ROOT/aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$ROOT/counter-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$ROOT/e2e-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
