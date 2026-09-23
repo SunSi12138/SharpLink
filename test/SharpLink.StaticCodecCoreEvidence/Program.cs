@@ -1,9 +1,11 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -25,6 +27,9 @@ internal static partial class Program
     private static readonly int[] DefaultStreamLengths = [1, 8, 64, 1_000, 10_000];
     private static readonly int[] FullStreamLengths = [1, 8, 64, 1_000, 10_000, 100_000];
     private static readonly int[] ConcurrencyLevels = [1, 8, 32, 128];
+    private const int LocalCodecIterations = 250_000;
+    private const int LocalCodecWarmupIterations = 10_000;
+    private const int LocalCodecRounds = 6;
 
     public static async Task<int> Main(string[] args)
     {
@@ -56,6 +61,13 @@ internal static partial class Program
                 $"{item.Name}: {item.NanosecondsPerUnit:F2} ns/unit, " +
                 $"{item.CpuNanosecondsPerUnit:F2} CPU ns/unit, " +
                 $"{item.AllocatedBytesPerUnit:F2} B/unit, p99 {item.P99Nanoseconds:F0} ns");
+        }
+        foreach (var item in report.LocalCodecCases)
+        {
+            Console.WriteLine(
+                $"{item.Name}: interface {item.InterfaceNanosecondsPerOperation:F2} ns/op, " +
+                $"Core {item.CoreNanosecondsPerOperation:F2} ns/op, " +
+                $"delta {item.CoreDeltaPercent:+0.00;-0.00;0.00}%, Core {item.CoreSizeBytes} B");
         }
         Console.WriteLine($"checksum={report.Checksum}");
         return 0;
@@ -217,6 +229,8 @@ internal static partial class Program
             foreach (var item in cases)
                 checksum = unchecked(checksum * 31 + item.Checksum);
 
+            var localCodecCases = RunLocalCodecEvidence();
+
             return new EvidenceReport
             {
                 Runtime = RuntimeInformation.FrameworkDescription,
@@ -227,6 +241,7 @@ internal static partial class Program
                 StopwatchFrequency = Stopwatch.Frequency,
                 Full = full,
                 Cases = cases,
+                LocalCodecCases = localCodecCases,
                 Checksum = checksum
             };
         }
@@ -275,6 +290,239 @@ internal static partial class Program
         for (var index = 0; index < count; index++)
             yield return EvidencePayloads.Get64(index + seed);
     }
+
+    private static List<LocalCodecEvidenceCase> RunLocalCodecEvidence()
+    {
+#if STATIC_CORE_CANDIDATE
+        using var context = new SharpLink.Runtime.SharpLinkRuntimeContextBuilder().Build();
+
+        var codec16Class =
+            (global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B)
+            context.Codecs.GetCodec<Core16>();
+        IRpcCodec<Core16> codec16Interface = codec16Class;
+        IRpcSizedCodec<Core16> codec16SizedInterface = codec16Class;
+        var codec16Core = codec16Class.StaticCore;
+
+        var snapshotClass =
+            (global::SharpLink.Generated.__SharpLinkGeneratedCodec_27DAE40D1F078250)
+            context.Codecs.GetCodec<CoreSnapshot>();
+        IRpcSizedCodec<CoreSnapshot> snapshotInterface = snapshotClass;
+        var snapshotCore = snapshotClass.StaticCore;
+
+        return
+        [
+            MeasureLocalPair(
+                "generated-core16-serialize-varying",
+                Unsafe.SizeOf<global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core>(),
+                iterations => MeasureCore16SerializeInterface(codec16Interface, iterations, constant: false),
+                iterations => MeasureCore16SerializeCore(codec16Core, iterations, constant: false)),
+            MeasureLocalPair(
+                "generated-core16-serialize-constant",
+                Unsafe.SizeOf<global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core>(),
+                iterations => MeasureCore16SerializeInterface(codec16Interface, iterations, constant: true),
+                iterations => MeasureCore16SerializeCore(codec16Core, iterations, constant: true)),
+            MeasureLocalPair(
+                "generated-core16-size-varying",
+                Unsafe.SizeOf<global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core>(),
+                iterations => MeasureCore16SizeInterface(codec16SizedInterface, iterations),
+                iterations => MeasureCore16SizeCore(codec16Core, iterations)),
+            MeasureLocalPair(
+                "generated-snapshot-size-varying",
+                Unsafe.SizeOf<global::SharpLink.Generated.__SharpLinkGeneratedCodec_27DAE40D1F078250.Core>(),
+                iterations => MeasureSnapshotSizeInterface(snapshotInterface, iterations),
+                iterations => MeasureSnapshotSizeCore(snapshotCore, iterations))
+        ];
+#else
+        return [];
+#endif
+    }
+
+#if STATIC_CORE_CANDIDATE
+    private static LocalCodecEvidenceCase MeasureLocalPair(
+        string name,
+        int coreSizeBytes,
+        Func<int, LocalCodecSample> measureInterface,
+        Func<int, LocalCodecSample> measureCore)
+    {
+        _ = measureInterface(LocalCodecWarmupIterations);
+        _ = measureCore(LocalCodecWarmupIterations);
+
+        var interfaceSamples = new double[LocalCodecRounds];
+        var coreSamples = new double[LocalCodecRounds];
+        var interfaceAllocations = new double[LocalCodecRounds];
+        var coreAllocations = new double[LocalCodecRounds];
+        long expectedChecksum = 0;
+
+        for (var round = 0; round < LocalCodecRounds; round++)
+        {
+            LocalCodecSample interfaceSample;
+            LocalCodecSample coreSample;
+            if ((round & 1) == 0)
+            {
+                interfaceSample = measureInterface(LocalCodecIterations);
+                coreSample = measureCore(LocalCodecIterations);
+            }
+            else
+            {
+                coreSample = measureCore(LocalCodecIterations);
+                interfaceSample = measureInterface(LocalCodecIterations);
+            }
+
+            if (interfaceSample.Checksum != coreSample.Checksum)
+            {
+                throw new InvalidOperationException(
+                    $"Local Codec evidence '{name}' produced different interface/Core checksums.");
+            }
+
+            expectedChecksum = interfaceSample.Checksum;
+            interfaceSamples[round] = interfaceSample.NanosecondsPerOperation;
+            coreSamples[round] = coreSample.NanosecondsPerOperation;
+            interfaceAllocations[round] = interfaceSample.AllocatedBytesPerOperation;
+            coreAllocations[round] = coreSample.AllocatedBytesPerOperation;
+        }
+
+        Array.Sort(interfaceSamples);
+        Array.Sort(coreSamples);
+        Array.Sort(interfaceAllocations);
+        Array.Sort(coreAllocations);
+        var interfaceMedian = Median(interfaceSamples);
+        var coreMedian = Median(coreSamples);
+
+        return new LocalCodecEvidenceCase
+        {
+            Name = name,
+            CoreSizeBytes = coreSizeBytes,
+            InterfaceNanosecondsPerOperation = interfaceMedian,
+            CoreNanosecondsPerOperation = coreMedian,
+            CoreDeltaPercent = (coreMedian / interfaceMedian - 1d) * 100d,
+            InterfaceAllocatedBytesPerOperation = Median(interfaceAllocations),
+            CoreAllocatedBytesPerOperation = Median(coreAllocations),
+            Checksum = expectedChecksum
+        };
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureCore16SerializeInterface(
+        IRpcCodec<Core16> codec,
+        int iterations,
+        bool constant)
+    {
+        using var writer = new SharpLink.Runtime.PooledByteBufferWriter(256);
+        return MeasureLocalLoop(iterations, iteration =>
+        {
+            var value = EvidencePayloads.Get16(constant ? 0 : iteration);
+            writer.Clear();
+            codec.Serialize(in value, writer);
+            return unchecked((long)writer.WrittenCount * 31 + value.A);
+        });
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureCore16SerializeCore(
+        global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core codec,
+        int iterations,
+        bool constant)
+    {
+        using var writer = new SharpLink.Runtime.PooledByteBufferWriter(256);
+        return MeasureLocalLoop(iterations, iteration =>
+        {
+            var value = EvidencePayloads.Get16(constant ? 0 : iteration);
+            writer.Clear();
+            codec.Serialize(in value, writer);
+            return unchecked((long)writer.WrittenCount * 31 + value.A);
+        });
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureCore16SizeInterface(
+        IRpcSizedCodec<Core16> codec,
+        int iterations)
+        => MeasureLocalLoop(iterations, iteration =>
+        {
+            var value = EvidencePayloads.Get16(iteration);
+            if (!codec.TryGetEncodedSize(in value, out var size))
+                throw new InvalidOperationException("Core16 must support exact sizing.");
+            return unchecked((long)size * 31 + value.A);
+        });
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureCore16SizeCore(
+        global::SharpLink.Generated.__SharpLinkGeneratedCodec_8F3120895402C91B.Core codec,
+        int iterations)
+        => MeasureLocalLoop(iterations, iteration =>
+        {
+            var value = EvidencePayloads.Get16(iteration);
+            if (!codec.TryGetEncodedSize(in value, out var size))
+                throw new InvalidOperationException("Core16 Core must support exact sizing.");
+            return unchecked((long)size * 31 + value.A);
+        });
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureSnapshotSizeInterface(
+        IRpcSizedCodec<CoreSnapshot> codec,
+        int iterations)
+        => MeasureLocalLoop(iterations, iteration =>
+        {
+            var value = EvidencePayloads.GetSnapshot(iteration);
+            if (!codec.TryGetEncodedSize(in value, out var size, out var snapshot))
+                throw new InvalidOperationException("CoreSnapshot must support exact sizing.");
+            try
+            {
+                return unchecked((long)size * 31 + value.Id);
+            }
+            finally
+            {
+                codec.ReleaseSnapshot(snapshot);
+            }
+        });
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static LocalCodecSample MeasureSnapshotSizeCore(
+        global::SharpLink.Generated.__SharpLinkGeneratedCodec_27DAE40D1F078250.Core codec,
+        int iterations)
+        => MeasureLocalLoop(iterations, iteration =>
+        {
+            var value = EvidencePayloads.GetSnapshot(iteration);
+            if (!codec.TryGetEncodedSize(in value, out var size, out var snapshot))
+                throw new InvalidOperationException("CoreSnapshot Core must support exact sizing.");
+            try
+            {
+                return unchecked((long)size * 31 + value.Id);
+            }
+            finally
+            {
+                codec.ReleaseSnapshot(snapshot);
+            }
+        });
+
+    private static LocalCodecSample MeasureLocalLoop(int iterations, Func<int, long> operation)
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+
+        var allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+        long checksum = 0;
+        var started = Stopwatch.GetTimestamp();
+        for (var iteration = 0; iteration < iterations; iteration++)
+            checksum = unchecked(checksum * 31 + operation(iteration));
+        var elapsed = Stopwatch.GetTimestamp() - started;
+        var allocatedAfter = GC.GetTotalAllocatedBytes(precise: true);
+
+        return new LocalCodecSample(
+            TicksToNanoseconds(elapsed) / iterations,
+            (allocatedAfter - allocatedBefore) / (double)iterations,
+            checksum);
+    }
+
+    private static double Median(double[] sorted)
+    {
+        var middle = sorted.Length / 2;
+        return (sorted.Length & 1) == 0
+            ? (sorted[middle - 1] + sorted[middle]) / 2d
+            : sorted[middle];
+    }
+#endif
 
     private static async Task<EvidenceCase> MeasureAsync(
         string name,
@@ -353,8 +601,28 @@ internal static partial class Program
         public long StopwatchFrequency { get; init; }
         public bool Full { get; init; }
         public List<EvidenceCase> Cases { get; init; } = [];
+        public List<LocalCodecEvidenceCase> LocalCodecCases { get; init; } = [];
         public long Checksum { get; init; }
     }
+
+    private sealed class LocalCodecEvidenceCase
+    {
+        public string Name { get; init; } = string.Empty;
+        public int CoreSizeBytes { get; init; }
+        public double InterfaceNanosecondsPerOperation { get; init; }
+        public double CoreNanosecondsPerOperation { get; init; }
+        public double CoreDeltaPercent { get; init; }
+        public double InterfaceAllocatedBytesPerOperation { get; init; }
+        public double CoreAllocatedBytesPerOperation { get; init; }
+        public long Checksum { get; init; }
+    }
+
+#if STATIC_CORE_CANDIDATE
+    private readonly record struct LocalCodecSample(
+        double NanosecondsPerOperation,
+        double AllocatedBytesPerOperation,
+        long Checksum);
+#endif
 
     private sealed class EvidenceCase
     {
