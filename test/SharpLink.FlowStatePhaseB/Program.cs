@@ -20,7 +20,9 @@ internal static class Program
         if (!args.Contains("--grants-only"))
             DirectionalProbe.Run(items, repetitions, diagnose, rows);
         if (!args.Contains("--b0-only"))
-            await GrantProbe.RunAsync(items, repetitions, rows);
+            await GrantProbe.RunAsync(items, repetitions, rows,
+                ReadOptionalInt(args, "--streams", [1, 8, 32, 128]),
+                ReadOptionalInt(args, "--item-bytes", [16, 4096]));
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
         await File.WriteAllTextAsync(output, JsonSerializer.Serialize(rows, EvidenceJson.Default.ListResult));
         Console.WriteLine($"Wrote {rows.Count} rows to {output}");
@@ -30,6 +32,15 @@ internal static class Program
     {
         var index = Array.IndexOf(args, flag);
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+
+    private static int? ReadOptionalInt(string[] args, string flag, int[] allowed)
+    {
+        var text = Read(args, flag);
+        if (text is null) return null;
+        var value = int.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
+        if (!allowed.Contains(value)) throw new ArgumentOutOfRangeException(flag);
+        return value;
     }
 
     private static int ReadInt(string[] args, string flag, int fallback)
@@ -45,7 +56,7 @@ internal sealed record Result(string Family, string Variant, string Shape, int A
     int Workers, int ItemBytes, int ItemsPerStream, int Repetition, double NsPerItem,
     double AllocatedBytesPerItem, double ConnectionGateEntriesPerItem, double OwnerHandoffsPerItem,
     double QueueOperationsPerItem, double ExplicitSubmissionRmwPerItem, double? RuntimeAtomicRmwPerItem,
-    double GateWaitNsPerItem, double GateHoldNsPerItem, bool Instrumented, long Checksum);
+    double GateWaitNsPerItem, double GateHoldNsPerItem, bool Instrumented, long Checksum, long? ReusableCommandsAllocated = null, long? QueueBackpressureWaits = null);
 
 [JsonSerializable(typeof(List<Result>))]
 [JsonSourceGenerationOptions(WriteIndented = true)]

@@ -1,6 +1,6 @@
 namespace SharpLink.FlowStatePhaseB;
 
-internal static class Checks
+internal static partial class Checks
 {
     internal static int Passed;
     private static void Require(bool condition, string message)
@@ -239,6 +239,7 @@ internal static class Checks
             b0.Complete(new InvalidOperationException("terminal"));
             await Reject(() => { b0.AcceptReceived(in a, 1); return Task.CompletedTask; });
         });
+        await RunReusableAsync();
         Console.WriteLine($"Phase B focused checks: {Passed} passed.");
     }
 

@@ -25,9 +25,21 @@ def validate(rows):
         if r["Family"] == "full-controller" and r["ConnectionGateEntriesPerItem"] != 2:
             raise ValueError(f"B0 must not claim fewer acquisitions/item: {key}")
         if r["Family"] == "send-owner-model":
-            expected = 1 + math.ceil(r["ItemsPerStream"] / 64) / r["ItemsPerStream"]
-            if (r["Variant"] == "B1-item-queue" or r["ItemBytes"] == 4096) and abs(r["OwnerHandoffsPerItem"] - expected) > 1e-9:
-                raise ValueError(f"Per-item queue control mismatch: {key}")
+            grant_items = {"B1-item-queue": 1, "B2-grant-256": max(1, 256 // r["ItemBytes"]),
+                           "B2-grant-1024": max(1, 1024 // r["ItemBytes"]),
+                           "B2-grant-4096": max(1, 4096 // r["ItemBytes"])}[r["Variant"]]
+            # Warmup processes 64 items and leaves the remainder of its last grant.
+            remaining_grant_items = (-64) % grant_items
+            refills = max(0, math.ceil((r["ItemsPerStream"] - remaining_grant_items) / grant_items))
+            expected = (refills + math.ceil(r["ItemsPerStream"] / 64)) / r["ItemsPerStream"]
+            if abs(r["OwnerHandoffsPerItem"] - expected) > 1e-9:
+                raise ValueError(f"Owner coordination count mismatch: {key}")
+            for field in ("ReusableCommandsAllocated", "QueueBackpressureWaits"):
+                value = r.get(field)
+                if value is not None and (type(value) is not int or value < 0):
+                    raise ValueError(f"Invalid command attribution: {key}/{field}")
+            if r.get("ReusableCommandsAllocated") not in (None, 0):
+                raise ValueError(f"Steady stream unexpectedly allocated a reusable command: {key}")
             if r["QueueOperationsPerItem"] != 2 * r["OwnerHandoffsPerItem"]:
                 raise ValueError(f"Queue reads+writes attribution mismatch: {key}")
         if r["RuntimeAtomicRmwPerItem"] is not None:

@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/flow-state-phase-b.yml'
       - 'eng/*flow-state-phase-b.py'
+      - 'eng/compare-flow-state-completions.py'
       - 'test/SharpLink.FlowStatePhaseB/**'
       - 'doc/performance/flow-state-phase-b.md'
   workflow_dispatch:
@@ -96,5 +97,88 @@ jobs:
         with:
           name: flow-state-phase-b-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/phase-b
+          if-no-files-found: error
+          retention-days: 30
+
+  completion-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASELINE_SHA: 4d7335c8c542136d895d60339131164b0052426b
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ROOT: ${{ github.workspace }}/artifacts/completion-control
+      DOTNET_ReadyToRun: '0'
+      DOTNET_TieredCompilation: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Prepare exact revisions with identical harnesses
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ROOT"
+          before="$RUNNER_TEMP/flow-state-allocating"
+          git worktree add --detach "$before" "$BASELINE_SHA"
+          for source in Program.cs GrantProbe.cs; do
+            cp "test/SharpLink.FlowStatePhaseB/$source" "$before/test/SharpLink.FlowStatePhaseB/$source"
+            cmp "test/SharpLink.FlowStatePhaseB/$source" "$before/test/SharpLink.FlowStatePhaseB/$source"
+            sha256sum "test/SharpLink.FlowStatePhaseB/$source" >> "$ROOT/harness-sha256.txt"
+          done
+          echo "BEFORE_ROOT=$before" >> "$GITHUB_ENV"
+          echo "CPU_LIST=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0))[:4])))')" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json, os, pathlib
+          pathlib.Path(os.environ['ROOT'], 'provenance.json').write_text(json.dumps({
+              'baseline': os.environ['BASELINE_SHA'], 'candidate': os.environ['CANDIDATE_SHA']}))
+          PY
+          dotnet --info > "$ROOT/dotnet.txt"
+          lscpu > "$ROOT/cpu.txt"
+      - name: Build both JIT and NativeAOT hosts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in "$BEFORE_ROOT" "$GITHUB_WORKSPACE"; do
+            project="$source/test/SharpLink.FlowStatePhaseB/SharpLink.FlowStatePhaseB.csproj"
+            dotnet restore "$project"
+            dotnet build "$project" -c Release --no-restore
+            dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=true -o "$source/artifacts/completion-native"
+          done
+      - name: AB/BA completion and allocation control
+        shell: bash
+        run: |
+          set -euo pipefail
+          for runtime in pgo0 pgo1 aot; do
+            for size in 1024 16384; do
+              for launch in 1 2; do
+                order=(before after)
+                if (( launch == 2 )); then order=(after before); fi
+                for label in "${order[@]}"; do
+                  source="$BEFORE_ROOT"
+                  if [[ "$label" == after ]]; then source="$GITHUB_WORKSPACE"; fi
+                  output="$ROOT/$runtime-$size-r$launch-$label.json"
+                  log="$ROOT/$runtime-$size-r$launch-$label.log"
+                  args=(--grants-only --streams 128 --item-bytes 16 --items "$size" --repetitions 2 --output "$output")
+                  if [[ "$runtime" == aot ]]; then
+                    taskset -c "$CPU_LIST" "$source/artifacts/completion-native/SharpLink.FlowStatePhaseB" "${args[@]}" > "$log" 2>&1
+                  else
+                    env DOTNET_TieredPGO="${runtime#pgo}" taskset -c "$CPU_LIST" dotnet run --project "$source/test/SharpLink.FlowStatePhaseB" -c Release --no-build -- "${args[@]}" > "$log" 2>&1
+                  fi
+                done
+              done
+            done
+          done
+      - name: Validate complete matched reports without hiding regressions
+        run: |
+          python3 eng/compare-flow-state-completions.py "$ROOT"
+          cat "$ROOT/comparison.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain comparison including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flow-state-completions-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/completion-control
           if-no-files-found: error
           retention-days: 30

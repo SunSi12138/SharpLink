@@ -54,9 +54,10 @@ The grant model is **not a drop-in production controller**. In particular:
   model receipt; it does not prove safe retirement after a real writer owns it.
 - Pending state-capacity admission and the exact production abort/error
   contract are not implemented. Adaptive grant sizing is not implemented.
-- Queue commands/completions currently allocate. B/item must be reported;
-  pooling or a reusable completion design is still required before a
-  production no-allocation-regression claim.
+- Refill/update commands and their completion sources are preallocated per stream.
+  Lifecycle commands, overlapping held updates, replacement generations with held
+  completions, cancellation/error paths and bounded-queue backpressure can still
+  allocate. This is not a production no-allocation-regression claim.
 
 The ledger invariant includes acquired but unpublished receipts:
 
@@ -110,7 +111,7 @@ serialization and transport are outside the measured owner-model loop.
 
 B0 correctness and B2 model conservation are separate checks. A lower
 B2/B1 handoff count validates the batching mechanism, not full Phase B Go.
-Still required: pooled/no-extra-allocation completion paths, real per-stream
+Still required: full lifecycle/pressure allocation accounting, real per-stream
 publication leases, key-only wire events, full lifecycle/FIFO differential
 coverage, receive-side batching/connection-threshold liveness, waiter latency
 and fairness distributions, independent instruction attribution, one-item
@@ -119,3 +120,57 @@ base. JIT PGO ON/OFF and NativeAOT research runs belong to their exact head.
 
 Neither the old Phase A contention regression nor an incomplete B2 model is
 a reason to close the reopened issue or declare the architecture No-Go.
+
+## Reusable completion increment
+
+`ReusableOwnerCommand<T>` implements a single-consumption `IValueTaskSource<T>`.
+The completion gate serializes publication/consumption, never credit mutation.
+The only nested order is stream gate then completion gate. GetResult releases
+completion ownership before disposing cancellation registration or taking the
+stream gate. An acquisition releases its pending bit and command slot under that
+same stream gate. The local item path gains no connection-wide RMW or queue entry.
+
+A completion is not reusable just because the owner has called SetResult. Held
+results keep their slot busy until consumed. Renting the same pooled state while
+a previous generation still holds a result installs a new slot rather than
+resetting the old token. Overlapping updates likewise get an independent slot.
+Those slow-path allocations are counted, not hidden. Waiters reuse intrusive
+nodes that the owner must unlink **before** signaling completion. Cancellation
+wakes only the authority; callbacks never retain a recyclable request token.
+Queue-full wakes may coalesce only because a queued command guarantees another
+cancellation scan. Queue backpressure uses an allocating slow helper and remains
+in the counters.
+
+The public .NET ValueTask contract requires single consumption, and a pending
+result must not be read synchronously. Defensive invalid-token checks do not
+relax that contract:
+https://learn.microsoft.com/en-us/dotnet/api/system.threading.tasks.valuetask-1?view=net-10.0
+https://learn.microsoft.com/en-us/dotnet/api/system.threading.tasks.sources.manualresetvaluetasksourcecore-1?view=net-10.0
+
+The first 17 checks remain; 11 additional checks cover held and canceled
+completions across real state reuse, independent overlapping updates, intrusive
+node reuse, bounded backpressure, coalesced cancellation wakes, closed queue
+failure and stale completion tokens. These remain model checks, not the full
+production publication/wire contract.
+
+The `completion-control` CI job compares the exact allocating model at
+`4d7335c8c542136d895d60339131164b0052426b` against the new head. It overlays
+identical Program/GrantProbe files on both; the only conditional compilation is
+for counters absent from the reference. The reference credit algorithm is not
+modified. The source hashes, revisions, runtime and affinity are retained.
+JIT PGO ON/OFF and NativeAOT run AB/BA launch order at c128/16 B with 1024 and
+16384 items/stream. Every launch includes all four grant settings and two
+samples each. The report requires all 24 files / 192 matched rows; missing
+cases, unknown reports, wrong revisions and fake zero counters are errors.
+
+`ReusableCommandsAllocated == 0` in a settled long-stream loop is only an object
+inventory statement. `AllocatedBytesPerItem` still reports actual process-wide
+allocation, including the fixed Task/closure harness cost. Comparing lengths
+helps distinguish that fixed cost from per-command slope, but excludes stream
+setup and cold lifecycle work. Source-level counter success is **not** substituted
+for measured zero B/item. Time regressions are printed with a positive sign;
+allocation improvement is not a speed or production acceptance claim.
+
+Use `--grants-only --streams 128 --item-bytes 16` for the narrowed control.
+The full default c1/c8/c32/c128, 16 B/4 KiB matrix remains unchanged. Connection
+handoff counts include all peer updates and the 64-item warmup's residual grant.

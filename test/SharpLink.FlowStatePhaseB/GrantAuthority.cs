@@ -3,20 +3,21 @@ using System.Threading.Channels;
 namespace SharpLink.FlowStatePhaseB;
 
 // Isolated SEND-SIDE model, not a replacement for StreamFlowController.
-// One unsettled item receipt / one pending acquire per stream. Receive batching,
-// wire integration and pooled queue completions are deliberately not claimed.
-internal sealed class GrantAuthority : IAsyncDisposable
+// One unsettled item receipt / one pending acquire per stream. Receive batching
+// and wire integration remain outside this research model.
+internal sealed partial class GrantAuthority : IAsyncDisposable
 {
     private readonly int _streamWindow;
     private readonly int _connectionWindow;
     private readonly int _grantBytes;
     private readonly int _maxStreams;
     private readonly int _maxItemBytes;
-    private readonly Channel<Action> _commands;
+    private readonly Channel<IOwnerCommand> _commands;
+    private readonly IOwnerCommand _wake;
     private readonly Task _owner;
     private readonly Dictionary<long, State> _states = [];
     private readonly Stack<State> _pool = [];
-    private readonly LinkedList<Request> _waiters = [];
+    private readonly LinkedList<AcquireCommand> _waiters = [];
     private long _generation;
     private long _free;
     private int _pressure;
@@ -25,9 +26,11 @@ internal sealed class GrantAuthority : IAsyncDisposable
     internal long AcquireSubmissions;
     internal long Revocations;
     internal long AdmittedWaiters;
+    internal long ReusableCommandAllocations;
+    internal long QueueBackpressureWaits;
 
     internal GrantAuthority(int streamWindow, int connectionWindow, int grantBytes,
-        int maxStreams = 128, int maxItemBytes = 4 * 1024 * 1024)
+        int maxStreams = 128, int maxItemBytes = 4 * 1024 * 1024, int? queueCapacity = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamWindow);
         ArgumentOutOfRangeException.ThrowIfLessThan(connectionWindow, streamWindow);
@@ -40,7 +43,8 @@ internal sealed class GrantAuthority : IAsyncDisposable
         _maxStreams = maxStreams;
         _maxItemBytes = maxItemBytes;
         _free = connectionWindow;
-        _commands = Channel.CreateBounded<Action>(new BoundedChannelOptions(checked(maxStreams * 4))
+        _wake = new ActionCommand(static () => { });
+        _commands = Channel.CreateBounded<IOwnerCommand>(new BoundedChannelOptions(queueCapacity ?? checked(maxStreams * 4))
         {
             SingleReader = true,
             SingleWriter = false,
@@ -55,9 +59,18 @@ internal sealed class GrantAuthority : IAsyncDisposable
     internal readonly record struct Ledger(long Free, long Unspent, long Pending,
         long Outstanding, int Waiters, int Retained);
 
-    internal sealed class State(GrantAuthority owner)
+    internal sealed class State
     {
-        internal readonly GrantAuthority Owner = owner;
+        internal readonly GrantAuthority Owner;
+        internal AcquireCommand AcquireCommand;
+        internal UpdateCommand UpdateCommand;
+
+        internal State(GrantAuthority owner)
+        {
+            Owner = owner;
+            AcquireCommand = new AcquireCommand(owner);
+            UpdateCommand = new UpdateCommand(owner);
+        }
         internal readonly Lock Gate = new();
         internal long Key;
         internal long Generation;
@@ -71,25 +84,58 @@ internal sealed class GrantAuthority : IAsyncDisposable
         internal int Pending;
     }
 
-    private sealed record Request(Lease Lease, int Bytes, CancellationToken Token,
-        TaskCompletionSource<Receipt> Completion);
+    private sealed class ActionCommand(Action action) : IOwnerCommand
+    {
+        public void Execute() => action();
+        public void Fail(Exception error) => throw error;
+    }
 
     private async Task RunOwnerAsync()
     {
         await foreach (var command in _commands.Reader.ReadAllAsync().ConfigureAwait(false))
         {
-            command();
+            command.Execute();
             DrainWaiters();
         }
     }
 
-    private async ValueTask SubmitAsync(Action command)
+    private async ValueTask SubmitAsync(Action action)
     {
-        await _commands.Writer.WriteAsync(command).ConfigureAwait(false);
+        // Count before publication: a consumer may finish before WriteAsync returns.
         Interlocked.Increment(ref QueueSubmissions);
+        try { await _commands.Writer.WriteAsync(new ActionCommand(action)).ConfigureAwait(false); }
+        catch { Interlocked.Decrement(ref QueueSubmissions); throw; }
     }
 
-    private async Task<T> OnOwnerAsync<T>(Func<T> operation)
+    private ValueTask<T> SubmitReusable<T>(ReusableOwnerCommand<T> command, ValueTask<T> result)
+    {
+        Interlocked.Increment(ref QueueSubmissions);
+        if (_commands.Writer.TryWrite(command)) return result;
+        Interlocked.Increment(ref QueueBackpressureWaits);
+        return WaitForQueueAsync(command, result);
+    }
+
+    private async ValueTask<T> WaitForQueueAsync<T>(ReusableOwnerCommand<T> command, ValueTask<T> result)
+    {
+        try { await _commands.Writer.WriteAsync(command).ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            Interlocked.Decrement(ref QueueSubmissions);
+            command.Fail(error);
+        }
+        // Consume the same captured token even on enqueue failure, releasing its slot.
+        return await result.ConfigureAwait(false);
+    }
+
+    private void WakeCanceledWaiters()
+    {
+        // Cancellation never captures a reusable request/generation. A full queue
+        // already guarantees an owner turn and a scan, so a wake can be coalesced.
+        Interlocked.Increment(ref QueueSubmissions);
+        if (!_commands.Writer.TryWrite(_wake)) Interlocked.Decrement(ref QueueSubmissions);
+    }
+
+    internal async Task<T> OnOwnerAsync<T>(Func<T> operation)
     {
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         await SubmitAsync(() =>
@@ -108,6 +154,10 @@ internal sealed class GrantAuthority : IAsyncDisposable
         var state = _pool.TryPop(out var pooled) ? pooled : new State(this);
         lock (state.Gate)
         {
+            // A closed stream can be rented before an old caller consumes completion.
+            // Replace only the held slot; never reset a previous generation's token.
+            if (state.AcquireCommand.IsBusy) state.AcquireCommand = new AcquireCommand(this);
+            if (state.UpdateCommand.IsBusy) state.UpdateCommand = new UpdateCommand(this);
             state.Key = key;
             state.Generation = checked(++_generation);
             state.Attached = true;
@@ -148,39 +198,26 @@ internal sealed class GrantAuthority : IAsyncDisposable
                 state.Pending = bytes;
                 return ValueTask.FromResult(new Receipt(lease, ++state.Sequence, bytes));
             }
-            state.AcquirePending = true;
+            return AcquireOnOwnerLocked(lease, bytes, token);
         }
-        return AcquireOnOwnerAsync(lease, bytes, token);
     }
 
-    private async ValueTask<Receipt> AcquireOnOwnerAsync(Lease lease, int bytes, CancellationToken token)
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private ValueTask<Receipt> AcquireOnOwnerLocked(Lease lease, int bytes, CancellationToken token)
     {
-        var completion = new TaskCompletionSource<Receipt>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var request = new Request(lease, bytes, token, completion);
-        using var registration = token.Register(() =>
-        {
-            // A full queue already guarantees an owner turn and cancellation scan.
-            if (_commands.Writer.TryWrite(static () => { }))
-                Interlocked.Increment(ref QueueSubmissions);
-        });
-        try
-        {
-            Interlocked.Increment(ref AcquireSubmissions);
-            await SubmitAsync(() => AdmitOrQueue(request)).ConfigureAwait(false);
-            return await completion.Task.ConfigureAwait(false);
-        }
-        finally
-        {
-            lock (lease.State.Gate)
-                if (lease.State.Generation == lease.Generation)
-                    lease.State.AcquirePending = false;
-        }
+        // Keep command preparation off the local-grant fast path. The caller still
+        // owns the stream gate until the slot is bound and submission is initiated.
+        var command = lease.State.AcquireCommand;
+        var result = command.Prepare(lease, bytes, token);
+        lease.State.AcquirePending = true;
+        Interlocked.Increment(ref AcquireSubmissions);
+        return SubmitReusable(command, result);
     }
 
     private bool HasCredit(long credit, int bytes, int window)
         => credit >= bytes || bytes > window && credit == window;
 
-    private Receipt Reserve(Request request, bool extras)
+    private Receipt Reserve(AcquireCommand request, bool extras)
     {
         var state = request.Lease.State;
         _free -= request.Bytes;
@@ -195,7 +232,7 @@ internal sealed class GrantAuthority : IAsyncDisposable
         return new Receipt(request.Lease, ++state.Sequence, request.Bytes);
     }
 
-    private void AdmitOrQueue(Request request)
+    private void AdmitOrQueue(AcquireCommand request)
     {
         try
         {
@@ -209,18 +246,18 @@ internal sealed class GrantAuthority : IAsyncDisposable
                 if (_waiters.Count == 0 && HasCredit(_free, request.Bytes, _connectionWindow) &&
                     HasCredit(state.Credit, request.Bytes, _streamWindow))
                 {
-                    request.Completion.SetResult(Reserve(request, extras: true));
+                    request.Complete(Reserve(request, extras: true));
                     return;
                 }
             }
             // Freeze new local admissions before reclaiming any grant. Taking every
             // stream gate drains in-progress local debit/settlement operations.
             Volatile.Write(ref _pressure, 1);
-            _waiters.AddLast(request);
+            _waiters.AddLast(request.Node);
             RevokeUnspent();
         }
-        catch (OperationCanceledException) { request.Completion.TrySetCanceled(request.Token); }
-        catch (Exception error) { request.Completion.TrySetException(error); }
+        catch (OperationCanceledException) { request.Fail(new OperationCanceledException(request.Token)); }
+        catch (Exception error) { request.Fail(error); }
     }
 
     private void RevokeUnspent()
@@ -249,13 +286,13 @@ internal sealed class GrantAuthority : IAsyncDisposable
                 var state = request.Lease.State;
                 if (request.Token.IsCancellationRequested)
                 {
-                    request.Completion.TrySetCanceled(request.Token);
                     _waiters.Remove(canceled);
+                    request.Fail(new OperationCanceledException(request.Token));
                 }
                 else if (_terminal || state.Closed || !state.Attached || state.Generation != request.Lease.Generation)
                 {
-                    request.Completion.TrySetException(new InvalidOperationException("Terminal or stale waiter."));
                     _waiters.Remove(canceled);
+                    request.Fail(new InvalidOperationException("Terminal or stale waiter."));
                 }
             }
             canceled = next;
@@ -265,6 +302,8 @@ internal sealed class GrantAuthority : IAsyncDisposable
         {
             var next = node.Next;
             var request = node.Value;
+            Receipt receipt = default;
+            Exception? error = null;
             bool removed = true;
             lock (request.Lease.State.Gate)
             {
@@ -279,15 +318,18 @@ internal sealed class GrantAuthority : IAsyncDisposable
                     {
                         // Required bytes only while waiters exist; never speculate a
                         // chunk ahead of an older connection-credit-blocked request.
-                        var receipt = Reserve(request, extras: false);
+                        receipt = Reserve(request, extras: false);
                         AdmittedWaiters++;
-                        request.Completion.TrySetResult(receipt);
                     }
                 }
-                catch (OperationCanceledException) { request.Completion.TrySetCanceled(request.Token); }
-                catch (Exception error) { request.Completion.TrySetException(error); }
+                catch (Exception failure) { error = failure; }
             }
-            if (removed) _waiters.Remove(node);
+            if (removed)
+            {
+                _waiters.Remove(node);
+                if (error is null) request.Complete(receipt);
+                else request.Fail(error);
+            }
             node = next;
         }
         if (_waiters.Count == 0) Volatile.Write(ref _pressure, 0);
@@ -323,7 +365,23 @@ internal sealed class GrantAuthority : IAsyncDisposable
         await OnOwnerAsync(() => { RevokeUnspent(); return true; }).ConfigureAwait(false);
     }
 
-    internal Task<bool> WindowUpdateAsync(Lease lease, int bytes) => OnOwnerAsync(() =>
+    internal ValueTask<bool> WindowUpdateAsync(Lease lease, int bytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
+        var state = lease.State ?? throw new InvalidOperationException("Unresolved lease.");
+        UpdateCommand command;
+        ValueTask<bool> result;
+        lock (state.Gate)
+        {
+            if (state.Owner != this) throw new InvalidOperationException("Foreign lease.");
+            // Preserve overlapping update support; held results are never overwritten.
+            command = state.UpdateCommand.IsBusy ? new UpdateCommand(this) : state.UpdateCommand;
+            result = command.Prepare(lease, bytes);
+        }
+        return SubmitReusable(command, result);
+    }
+
+    private bool ApplyWindowUpdate(Lease lease, int bytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
         lock (lease.State.Gate)
@@ -340,7 +398,7 @@ internal sealed class GrantAuthority : IAsyncDisposable
             if (state.Closed && state.Outstanding == 0) Retire(state);
             return true;
         }
-    });
+    }
 
     private void Retire(State state)
     {
