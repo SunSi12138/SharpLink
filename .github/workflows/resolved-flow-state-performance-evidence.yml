@@ -55,6 +55,8 @@ jobs:
           candidate="$RUNNER_TEMP/sharplink-flow-candidate"
           git worktree add --detach "$baseline" "$BASELINE_SHA"
           git worktree add --detach "$candidate" "$CANDIDATE_SHA"
+          # Keep the measurement harness identical while linking it against each revision.
+          cp "$candidate/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs" "$baseline/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
           echo "BASELINE_ROOT=$baseline" >> "$GITHUB_ENV"
           echo "CANDIDATE_ROOT=$candidate" >> "$GITHUB_ENV"
 
