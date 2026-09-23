@@ -19,6 +19,12 @@ public partial class RpcGenerator
                 static group => group.Key,
                 static group => group.First(),
                 StringComparer.Ordinal);
+        var leafDtoTypes = new HashSet<string>(
+            dtoByCodecName.Values
+                .Where(static codec => codec.Members.All(
+                    static member => member.Kind != GeneratedMemberKind.Complex))
+                .Select(static codec => codec.TypeName),
+            StringComparer.Ordinal);
         var globalConcreteCodecTypes = CreateConcreteCodecTypeMap(globalCodecs);
         var contractConcreteCodecTypes = CreateConcreteCodecTypeMap(globalCodecs, contractCodecs);
         var contractCodecNames = new HashSet<string>(
@@ -61,7 +67,7 @@ public partial class RpcGenerator
                     throw new InvalidOperationException(
                         $"DTO analysis result is missing emitter model '{codec.CodecName}'.");
                 }
-                AppendDtoCodec(sb, dto, concreteCodecTypes);
+                AppendDtoCodec(sb, dto, concreteCodecTypes, leafDtoTypes);
             }
             else
                 AppendCollectionCodec(sb, codec, concreteCodecTypes);
