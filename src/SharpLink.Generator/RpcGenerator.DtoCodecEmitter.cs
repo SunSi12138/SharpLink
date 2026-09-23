@@ -91,10 +91,12 @@ public partial class RpcGenerator
         bool hasComplex,
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
-        // Keep async/pending-operation state bounded. Small generated graphs benefit from
-        // carrying concrete child state directly; larger graphs keep the authoritative
-        // class instance as the compact Core. This is a compile-time layout rule only.
-        var useHybridCore = complexMembers.Length <= 1;
+        // Keep async/pending-operation state bounded while preserving the concrete child
+        // Codec graph for common generated DTOs. Store concrete sealed child Codec references
+        // rather than recursively embedding child Cores so nested DTO depth does not inflate
+        // the Core exponentially. Larger fan-out graphs keep the authoritative owner-only Core.
+        const int MaxConcreteChildCodecFields = 4;
+        var useHybridCore = complexMembers.Length <= MaxConcreteChildCodecFields;
 
         sb.AppendLine();
         sb.AppendLine("    internal Core StaticCore => new(this);");
@@ -135,10 +137,26 @@ public partial class RpcGenerator
         for (var index = 0; index < complexMembers.Length; index++)
         {
             var member = complexMembers[index];
-            sb.AppendLine(
-                $"        private readonly {GetCodecStorageType(member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)} __codec_{index};");
-            sb.AppendLine(
-                $"        private readonly IRpcSizedCodec<{member.TypeName}>? __sizedCodec_{index};");
+            var childStorageType = GetCodecStorageType(
+                member.TypeName,
+                member.CodecLookupTypeName,
+                concreteCodecTypes);
+            sb.AppendLine($"        private readonly {childStorageType} __codec_{index};");
+            if (TryGetStaticGeneratedCodecCoreType(
+                    member.CodecLookupTypeName,
+                    concreteCodecTypes,
+                    out _))
+            {
+                // The concrete generated class already implements IRpcSizedCodec<T>.
+                // Alias the sizing path to the same reference instead of retaining a second
+                // interface reference in every async/pending Core copy.
+                sb.AppendLine($"        private {childStorageType} __sizedCodec_{index} => __codec_{index};");
+            }
+            else
+            {
+                sb.AppendLine(
+                    $"        private readonly IRpcSizedCodec<{member.TypeName}>? __sizedCodec_{index};");
+            }
         }
         if (complexMembers.Length != 0)
             sb.AppendLine("        private readonly bool __canExactSize;");
@@ -148,8 +166,15 @@ public partial class RpcGenerator
         sb.AppendLine("            __owner = owner;");
         for (var index = 0; index < complexMembers.Length; index++)
         {
+            var member = complexMembers[index];
             sb.AppendLine($"            __codec_{index} = owner.__codec_{index};");
-            sb.AppendLine($"            __sizedCodec_{index} = owner.__sizedCodec_{index};");
+            if (!TryGetStaticGeneratedCodecCoreType(
+                    member.CodecLookupTypeName,
+                    concreteCodecTypes,
+                    out _))
+            {
+                sb.AppendLine($"            __sizedCodec_{index} = owner.__sizedCodec_{index};");
+            }
         }
         if (complexMembers.Length != 0)
             sb.AppendLine("            __canExactSize = owner.__canExactSize;");
