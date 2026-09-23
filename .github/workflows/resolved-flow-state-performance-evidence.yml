@@ -11,6 +11,7 @@ on:
       - 'test/SharpLink.Benchmarks/ResolvedFlowStateEvidenceRunner.cs'
       - 'test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs'
       - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'test/SharpLink.ResolvedFlowStateAotEvidence/**'
   workflow_dispatch:
 
 permissions:
@@ -19,7 +20,7 @@ permissions:
 jobs:
   evidence:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       BASELINE_SHA: 56c643cd308f294cb03df79d9f1214fb8292affb
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -38,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$ROOT"/{micro,e2e,env,logs}
+          mkdir -p "$ROOT"/{micro,aot,counters,e2e,env,logs}
 
           cpu_count="$(nproc)"
           if (( cpu_count >= 4 )); then
@@ -71,6 +72,14 @@ jobs:
             dotnet restore "$project"
             dotnet build "$project" -c Release --no-restore               -p:PublishAot=false -m:1 /nodeReuse:false -v minimal
           done
+
+      - name: Build NativeAOT evidence host
+        shell: bash
+        run: |
+          set -euo pipefail
+          project="$CANDIDATE_ROOT/test/SharpLink.ResolvedFlowStateAotEvidence/SharpLink.ResolvedFlowStateAotEvidence.csproj"
+          dotnet restore "$project" -r linux-x64
+          dotnet publish "$project" -c Release -r linux-x64 --no-restore -p:PublishAot=true -p:StripSymbols=false -o "$ROOT/aot/bin" -v minimal
 
       - name: Run resolved-state microkernel
         shell: bash
@@ -119,22 +128,29 @@ jobs:
                           pair["resolved"]["AllocatedBytesPerItem"] -
                           pair["key"]["AllocatedBytesPerItem"]
                       )
-                      per_case.setdefault(key, []).append((gain, alloc_delta))
+                      lock_delta = (
+                          pair["resolved"]["LockContentionsPerItem"] -
+                          pair["key"]["LockContentionsPerItem"]
+                      )
+                      per_case.setdefault(key, []).append((gain, alloc_delta, lock_delta))
 
               medians = {
                   key: (
                       statistics.median(v[0] for v in values),
                       statistics.median(v[1] for v in values),
+                      statistics.median(v[2] for v in values),
                   )
                   for key, values in per_case.items()
               }
 
               def vals(pred):
-                  return [gain for key, (gain, _) in medians.items() if pred(key)]
+                  return [gain for key, (gain, _, _) in medians.items() if pred(key)]
 
               scenario_summary = {}
               for scenario in (
                   "send-no-wait",
+                  "send-periodic-window-update",
+                  "send-starved-control",
                   "receive-accept",
                   "receive-consume",
                   "receive-pair",
@@ -148,12 +164,14 @@ jobs:
 
               long_lived = vals(lambda k: k[2] >= 1000 and k[0] != "short-stream-control")
               short = vals(lambda k: k[2] == 1 or k[0] == "short-stream-control")
-              alloc_deltas = [delta for _, delta in medians.values()]
+              alloc_deltas = [delta for _, delta, _ in medians.values()]
+              lock_deltas = [delta for _, _, delta in medians.values()]
               out[str(pgo)] = {
                   "scenarioMedianGainPct": scenario_summary,
                   "longLivedMedianGainPct": statistics.median(long_lived),
                   "shortControlMedianGainPct": statistics.median(short),
                   "maxAllocationDeltaBytesPerItem": max(alloc_deltas),
+                  "maxLockContentionDeltaPerItem": max(lock_deltas),
               }
 
               lines += [
@@ -162,16 +180,104 @@ jobs:
                   f"- long-lived median ns/item improvement: {out[str(pgo)]['longLivedMedianGainPct']:+.2f}%",
                   f"- short/control median improvement: {out[str(pgo)]['shortControlMedianGainPct']:+.2f}%",
                   f"- max allocation delta B/item: {out[str(pgo)]['maxAllocationDeltaBytesPerItem']:+.3f}",
+                  f"- max lock-contention delta/item: {out[str(pgo)]['maxLockContentionDeltaPerItem']:+.6f}",
                   "",
-                  "| Scenario | Median ns/item improvement |",
-                  "|---|---:|",
+                  "| Scenario | Median ns/item improvement | Lock contention delta/item |",
+                  "|---|---:|---:|",
               ]
               for scenario, value in scenario_summary.items():
-                  lines.append(f"| {scenario} | {value:+.2f}% |")
+                  lock_values = [
+                      lock_delta
+                      for key, (_, _, lock_delta) in medians.items()
+                      if key[0] == scenario
+                  ]
+                  lines.append(
+                      f"| {scenario} | {value:+.2f}% | {statistics.median(lock_values):+.6f} |"
+                  )
               lines.append("")
 
           (root / "micro-summary.json").write_text(json.dumps(out, indent=2) + "\n")
           (root / "micro-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Run NativeAOT resolved-state microkernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          taskset -c "$CPU_LIST" "$ROOT/aot/bin/SharpLink.Benchmarks" --repetitions 3 --contention-items 20000 --output "$ROOT/aot/micro.json" > "$ROOT/logs/micro-nativeaot.log"
+
+      - name: Summarize NativeAOT microkernel
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/resolved-flow-state")
+          rows = json.loads((root / "aot" / "micro.json").read_text())
+          by_key = {}
+          for row in rows:
+              key = (row["Scenario"], row["ActiveStreams"], row["ItemsPerStream"])
+              by_key.setdefault(key, {})[row["Mode"]] = row
+
+          medians = {}
+          for key, pair in by_key.items():
+              if "key" not in pair or "resolved" not in pair:
+                  continue
+              old = pair["key"]["NanosecondsPerItem"]
+              new = pair["resolved"]["NanosecondsPerItem"]
+              medians[key] = (
+                  (old - new) * 100.0 / old,
+                  pair["resolved"]["AllocatedBytesPerItem"] - pair["key"]["AllocatedBytesPerItem"],
+                  pair["resolved"]["LockContentionsPerItem"] - pair["key"]["LockContentionsPerItem"],
+              )
+
+          scenarios = (
+              "send-no-wait",
+              "send-periodic-window-update",
+              "send-starved-control",
+              "receive-accept",
+              "receive-consume",
+              "receive-pair",
+              "short-stream-control",
+              "send-contention",
+              "receive-pair-contention",
+          )
+          lines = [
+              "# NativeAOT resolved flow-state microkernel",
+              "",
+              "| Scenario | Median ns/item improvement | Lock contention delta/item |",
+              "|---|---:|---:|",
+          ]
+          summary = {}
+          for scenario in scenarios:
+              values = [v for key, v in medians.items() if key[0] == scenario]
+              if not values:
+                  continue
+              gain = statistics.median(v[0] for v in values)
+              lock_delta = statistics.median(v[2] for v in values)
+              summary[scenario] = {
+                  "gainPct": gain,
+                  "lockContentionDeltaPerItem": lock_delta,
+              }
+              lines.append(f"| {scenario} | {gain:+.2f}% | {lock_delta:+.6f} |")
+
+          long_lived = [
+              gain
+              for key, (gain, _, _) in medians.items()
+              if key[2] >= 1000 and key[0] != "short-stream-control"
+          ]
+          alloc_deltas = [delta for _, delta, _ in medians.values()]
+          lines += [
+              "",
+              f"- long-lived median ns/item improvement: {statistics.median(long_lived):+.2f}%",
+              f"- max allocation delta B/item: {max(alloc_deltas):+.3f}",
+              "",
+          ]
+          (root / "aot-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          (root / "aot-summary.md").write_text("\n".join(lines) + "\n")
           print("\n".join(lines))
           PY
 
@@ -321,6 +427,8 @@ jobs:
         shell: bash
         run: |
           cat "$ROOT/micro-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$ROOT/aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
           printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
           cat "$ROOT/e2e-summary.md" >> "$GITHUB_STEP_SUMMARY"
 
