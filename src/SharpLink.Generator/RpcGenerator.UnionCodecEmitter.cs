@@ -173,7 +173,7 @@ public partial class RpcGenerator
             else
             {
                 sb.AppendLine($"            __codec_{index} = owner.__codec_{index};");
-                sb.AppendLine($"            __sizedCodec_{index} = owner.__codec_{index} as IRpcSizedCodec<{caseType}>;");
+                sb.AppendLine($"            __sizedCodec_{index} = (object)owner.__codec_{index} as IRpcSizedCodec<{caseType}>;");
             }
         }
         if (cases.Length == 0)
@@ -199,20 +199,6 @@ public partial class RpcGenerator
         sb.AppendLine($"        public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");
         sb.AppendLine("        {");
         sb.AppendLine("            ArgumentNullException.ThrowIfNull(writer);");
-        sb.AppendLine("            if (__canExactSize && writer is IRpcByteBufferWriter __exactWriter && !RpcGeneratedCodecSizing.IsSuppressed &&");
-        sb.AppendLine("                TryGetEncodedSize(in value, out var __exactSize, out var __sizedSnapshot))");
-        sb.AppendLine("            {");
-        sb.AppendLine("                try");
-        sb.AppendLine("                {");
-        sb.AppendLine("                    __exactWriter.GetSpan(checked(__exactSize + 4));");
-        sb.AppendLine("                    __exactWriter.Advance(0);");
-        sb.AppendLine("                    RpcGeneratedCodecSizing.Enter();");
-        sb.AppendLine("                    try { SerializeSized(in value, writer, __exactSize, __sizedSnapshot); }");
-        sb.AppendLine("                    finally { RpcGeneratedCodecSizing.Exit(); }");
-        sb.AppendLine("                }");
-        sb.AppendLine("                finally { ReleaseSnapshot(__sizedSnapshot); }");
-        sb.AppendLine("                return;");
-        sb.AppendLine("            }");
         sb.AppendLine("            if (value is null)");
         sb.AppendLine("            {");
         sb.AppendLine("                __WriteDiscriminator(writer, 0);");
