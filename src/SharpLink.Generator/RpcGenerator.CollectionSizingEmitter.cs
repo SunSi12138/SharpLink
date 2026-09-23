@@ -47,7 +47,7 @@ public partial class RpcGenerator
         if (!IsDirectCollectionSizedType(typeName))
         {
             sb.AppendLine(
-                $"            {GetCollectionSizedFieldName(codecField)} = owner.{codecField} as IRpcSizedCodec<{typeName}>;");
+                $"            {GetCollectionSizedFieldName(codecField)} = (object)owner.{codecField} as IRpcSizedCodec<{typeName}>;");
         }
     }
 
