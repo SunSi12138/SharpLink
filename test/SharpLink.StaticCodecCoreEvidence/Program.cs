@@ -474,7 +474,8 @@ internal static partial class Program
         var started = Stopwatch.GetTimestamp();
         for (var iteration = 0; iteration < iterations; iteration++)
         {
-            var value = codec.Deserialize(in payload);
+            var value = codec.Deserialize(in payload)
+                ?? throw new InvalidOperationException("Core16 interface decode returned null.");
             checksum = unchecked(checksum * 31 + value.A + value.D);
         }
         return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
@@ -492,7 +493,8 @@ internal static partial class Program
         var started = Stopwatch.GetTimestamp();
         for (var iteration = 0; iteration < iterations; iteration++)
         {
-            var value = codec.Deserialize(in payload);
+            var value = codec.Deserialize(in payload)
+                ?? throw new InvalidOperationException("Core16 Core decode returned null.");
             checksum = unchecked(checksum * 31 + value.A + value.D);
         }
         return CompleteLocalMeasurement(started, allocatedBefore, iterations, checksum);
