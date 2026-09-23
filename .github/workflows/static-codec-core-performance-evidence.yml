@@ -64,10 +64,15 @@ jobs:
             local label="$1"
             local root="$2"
             local generated="$EVIDENCE_ROOT/generated/$label"
+            local candidate_property=""
+            if [[ "$label" == "candidate" ]]; then
+              candidate_property="-p:StaticCoreCandidateEvidence=true"
+            fi
             mkdir -p "$generated"
             dotnet restore "$root/$PROJECT"
             dotnet build "$root/$PROJECT" --no-restore -c Release -v minimal \
               -p:PublishAot=false \
+              $candidate_property \
               -p:EmitCompilerGeneratedFiles=true \
               -p:CompilerGeneratedFilesOutputPath="$generated"
             stat -c '%s' "$root/test/SharpLink.StaticCodecCoreEvidence/bin/Release/net10.0/SharpLink.StaticCodecCoreEvidence.dll" \
@@ -161,10 +166,15 @@ jobs:
             local label="$1"
             local root="$2"
             local output="$EVIDENCE_ROOT/aot/$label-publish"
+            local candidate_property=""
+            if [[ "$label" == "candidate" ]]; then
+              candidate_property="-p:StaticCoreCandidateEvidence=true"
+            fi
             mkdir -p "$output"
             /usr/bin/time -f '%e' -o "$EVIDENCE_ROOT/aot/$label-publish-seconds.txt" \
               dotnet publish "$root/$PROJECT" -c Release -r linux-x64 --self-contained true \
                 -p:PublishAot=true -p:StripSymbols=false -p:IlcGenerateMapFile=true \
+                $candidate_property \
                 -o "$output" -v minimal
             stat -c '%s' "$output/SharpLink.StaticCodecCoreEvidence" \
               > "$EVIDENCE_ROOT/aot/$label-image-size.txt"
@@ -274,6 +284,39 @@ jobs:
                       f"| {name} | {ns_before:.2f} | {ns_after:.2f} | "
                       f"{delta_median:+.2f}% | {delta_mad:.2f} pp | {cpu_before:.2f} | {cpu_after:.2f} | "
                       f"{alloc_after - alloc_before:+.2f} | {p99:.0f} |")
+              lines.append("")
+
+          lines += [
+              "## Production generated Codec local specialization",
+              "",
+              "These are same-binary candidate measurements using the provider-owned generated class Codec versus its real generated readonly struct Core. Each report alternates interface/Core order across six internal rounds.",
+              "",
+          ]
+          for mode, (_, after_reports) in modes.items():
+              local_rounds = [{c["Name"]: c for c in report.get("LocalCodecCases", [])} for report in after_reports]
+              if not local_rounds or not local_rounds[0]:
+                  raise SystemExit(f"missing local generated Codec evidence in {mode}")
+              names = list(local_rounds[0])
+              lines += [
+                  f"### {mode}",
+                  "",
+                  "| case | Core size | interface ns/op | Core ns/op | Core delta | delta MAD | allocation delta B/op |",
+                  "|---|---:|---:|---:|---:|---:|---:|",
+              ]
+              for name in names:
+                  samples = [r[name] for r in local_rounds]
+                  interface_ns = statistics.median(x["InterfaceNanosecondsPerOperation"] for x in samples)
+                  core_ns = statistics.median(x["CoreNanosecondsPerOperation"] for x in samples)
+                  deltas = [x["CoreDeltaPercent"] for x in samples]
+                  delta_median = statistics.median(deltas)
+                  delta_mad = statistics.median(abs(x - delta_median) for x in deltas)
+                  alloc_delta = statistics.median(
+                      x["CoreAllocatedBytesPerOperation"] - x["InterfaceAllocatedBytesPerOperation"]
+                      for x in samples)
+                  core_size = samples[0]["CoreSizeBytes"]
+                  lines.append(
+                      f"| {name} | {core_size} B | {interface_ns:.2f} | {core_ns:.2f} | "
+                      f"{delta_median:+.2f}% | {delta_mad:.2f} pp | {alloc_delta:+.2f} |")
               lines.append("")
 
           managed_before = int((root / "codegen/baseline-managed-size.txt").read_text())
