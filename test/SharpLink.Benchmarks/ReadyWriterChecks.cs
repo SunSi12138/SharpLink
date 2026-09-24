@@ -25,8 +25,7 @@ internal static class ReadyWriterChecks
                 Console.WriteLine($"PASS {mode} c{streams} bytes{bytes} ring{slots} budget{budget} flush{flush}"); checks++;
             }
 #if SHARPLINK_READY_WRITER_DIAGNOSTIC
-        await PhaseBTransportCase.RunDiagnosticCaptureChecksAsync();
-        checks += 2;
+        checks += await PhaseBTransportCase.RunDiagnosticCaptureChecksAsync();
 #endif
         Console.WriteLine($"{checks}/{checks} ready writer transport checks passed.");
     }

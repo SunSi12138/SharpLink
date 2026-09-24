@@ -1,6 +1,8 @@
 #if SHARPLINK_READY_WRITER_DIAGNOSTIC
 using System.Collections;
+using System.Diagnostics;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using SharpLink.Runtime;
 
@@ -32,24 +34,59 @@ internal sealed partial class PhaseBTransportCase
             Console.Error.WriteLine($"STALL-SNAPSHOT mode={_mode}; received={Volatile.Read(ref _received)}; returned={Volatile.Read(ref _returned)}; updates={Volatile.Read(ref _updates)}; sender=[{DescribePump(_sender)}]; receiver=[{DescribePump(_receiver)}]");
             Console.Error.WriteLine($"TASKS {string.Join(",", _ownedWork.Select((task, index) => $"{index}:{task.Status}"))}");
             _readyWriter?.DumpForStall();
+            if (_transport == "tcp") DescribeTcpWindow(_receiver.LocalEndPoint);
         }
         catch (Exception error) { Console.Error.WriteLine($"STALL-SNAPSHOT-ERROR {error}"); }
     }
 
-    internal static async Task RunDiagnosticCaptureChecksAsync()
+    private static void DescribeTcpWindow(EndPoint? endpoint)
     {
+        if (!OperatingSystem.IsLinux() || endpoint is not IPEndPoint ip || !IPAddress.IsLoopback(ip.Address))
+            return;
+        // Read kernel state for this test pair only. Never alter socket options or
+        // issue writes/reads on the measured connection. This exists only in the
+        // separately compiled diagnostic binary; its reports cannot pass timing gates.
+        using var probe = new Process
+        {
+            StartInfo = new ProcessStartInfo("ss")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            }
+        };
+        probe.StartInfo.ArgumentList.Add("-tinmH");
+        probe.StartInfo.ArgumentList.Add($"( sport = :{ip.Port} or dport = :{ip.Port} )");
+        probe.Start();
+        if (!probe.WaitForExit(2000))
+        {
+            probe.Kill(entireProcessTree: true);
+            Console.Error.WriteLine("TCP-SNAPSHOT unavailable: ss exceeded observation limit");
+            return;
+        }
+        var output = probe.StandardOutput.ReadToEnd();
+        var error = probe.StandardError.ReadToEnd();
+        Console.Error.WriteLine($"TCP-SNAPSHOT t={Stopwatch.GetTimestamp()} port={ip.Port} exit={probe.ExitCode}\n{output}{error}");
+    }
+
+    internal static async Task<int> RunDiagnosticCaptureChecksAsync()
+    {
+        var count = 0;
+        foreach (var transport in new[] { "pipe", "tcp" })
         foreach (var mode in new[] { "A-ready", "B3-ready" })
         {
-            var pair = await PhaseBTransportPair.CreateAsync("pipe");
-            await using var test = new PhaseBTransportCase(mode, "pipe", pair.Client, pair.Server,
+            var pair = await PhaseBTransportPair.CreateAsync(transport);
+            await using var test = new PhaseBTransportCase(mode, transport, pair.Client, pair.Server,
                 2, 4, 16, 8192, 4, 16384, 1, 8192);
             test.DumpForStall();
             var result = await test.MeasureAsync(0);
             test.DumpForStall();
             if (result.ItemsReceived != 8 || result.BytesReturned != 128 || result.ReadyWriterMetrics!["RemainingQueuedBytes"] != 0)
                 throw new InvalidOperationException("A diagnostic snapshot changed the measured contract.");
-            Console.WriteLine($"PASS {mode} cold and settled diagnostic capture");
+            Console.WriteLine($"PASS {mode}/{transport} cold and settled diagnostic capture");
+            count++;
         }
+        return count;
     }
 }
 
