@@ -32,10 +32,13 @@ class FusedEvidenceTests(unittest.TestCase):
     def test_real_writer_boundary_uses_the_same_model_sources(self):
         root = Path(__file__).resolve().parents[1]
         project = root / "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
-        xml = ET.parse(project)
+        self._assert_boundary_sources(project, ET.parse(project))
+
+    def _assert_boundary_sources(self, project, xml):
         includes = [item.attrib["Include"] for item in xml.findall(".//Compile")
                     if "SharpLink.FlowStatePhaseB/" in item.attrib.get("Include", "")]
-        expected = ["GrantAuthority.cs", "GrantAuthority.Commands.cs", "GrantAuthority.Publication.cs", "ReusableOwnerCommand.cs"]
+        expected = ["GrantAuthority.cs", "GrantAuthority.Commands.cs", "GrantAuthority.Publication.cs",
+                    "GrantAuthority.Wire.cs", "ReusableOwnerCommand.cs"]
         self.assertEqual(set(includes), {"../SharpLink.FlowStatePhaseB/" + name for name in expected})
         self.assertEqual(len(includes), len(expected))
         for source in includes:
@@ -43,6 +46,30 @@ class FusedEvidenceTests(unittest.TestCase):
         references = [item.attrib["Include"].replace("\\", "/") for item in xml.findall(".//ProjectReference")]
         self.assertIn("../../src/SharpLink.Runtime/SharpLink.Runtime.csproj", references)
         self.assertFalse(any("SharpLink.FlowStatePhaseB.csproj" in path for path in references))
+
+    def test_boundary_inventory_still_rejects_missing_duplicate_or_unapproved_sources(self):
+        root = Path(__file__).resolve().parents[1]
+        project = root / "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
+        original = project.read_text()
+        for change in ("missing-wire", "duplicate-wire", "extra-model", "executable-reference"):
+            with self.subTest(change=change):
+                xml = ET.ElementTree(ET.fromstring(original))
+                group = next(group for group in xml.findall(".//ItemGroup")
+                             if any(item.attrib.get("Include", "").endswith("/GrantAuthority.Wire.cs")
+                                    for item in group.findall("Compile")))
+                wire = next(item for item in group.findall("Compile")
+                            if item.attrib["Include"].endswith("/GrantAuthority.Wire.cs"))
+                if change == "missing-wire":
+                    group.remove(wire)
+                elif change == "duplicate-wire":
+                    ET.SubElement(group, "Compile", dict(wire.attrib))
+                elif change == "extra-model":
+                    ET.SubElement(group, "Compile", {"Include": "../SharpLink.FlowStatePhaseB/Unreviewed.cs"})
+                else:
+                    ET.SubElement(group, "ProjectReference", {
+                        "Include": "../SharpLink.FlowStatePhaseB/SharpLink.FlowStatePhaseB.csproj"})
+                with self.assertRaises(AssertionError):
+                    self._assert_boundary_sources(project, xml)
 
     def test_complete_matrix_retains_regression(self):
         with tempfile.TemporaryDirectory() as directory:
