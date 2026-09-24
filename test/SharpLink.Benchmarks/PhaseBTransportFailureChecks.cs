@@ -17,8 +17,13 @@ internal static class PhaseBTransportFailureChecks
         await TimeoutWithoutParticipantFaultStaysCanceledAsync();
         await ConcurrentFaultsHaveOneStableWinnerAsync();
         await SuccessDoesNotCancelAsync();
-        Console.WriteLine("7/7 transport failure arbitration checks passed.");
-        return 7;
+        await CaseCleanupKeepsPrimaryAsync();
+        await CleanupFailureFailsSuccessfulCaseAsync();
+        await CleanupRunsAfterSynchronousFailureAsync();
+        await DiagnosticFailureIsSecondaryAsync();
+        await CaseSuccessIsUnchangedAsync();
+        Console.WriteLine("12/12 transport failure arbitration checks passed.");
+        return 12;
     }
 
     private static async Task ParticipantFaultPrecedesCancellationAsync()
@@ -119,6 +124,63 @@ internal static class PhaseBTransportFailureChecks
         var failures = new PhaseBTransportFailure(cancellation);
         await failures.WaitAsync([failures.ObserveAsync(Task.CompletedTask, "completed")]);
         Require(!cancellation.IsCancellationRequested, "successful case canceled itself");
+    }
+
+    private static async Task CaseCleanupKeepsPrimaryAsync()
+    {
+        var primary = new IOException("original measurement failure");
+        var cleanup = new TimeoutException("controlled final-cleanup timeout");
+        var described = false;
+        var observed = await ErrorAsync(PhaseBTransportFailure.RunCaseAsync<int>(
+            () => Task.FromException<int>(primary), () => Task.FromException(cleanup),
+            error => described = ReferenceEquals(error, primary)));
+        Require(described && observed is AggregateException aggregate &&
+            ReferenceEquals(aggregate.InnerExceptions[0], primary) &&
+            ReferenceEquals(aggregate.InnerExceptions[1], cleanup),
+            "a failing finally replaced the primary measurement error");
+    }
+
+    private static async Task CleanupFailureFailsSuccessfulCaseAsync()
+    {
+        var failure = new IOException("cleanup after a successful measurement");
+        var described = false;
+        var observed = await ErrorAsync(PhaseBTransportFailure.RunCaseAsync(
+            () => Task.FromResult(42), () => Task.FromException(failure), _ => described = true));
+        Require(!described && ReferenceEquals(observed, failure), "cleanup failure was hidden behind a successful sample");
+    }
+
+    private static async Task CleanupRunsAfterSynchronousFailureAsync()
+    {
+        var primary = new OperationCanceledException("controlled synchronous measurement cancellation");
+        var cleanupCalls = 0;
+        var observed = await ErrorAsync(PhaseBTransportFailure.RunCaseAsync<int>(
+            () => throw primary, () => { cleanupCalls++; return Task.CompletedTask; }, _ => { }));
+        Require(cleanupCalls == 1 && ReferenceEquals(observed, primary),
+            "synchronous cancellation did not retain its cause and exactly one cleanup");
+    }
+
+    private static async Task DiagnosticFailureIsSecondaryAsync()
+    {
+        var primary = new IOException("measurement");
+        var diagnostic = new InvalidOperationException("diagnostic sink");
+        var cleanup = new IOException("cleanup");
+        var observed = await ErrorAsync(PhaseBTransportFailure.RunCaseAsync<int>(
+            () => Task.FromException<int>(primary), () => Task.FromException(cleanup), _ => throw diagnostic));
+        Require(observed is AggregateException aggregate &&
+            aggregate.Flatten().InnerExceptions.Count == 3 &&
+            aggregate.Flatten().InnerExceptions.Contains(primary) &&
+            aggregate.Flatten().InnerExceptions.Contains(diagnostic) &&
+            aggregate.Flatten().InnerExceptions.Contains(cleanup), "a secondary diagnostic failure obscured original evidence");
+    }
+
+    private static async Task CaseSuccessIsUnchangedAsync()
+    {
+        var cleanupCalls = 0;
+        var diagnosticCalls = 0;
+        var result = await PhaseBTransportFailure.RunCaseAsync(() => Task.FromResult(42),
+            () => { cleanupCalls++; return Task.CompletedTask; }, _ => diagnosticCalls++);
+        Require(result == 42 && cleanupCalls == 1 && diagnosticCalls == 0,
+            "a successful case acquired diagnostic work or changed its result");
     }
 
     private static async Task<Exception> ErrorAsync(Task task)

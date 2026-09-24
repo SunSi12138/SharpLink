@@ -89,14 +89,12 @@ internal sealed partial class PhaseBTransportCase : IAsyncDisposable
 #if SHARPLINK_READY_WRITER_DIAGNOSTIC
         using var diagnostic = new Timer(_ => test.DumpForStall(), null, 5000, 5000);
 #endif
-        try { return await test.MeasureAsync(round); }
-        catch (Exception error)
-        {
-            Console.Error.WriteLine($"CASE STATE origin={test._failures.Origin}; senderConnected={test._sender.IsConnected}; receiverConnected={test._receiver.IsConnected}; unfinished=[{string.Join(",", test._ownedWork.Select((task, index) => (task, index)).Where(x => !x.task.IsCompleted).Select(x => $"{x.index}:{x.task.Status}"))}]");
-            Console.Error.WriteLine($"FAILED {mode}/{transport}/c{streams}/r{round}: received={test._received}, credits={test._returned}, updates={test._updates}: {error}");
-            throw;
-        }
-        finally { await test.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)); }
+        return await PhaseBTransportFailure.RunCaseAsync(() => test.MeasureAsync(round),
+            () => test.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10)), error =>
+            {
+                Console.Error.WriteLine($"CASE STATE origin={test._failures.Origin}; senderConnected={test._sender.IsConnected}; receiverConnected={test._receiver.IsConnected}; unfinished=[{string.Join(",", test._ownedWork.Select((task, index) => (task, index)).Where(x => !x.task.IsCompleted).Select(x => $"{x.index}:{x.task.Status}"))}]");
+                Console.Error.WriteLine($"FAILED {mode}/{transport}/c{streams}/r{round}: received={test._received}, credits={test._returned}, updates={test._updates}: {error}");
+            });
     }
 
     private async Task<PhaseBTransportEvidenceRunner.Sample> MeasureAsync(int round)

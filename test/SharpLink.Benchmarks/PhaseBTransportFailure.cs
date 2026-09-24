@@ -18,6 +18,36 @@ internal sealed class PhaseBTransportFailure(CancellationTokenSource cancellatio
         internal Exception? CancellationFailure;
     }
 
+    // Case boundary only, outside all per-item work. A finally exception must not
+    // replace the actual measurement failure; cleanup failure alone still fails.
+    internal static async Task<T> RunCaseAsync<T>(Func<Task<T>> operation, Func<Task> cleanup,
+        Action<Exception> describeFailure)
+    {
+        ExceptionDispatchInfo? primary = null;
+        T result = default!;
+        try { result = await operation().ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            primary = ExceptionDispatchInfo.Capture(error);
+            try { describeFailure(error); }
+            catch (Exception diagnosticError)
+            {
+                primary = ExceptionDispatchInfo.Capture(new AggregateException(
+                    "The case and its failure diagnostic both failed.", error, diagnosticError));
+            }
+        }
+        try { await cleanup().ConfigureAwait(false); }
+        catch (Exception cleanupError)
+        {
+            if (primary is not null)
+                throw new AggregateException("The case failed and final cleanup also failed.",
+                    primary.SourceException, cleanupError);
+            throw;
+        }
+        primary?.Throw();
+        return result;
+    }
+
     private Failure? _first;
     internal string Origin => Volatile.Read(ref _first)?.Origin ?? "case-timeout-or-external-cancellation";
 
