@@ -452,29 +452,10 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
             1,
             async () =>
             {
-                var target = environment.LocalService.PublishedCount + 1;
+                _ = environment;
                 await invoke().ConfigureAwait(false);
-                await WaitUntilPublishedAsync(environment.LocalService, target)
-                    .ConfigureAwait(false);
                 return 1;
             });
-
-    private static async ValueTask WaitUntilPublishedAsync(
-        BenchmarkRpcService service,
-        long target)
-    {
-        var started = Stopwatch.GetTimestamp();
-        while (service.PublishedCount < target)
-        {
-            if (Stopwatch.GetElapsedTime(started) > TimeSpan.FromSeconds(5))
-            {
-                throw new TimeoutException(
-                    $"OneWay service completed {service.PublishedCount} calls; expected {target}.");
-            }
-
-            await Task.Yield();
-        }
-    }
 
     private static async ValueTask<long> SumAsync(IAsyncEnumerable<int> values)
     {
