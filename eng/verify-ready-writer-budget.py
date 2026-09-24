@@ -20,6 +20,7 @@ def expected_plan():
 
 def validate_document(doc, source, case):
     samples=base.validate_report(doc,source,case[:8]);m=doc['metadata'];budget=case[8]
+    if m.get('DiagnosticCapture',False):raise ValueError('Diagnostic timing is not performance evidence')
     if m.get('preparedByteBudget')!=budget or m.get('allocationDiagnostic') is not False:raise ValueError('wrong byte cap/diagnostic contamination')
     for s in samples:
         rm=s['ReadyWriterMetrics']; maxpacket=rm['MaximumObservedPacketBytes'];peak=rm['MaximumQueuedBytesPerStream']

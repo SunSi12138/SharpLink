@@ -25,6 +25,7 @@ def validate_provenance(p):
 def validate_report(doc, source, expected, check_reads=True):
     transport,pgo,streams,items,bytes_,window,flush,launch=expected
     m=doc['metadata']
+    if m.get('DiagnosticCapture',False):raise ValueError('Diagnostic timing is not performance evidence')
     if doc['status']!='completed' or doc.get('error') is not None:raise ValueError('failed or incomplete report')
     if m['Source']!=source or len(source)!=40:raise ValueError('wrong source')
     for key,value in {'transport':transport,'Pgo':str(pgo),'streams':streams,'items':items,'bytes':bytes_,'connection':window,'flush':flush,'slots':16,'rounds':4,'orderOffset':launch,'ProcessorCount':4}.items():

@@ -12,6 +12,7 @@ internal sealed record ReadyWriterRunMetadata
     public required string OS { get; init; }
     public string? Pgo { get; init; }
     public bool DynamicCodeSupported { get; init; }
+    public bool DiagnosticCapture { get; init; }
     public int ProcessorCount { get; init; }
     public required string transport { get; init; }
     public int streams { get; init; }

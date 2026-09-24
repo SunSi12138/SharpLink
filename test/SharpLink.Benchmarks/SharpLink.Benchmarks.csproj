@@ -8,6 +8,9 @@
     <DefineConstants Condition="'$(Configuration)' == 'Release'">$(DefineConstants);SHARPLINK_RELEASE_BUILD</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(ReadyWriterExperiment)' == 'true' And '$(ReadyWriterDiagnostic)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHARPLINK_READY_WRITER_DIAGNOSTIC</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />

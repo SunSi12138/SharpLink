@@ -15,6 +15,11 @@ class Guards(unittest.TestCase):
     def reject(self,mutate):
         d,c=self.fixture();mutate(d)
         with self.assertRaises((ValueError,KeyError)):verify.validate_document(d,'a'*40,c)
+    def test_diagnostic_timings_rejected(self):
+        doc, case = self.fixture()
+        doc["metadata"]["DiagnosticCapture"] = True
+        with self.assertRaises(ValueError): verify.validate_document(doc, "a"*40, case)
+
     def test_valid_budget_report(self):
         d,c=self.fixture();self.assertEqual(len(verify.validate_document(d,'a'*40,c)),16)
     def test_independently_defined_full_plan(self):

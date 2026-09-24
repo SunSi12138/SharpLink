@@ -10,7 +10,7 @@ using SharpLink.Runtime;
 
 namespace SharpLink.Benchmarks;
 
-internal sealed class PhaseBTransportCase : IAsyncDisposable
+internal sealed partial class PhaseBTransportCase : IAsyncDisposable
 {
     private const int StreamWindow = 8192;
     private readonly SharpLinkRuntimeContext _context;
@@ -86,6 +86,9 @@ internal sealed class PhaseBTransportCase : IAsyncDisposable
         if (preparedByteBudget < 0) preparedByteBudget = int.Parse(Environment.GetEnvironmentVariable("SHARPLINK_READY_PREPARED_BYTES") ?? "0", System.Globalization.CultureInfo.InvariantCulture);
         var (sender, receiver) = await PhaseBTransportPair.CreateAsync(transport);
         var test = new PhaseBTransportCase(mode, transport, sender, receiver, streams, items, bytes, connectionWindow, slots, flushBytes, quantum, preparedByteBudget);
+#if SHARPLINK_READY_WRITER_DIAGNOSTIC
+        using var diagnostic = new Timer(_ => test.DumpForStall(), null, 5000, 5000);
+#endif
         try { return await test.MeasureAsync(round); }
         catch (Exception error)
         {

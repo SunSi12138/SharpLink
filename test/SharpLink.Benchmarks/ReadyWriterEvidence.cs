@@ -29,6 +29,9 @@ internal static class ReadyWriterEvidence
             Source = source, Runtime = RuntimeInformation.FrameworkDescription, OS = RuntimeInformation.OSDescription,
             Pgo = RuntimeFeature.IsDynamicCodeSupported ? Environment.GetEnvironmentVariable("DOTNET_TieredPGO") : "nativeaot",
             DynamicCodeSupported = RuntimeFeature.IsDynamicCodeSupported, ProcessorCount = Environment.ProcessorCount,
+#if SHARPLINK_READY_WRITER_DIAGNOSTIC
+            DiagnosticCapture = true,
+#endif
             transport = transport, streams = streams, items = items, bytes = bytes, rounds = rounds,
             connection = connection, slots = slots, flush = flush, orderOffset = orderOffset,
             preparedByteBudget = int.Parse(Environment.GetEnvironmentVariable("SHARPLINK_READY_PREPARED_BYTES") ?? "0", CultureInfo.InvariantCulture),

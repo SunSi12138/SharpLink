@@ -58,6 +58,16 @@ class NativeEvidenceTests(unittest.TestCase):
             path.write_text(json.dumps(self.fixture(case)))
             path.with_suffix(".exit").write_text('{"code":0}')
 
+    def test_diagnostics_require_the_separate_build_flag(self):
+        path = ROOT / "test/SharpLink.Benchmarks/ReadyWriterStallDiagnostics.cs"
+        text = path.read_text().strip()
+        self.assertTrue(text.startswith("#if SHARPLINK_READY_WRITER_DIAGNOSTIC"))
+        self.assertTrue(text.endswith("#endif"))
+        project = (ROOT / "test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj").read_text()
+        self.assertIn("'$(ReadyWriterExperiment)' == 'true' And '$(ReadyWriterDiagnostic)' == 'true'", project)
+        native = (ROOT / "test/SharpLink.ReadyWriterAotEvidence/SharpLink.ReadyWriterAotEvidence.csproj").read_text()
+        self.assertNotIn("SHARPLINK_READY_WRITER_DIAGNOSTIC", native)
+
     def test_population_and_complete_evidence(self):
         self.assertEqual(runner.plan(), verify.expected_plan())
         with tempfile.TemporaryDirectory() as temp:
@@ -112,7 +122,7 @@ class NativeEvidenceTests(unittest.TestCase):
                     "PhaseBTransportFailure.cs", "PhaseBTransportFailureChecks.cs",
                     "ReadyWriterCoordinator.cs", "ReadyWriterCoordinator.Checks.cs",
                     "ReadyWriterCoordinator.PreparedChecks.cs", "ReadyWriterCoordinator.StopChecks.cs",
-                    "ReadyWriterChecks.cs", "ReadyWriterEvidence.cs", "ReadyWriterJson.cs",
+                    "ReadyWriterChecks.cs", "ReadyWriterEvidence.cs", "ReadyWriterJson.cs", "ReadyWriterStallDiagnostics.cs",
                     "GrantAuthority.cs", "GrantAuthority.Commands.cs", "GrantAuthority.Publication.cs",
                     "GrantAuthority.Wire.cs", "ReusableOwnerCommand.cs"}
         self.assertEqual(linked, expected)

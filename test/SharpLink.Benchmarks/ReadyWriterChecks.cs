@@ -24,6 +24,10 @@ internal static class ReadyWriterChecks
                     throw new Exception("Prepared-byte bound exceeded or bytes not released.");
                 Console.WriteLine($"PASS {mode} c{streams} bytes{bytes} ring{slots} budget{budget} flush{flush}"); checks++;
             }
+#if SHARPLINK_READY_WRITER_DIAGNOSTIC
+        await PhaseBTransportCase.RunDiagnosticCaptureChecksAsync();
+        checks += 2;
+#endif
         Console.WriteLine($"{checks}/{checks} ready writer transport checks passed.");
     }
 }
