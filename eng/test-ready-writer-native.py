@@ -86,6 +86,14 @@ class NativeEvidenceTests(unittest.TestCase):
                 with self.assertRaises((ValueError, FileNotFoundError)):
                     verify.summarize(root)
 
+    def test_failure_artifacts_are_retained_per_attempt(self):
+        for name in ("flow-state-ready-writer.yml", "flow-state-phase-b-transport.yml"):
+            text = (ROOT / ".github/workflows" / name).read_text()
+            names = [line for line in text.splitlines() if "name:" in line and "github.event.pull_request.head.sha" in line]
+            self.assertTrue(names)
+            self.assertTrue(all("github.run_attempt" in line for line in names))
+            self.assertNotIn("overwrite: true", text)
+
     def test_native_host_links_reviewed_sources_only(self):
         project = ROOT / "test/SharpLink.ReadyWriterAotEvidence/SharpLink.ReadyWriterAotEvidence.csproj"
         xml = ET.parse(project).getroot()
@@ -101,6 +109,7 @@ class NativeEvidenceTests(unittest.TestCase):
             self.assertTrue(paths, pattern)
             linked.update(path.name for path in paths)
         expected = {"PhaseBTransportSample.cs", "PhaseBTransportCase.cs", "PhaseBTransportPair.cs",
+                    "PhaseBTransportFailure.cs", "PhaseBTransportFailureChecks.cs",
                     "ReadyWriterCoordinator.cs", "ReadyWriterCoordinator.Checks.cs",
                     "ReadyWriterCoordinator.PreparedChecks.cs", "ReadyWriterCoordinator.StopChecks.cs",
                     "ReadyWriterChecks.cs", "ReadyWriterEvidence.cs", "ReadyWriterJson.cs",

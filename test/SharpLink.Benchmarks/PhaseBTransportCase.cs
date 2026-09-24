@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.IO;
 using System.IO.Pipelines;
 using System.Linq;
 using SharpLink.Abstractions;
@@ -32,10 +33,12 @@ internal sealed class PhaseBTransportCase : IAsyncDisposable
     private readonly GrantAuthority.Lease[] _leases;
     private readonly ValidatingConsumer[] _consumers;
     private Task[] _ownedWork = [];
+    private readonly PhaseBTransportFailure _failures;
 
     private PhaseBTransportCase(string mode, string transport, ITransportConnection sender, ITransportConnection receiver,
         int streams, int items, int bytes, int connectionWindow, int slots, int flushBytes, int quantum, int preparedByteBudget)
     {
+        _failures = new PhaseBTransportFailure(_timeout);
         _mode = mode; _transport = transport; _streams = streams; _items = items; _bytes = bytes; _connectionWindow = connectionWindow;
         _slots = slots; _flushBytes = flushBytes;
 #if SHARPLINK_READY_WRITER_EXPERIMENT
@@ -50,6 +53,8 @@ internal sealed class PhaseBTransportCase : IAsyncDisposable
         var flush = new RpcSessionFlushOptions(flushBytes, TimeSpan.MaxValue);
         _sender = new RpcSession(sender, new RpcSessionCreationOptions(RpcSessionRole.Client, _context, flush));
         _receiver = new RpcSession(receiver, new RpcSessionCreationOptions(RpcSessionRole.Server, _context, flush));
+        _sender.OnDisconnected += OnSenderDisconnected;
+        _receiver.OnDisconnected += OnReceiverDisconnected;
         // The send controller is external in ALL variants for an identical session path.
         // The receiver is the unchanged negotiated production controller in ALL variants.
         Handshake(_sender, ProtocolV2Capabilities.None);
@@ -84,6 +89,7 @@ internal sealed class PhaseBTransportCase : IAsyncDisposable
         try { return await test.MeasureAsync(round); }
         catch (Exception error)
         {
+            Console.Error.WriteLine($"CASE STATE origin={test._failures.Origin}; senderConnected={test._sender.IsConnected}; receiverConnected={test._receiver.IsConnected}; unfinished=[{string.Join(",", test._ownedWork.Select((task, index) => (task, index)).Where(x => !x.task.IsCompleted).Select(x => $"{x.index}:{x.task.Status}"))}]");
             Console.Error.WriteLine($"FAILED {mode}/{transport}/c{streams}/r{round}: received={test._received}, credits={test._returned}, updates={test._updates}: {error}");
             throw;
         }
@@ -105,7 +111,8 @@ internal sealed class PhaseBTransportCase : IAsyncDisposable
 #if SHARPLINK_READY_WRITER_EXPERIMENT
         if (_readyWriter is not null) work = work.Append(_readyWriter.Completion).ToArray();
 #endif
-        _ownedWork = work.Select(CancelPeersOnFailureAsync).ToArray();
+        _ownedWork = work.Select((task, index) => _failures.ObserveAsync(task,
+            index < _streams ? $"producer-{index}" : index == _streams ? "receive" : index == _streams + 1 ? "credit-return" : "ready-writer")).ToArray();
         GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
         using var process = Process.GetCurrentProcess();
         var allocated = GC.GetTotalAllocatedBytes(precise: true);
@@ -113,7 +120,7 @@ internal sealed class PhaseBTransportCase : IAsyncDisposable
         var commands = _grants?.QueueSubmissions ?? 0;
         var started = Stopwatch.GetTimestamp();
         _start.TrySetResult();
-        await Task.WhenAll(_ownedWork).WaitAsync(_timeout.Token);
+        await _failures.WaitAsync(_ownedWork);
         var elapsed = Stopwatch.GetElapsedTime(started);
         var cpuMs = (process.TotalProcessorTime - cpu).TotalMilliseconds;
         var totalAllocated = GC.GetTotalAllocatedBytes(precise: true) - allocated;
@@ -159,11 +166,11 @@ internal sealed class PhaseBTransportCase : IAsyncDisposable
         return result;
     }
 
-    private async Task CancelPeersOnFailureAsync(Task task)
-    {
-        try { await task.ConfigureAwait(false); }
-        catch { _timeout.Cancel(); throw; }
-    }
+    private void OnSenderDisconnected(Exception? error)
+        => _failures.RecordAndCancel("sender-session", error ?? new IOException("Sender session closed."));
+
+    private void OnReceiverDisconnected(Exception? error)
+        => _failures.RecordAndCancel("receiver-session", error ?? new IOException("Receiver session closed."));
 
     private async Task ProduceAsync(int index)
     {
@@ -320,6 +327,9 @@ internal sealed class PhaseBTransportCase : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // Normal teardown is not a new measured failure.
+        _sender.OnDisconnected -= OnSenderDisconnected;
+        _receiver.OnDisconnected -= OnReceiverDisconnected;
         _timeout.Cancel();
         try { await _sender.DisposeAsync(); }
         finally

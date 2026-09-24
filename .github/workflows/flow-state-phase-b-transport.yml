@@ -38,6 +38,7 @@ jobs:
           python3 eng/test-flow-state-transport.py
           dotnet run -c Release --project test/SharpLink.FlowStatePhaseB -- --self-test
           dotnet build -c Release test/SharpLink.Benchmarks
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --transport-failure-self-test
       - name: Same-path controls, including all negative cases
         shell: bash
         run: |
@@ -62,7 +63,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: phase-b-transport-pgo${{ matrix.pgo }}-${{ github.event.pull_request.head.sha || github.sha }}
+          name: phase-b-transport-pgo${{ matrix.pgo }}-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
           path: artifacts/transport
           if-no-files-found: error
           retention-days: 30

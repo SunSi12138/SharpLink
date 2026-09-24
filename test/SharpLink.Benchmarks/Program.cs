@@ -8,6 +8,11 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--transport-failure-self-test")
+        {
+            await PhaseBTransportFailureChecks.RunAsync();
+            return;
+        }
 #if SHARPLINK_READY_WRITER_EXPERIMENT
         if (args.Length > 0 && args[0] == "--ready-writer-evidence")
         {

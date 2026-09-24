@@ -80,7 +80,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: ready-writer-jit-${{ github.event.pull_request.head.sha || github.sha }}
+          name: ready-writer-jit-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
           path: artifacts/ready-writer
           if-no-files-found: error
           retention-days: 30
@@ -116,7 +116,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: ready-writer-native-${{ github.event.pull_request.head.sha || github.sha }}
+          name: ready-writer-native-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
           path: artifacts/ready-native-evidence
           if-no-files-found: error
           retention-days: 30

@@ -14,6 +14,8 @@
     <Compile Include="../SharpLink.Benchmarks/PhaseBTransportSample.cs" Link="PhaseBTransportSample.cs" />
     <Compile Include="../SharpLink.Benchmarks/PhaseBTransportCase.cs" Link="PhaseBTransportCase.cs" />
     <Compile Include="../SharpLink.Benchmarks/PhaseBTransportPair.cs" Link="PhaseBTransportPair.cs" />
+    <Compile Include="../SharpLink.Benchmarks/PhaseBTransportFailure.cs" Link="PhaseBTransportFailure.cs" />
+    <Compile Include="../SharpLink.Benchmarks/PhaseBTransportFailureChecks.cs" Link="PhaseBTransportFailureChecks.cs" />
     <Compile Include="../SharpLink.Benchmarks/ReadyWriter*.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.cs" Link="GrantAuthority.cs" />
     <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Commands.cs" Link="GrantAuthority.Commands.cs" />
