@@ -676,10 +676,33 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
 
     full_rpc: dict[str, list[dict[str, object]]] = {}
     for mode in ("pgo-off", "pgo-on"):
-        rows = []
+        grouped: dict[str, list[dict[str, object]]] = {}
         directory = root / "full-rpc" / mode
         for path in sorted(directory.glob("*.json")):
-            rows.append(load_json(path))
+            row = load_json(path)
+            grouped.setdefault(row["scenario"], []).append(row)
+
+        rows: list[dict[str, object]] = []
+        for scenario, samples in sorted(grouped.items()):
+            first = samples[0]
+            rows.append({
+                "scenario": scenario,
+                "shape": first["shape"],
+                "factSummary": first["factSummary"],
+                "payloadClass": first["payloadClass"],
+                "sampleCount": len(samples),
+                "throughputPerSecond": median(
+                    sample["throughputPerSecond"] for sample in samples
+                ),
+                "p50Us": median(sample["p50Us"] for sample in samples),
+                "p99Us": median(sample["p99Us"] for sample in samples),
+                "cpuUsPerOperation": median(
+                    sample["cpuUsPerOperation"] for sample in samples
+                ),
+                "allocatedBytesPerOperation": median(
+                    sample["allocatedBytesPerOperation"] for sample in samples
+                ),
+            })
         full_rpc[mode] = rows
 
     baseline = variants["A"]
@@ -707,9 +730,16 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
     )
     full_d_cost = max(d["aotExecutableDeltaPct"], d["aotBuildTimeDeltaPct"])
     if full_d_speedup >= 5.0 and full_d_cost <= 20.0:
-        full_d_decision = "GO candidate: full de-fold clears the predeclared prototype benefit/cost gate; production integration still needs a real-runtime A/B."
+        full_d_decision = (
+            "GO candidate: full de-fold clears the predeclared prototype benefit/cost gate; "
+            "production integration still needs a real-runtime A/B."
+        )
     else:
-        full_d_decision = "NO-GO for full de-fold: prototype benefit does not clear 5% while AOT image/build cost stays within 20%."
+        full_d_decision = (
+            "NO-GO for full de-fold: the best prototype speedup is "
+            f"{full_d_speedup:.2f}% and the larger AOT image/build cost is "
+            f"{full_d_cost:.2f}% (gate: >=5% speedup and <=20% AOT cost)."
+        )
 
     c = comparisons["C"]
     selective_speedup = max(
