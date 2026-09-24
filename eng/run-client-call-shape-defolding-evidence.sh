@@ -87,7 +87,15 @@ for variant in A B C D; do
 
   DOTNET_TieredCompilation=1   DOTNET_TieredPGO=1   DOTNET_TC_QuickJitForLoops=1     dotnet "$directory/jit/ShapeProbe.dll"       "$PROBE_ITERATIONS" "$directory/jit-pgo-on.json"       > "$directory/jit-pgo-on.stdout"
 
-  /usr/bin/time -f '%e' -o "$directory/aot-build-seconds.txt"     dotnet publish "$directory/ShapeProbe.csproj"       -c Release -r linux-x64 -p:PublishAot=true       -o "$directory/aot" -v minimal       > "$directory/aot-build.log"
+  dotnet restore "$directory/ShapeProbe.csproj" \
+    -r linux-x64 -p:PublishAot=true -v minimal \
+    > "$directory/aot-restore.log"
+
+  /usr/bin/time -f '%e' -o "$directory/aot-build-seconds.txt" \
+    dotnet publish "$directory/ShapeProbe.csproj" \
+      -c Release -r linux-x64 -p:PublishAot=true --no-restore \
+      -o "$directory/aot" -v minimal \
+      > "$directory/aot-build.log"
 
   "$directory/aot/ShapeProbe"     "$AOT_PROBE_ITERATIONS" "$directory/aot-run.json"     > "$directory/aot-run.stdout"
 done
