@@ -10,6 +10,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
     private readonly int _streamWindow;
     private readonly int _connectionWindow;
     private readonly int _grantBytes;
+    private readonly bool _adaptiveGrants;
     private readonly int _maxStreams;
     private readonly int _maxItemBytes;
     private readonly Channel<IOwnerCommand> _commands;
@@ -25,12 +26,13 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
     internal long QueueSubmissions;
     internal long AcquireSubmissions;
     internal long Revocations;
+    internal long RevocationSweeps;
     internal long AdmittedWaiters;
     internal long ReusableCommandAllocations;
     internal long QueueBackpressureWaits;
 
     internal GrantAuthority(int streamWindow, int connectionWindow, int grantBytes,
-        int maxStreams = 128, int maxItemBytes = 4 * 1024 * 1024, int? queueCapacity = null)
+        int maxStreams = 128, int maxItemBytes = 4 * 1024 * 1024, int? queueCapacity = null, bool adaptiveGrants = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(streamWindow);
         ArgumentOutOfRangeException.ThrowIfLessThan(connectionWindow, streamWindow);
@@ -40,6 +42,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         _streamWindow = streamWindow;
         _connectionWindow = connectionWindow;
         _grantBytes = grantBytes;
+        _adaptiveGrants = adaptiveGrants;
         _maxStreams = maxStreams;
         _maxItemBytes = maxItemBytes;
         _free = connectionWindow;
@@ -232,9 +235,16 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         _free -= request.Bytes;
         state.Credit -= request.Bytes;
         state.Pending = request.Bytes;
-        if (extras && _grantBytes > request.Bytes)
+        // Owner-only refill policy: cap new speculative grants by half-window fair
+        // share, leaving headroom for staggered refill/updates. Existing grants may
+        // exceed a new share after Open; the unchanged pressure/FIFO path reclaims them.
+        // The cap never constrains the required item or oversized borrow semantics.
+        var grantBytes = _adaptiveGrants
+            ? Math.Min(_grantBytes, _connectionWindow / (2L * _states.Count))
+            : _grantBytes;
+        if (extras && grantBytes > request.Bytes)
         {
-            var extra = Math.Max(0, Math.Min(_grantBytes - request.Bytes, Math.Min(_free, state.Credit)));
+            var extra = Math.Max(0, Math.Min(grantBytes - request.Bytes, Math.Min(_free, state.Credit)));
             _free -= extra;
             state.Grant += extra;
         }
@@ -263,9 +273,13 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
             }
             // Freeze new local admissions before reclaiming any grant. Taking every
             // stream gate drains in-progress local debit/settlement operations.
+            var firstPressure = Volatile.Read(ref _pressure) == 0;
             Volatile.Write(ref _pressure, 1);
             _waiters.AddLast(request.Node);
-            RevokeUnspent();
+            // Once frozen and swept, local admission cannot issue a new grant.
+            // Late unsent refunds/close have their own owner command and wakeup.
+            // Preserve repeated sweeps in fixed/B1 controls for direct attribution.
+            if (!_adaptiveGrants || firstPressure) RevokeUnspent();
         }
         catch (OperationCanceledException) { request.Fail(new OperationCanceledException(request.Token)); }
         catch (Exception error) { request.Fail(error); }
@@ -273,6 +287,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
 
     private void RevokeUnspent()
     {
+        RevocationSweeps++;
         foreach (var state in _states.Values)
         {
             lock (state.Gate)
