@@ -262,6 +262,43 @@ def static_value(shapes: tuple[Shape, ...], attribute: str):
     return None
 
 
+def dynamic_parameters(entry: Entry) -> list[tuple[str, str, str]]:
+    parameters: list[tuple[str, str, str]] = []
+    facts = (
+        ("request_payload", "bool", "requestPayload"),
+        ("response", "ResponseKind", "response"),
+        ("client_stream_count", "int", "clientStreamCount"),
+        ("timeout", "bool", "hasTimeout"),
+        ("idempotent", "bool", "isIdempotent"),
+        ("cancellation", "bool", "cancellationRelevant"),
+    )
+    for attribute, type_name, parameter_name in facts:
+        if static_value(entry.shapes, attribute) is None:
+            parameters.append((attribute, type_name, parameter_name))
+
+    cancellation = static_value(entry.shapes, "cancellation")
+    if cancellation is None or cancellation:
+        parameters.append(("cancellation_token", "CancellationToken", "cancellationToken"))
+    return parameters
+
+
+def dispatch_arguments(entry: Entry, representative_index: int) -> str:
+    shape_expression = f"SRepresentatives[{representative_index}]"
+    expressions = ["seed"]
+    value_expressions = {
+        "request_payload": f"{shape_expression}.RequestPayload",
+        "response": f"{shape_expression}.Response",
+        "client_stream_count": f"{shape_expression}.ClientStreamCount",
+        "timeout": f"{shape_expression}.HasTimeout",
+        "idempotent": f"{shape_expression}.IsIdempotent",
+        "cancellation": f"{shape_expression}.CancellationRelevant",
+        "cancellation_token": "cancellationToken",
+    }
+    for attribute, _, _ in dynamic_parameters(entry):
+        expressions.append(value_expressions[attribute])
+    return ", ".join(expressions)
+
+
 def method_body(entry: Entry) -> str:
     request = static_value(entry.shapes, "request_payload")
     response = static_value(entry.shapes, "response")
@@ -270,11 +307,11 @@ def method_body(entry: Entry) -> str:
     idempotent = static_value(entry.shapes, "idempotent")
     cancellation = static_value(entry.shapes, "cancellation")
 
+    parameters = [("seed", "int", "seed")]
+    parameters.extend(dynamic_parameters(entry))
+    signature = ", ".join(f"{type_name} {name}" for _, type_name, name in parameters)
     lines = [
-        f"    private static async ValueTask<int> {entry.name}(",
-        "        int seed,",
-        "        Shape shape,",
-        "        CancellationToken cancellationToken)",
+        f"    private static async ValueTask<int> {entry.name}({signature})",
         "    {",
         "        var score = seed;",
         "        await Task.Yield();",
@@ -282,7 +319,7 @@ def method_body(entry: Entry) -> str:
 
     if request is None:
         lines += [
-            "        if (shape.RequestPayload)",
+            "        if (requestPayload)",
             "            score += 3;",
         ]
     elif request:
@@ -290,7 +327,7 @@ def method_body(entry: Entry) -> str:
 
     if response is None:
         lines += [
-            "        score += shape.Response switch",
+            "        score += response switch",
             "        {",
             "            ResponseKind.None => 0,",
             "            ResponseKind.Value => 5,",
@@ -306,10 +343,10 @@ def method_body(entry: Entry) -> str:
 
     if streams is None:
         lines += [
-            "        if (shape.ClientStreamCount == 1)",
+            "        if (clientStreamCount == 1)",
             "            score += 11;",
-            "        else if (shape.ClientStreamCount > 1)",
-            "            score += 17 + (shape.ClientStreamCount & 7);",
+            "        else if (clientStreamCount > 1)",
+            "            score += 17 + (clientStreamCount & 7);",
         ]
     elif streams == 1:
         lines.append("        score += 11;")
@@ -318,7 +355,7 @@ def method_body(entry: Entry) -> str:
 
     if timeout is None:
         lines += [
-            "        if (shape.HasTimeout)",
+            "        if (hasTimeout)",
             "            score += 23;",
         ]
     elif timeout:
@@ -326,7 +363,7 @@ def method_body(entry: Entry) -> str:
 
     if idempotent is None:
         lines += [
-            "        if (shape.IsIdempotent)",
+            "        if (isIdempotent)",
             "            score += 29;",
         ]
     elif idempotent:
@@ -334,7 +371,7 @@ def method_body(entry: Entry) -> str:
 
     if cancellation is None:
         lines += [
-            "        if (shape.CancellationRelevant && cancellationToken.CanBeCanceled)",
+            "        if (cancellationRelevant && cancellationToken.CanBeCanceled)",
             "            score += 31;",
         ]
     elif cancellation:
@@ -377,9 +414,10 @@ def generate_probe(variant: str, output_dir: Path) -> None:
 
     dispatch_cases = []
     for representative_index, entry_index in enumerate(rep_entry_indexes):
-        method = entries[entry_index].name
+        entry = entries[entry_index]
+        arguments = dispatch_arguments(entry, representative_index)
         dispatch_cases.append(
-            f"            {representative_index} => {method}(seed, SRepresentatives[{representative_index}], cancellationToken),"
+            f"            {representative_index} => {entry.name}({arguments}),"
         )
 
     source_parts = [
