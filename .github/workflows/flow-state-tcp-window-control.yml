@@ -1,0 +1,65 @@
+name: Flow State TCP Window Control
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/flow-state-tcp-window-control.yml'
+      - 'eng/*ready-writer-socket-control.py'
+      - 'test/SharpLink.Benchmarks/PhaseBTransport*.cs'
+      - 'test/SharpLink.Benchmarks/ReadyWriter*.cs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-state-tcp-window-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  socket-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      DOTNET_TieredCompilation: '1'
+      DOTNET_TieredPGO: '0'
+      DOTNET_ReadyToRun: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Validate separate control and retain original environment
+        run: |
+          python3 eng/test-ready-writer-socket-control.py
+          mkdir -p artifacts/socket-control
+          git rev-parse HEAD > artifacts/socket-control/checkout.txt
+          dotnet --info > artifacts/socket-control/dotnet.txt
+          uname -a > artifacts/socket-control/kernel.txt
+          lscpu > artifacts/socket-control/cpu.txt
+          ss --version > artifacts/socket-control/ss-version.txt
+          for key in tcp_rmem tcp_wmem tcp_moderate_rcvbuf tcp_shrink_window tcp_no_metrics_save tcp_rcvbuf_low_rtt; do
+            path="/proc/sys/net/ipv4/$key"
+            if [[ -r "$path" ]]; then printf '%s=' "$key"; cat "$path"; fi
+          done > artifacts/socket-control/sysctl-readonly.txt
+      - name: Prepare same hash-checked writer plus diagnostic-only socket overlay
+        run: |
+          python3 eng/prepare-ready-writer.py --apply
+          python3 eng/prepare-ready-writer-socket-control.py
+          git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs test/SharpLink.Benchmarks/PhaseBTransportPair.cs
+          git diff --cached --binary > artifacts/socket-control/disposable.patch
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:ReadyWriterDiagnostic=true -p:Platform=AnyCPU
+      - name: Check actual default and explicit-buffer pairs before the control
+        run: |
+          for profile in default 262144; do
+            env SHARPLINK_TCP_RCVBUF_CONTROL="$profile" dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test > "artifacts/socket-control/self-test-$profile.log" 2>&1
+          done
+      - name: Collect both profiles in AB/BA order without suppressing failed defaults
+        run: python3 eng/run-ready-writer-socket-control.py artifacts/socket-control
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: ready-writer-socket-control-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/socket-control
+          if-no-files-found: error
+          retention-days: 30
