@@ -313,31 +313,26 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
                         await rpc.EchoBytesAsync(payload4096).ConfigureAwait(false))),
 
                 ClientCallShapeScenario.OneWayPayload => OneWay(
-                    environment,
                     "request=payload,response=none,timeout=no,cancel=no,streams=0",
                     "tiny",
                     () => rpc.PublishEventAsync(7, 11, "shape")),
 
                 ClientCallShapeScenario.OneWayTimedPayload => OneWay(
-                    environment,
                     "request=payload,response=none,timeout=yes,cancel=no,streams=0",
                     "tiny",
                     () => rpc.PublishTimedEventAsync(7)),
 
                 ClientCallShapeScenario.OneWayCancellablePayload => OneWay(
-                    environment,
                     "request=payload,response=none,timeout=no,cancel=yes,streams=0",
                     "tiny",
                     () => rpc.PublishCancellableEventAsync(7, token)),
 
                 ClientCallShapeScenario.OneWayOneClientStream => OneWay(
-                    environment,
                     "request=empty,response=none,timeout=no,cancel=no,streams=1",
                     "tiny",
                     () => rpc.PublishNumbersAsync(numbers)),
 
                 ClientCallShapeScenario.OneWayTwoClientStreamsTimed => OneWay(
-                    environment,
                     "request=empty,response=none,timeout=yes,cancel=no,streams=2",
                     "tiny",
                     () => rpc.PublishTwoStreamsAsync(leftNumbers, rightNumbers)),
@@ -441,7 +436,6 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
     }
 
     private static CaseDescriptor OneWay(
-        BenchmarkEnvironment environment,
         string facts,
         string payloadClass,
         Func<ValueTask> invoke)
@@ -452,7 +446,6 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
             1,
             async () =>
             {
-                _ = environment;
                 await invoke().ConfigureAwait(false);
                 return 1;
             });
