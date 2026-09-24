@@ -273,3 +273,24 @@ This control measures local admission overhead with real pin accounting, not
 writer/transport execution. Real SendPump integration, key-only wire updates,
 receive batching and complete production latency/fairness/allocation acceptance
 are still open. Positive model timing does not change the PR's Draft status.
+
+## Key-only wire boundary continuation
+
+The next boundary uses a negotiated real receiver and actual StreamData /
+WindowUpdate bytes. It replaces the model's single-long identity with one
+(requestId, streamId) map; retained leases still carry local generations. A
+reusable incoming command resolves wire identity on the connection owner,
+ordered with Open/Close. It does not add a second state map or change the
+per-item local admission/settlement path.
+
+`ObserveWindowUpdateAsync` deliberately retains the model's debt-bounded return
+policy and exposes excess bytes. It is a **compatibility control**, not a
+production replacement for `RpcSession.ApplyWindowUpdate`. In particular the
+frozen controller independently clamps stream and connection credit, which is
+not equivalent to returning only the targeted stream's outstanding bytes under
+some duplicate events. The new tests record this difference rather than hiding
+it by deleting existing invariants or changing shipping behavior.
+
+See [wire boundary and explicit compatibility gap](flow-state-phase-b-wire-boundary.md).
+This supersedes the earlier statement that no actual wire frames were exercised,
+not the remaining production-adapter / receive-batching / performance limitations.

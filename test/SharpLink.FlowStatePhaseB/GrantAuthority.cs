@@ -4,7 +4,7 @@ namespace SharpLink.FlowStatePhaseB;
 
 // Isolated SEND-SIDE model, not a replacement for StreamFlowController.
 // One unsettled item receipt / one pending acquire per stream. Receive batching
-// and wire integration remain outside this research model.
+// and compatible production wire integration remain outside this research model.
 internal sealed partial class GrantAuthority : IAsyncDisposable
 {
     private readonly int _streamWindow;
@@ -15,7 +15,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
     private readonly Channel<IOwnerCommand> _commands;
     private readonly IOwnerCommand _wake;
     private readonly Task _owner;
-    private readonly Dictionary<long, State> _states = [];
+    private readonly Dictionary<StreamKey, State> _states = [];
     private readonly Stack<State> _pool = [];
     private readonly LinkedList<AcquireCommand> _waiters = [];
     private long _generation;
@@ -54,6 +54,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         _owner = Task.Run(RunOwnerAsync);
     }
 
+    internal readonly record struct StreamKey(long RequestId, ushort StreamId);
     internal readonly record struct Lease(State State, long Generation);
     internal readonly record struct Receipt(Lease Lease, long Sequence, int Bytes);
     internal readonly record struct Ledger(long Free, long Unspent, long Pending,
@@ -73,6 +74,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         }
         internal readonly Lock Gate = new();
         internal long Key;
+        internal ushort StreamId;
         internal long Generation;
         internal bool Attached;
         internal bool Closed;
@@ -149,10 +151,11 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         return await completion.Task.ConfigureAwait(false);
     }
 
-    internal Task<Lease> OpenAsync(long key) => OnOwnerAsync(() =>
+    internal Task<Lease> OpenAsync(long key, ushort streamId = 1) => OnOwnerAsync(() =>
     {
         if (_terminal) throw new InvalidOperationException("Connection is terminal.");
-        if (_states.ContainsKey(key)) throw new InvalidOperationException("Active key or tombstone exists.");
+        var identity = new StreamKey(key, streamId);
+        if (_states.ContainsKey(identity)) throw new InvalidOperationException("Active key or tombstone exists.");
         if (_states.Count == _maxStreams) throw new InvalidOperationException("Stream limit reached.");
         var state = _pool.TryPop(out var pooled) ? pooled : new State(this);
         lock (state.Gate)
@@ -162,6 +165,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
             if (state.AcquireCommand.IsBusy) state.AcquireCommand = new AcquireCommand(this);
             if (state.UpdateCommand.IsBusy) state.UpdateCommand = new UpdateCommand(this);
             state.Key = key;
+            state.StreamId = streamId;
             state.Generation = checked(++_generation);
             state.Attached = true;
             state.Closed = false;
@@ -171,7 +175,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
             state.Pending = 0;
             state.PublicationActive = false;
             state.PublicationUncredited = state.PublicationBytes = 0;
-            _states.Add(key, state);
+            _states.Add(identity, state);
             return new Lease(state, state.Generation);
         }
     });
@@ -417,7 +421,7 @@ internal sealed partial class GrantAuthority : IAsyncDisposable
         if (state.PublicationActive || state.Pending != 0 || state.Outstanding != 0 || state.Grant != 0)
             throw new InvalidOperationException("Cannot recycle a state with live credit or publication ownership.");
         state.Attached = false;
-        _states.Remove(state.Key);
+        _states.Remove(new StreamKey(state.Key, state.StreamId));
         if (_pool.Count < _maxStreams) _pool.Push(state);
     }
 

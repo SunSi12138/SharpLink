@@ -17,6 +17,7 @@ internal static partial class Checks
 
     internal static async Task RunAsync()
     {
+        await RunWireAsync();
         await RunFusedPublicationAsync();
         await Case("grant accounting and unsent exactly-once", async () =>
         {

@@ -41,7 +41,7 @@ internal sealed class PhaseBWriterBoundaryFixture : IAsyncDisposable
                    ProtocolV2FrameFlags.None, unchecked((ulong)lease.State.Key)))
         {
             var id = packet.GetSpan(sizeof(ushort));
-            BinaryPrimitives.WriteUInt16LittleEndian(id, 1);
+            BinaryPrimitives.WriteUInt16LittleEndian(id, lease.State.StreamId);
             packet.Advance(sizeof(ushort));
             packet.Write(new byte[payloadBytes]);
         }
@@ -74,12 +74,17 @@ internal sealed class PhaseBWriterBoundaryFixture : IAsyncDisposable
     }
 
     internal async Task ReadExactFrameAsync(Ticket ticket)
+        => _ = await ReadFrameBytesAsync(ticket);
+
+    internal async Task<byte[]> ReadFrameBytesAsync(Ticket ticket)
     {
         var read = await _output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         try
         {
-            if (!read.Buffer.ToArray().AsSpan().SequenceEqual(ticket.ExpectedWire))
+            var bytes = read.Buffer.ToArray();
+            if (!bytes.AsSpan().SequenceEqual(ticket.ExpectedWire))
                 throw new InvalidOperationException("The real pump must emit the exact prepared StreamData frame.");
+            return bytes;
         }
         finally { _output.Reader.AdvanceTo(read.Buffer.End); }
     }

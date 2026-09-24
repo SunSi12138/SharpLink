@@ -11,9 +11,11 @@ on:
       - 'eng/compare-flow-state-publication.py'
       - 'test/SharpLink.FlowStatePhaseB/**'
       - 'test/SharpLink.UnitTests/Runtime/PhaseBWriterBoundary*.cs'
+      - 'test/SharpLink.UnitTests/Runtime/PhaseBWireBoundary*.cs'
       - 'test/SharpLink.UnitTests/SharpLink.UnitTests.csproj'
       - 'doc/performance/flow-state-phase-b.md'
       - 'doc/performance/flow-state-phase-b-writer-boundary.md'
+      - 'doc/performance/flow-state-phase-b-wire-boundary.md'
   workflow_dispatch:
 
 permissions:
@@ -46,8 +48,27 @@ jobs:
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --treenode-filter '/*/*/StreamFlowControllerTests/*'
       - name: Run real SendPump Phase B publication boundaries
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --treenode-filter '/*/*/PhaseBWriterBoundaryTests/*'
+      - name: Run actual receiver wire returns and compatibility characterization
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/phase-b-wire
+          printf 'review_head=%s\n' '${{ github.event.pull_request.head.sha || github.sha }}' > artifacts/phase-b-wire/revisions.txt
+          git rev-parse HEAD >> artifacts/phase-b-wire/revisions.txt
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build -- --treenode-filter '/*/*/PhaseBWireBoundaryTests/*' | tee artifacts/phase-b-wire/wire-tests.log
       - name: Run complete unit suite with split gates
-        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build | tee artifacts/phase-b-wire/full-tests.log
+      - name: Retain wire boundary validation including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flow-state-wire-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/phase-b-wire
+          if-no-files-found: warn
+          retention-days: 30
 
   evidence:
     runs-on: ubuntu-24.04

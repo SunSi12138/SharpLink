@@ -23,6 +23,7 @@
     <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.cs" Link="PhaseB/GrantAuthority.cs" />
     <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Commands.cs" Link="PhaseB/GrantAuthority.Commands.cs" />
     <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Publication.cs" Link="PhaseB/GrantAuthority.Publication.cs" />
+    <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Wire.cs" Link="PhaseB/GrantAuthority.Wire.cs" />
     <Compile Include="../SharpLink.FlowStatePhaseB/ReusableOwnerCommand.cs" Link="PhaseB/ReusableOwnerCommand.cs" />
   </ItemGroup>
 
