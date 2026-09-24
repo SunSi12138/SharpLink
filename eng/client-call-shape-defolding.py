@@ -748,6 +748,7 @@ def pct_delta(value: float, baseline: float) -> float:
 
 def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
     lattice = load_json(root / "lattice.json")
+    generated_inventory = load_json(root / "generated-code-inventory.json")
     variants: dict[str, dict[str, object]] = {}
     for variant in "ABCD":
         directory = root / "probe" / variant
@@ -765,10 +766,14 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
         ]
         state_sizes = [method["stateMachineSizeBytes"] for method in inspector["methods"]]
         move_next_il = [method["moveNextIlBytes"] for method in inspector["methods"]]
+        missing_native = sorted(set(manifest["representativeMethods"]) - set(jit_sizes))
+        if missing_native:
+            raise ValueError(
+                f"variant {variant} is missing JIT native sizes for: {', '.join(missing_native)}"
+            )
         native_sizes = [
             jit_sizes[name]
             for name in manifest["representativeMethods"]
-            if name in jit_sizes
         ]
         variants[variant] = {
             "methodCount": manifest["methodCount"],
@@ -870,6 +875,7 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
 
     result = {
         "lattice": lattice,
+        "generatedCodeInventory": generated_inventory,
         "variants": variants,
         "comparisonsVsA": comparisons,
         "fullRpc": full_rpc,
@@ -891,6 +897,25 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
         f"- exact reachable shapes: **{lattice['reachableExactCount']:,}**; equivalent lifecycle shapes: **{lattice['reachableEquivalentCount']:,}**",
         f"- production entry points: **{lattice['currentProductionEntryPoints']}**",
         f"- A/B/C/D prototype entries: **{lattice['variants']['A']} / {lattice['variants']['B']} / {lattice['variants']['C']} / {lattice['variants']['D']:,}**",
+        "",
+        "## Current generated-client inventory",
+        "",
+        f"- benchmark generated source: **{generated_inventory['files']} files / {generated_inventory['lines']:,} LOC / {generated_inventory['bytes'] / 1024:.1f} KiB**",
+        f"- generated client Invoke* call sites: **{generated_inventory['clientEntrypointCallSites']}**",
+        f"- unique emitted closed-generic Invoke* spellings: **{generated_inventory['uniqueClosedGenericClientEntrypoints']}**",
+        "",
+        "| Entry point | Call sites | Unique closed-generic spellings |",
+        "| --- | ---: | ---: |",
+    ]
+    for entrypoint, inventory in generated_inventory["byEntrypoint"].items():
+        lines.append(
+            f"| {entrypoint} | {inventory['callSites']} | "
+            f"{inventory['uniqueClosedGenericCallSites']} |"
+        )
+    lines += [
+        "",
+        "The closed-generic count is emitted-source evidence; CLR/JIT canonical sharing can reduce native instantiations.",
+        "Native code footprint below is used as the hosted-runner i-cache/locality proxy; no hardware PMU counter is claimed.",
         "",
         "## Prototype codegen / cost",
         "",
