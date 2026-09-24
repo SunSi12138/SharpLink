@@ -796,7 +796,7 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
         }
 
     full_rpc: dict[str, list[dict[str, object]]] = {}
-    for mode in ("pgo-off", "pgo-on"):
+    for mode in ("pgo-off", "pgo-on", "native-aot"):
         grouped: dict[str, list[dict[str, object]]] = {}
         directory = root / "full-rpc" / mode
         for path in sorted(directory.glob("*.json")):
@@ -873,11 +873,21 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
     else:
         selective_decision = "Selective C does not clear the 3% / +10% AOT prototype gate; keep the five-entry ABI as the default and require dimension-specific evidence."
 
+    full_rpc_host = {
+        "nativeAotImageBytes": int(
+            (root / "full-rpc-host-aot-image-bytes.txt").read_text().strip()
+        ),
+        "nativeAotBuildSeconds": float(
+            (root / "full-rpc-host-aot-build-seconds.txt").read_text().strip()
+        ),
+    }
+
     result = {
         "lattice": lattice,
         "generatedCodeInventory": generated_inventory,
         "variants": variants,
         "comparisonsVsA": comparisons,
+        "fullRpcHost": full_rpc_host,
         "fullRpc": full_rpc,
         "decision": {
             "fullD": full_d_decision,
@@ -954,12 +964,14 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
         "",
         "## Full SharpLink RPC matrix",
         "",
-        "Each row is one in-process TCP client/server process. OneWay records the public local send-completion boundary; response calls record end-to-end completion.",
+        "The JIT PGO-off, JIT PGO-on, and NativeAOT rows all execute the same linked contract/service/runner source in the minimal call-shape host.",
+        "OneWay records the public local send-completion boundary; response calls record end-to-end completion.",
+        f"NativeAOT full-RPC host: {full_rpc_host['nativeAotImageBytes'] / 1024:.1f} KiB executable; {full_rpc_host['nativeAotBuildSeconds']:.1f} s publish after restore.",
         "",
         "| Mode | Scenario | Shape | Payload | QPS | P50 us | P99 us | CPU us/op | B/op |",
         "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for mode in ("pgo-off", "pgo-on"):
+    for mode in ("pgo-off", "pgo-on", "native-aot"):
         for row in full_rpc[mode]:
             lines.append(
                 f"| {mode} | {row['scenario']} | {row['shape']} | {row['payloadClass']} | "
