@@ -37,6 +37,7 @@ jobs:
         run: |
           python3 eng/test-ready-writer.py
           python3 eng/test-ready-writer-budget.py
+          python3 eng/test-ready-writer-collection.py
           python3 eng/test-ready-writer-native.py
           python3 eng/prepare-ready-writer.py --apply
       - name: Compile and check actual pump integration
@@ -61,6 +62,7 @@ jobs:
         run: |
           python3 eng/test-ready-writer.py
           python3 eng/test-ready-writer-budget.py
+          python3 eng/test-ready-writer-collection.py
           python3 eng/test-ready-writer-native.py
           python3 eng/prepare-ready-writer.py --apply
           git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs
@@ -75,6 +77,13 @@ jobs:
           dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:Platform=AnyCPU
           dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test
           python3 eng/run-ready-writer-budget.py artifacts/ready-writer --source "$MEASURED_TREE"
+      - name: Inventory every planned case including failed controls
+        if: always()
+        run: |
+          python3 eng/report-ready-writer-coverage.py artifacts/ready-writer > artifacts/ready-writer/coverage-step.log 2>&1
+      - name: Require the unchanged full population before accepting timings
+        if: always()
+        run: |
           python3 eng/verify-ready-writer-budget.py artifacts/ready-writer
           cat artifacts/ready-writer/summary.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

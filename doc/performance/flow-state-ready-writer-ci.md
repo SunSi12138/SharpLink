@@ -97,3 +97,34 @@ New-head CI is required after this increment. Keep #735 open and #742 Draft:
 dynamic lifecycle, original waiter FIFO equivalence, duplicate/clamped wire
 updates, production cancellation/deadline, receiver batching, full-duplex RPC
 and the remaining allocation/performance matrix are not accepted yet.
+
+## Complete collection after a failed control (continuation from 727fb20)
+
+The current `727fb20` CI again completed its NativeAOT matrix and correctness
+job, while its JIT collection stopped at process 24 (TCP, PGO OFF, 4096-byte
+items, count-only preparation). Run 36002046312, artifact 10809315020:
+`5f26cb584fd6361632ed680544a5b08fc4ef49b6f0b160fccd1b9756a3cfc333`.
+The failing A-ready case reported 6674 received items and 27336704 returned
+bytes. Its recorded primary origin was the case timeout, with both sessions
+still connected. This does not establish the underlying stall's cause.
+
+Failing immediately after that control also prevented later byte-budget
+candidates from being measured. The collector now attempts each selected
+process exactly once even after a nonzero exit or process timeout. It retains
+every partial report, error log and exit record and returns failure after the
+selection is exhausted. Existing records are rejected before any launch.
+The 45-second case timeout, 180-second process timeout, 48-case population,
+order, workload, pool/window configuration and sample policy are unchanged.
+
+A separate fail-closed coverage report lists all 48 cases as complete, failed,
+invalid or missing. Nonzero exits and incomplete samples never count as
+complete. It shares the original provenance and per-case validation, and
+the full 768-sample verifier still must pass before publishing a performance
+summary. Coverage itself contains no speedup aggregates. Finalization runs
+also on failed collection; failed processes cannot be made CI-green by
+continuing to gather independent evidence. No retry-until-green is added.
+
+This change fixes a coverage blind spot, not the TCP stall. Diagnostic local
+runs without a stall cannot establish its root cause. The failure remains an
+acceptance blocker, and a new head requires its own evidence. Native data
+from `727fb20` is kept separate from all subsequent heads and from JIT.

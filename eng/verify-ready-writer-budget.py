@@ -31,14 +31,17 @@ def validate_document(doc, source, case):
         if peak>limit or rm['SumOfStreamQueuedBytePeaks']>s['Streams']*limit:raise ValueError('serialized-byte or oversized-ring bound exceeded')
     return samples
 
-def summarize(root):
-    root=pathlib.Path(root);p=json.loads((root/'provenance.json').read_text())
+def validate_provenance(p):
     if p.get('plan')!=expected_plan() or p.get('budgets')!=[0,8192,16384] or p.get('allocation_diagnostic') is not False:raise ValueError('altered population')
     for k,size in [('source_tree',40),('host_sha256',64)]:
         if len(p.get(k,''))!=size or any(c not in '0123456789abcdef' for c in p[k]):raise ValueError('invalid revision/digest')
     if p.get('rounds')!=4 or p.get('slots')!=16 or p.get('quanta')!=[1,16]:raise ValueError('changed sample policy')
     affinity=p['cpu_affinity']
     if len(affinity)!=4 or len(set(affinity))!=4 or any(type(x) is not int or x<0 for x in affinity):raise ValueError('wrong affinity')
+
+def summarize(root):
+    root=pathlib.Path(root);p=json.loads((root/'provenance.json').read_text())
+    validate_provenance(p)
     rows=[];names=set()
     for i,case in enumerate(expected_plan()):
         t,g,c,n,b,w,f,r,budget=case
