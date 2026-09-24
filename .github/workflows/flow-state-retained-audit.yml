@@ -1,0 +1,36 @@
+name: Flow State Retained Evidence Audit
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/flow-state-retained-audit.yml'
+      - 'eng/audit-flow-state-retained.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check immutable evidence reader without network
+        run: python3 eng/audit-flow-state-retained.py --self-test
+      - name: Independently revalidate completed reports and expose retained failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 eng/audit-flow-state-retained.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: retained-flow-state-audit-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/retained-flow-state-audit
+          if-no-files-found: error
+          retention-days: 30
