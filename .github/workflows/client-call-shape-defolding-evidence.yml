@@ -1,0 +1,73 @@
+name: Client Call Shape De-folding Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'eng/client-call-shape-defolding.py'
+      - 'eng/run-client-call-shape-defolding-evidence.sh'
+      - 'test/SharpLink.Benchmarks/BenchmarkContracts.cs'
+      - 'test/SharpLink.Benchmarks/BenchmarkService.cs'
+      - 'test/SharpLink.Benchmarks/ClientCallShapeEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'doc/performance/client-call-shape-defolding.md'
+      - '.github/workflows/client-call-shape-defolding-evidence.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-call-shape-defolding-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Validate evidence harness
+        shell: bash
+        run: |
+          python3 -m py_compile eng/client-call-shape-defolding.py
+          python3 eng/client-call-shape-defolding.py self-test > /tmp/call-shape-lattice.json
+          bash -n eng/run-client-call-shape-defolding-evidence.sh
+
+      - name: Run JIT NativeAOT and full RPC evidence
+        shell: bash
+        env:
+          SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha }}
+          SHARPLINK_CALL_SHAPE_RUNS: 3
+          SHARPLINK_CALL_SHAPE_WARMUP_OPERATIONS: 2000
+          SHARPLINK_CALL_SHAPE_MEASUREMENT_SECONDS: 1
+          SHARPLINK_CALL_SHAPE_MAX_OPERATIONS: 250000
+          SHARPLINK_CALL_SHAPE_PROBE_ITERATIONS: 30000
+          SHARPLINK_CALL_SHAPE_AOT_PROBE_ITERATIONS: 10000
+        run: |
+          bash eng/run-client-call-shape-defolding-evidence.sh             artifacts/performance/client-call-shape-defolding
+
+      - name: Publish evidence summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f artifacts/performance/client-call-shape-defolding/summary.md ]]; then
+            cat artifacts/performance/client-call-shape-defolding/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload client call-shape evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: client-call-shape-defolding-${{ github.event.pull_request.head.sha }}
+          path: artifacts/performance/client-call-shape-defolding
+          if-no-files-found: error
+          retention-days: 30
