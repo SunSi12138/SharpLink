@@ -122,7 +122,7 @@ class NativeEvidenceTests(unittest.TestCase):
                     "PhaseBTransportFailure.cs", "PhaseBTransportFailureChecks.cs",
                     "ReadyWriterCoordinator.cs", "ReadyWriterCoordinator.Checks.cs",
                     "ReadyWriterCoordinator.PreparedChecks.cs", "ReadyWriterCoordinator.StopChecks.cs",
-                    "ReadyWriterQueueBudgetChecks.cs", "ReadyWriterChecks.cs", "ReadyWriterEvidence.cs", "ReadyWriterJson.cs", "ReadyWriterStallDiagnostics.cs",
+                    "ReadyWriterQueueBudgetChecks.cs", "ReadyWriterProgressChecks.cs", "ReadyWriterChecks.cs", "ReadyWriterEvidence.cs", "ReadyWriterJson.cs", "ReadyWriterStallDiagnostics.cs",
                     "GrantAuthority.cs", "GrantAuthority.Commands.cs", "GrantAuthority.Publication.cs",
                     "GrantAuthority.Wire.cs", "ReusableOwnerCommand.cs"}
         self.assertEqual(linked, expected)
