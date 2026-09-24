@@ -1182,10 +1182,12 @@ internal sealed class StreamManager
 
     private sealed class DispatcherEntry : IStreamDispatchState
     {
-        private const int ClosedMask = int.MinValue;
-        private const int CountMask = int.MaxValue;
-        private int _state;
-        private int _detached;
+        private const long ClosedMask = long.MinValue;
+        private const long DetachedMask = 1L << 32;
+        private const long CountMask = int.MaxValue;
+        // One atomic word orders the last release against detach. Separate count and
+        // detached reads can both claim the same pooled-dispatcher drain notification.
+        private long _state;
         private int _receiveTerminalPublished;
         private int _peerTerminalReceived;
         // Lazily shares the distinct drain/detach completions without growing common entries.
@@ -1206,7 +1208,7 @@ internal sealed class StreamManager
 
         public bool HasActiveDispatches => (Volatile.Read(ref _state) & CountMask) != 0;
 
-        public bool IsDetached => Volatile.Read(ref _detached) != 0;
+        public bool IsDetached => (Volatile.Read(ref _state) & DetachedMask) != 0;
 
         internal bool PeerTerminalReceived => Volatile.Read(ref _peerTerminalReceived) != 0;
 
@@ -1238,7 +1240,9 @@ internal sealed class StreamManager
             if ((state & ClosedMask) != 0 && (state & CountMask) == 0)
             {
                 Volatile.Read(ref _completions)?.SignalDispatchesDrained();
-                if (IsDetached && Dispatcher is IStreamDispatchLease lease)
+                // Use this release's atomic snapshot, not a new read after signaling:
+                // a drain continuation may have detached and notified in the meantime.
+                if ((state & DetachedMask) != 0 && Dispatcher is IStreamDispatchLease lease)
                     lease.OnDispatchesDrained();
             }
         }
@@ -1287,11 +1291,13 @@ internal sealed class StreamManager
 
         internal void Detach()
         {
-            Close();
-            if (Interlocked.Exchange(ref _detached, 1) != 0)
+            var state = Interlocked.Or(ref _state, ClosedMask | DetachedMask);
+            if ((state & DetachedMask) != 0)
                 return;
             Volatile.Read(ref _completions)?.SignalDetached();
-            if (!HasActiveDispatches && Dispatcher is IStreamDispatchLease lease)
+            // Whichever transition observes both detached and zero leases owns the
+            // notification. Last Release handles a detach that still had active leases.
+            if ((state & CountMask) == 0 && Dispatcher is IStreamDispatchLease lease)
                 lease.OnDispatchesDrained();
         }
 
