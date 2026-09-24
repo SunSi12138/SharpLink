@@ -99,13 +99,20 @@ That makes the experiment sensitive to state-machine payload fields, `MoveNext` 
 runtime branches, and NativeAOT rooting. It is an attribution prototype, not a synthetic RPC latency
 claim.
 
+Before the A/B/C/D probes run, the harness also inventories the real
+`SharpLink.Benchmarks/obj/Generated` tree: generated file/LOC/byte count, total generated
+`Invoke*Async` call sites, and unique emitted closed-generic `Invoke*Async<...>` spellings by
+lifecycle entry point. That is an emitted-source generic-instantiation proxy; CLR/JIT canonical
+sharing can reduce the native instantiation count.
+
 For each variant the harness records:
 
 - generated source lines and bytes;
 - JIT assembly IL size;
 - representative async state-machine field count and managed struct size;
 - representative `MoveNext` IL bytes;
-- JIT `MoveNext` native bytes from `DOTNET_JitDisasm`;
+- JIT `MoveNext` native bytes from `DOTNET_JitDisasm` (used as the hosted-runner
+  instruction-footprint/locality proxy; no PMU i-cache counter is claimed);
 - identical-workload latency/allocation with TieredPGO OFF and ON;
 - identical-workload NativeAOT latency/allocation;
 - NativeAOT executable size;
@@ -160,16 +167,18 @@ OFF/ON first to reduce monotonic host drift. The report uses per-scenario median
 
 ## JIT and NativeAOT modes
 
-The full SharpLink RPC matrix runs with:
+The full SharpLink RPC matrix runs from `SharpLink.CallShapeAotEvidence`, a minimal host that
+links the exact same contract, service, and `ClientCallShapeEvidenceRunner` source used by
+`SharpLink.Benchmarks`. The same 24 scenarios therefore run in all three modes:
 
 - `DOTNET_TieredCompilation=1`, `DOTNET_TieredPGO=0`;
-- `DOTNET_TieredCompilation=1`, `DOTNET_TieredPGO=1`.
+- `DOTNET_TieredCompilation=1`, `DOTNET_TieredPGO=1`;
+- NativeAOT `linux-x64`.
 
-The A/B/C/D attribution workload runs in both of those modes and as NativeAOT. This is the
-same-workload JIT/AOT codegen comparison used for the specialization decision. The existing
-`SharpLink.Benchmarks` executable is deliberately not republished as NativeAOT because it carries
-BenchmarkDotNet/dynamic evidence dependencies; this experiment does not treat that limitation as
-proof of a production AOT result.
+The A/B/C/D attribution workload also runs in PGO OFF, PGO ON, and NativeAOT. NativeAOT restore is
+performed before build timing starts, so package acquisition is not charged to A. The full-RPC host
+records its own NativeAOT executable size and publish time separately from the synthetic A/B/C/D
+code-growth experiment.
 
 ## Predeclared decision gates
 
