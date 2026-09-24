@@ -630,6 +630,84 @@ internal static class Program
     (output_dir / "Program.cs").write_text(source, encoding="utf-8")
 
 
+def inventory_generated(generated_dir: Path, output: Path) -> None:
+    if not generated_dir.is_dir():
+        raise FileNotFoundError(f"generated source directory does not exist: {generated_dir}")
+
+    entrypoints = (
+        "InvokeUnaryAsync",
+        "InvokeOneWayAsync",
+        "InvokeClientStreamingAsync",
+        "InvokeServerStreamingAsync",
+        "InvokeDuplexStreamingAsync",
+    )
+    files = sorted(generated_dir.rglob("*.cs"))
+    combined_parts: list[str] = []
+    total_lines = 0
+    total_bytes = 0
+    for path in files:
+        content = path.read_text(encoding="utf-8")
+        combined_parts.append(content)
+        total_lines += content.count("\n")
+        total_bytes += len(content.encode("utf-8"))
+    combined = "\n".join(combined_parts)
+
+    by_entrypoint: dict[str, dict[str, object]] = {}
+    all_closed: set[str] = set()
+    for entrypoint in entrypoints:
+        token = entrypoint + "<"
+        position = 0
+        closed: list[str] = []
+        while True:
+            start = combined.find(token, position)
+            if start < 0:
+                break
+            angle = start + len(entrypoint)
+            depth = 0
+            end = angle
+            while end < len(combined):
+                character = combined[end]
+                if character == "<":
+                    depth += 1
+                elif character == ">":
+                    depth -= 1
+                    if depth == 0:
+                        end += 1
+                        break
+                end += 1
+            if depth != 0:
+                raise ValueError(f"unterminated generic argument list after {entrypoint}")
+            generic = " ".join(combined[angle:end].split())
+            spelling = entrypoint + generic
+            closed.append(spelling)
+            all_closed.add(spelling)
+            position = end
+
+        by_entrypoint[entrypoint] = {
+            "callSites": len(closed),
+            "uniqueClosedGenericCallSites": len(set(closed)),
+        }
+
+    document = {
+        "generatedDirectory": str(generated_dir),
+        "files": len(files),
+        "lines": total_lines,
+        "bytes": total_bytes,
+        "clientEntrypointCallSites": sum(
+            int(value["callSites"]) for value in by_entrypoint.values()
+        ),
+        "uniqueClosedGenericClientEntrypoints": len(all_closed),
+        "byEntrypoint": by_entrypoint,
+        "note": (
+            "This is the count of distinct closed generic Invoke*Async spellings emitted by "
+            "the source generator. CLR/JIT canonical generic sharing can reduce the number of "
+            "native instantiations, so this is an emitted-callsite count rather than a JIT claim."
+        ),
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+
 def parse_jit_sizes(path: Path) -> dict[str, int]:
     if not path.exists():
         return {}
@@ -896,6 +974,10 @@ def main() -> int:
     inspector_parser = subparsers.add_parser("generate-inspector")
     inspector_parser.add_argument("output_dir", type=Path)
 
+    inventory_parser = subparsers.add_parser("generated-inventory")
+    inventory_parser.add_argument("generated_dir", type=Path)
+    inventory_parser.add_argument("output", type=Path)
+
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("root", type=Path)
     summarize_parser.add_argument("output_markdown", type=Path)
@@ -916,6 +998,9 @@ def main() -> int:
         return 0
     if args.command == "generate-inspector":
         generate_inspector(args.output_dir)
+        return 0
+    if args.command == "generated-inventory":
+        inventory_generated(args.generated_dir, args.output)
         return 0
     if args.command == "summarize":
         summarize(args.root, args.output_markdown, args.output_json)
