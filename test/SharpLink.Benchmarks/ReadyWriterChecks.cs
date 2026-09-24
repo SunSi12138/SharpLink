@@ -6,7 +6,8 @@ internal static class ReadyWriterChecks
 {
     internal static async Task RunAsync()
     {
-        var checks = await PhaseBTransportFailureChecks.RunAsync();
+        var checks = await ReadyWriterCoordinator.RunQueueBudgetChecksAsync();
+        checks += await PhaseBTransportFailureChecks.RunAsync();
         checks += await ReadyWriterCoordinator.RunStopChecksAsync();
         checks += await ReadyWriterCoordinator.RunDeterministicChecksAsync();
         checks += await ReadyWriterCoordinator.RunPreparedByteChecksAsync();

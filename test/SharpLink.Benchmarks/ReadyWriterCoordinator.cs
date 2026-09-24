@@ -245,7 +245,16 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         CheckSettled();
     }
 
-    public bool TryTake(out ReadyStreamFrame frame)
+    // Mechanism-only checks use this overload without an actual pump budget.
+    internal bool TryTake(out ReadyStreamFrame frame) => TryTake(UnboundedAdmission.Instance, out frame);
+
+    private sealed class UnboundedAdmission : IReadyFrameAdmission
+    {
+        internal static readonly UnboundedAdmission Instance = new();
+        public bool TryReserve(int frameBytes) => true;
+    }
+
+    public bool TryTake(IReadyFrameAdmission admission, out ReadyStreamFrame frame)
     {
         frame = default;
         if (Volatile.Read(ref _stopped) != 0) return false;
@@ -266,6 +275,13 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                     if (!Available(stream.Credit, _window, _bytes)) { _streamBlocked++; node = next; continue; }
                     if (!Available(_connectionCredit, _connectionWindow, _bytes))
                     { _connectionBlocked++; _blocked = true; return false; }
+                }
+                // The full serialized frame must fit the pump before B3 credit is
+                // debited or either variant removes its ready head. A transient
+                // miss keeps order and ownership unchanged for the next owner turn.
+                if (!admission.TryReserve(stream.Frames.Peek().WrittenCount)) return false;
+                if (_reference is null)
+                {
                     stream.Credit -= _bytes; _connectionCredit -= _bytes;
                     stream.Outstanding += _bytes; _creditDebits++;
                 }

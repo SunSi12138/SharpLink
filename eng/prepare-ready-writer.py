@@ -25,7 +25,7 @@ def transform(name, text):
 """)
     text=once(text,"private sealed class SendPump","private sealed partial class SendPump")
     text=once(text,"private bool HasNormalFrames() => _normalQueue.Reader.TryPeek(out _);", """private bool HasNormalFrames() => _normalQueue.Reader.TryPeek(out _) ||
-            (Volatile.Read(ref _stopped) == 0 && (Volatile.Read(ref _readyWriterExperiment)?.HasWork ?? false));""")
+            HasReadyWriterWork();""")
     text=once(text,"while (_normalQueue.Reader.TryRead(out var frame))\n                    {", "while (TryReadNormalOrReadyFrame(out var frame))\n                    {")
     text=once(text,"                    if (_flushPolicyState.Capture().ExplicitBatchWindowEnabled &&", """                    // A ready-stream source can be waiting for credit carried by this
                     // unfinished batch. Do not wait for more data while holding that credit.
@@ -34,6 +34,7 @@ def transform(name, text):
     text=once(text,"                DrainQueuedFrames(terminalException);", """                DrainQueuedFrames(terminalException);
                 Volatile.Read(ref _readyWriterExperiment)?.Stopped(terminalException);""")
     text=once(text,"                PulseCapacityWaiters();\n                // This belongs", """                frame.ReadyCompletion?.Complete(exception);
+                WakeReadyWriterForCapacity();
                 PulseCapacityWaiters();
                 // This belongs""")
     return text
