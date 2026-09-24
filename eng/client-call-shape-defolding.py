@@ -518,63 +518,75 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 
-if (args.Length != 3)
-    throw new ArgumentException("Usage: Inspector <assembly> <representatives.txt> <output-json>");
+namespace Inspector;
 
-var assembly = Assembly.LoadFrom(Path.GetFullPath(args[0]));
-var host = assembly.GetType("ShapeProbe.Program", throwOnError: true)!;
-var names = File.ReadAllLines(args[1])
-    .Where(static value => !string.IsNullOrWhiteSpace(value))
-    .ToArray();
-var rows = new List<object>();
-foreach (var name in names)
+internal static class Program
 {
-    var stateMachine = host.GetNestedTypes(BindingFlags.NonPublic)
-        .Single(type => type.Name.StartsWith($"<{name}>d__", StringComparison.Ordinal));
-    var fields = stateMachine.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-    var moveNext = stateMachine.GetMethod(
-        "MoveNext",
-        BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!;
-    var stub = host.GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)!;
-    rows.Add(new
+    public static int Main(string[] args)
     {
-        method = name,
-        stateMachineSizeBytes = SizeOf(stateMachine),
-        stateMachineFieldCount = fields.Length,
-        stateMachinePayloadFieldCount = fields.Count(static field =>
-            field.Name is not "<>1__state" && field.Name is not "<>t__builder"),
-        fields = fields.Select(static field => new
+        if (args.Length != 3)
+            throw new ArgumentException("Usage: Inspector <assembly> <representatives.txt> <output-json>");
+
+        var assembly = Assembly.LoadFrom(Path.GetFullPath(args[0]));
+        var host = assembly.GetType("ShapeProbe.Program", throwOnError: true)!;
+        var names = File.ReadAllLines(args[1])
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .ToArray();
+        var rows = new List<object>();
+        foreach (var name in names)
         {
-            field.Name,
-            type = field.FieldType.FullName ?? field.FieldType.Name
-        }).ToArray(),
-        stubIlBytes = stub.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0,
-        moveNextIlBytes = moveNext.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0
-    });
+            var stateMachine = host.GetNestedTypes(BindingFlags.NonPublic)
+                .Single(type => type.Name.StartsWith($"<{name}>d__", StringComparison.Ordinal));
+            var fields = stateMachine.GetFields(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var moveNext = stateMachine.GetMethod(
+                "MoveNext",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!;
+            var stub = host.GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)!;
+            rows.Add(new
+            {
+                method = name,
+                stateMachineSizeBytes = SizeOf(stateMachine),
+                stateMachineFieldCount = fields.Length,
+                stateMachinePayloadFieldCount = fields.Count(static field =>
+                    field.Name is not "<>1__state" && field.Name is not "<>t__builder"),
+                fields = fields.Select(static field => new
+                {
+                    field.Name,
+                    type = field.FieldType.FullName ?? field.FieldType.Name
+                }).ToArray(),
+                stubIlBytes = stub.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0,
+                moveNextIlBytes = moveNext.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0
+            });
+        }
+
+        var output = new
+        {
+            assembly = Path.GetFileName(args[0]),
+            methods = rows
+        };
+        var options = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true
+        };
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[2]))!);
+        File.WriteAllText(
+            args[2],
+            JsonSerializer.Serialize(output, options) + Environment.NewLine);
+        return 0;
+    }
+
+    private static int SizeOf(Type type)
+    {
+        var method = typeof(Program).GetMethod(
+            nameof(SizeOfGeneric),
+            BindingFlags.Static | BindingFlags.NonPublic)!.MakeGenericMethod(type);
+        return (int)method.Invoke(null, null)!;
+    }
+
+    private static int SizeOfGeneric<T>() => Unsafe.SizeOf<T>();
 }
-
-var output = new
-{
-    assembly = Path.GetFileName(args[0]),
-    methods = rows
-};
-var options = new JsonSerializerOptions
-{
-    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    WriteIndented = true
-};
-Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[2]))!);
-File.WriteAllText(args[2], JsonSerializer.Serialize(output, options) + Environment.NewLine);
-
-static int SizeOf(Type type)
-{
-    var method = typeof(Program).GetMethod(
-        nameof(SizeOfGeneric),
-        BindingFlags.Static | BindingFlags.NonPublic)!.MakeGenericMethod(type);
-    return (int)method.Invoke(null, null)!;
-}
-
-static int SizeOfGeneric<T>() => Unsafe.SizeOf<T>();
 '''
     (output_dir / "Inspector.csproj").write_text(csproj, encoding="utf-8")
     (output_dir / "Program.cs").write_text(source, encoding="utf-8")
