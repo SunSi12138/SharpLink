@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/flow-state-retained-audit.yml'
       - 'eng/audit-flow-state-retained.py'
+      - 'eng/inspect-ready-writer-retained-stall.py'
   workflow_dispatch:
 
 permissions:
@@ -22,11 +23,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Check immutable evidence reader without network
-        run: python3 eng/audit-flow-state-retained.py --self-test
+        run: |
+          python3 eng/audit-flow-state-retained.py --self-test
+          python3 eng/inspect-ready-writer-retained-stall.py --self-test
       - name: Independently revalidate completed reports and expose retained failure
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 eng/audit-flow-state-retained.py
+        run: |
+          python3 eng/audit-flow-state-retained.py
+          python3 eng/inspect-ready-writer-retained-stall.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
