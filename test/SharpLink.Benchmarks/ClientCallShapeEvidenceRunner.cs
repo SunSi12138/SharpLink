@@ -7,6 +7,7 @@ using System.Net;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Client;
@@ -15,12 +16,6 @@ namespace SharpLink.Benchmarks;
 
 internal static class ClientCallShapeEvidenceRunner
 {
-    private static readonly JsonSerializerOptions SJsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true
-    };
-
     public static async Task RunAsync(string[] args)
     {
         if (args.Length != 5)
@@ -132,8 +127,8 @@ internal static class ClientCallShapeEvidenceRunner
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         await File.WriteAllTextAsync(
             outputPath,
-            JsonSerializer.Serialize(resultDocument, SJsonOptions)).ConfigureAwait(false);
-        Console.WriteLine(JsonSerializer.Serialize(resultDocument, SJsonOptions));
+            JsonSerializer.Serialize(resultDocument, ClientCallShapeJsonContext.Default.ClientCallShapeEvidenceResult)).ConfigureAwait(false);
+        Console.WriteLine(JsonSerializer.Serialize(resultDocument, ClientCallShapeJsonContext.Default.ClientCallShapeEvidenceResult));
     }
 
     private static double Percentile(long[] values, int count, double percentile)
@@ -558,4 +553,12 @@ internal sealed class ClientCallShapeEvidenceResult
     public long WorkingSetBytes { get; init; }
     public int ValidationFailures { get; init; }
     public bool HitOperationLimit { get; init; }
+}
+
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    WriteIndented = true)]
+[JsonSerializable(typeof(ClientCallShapeEvidenceResult))]
+internal partial class ClientCallShapeJsonContext : JsonSerializerContext
+{
 }
