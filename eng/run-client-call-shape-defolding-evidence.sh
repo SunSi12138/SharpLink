@@ -58,7 +58,11 @@ python3 eng/client-call-shape-defolding.py self-test   > "$OUTPUT_ROOT/lattice-s
 python3 eng/client-call-shape-defolding.py lattice   "$OUTPUT_ROOT/lattice.json"
 
 BENCHMARK_PROJECT="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
-dotnet build "$BENCHMARK_PROJECT" -c Release -v minimal   > "$OUTPUT_ROOT/benchmark-build.log"
+dotnet build "$BENCHMARK_PROJECT" -c Release -v minimal \
+  > "$OUTPUT_ROOT/benchmark-build.log"
+python3 eng/client-call-shape-defolding.py generated-inventory \
+  test/SharpLink.Benchmarks/obj/Generated \
+  "$OUTPUT_ROOT/generated-code-inventory.json"
 
 INSPECTOR="$OUTPUT_ROOT/inspector"
 python3 eng/client-call-shape-defolding.py generate-inspector "$INSPECTOR"
