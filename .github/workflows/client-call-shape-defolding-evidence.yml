@@ -11,6 +11,8 @@ on:
       - 'test/SharpLink.Benchmarks/BenchmarkService.cs'
       - 'test/SharpLink.Benchmarks/ClientCallShapeEvidenceRunner.cs'
       - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'test/SharpLink.CallShapeAotEvidence/**'
+      - 'Sharplink.slnx'
       - 'doc/performance/client-call-shape-defolding.md'
       - '.github/workflows/client-call-shape-defolding-evidence.yml'
 
