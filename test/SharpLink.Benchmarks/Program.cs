@@ -57,6 +57,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--client-call-shape-evidence", StringComparison.Ordinal))
+        {
+            await ClientCallShapeEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--generated-abi-streaming-evidence", StringComparison.Ordinal))
         {
             await GeneratedAbiStreamingEvidenceRunner.RunAsync(args[1..]);
