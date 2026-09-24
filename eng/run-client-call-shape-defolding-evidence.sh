@@ -58,11 +58,18 @@ python3 eng/client-call-shape-defolding.py self-test   > "$OUTPUT_ROOT/lattice-s
 python3 eng/client-call-shape-defolding.py lattice   "$OUTPUT_ROOT/lattice.json"
 
 BENCHMARK_PROJECT="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
-dotnet build "$BENCHMARK_PROJECT" -c Release -v minimal \
-  > "$OUTPUT_ROOT/benchmark-build.log"
-python3 eng/client-call-shape-defolding.py generated-inventory \
-  test/SharpLink.Benchmarks/obj/Generated \
-  "$OUTPUT_ROOT/generated-code-inventory.json"
+AOT_HOST_PROJECT="test/SharpLink.CallShapeAotEvidence/SharpLink.CallShapeAotEvidence.csproj"
+AOT_HOST_ROOT="$OUTPUT_ROOT/full-rpc-host"
+AOT_HOST_PUBLISH="$AOT_HOST_ROOT/native-aot"
+
+dotnet build "$BENCHMARK_PROJECT" -c Release -v minimal   > "$OUTPUT_ROOT/benchmark-build.log"
+python3 eng/client-call-shape-defolding.py generated-inventory   test/SharpLink.Benchmarks/obj/Generated   "$OUTPUT_ROOT/generated-code-inventory.json"
+
+dotnet build "$AOT_HOST_PROJECT" -c Release -v minimal   > "$AOT_HOST_ROOT-jit-build.log"
+dotnet restore "$AOT_HOST_PROJECT"   -r linux-x64 -p:PublishAot=true -v minimal   > "$AOT_HOST_ROOT-aot-restore.log"
+mkdir -p "$AOT_HOST_PUBLISH"
+/usr/bin/time -f '%e' -o "$AOT_HOST_ROOT-aot-build-seconds.txt"   dotnet publish "$AOT_HOST_PROJECT"     -c Release -r linux-x64 -p:PublishAot=true --no-restore     -o "$AOT_HOST_PUBLISH" -v minimal     > "$AOT_HOST_ROOT-aot-build.log"
+stat -c '%s' "$AOT_HOST_PUBLISH/SharpLink.CallShapeAotEvidence"   > "$AOT_HOST_ROOT-aot-image-bytes.txt"
 
 INSPECTOR="$OUTPUT_ROOT/inspector"
 python3 eng/client-call-shape-defolding.py generate-inspector "$INSPECTOR"
@@ -91,15 +98,9 @@ for variant in A B C D; do
 
   DOTNET_TieredCompilation=1   DOTNET_TieredPGO=1   DOTNET_TC_QuickJitForLoops=1     dotnet "$directory/jit/ShapeProbe.dll"       "$PROBE_ITERATIONS" "$directory/jit-pgo-on.json"       > "$directory/jit-pgo-on.stdout"
 
-  dotnet restore "$directory/ShapeProbe.csproj" \
-    -r linux-x64 -p:PublishAot=true -v minimal \
-    > "$directory/aot-restore.log"
+  dotnet restore "$directory/ShapeProbe.csproj"     -r linux-x64 -p:PublishAot=true -v minimal     > "$directory/aot-restore.log"
 
-  /usr/bin/time -f '%e' -o "$directory/aot-build-seconds.txt" \
-    dotnet publish "$directory/ShapeProbe.csproj" \
-      -c Release -r linux-x64 -p:PublishAot=true --no-restore \
-      -o "$directory/aot" -v minimal \
-      > "$directory/aot-build.log"
+  /usr/bin/time -f '%e' -o "$directory/aot-build-seconds.txt"     dotnet publish "$directory/ShapeProbe.csproj"       -c Release -r linux-x64 -p:PublishAot=true --no-restore       -o "$directory/aot" -v minimal       > "$directory/aot-build.log"
 
   "$directory/aot/ShapeProbe"     "$AOT_PROBE_ITERATIONS" "$directory/aot-run.json"     > "$directory/aot-run.stdout"
 done
@@ -131,7 +132,7 @@ SCENARIOS=(
   DuplexPayload4096
 )
 
-run_full_rpc() {
+run_full_rpc_jit() {
   local pgo="$1"
   local mode="$2"
   local scenario="$3"
@@ -140,20 +141,32 @@ run_full_rpc() {
   mkdir -p "$directory"
   local output="$directory/$scenario-r$(printf '%02d' "$repetition").json"
 
-  DOTNET_TieredCompilation=1   DOTNET_TieredPGO="$pgo"   DOTNET_TC_QuickJitForLoops=1     dotnet run -c Release --no-build       --project "$BENCHMARK_PROJECT" --       --client-call-shape-evidence       "$scenario" "$WARMUP_OPERATIONS" "$MEASUREMENT_SECONDS"       "$MAX_OPERATIONS" "$output"       > "$output.stdout"
+  DOTNET_TieredCompilation=1   DOTNET_TieredPGO="$pgo"   DOTNET_TC_QuickJitForLoops=1     dotnet run -c Release --no-build       --project "$AOT_HOST_PROJECT" --       --client-call-shape-evidence       "$scenario" "$WARMUP_OPERATIONS" "$MEASUREMENT_SECONDS"       "$MAX_OPERATIONS" "$output"       > "$output.stdout"
+}
+
+run_full_rpc_aot() {
+  local scenario="$1"
+  local repetition="$2"
+  local directory="$OUTPUT_ROOT/full-rpc/native-aot"
+  mkdir -p "$directory"
+  local output="$directory/$scenario-r$(printf '%02d' "$repetition").json"
+
+  "$AOT_HOST_PUBLISH/SharpLink.CallShapeAotEvidence"     --client-call-shape-evidence     "$scenario" "$WARMUP_OPERATIONS" "$MEASUREMENT_SECONDS"     "$MAX_OPERATIONS" "$output"     > "$output.stdout"
 }
 
 for repetition in $(seq 1 "$RUNS"); do
   if (( repetition % 2 == 1 )); then
     for scenario in "${SCENARIOS[@]}"; do
-      run_full_rpc 0 pgo-off "$scenario" "$repetition"
-      run_full_rpc 1 pgo-on "$scenario" "$repetition"
+      run_full_rpc_jit 0 pgo-off "$scenario" "$repetition"
+      run_full_rpc_jit 1 pgo-on "$scenario" "$repetition"
+      run_full_rpc_aot "$scenario" "$repetition"
     done
   else
     for ((index=${#SCENARIOS[@]} - 1; index >= 0; index--)); do
       scenario="${SCENARIOS[index]}"
-      run_full_rpc 1 pgo-on "$scenario" "$repetition"
-      run_full_rpc 0 pgo-off "$scenario" "$repetition"
+      run_full_rpc_aot "$scenario" "$repetition"
+      run_full_rpc_jit 1 pgo-on "$scenario" "$repetition"
+      run_full_rpc_jit 0 pgo-off "$scenario" "$repetition"
     done
   fi
 done
