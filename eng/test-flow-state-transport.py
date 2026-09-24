@@ -29,6 +29,11 @@ class TransportEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p=Path(d)/"sample.json"; p.write_text(json.dumps(report)); return module.validate(p)
 
+    def test_diagnostic_report_is_not_timing_evidence(self):
+        report = self.report()
+        report["metadata"]["DiagnosticCapture"] = True
+        with self.assertRaises(ValueError): self.validate(report)
+
     def test_balanced_control(self):
         self.assertEqual(len(self.validate(self.report())[1]),4)
 

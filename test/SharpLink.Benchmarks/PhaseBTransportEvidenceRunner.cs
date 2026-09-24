@@ -34,6 +34,9 @@ internal static partial class PhaseBTransportEvidenceRunner
             OS = RuntimeInformation.OSDescription,
             Pgo = Environment.GetEnvironmentVariable("DOTNET_TieredPGO"),
             ProcessorCount = Environment.ProcessorCount,
+#if SHARPLINK_READY_WRITER_DIAGNOSTIC
+            DiagnosticCapture = true,
+#endif
             Scope = "Same 1-unsettled-emission-per-stream pacing; setup/handshake excluded. Actual transport, data validation, production receive accounting and balanced key-only credits included. No generated RPC dispatch, duplicate-credit compatibility or production Go claim.",
             transport,
             streams,

@@ -16,6 +16,8 @@ def validate(path):
     if report.get("status") != "completed" or report.get("error") is not None:
         raise ValueError(f"Incomplete/failed report: {path}")
     metadata = report["metadata"]
+    if metadata.get("DiagnosticCapture", False) is not False:
+        raise ValueError("Diagnostic execution is not performance evidence")
     source = metadata["Source"]
     if not re.fullmatch(r"[0-9a-f]{40}", source):
         raise ValueError("Missing exact measured tree")

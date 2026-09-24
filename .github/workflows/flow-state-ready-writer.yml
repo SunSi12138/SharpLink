@@ -174,3 +174,48 @@ jobs:
           path: artifacts/ready-stall
           if-no-files-found: error
           retention-days: 30
+
+  stalled-owner-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      DOTNET_TieredCompilation: '1'
+      DOTNET_TieredPGO: '0'
+      DOTNET_ReadyToRun: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build the separate credit-owner diagnostic host
+        run: |
+          python3 eng/test-flow-state-transport.py
+          python3 eng/test-ready-writer-native.py
+          python3 eng/prepare-ready-writer.py --apply
+          git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs
+          echo "SHARPLINK_SOURCE_TREE=$(git write-tree)" >> "$GITHUB_ENV"
+          mkdir -p artifacts/owner-stall
+          dotnet --info > artifacts/owner-stall/dotnet.txt
+          lscpu > artifacts/owner-stall/cpu.txt
+          git diff --cached --binary > artifacts/owner-stall/disposable-runtime.patch
+          echo "CPU_LIST=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0))[:4])))')" >> "$GITHUB_ENV"
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:ReadyWriterDiagnostic=true -p:Platform=AnyCPU
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test > artifacts/owner-stall/self-check.log 2>&1
+      - name: Observe the complete failed B2 control before cancellation
+        shell: bash
+        run: |
+          set -euo pipefail
+          for launch in 0 1 2 3; do
+            set +e
+            taskset -c "$CPU_LIST" dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --phase-b-transport-evidence tcp 128 64 4096 8 524288 "artifacts/owner-stall/case-$launch.json" > "artifacts/owner-stall/case-$launch.log" 2>&1
+            code=$?
+            set -e
+            printf '%s\n' "$code" > "artifacts/owner-stall/case-$launch.exit"
+            if (( code != 0 )); then exit "$code"; fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: ready-writer-owner-stall-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/owner-stall
+          if-no-files-found: error
+          retention-days: 30
