@@ -855,41 +855,13 @@ def inventory_generated(generated_dir: Path, output: Path) -> None:
         total_bytes += len(content.encode("utf-8"))
     combined = "\n".join(combined_parts)
 
-    by_entrypoint: dict[str, dict[str, object]] = {}
-    all_closed: set[str] = set()
+    by_entrypoint: dict[str, dict[str, int]] = {}
     for entrypoint in entrypoints:
-        token = entrypoint + "<"
-        position = 0
-        closed: list[str] = []
-        while True:
-            start = combined.find(token, position)
-            if start < 0:
-                break
-            angle = start + len(entrypoint)
-            depth = 0
-            end = angle
-            while end < len(combined):
-                character = combined[end]
-                if character == "<":
-                    depth += 1
-                elif character == ">":
-                    depth -= 1
-                    if depth == 0:
-                        end += 1
-                        break
-                end += 1
-            if depth != 0:
-                raise ValueError(f"unterminated generic argument list after {entrypoint}")
-            generic = " ".join(combined[angle:end].split())
-            spelling = entrypoint + generic
-            closed.append(spelling)
-            all_closed.add(spelling)
-            position = end
-
-        by_entrypoint[entrypoint] = {
-            "callSites": len(closed),
-            "uniqueClosedGenericCallSites": len(set(closed)),
-        }
+        call_sites = len(re.findall(
+            rf"\.{re.escape(entrypoint)}\s*\(",
+            combined,
+        ))
+        by_entrypoint[entrypoint] = {"callSites": call_sites}
 
     document = {
         "generatedDirectory": str(generated_dir),
@@ -897,14 +869,12 @@ def inventory_generated(generated_dir: Path, output: Path) -> None:
         "lines": total_lines,
         "bytes": total_bytes,
         "clientEntrypointCallSites": sum(
-            int(value["callSites"]) for value in by_entrypoint.values()
+            value["callSites"] for value in by_entrypoint.values()
         ),
-        "uniqueClosedGenericClientEntrypoints": len(all_closed),
         "byEntrypoint": by_entrypoint,
         "note": (
-            "This is the count of distinct closed generic Invoke*Async spellings emitted by "
-            "the source generator. CLR/JIT canonical generic sharing can reduce the number of "
-            "native instantiations, so this is an emitted-callsite count rather than a JIT claim."
+            "Generated C# relies on generic type inference, so closed generic arguments are not "
+            "spelled in source. The companion IL inspector records MethodSpec instantiations."
         ),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
