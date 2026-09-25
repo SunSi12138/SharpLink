@@ -120,6 +120,12 @@ jobs:
       - name: Complete NativeAOT transport controls including negative cases
         run: |
           python3 eng/run-ready-writer-native.py artifacts/ready-native-evidence --binary artifacts/ready-native/SharpLink.Benchmarks --source "$MEASURED_TREE"
+      - name: Inventory every native process even after collection fails
+        if: always()
+        run: python3 eng/verify-ready-writer-native.py artifacts/ready-native-evidence --coverage-only
+      - name: Require all native cases before accepting timings
+        if: always()
+        run: |
           python3 eng/verify-ready-writer-native.py artifacts/ready-native-evidence
           cat artifacts/ready-native-evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

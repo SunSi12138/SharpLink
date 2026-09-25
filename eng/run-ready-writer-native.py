@@ -43,12 +43,17 @@ def main():
     path = args.output / "provenance.json"
     if path.exists():
         raise FileExistsError("Do not combine independent evidence runs")
+    # Check every output before launching anything. A retained failure may have
+    # only a log/exit file, without a completed JSON report.
+    for index, case in enumerate(plan()):
+        target = args.output / name(index, case)
+        if any(p.exists() for p in (target, target.with_suffix(".log"), target.with_suffix(".exit"))):
+            raise FileExistsError(target)
     path.write_text(json.dumps(provenance, indent=2))
+    failures = []
     for index, case in enumerate(plan()):
         transport, _, streams, items, size, window, flush, launch, budget = case
         target = args.output / name(index, case)
-        if target.exists():
-            raise FileExistsError(target)
         env = dict(os.environ, SHARPLINK_SOURCE_TREE=actual, DOTNET_PROCESSOR_COUNT="4",
                    SHARPLINK_READY_ORDER=str(launch), SHARPLINK_READY_PREPARED_BYTES=str(budget),
                    SHARPLINK_READY_ALLOCATION_DIAGNOSTIC="0")
@@ -57,6 +62,7 @@ def main():
                    "--ready-writer-evidence", transport, str(streams), str(items), str(size),
                    "4", str(window), "16", str(flush), str(target.resolve())]
         started = time.monotonic()
+        launch_error = None
         print("RUN", index, target.name, flush=True)
         with target.with_suffix(".log").open("w") as log:
             try:
@@ -64,10 +70,21 @@ def main():
                                       stderr=subprocess.STDOUT, timeout=180).returncode
             except subprocess.TimeoutExpired:
                 code = 124
-        target.with_suffix(".exit").write_text(json.dumps(dict(code=code, seconds=time.monotonic() - started)))
+            except OSError as error:
+                code = 127
+                launch_error = str(error)
+                log.write(launch_error + "\n")
+        result = dict(code=code, seconds=time.monotonic() - started)
+        if launch_error is not None:
+            result["launch_error"] = launch_error
+        target.with_suffix(".exit").write_text(json.dumps(result))
         if code:
-            raise SystemExit(f"Native process failed ({code}); no retry or dropped sample: {target}")
-        print("PASS", index, flush=True)
+            failures.append((index, code))
+            print("FAIL", index, code, "retained; no retry", flush=True)
+        else:
+            print("PASS", index, flush=True)
+    if failures:
+        raise SystemExit(f"{len(failures)} native processes failed: {failures}; all eight attempted once.")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,9 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -103,6 +106,135 @@ class NativeEvidenceTests(unittest.TestCase):
             self.assertTrue(names)
             self.assertTrue(all("github.run_attempt" in line for line in names))
             self.assertNotIn("overwrite: true", text)
+
+    def test_native_collection_continues_after_failure_without_retry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            binary = root / "native-host"
+            binary.write_bytes(b"test-only fixture, never executed")
+            output = root / "out"
+            launches = []
+
+            def invoke(command, **kwargs):
+                if command[:2] == ["git", "diff"]:
+                    return SimpleNamespace(returncode=0)
+                self.assertEqual(kwargs["timeout"], 180)
+                launches.append(command[-1])
+                index = len(launches) - 1
+                if index == 0:
+                    raise subprocess.TimeoutExpired(command, 180)
+                if index == 6:
+                    raise OSError("controlled launch failure")
+                return SimpleNamespace(returncode=0)
+
+            with patch.object(runner.subprocess, "check_output", return_value="a" * 40), \
+                 patch.object(runner.subprocess, "run", side_effect=invoke), \
+                 patch.object(runner.os, "sched_getaffinity", return_value={0, 1, 2, 3}), \
+                 patch("sys.argv", ["run-native", str(output), "--binary", str(binary), "--source", "a" * 40]):
+                with self.assertRaises(SystemExit):
+                    runner.main()
+            self.assertEqual(len(launches), 8, "the first failure must not hide later predeclared controls")
+            self.assertEqual(len(set(launches)), 8, "no case is retried")
+            exits = [json.loads((output / runner.name(i, case)).with_suffix(".exit").read_text())["code"]
+                     for i, case in enumerate(runner.plan())]
+            self.assertEqual(exits, [124, 0, 0, 0, 0, 0, 127, 0])
+
+    def test_native_preflight_preserves_existing_logs_and_exits(self):
+        for suffix in (".json", ".log", ".exit"):
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                binary = root / "native-host"
+                binary.write_bytes(b"fixture")
+                output = root / "out"
+                output.mkdir()
+                old = (output / runner.name(7, runner.plan()[7])).with_suffix(suffix)
+                old.write_text("retained failure")
+                with patch.object(runner.subprocess, "check_output", return_value="a" * 40), \
+                     patch.object(runner.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as invoke, \
+                     patch.object(runner.os, "sched_getaffinity", return_value={0, 1, 2, 3}), \
+                     patch("sys.argv", ["run-native", str(output), "--binary", str(binary), "--source", "a" * 40]):
+                    with self.assertRaises(FileExistsError):
+                        runner.main()
+                self.assertEqual(invoke.call_count, 1, "only git verification is permitted before preflight")
+                self.assertEqual(old.read_text(), "retained failure")
+
+    def test_boolean_exit_is_not_a_successful_process(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.populate(root)
+            path = root / runner.name(0, runner.plan()[0])
+            path.with_suffix(".exit").write_text('{"code":false}')
+            with self.assertRaises(ValueError):
+                verify.summarize(root)
+
+    def test_partial_coverage_is_not_performance_acceptance(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.populate(root)
+            failed = root / runner.name(0, runner.plan()[0])
+            failed.with_suffix(".exit").write_text('{"code":124}')
+            invalid = root / runner.name(1, runner.plan()[1])
+            invalid.with_suffix(".exit").write_text('{"code":false}')
+            missing = root / runner.name(7, runner.plan()[7])
+            missing.with_suffix(".exit").unlink()
+            result = verify.coverage(root)
+            self.assertFalse(result["accepted"])
+            self.assertEqual(result["complete"], 5)
+            self.assertEqual([case["status"] for case in result["cases"]],
+                             ["failed", "invalid", "complete", "complete", "complete", "complete", "complete", "missing"])
+            self.assertEqual(result["cases"][0]["validated_rows"], 0)
+            with self.assertRaises(ValueError):
+                verify.summarize(root)
+            with patch("sys.argv", ["verify-native", str(root), "--coverage-only"]):
+                with self.assertRaises(SystemExit) as failure:
+                    verify.main()
+            self.assertEqual(failure.exception.code, 1)
+            self.assertTrue((root / "coverage.json").exists())
+            self.assertTrue((root / "coverage.md").exists())
+            self.assertFalse((root / "summary.md").exists())
+
+    def test_coverage_excludes_diagnostics_and_extra_reports(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.populate(root)
+            result = verify.coverage(root)
+            self.assertTrue(result["accepted"])
+            self.assertEqual(sum(case["validated_rows"] for case in result["cases"]), 128)
+            path = root / runner.name(0, runner.plan()[0])
+            document = json.loads(path.read_text())
+            document["metadata"]["DiagnosticCapture"] = True
+            path.write_text(json.dumps(document))
+            self.assertEqual(verify.coverage(root)["cases"][0]["status"], "invalid")
+            self.populate(root)
+            (root / "99-unexpected.json").write_text("{}")
+            result = verify.coverage(root)
+            self.assertFalse(result["accepted"])
+            self.assertEqual(result["unexpected_reports"], ["99-unexpected.json"])
+            with self.assertRaises(ValueError):
+                verify.summarize(root)
+
+    def test_invalid_exit_types_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "test.json"
+            for code in (False, True, 0.0, "0", None):
+                path.with_suffix(".exit").write_text(json.dumps({"code": code}))
+                with self.assertRaises(ValueError):
+                    verify.read_exit(path)
+
+    def test_native_finalizers_run_even_after_failure(self):
+        text = (ROOT / ".github/workflows/flow-state-ready-writer.yml").read_text()
+        native = text.split("  native-evidence:", 1)[1].split("  stalled-jit-diagnostic:", 1)[0]
+        blocks = native.split("      - name:")
+        coverage = [block for block in blocks if "--coverage-only" in block]
+        verification = [block for block in blocks if "verify-ready-writer-native.py" in block
+                        and "--coverage-only" not in block]
+        self.assertEqual(len(coverage), 1)
+        self.assertEqual(len(verification), 1)
+        for block in coverage + verification:
+            self.assertIn("        if: always()\n", block)
+            self.assertNotIn("continue-on-error", block)
+            self.assertNotIn("|| true", block)
+        self.assertIn("    timeout-minutes: 20\n", native)
 
     def test_native_host_links_reviewed_sources_only(self):
         project = ROOT / "test/SharpLink.ReadyWriterAotEvidence/SharpLink.ReadyWriterAotEvidence.csproj"
