@@ -54,8 +54,16 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         {
             var stream = new Stream(i, slots, window, this, preparedByteBudget);
             _streams[i] = stream;
-            _identities.Add(new StreamIdentity(i + 1, 1), stream);
+            if (dynamicLifetimes)
+            {
+                stream.Generation = 0; stream.Closed = true; stream.Retired = true;
+            }
+            else _identities.Add(new StreamIdentity(i + 1, 1), stream);
         }
+        // Dynamic connections start empty. Initial capacity is not a set of fake
+        // active wire identities that callers must close before their first Open.
+        if (dynamicLifetimes)
+            for (var i = streams - 1; i >= 0; i--) _retiredStreams.Push(_streams[i]);
         _notifications = Channel.CreateBounded<ReadyNotification>(new BoundedChannelOptions(streams)
         { SingleReader = true, FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
         _capacityCancellation = _stopToken.UnsafeRegister(static state => ((ReadyWriterCoordinator)state!).CancelCapacityWaits(), this);

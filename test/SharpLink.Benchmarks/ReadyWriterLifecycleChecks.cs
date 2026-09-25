@@ -10,7 +10,7 @@ internal sealed partial class ReadyWriterCoordinator
     internal static async Task<int> RunLifecycleChecksAsync()
     {
         string[] scenarios = ["empty", "queued", "late-credit", "writer-pin", "held-capacity", "producer-close",
-            "ordered-inbox", "foreign", "old-notification", "old-completion", "generation-limit", "terminal", "ready-order", "same-key-wire", "reuse100k"];
+            "ordered-inbox", "foreign", "old-notification", "old-completion", "generation-limit", "terminal", "ready-order", "same-key-wire", "reuse100k", "cold-registration"];
         var failures = new List<Exception>();
         foreach (var scenario in scenarios)
         {
@@ -38,6 +38,28 @@ internal sealed partial class ReadyWriterCoordinator
 
     private static async Task CheckLifecycleAsync(string scenario)
     {
+        if (scenario == "cold-registration")
+        {
+            await using var cold = await LifecycleFixture.CreateAsync(2, initialize: false);
+            RequireWire(cold.Owner._identities.Count == 0 && cold.Owner._retiredStreams.Count == 2,
+                "Dynamic capacity must begin empty, without synthetic active keys.");
+            var first = await cold.OpenAsync(71, 9);
+            var second = await cold.OpenAsync(72, 10);
+            RequireWire(first.Generation == 1 && second.Generation == 1 && first.Slot != second.Slot,
+                "The first actual registrations must own distinct generation-one states.");
+            var exhausted = cold.Owner.OpenStreamAsync(73, 11); cold.Owner.DrainNotifications();
+            await RejectLifecycleAsync(exhausted);
+            var duplicate = cold.Owner.OpenStreamAsync(71, 9); cold.Owner.DrainNotifications();
+            await RejectLifecycleAsync(duplicate);
+            RequireWire(cold.Owner._identities.Count == 2 && cold.Owner._retiredStreams.Count == 0,
+                "Rejected capacity/key admission must not mutate registered identities.");
+            var frame = await cold.TakeAsync(first, 71, 9); cold.Release(frame);
+            await cold.UpdateAsync(71, 9, 16); await cold.CloseAsync(first);
+            var third = await cold.OpenAsync(73, 11);
+            RequireWire(third.Slot == first.Slot && third.Generation == 2,
+                "Initial registration must lead into the same bounded reuse path.");
+            return;
+        }
         await using var fixture = await LifecycleFixture.CreateAsync(scenario is "foreign" or "ready-order" ? 2 : 1);
         var owner = fixture.Owner;
         var old = new StreamHandle(owner, 0, 1);
@@ -218,10 +240,18 @@ internal sealed partial class ReadyWriterCoordinator
             _session = new RpcSession(transport, new RpcSessionCreationOptions(RpcSessionRole.Client, _context));
             Owner = new ReadyWriterCoordinator(_session, _context, _cancel, false, streams, int.MaxValue, 16, 16, streams * 16, 1, dynamicLifetimes: true);
         }
-        internal static async Task<LifecycleFixture> CreateAsync(int streams)
+        internal static async Task<LifecycleFixture> CreateAsync(int streams, bool initialize = true)
         {
             var pair = await PhaseBTransportPair.CreateAsync("pipe");
-            return new LifecycleFixture(pair.Client, pair.Server, streams);
+            var fixture = new LifecycleFixture(pair.Client, pair.Server, streams);
+            if (initialize)
+                for (var index = 0; index < streams; index++)
+                {
+                    var handle = await fixture.OpenAsync(index + 1, 1);
+                    RequireWire(handle.Slot == index && handle.Generation == 1,
+                        "Fixture identities must be registered through the actual lifecycle inbox.");
+                }
+            return fixture;
         }
         internal IRpcByteBufferWriter Packet(long requestId, ushort streamId)
         {

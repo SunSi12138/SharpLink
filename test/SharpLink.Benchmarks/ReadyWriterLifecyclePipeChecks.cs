@@ -35,7 +35,6 @@ internal sealed partial class ReadyWriterCoordinator
         using var cancel = new CancellationTokenSource();
         var source = new ReadyWriterCoordinator(session, context, cancel, false, 1, 1, bytes,
             bytes, bytes, 1, dynamicLifetimes: true);
-        var old = new StreamHandle(source, 0, 1);
         var oldState = source._streams[0];
         IRpcByteBufferWriter Packet(int marker)
         {
@@ -96,7 +95,11 @@ internal sealed partial class ReadyWriterCoordinator
         }
         try
         {
-            source.Attach(); await source.EnqueueAsync(old, Packet(10));
+            source.Attach();
+            var old = await source.OpenStreamAsync(1, 1).WaitAsync(TimeSpan.FromSeconds(5));
+            RequireWire(old.Generation == 1 && old.Slot == 0,
+                "The actual writer must register the first stream from empty capacity.");
+            await source.EnqueueAsync(old, Packet(10));
             await output.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5)); await ReadData(10);
             var close = source.CloseStreamAsync(old);
             await ReturnWireCredit();

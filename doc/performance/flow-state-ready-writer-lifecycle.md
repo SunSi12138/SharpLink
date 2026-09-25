@@ -1,6 +1,9 @@
 # B3 owner-ordered lifecycle and real state reuse
 
 This increment builds on `3fe2156a0ff7988c723e5f5430cb471378ca455c`.
+A follow-up on `876e57b034101bfb97f2e1703d15048b6b29b401` starts dynamic
+connections with empty identities and free bounded slots, rather than synthetic
+active test keys. Fixed-lifetime A/B controls retain their original setup.
 It preserves Phase A, active-key wire permission/settlement separation, blocked
 preparation cancellation, SendPump budgeting and all existing evidence gates.
 Shipping `src/` is unchanged; the actual pump hooks are still disposable research
@@ -9,7 +12,8 @@ transforms. This is not a production-ready replacement or complete #735 acceptan
 ## Ownership and identity
 
 The B3 coordinator now has opt-in `dynamicLifetimes: true`. Its bounded stream
-slots have a generation, composite wire identity, closed/retired state and a
+slots begin unregistered at generation zero. First Open binds generation one;
+retirement/reopen increments it. Slots have a composite wire identity, closed/retired state and a
 retained completion target. `OpenStreamAsync` and `CloseStreamAsync` use the SAME
 bounded writer inbox as key-only WindowUpdate. The writer alone mutates its sole
 identity map, pool and ready list. Producer DATA uses an immutable
@@ -41,8 +45,8 @@ cost changes: old performance numbers cannot be used as this head's results.
 
 ## Checks and negative controls
 
-The shared JIT/NativeAOT self-test now includes 15 lifecycle cases and two actual
-Pipe/SendPump cases in addition to the original 108 checks. The cases cover empty
+The shared JIT/NativeAOT self-test now includes 16 lifecycle cases and two actual
+Pipe/SendPump cases in addition to the original 108 checks. The cases cover empty-capacity first registration/overflow rejection, empty
 and prepared close, tombstones, early-credit writer pins, held capacity results,
 blocked producers, ordered close/update/open, foreign and stale handles, stale
 notifications/completions, generation overflow, pending commands on connection
