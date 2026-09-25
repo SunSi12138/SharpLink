@@ -545,6 +545,9 @@ def generate_inspector(output_dir: Path) -> None:
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
   </PropertyGroup>
 </Project>
 """
@@ -598,7 +601,7 @@ internal static class Program
         foreach (var name in names)
         {
             var stateMachine = host.GetNestedTypes(BindingFlags.NonPublic)
-                .Single(type => type.Name.StartsWith($"<${name}>d__", StringComparison.Ordinal));
+                .Single(type => type.Name.StartsWith($"<{name}>d__", StringComparison.Ordinal));
             var fields = stateMachine.GetFields(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             var moveNext = stateMachine.GetMethod(
@@ -690,7 +693,7 @@ internal static class Program
                         : Type.EmptyTypes;
                     var signature = genericArguments.Length == 0
                         ? info.Name
-                        : $"${info.Name}<${string.Join(",", genericArguments.Select(FormatType))}>";
+                        : $"{info.Name}<{string.Join(",", genericArguments.Select(FormatType))}>";
                     signatures[info.Name].Add(signature);
                 }
             }
@@ -772,7 +775,7 @@ internal static class Program
             OperandType.InlineSwitch => checked(
                 4 + BitConverter.ToInt32(il, offset) * 4),
             _ => throw new InvalidOperationException(
-                $"Unsupported IL operand type ${operandType}.")
+                $"Unsupported IL operand type {operandType}.")
         };
 
     private static OpCode[] BuildOpCodes(bool twoByte)
@@ -802,7 +805,7 @@ internal static class Program
         var tick = name.IndexOf('`');
         if (tick >= 0)
             name = name[..tick];
-        return $"${name}<${string.Join(",", type.GetGenericArguments().Select(FormatType))}>";
+        return $"{name}<{string.Join(",", type.GetGenericArguments().Select(FormatType))}>";
     }
 
     private static void WriteJson(string outputPath, object value)
