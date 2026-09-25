@@ -1,0 +1,227 @@
+name: Flow State Ready Writer Research
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/flow-state-ready-writer.yml'
+      - 'eng/*ready-writer*.py'
+      - 'test/SharpLink.UnitTests/Client/EmissionEntryBarrier*.cs'
+      - 'test/SharpLink.UnitTests/Client/SharpLinkClientDeadlinePublicationTests.cs'
+      - 'test/SharpLink.UnitTests/TestClientTransportFactory.cs'
+      - 'test/SharpLink.ReadyWriterExperiment/**'
+      - 'test/SharpLink.ReadyWriterAotEvidence/**'
+      - 'test/SharpLink.Benchmarks/ReadyWriter*.cs'
+      - 'test/SharpLink.Benchmarks/PhaseBTransport*.cs'
+      - 'test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj'
+      - 'src/SharpLink.Runtime/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-state-ready-writer-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Check pinned sources and evidence guards
+        run: |
+          python3 eng/test-ready-writer.py
+          python3 eng/test-ready-writer-budget.py
+          python3 eng/test-ready-writer-collection.py
+          python3 eng/test-ready-writer-native.py
+          python3 eng/prepare-ready-writer.py --apply
+      - name: Compile and check actual pump integration
+        run: |
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:Platform=AnyCPU
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU
+      - name: Preserve frame-layout and existing runtime contracts
+        run: |
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/SendPumpProgressIsolationTests/*'
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU
+
+  jit-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Prepare disposable measured tree
+        run: |
+          python3 eng/test-ready-writer.py
+          python3 eng/test-ready-writer-budget.py
+          python3 eng/test-ready-writer-collection.py
+          python3 eng/test-ready-writer-native.py
+          python3 eng/prepare-ready-writer.py --apply
+          git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs
+          echo "MEASURED_TREE=$(git write-tree)" >> "$GITHUB_ENV"
+          mkdir -p artifacts/ready-writer
+          git rev-parse HEAD > artifacts/ready-writer/checkout.txt
+          git diff --cached --binary > artifacts/ready-writer/disposable-runtime.patch
+          dotnet --info > artifacts/ready-writer/dotnet.txt
+          lscpu > artifacts/ready-writer/cpu.txt
+      - name: Build, self-check and measure all matched controls
+        run: |
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:Platform=AnyCPU
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test
+          python3 eng/run-ready-writer-budget.py artifacts/ready-writer --source "$MEASURED_TREE"
+      - name: Inventory every planned case including failed controls
+        if: always()
+        run: |
+          python3 eng/report-ready-writer-coverage.py artifacts/ready-writer > artifacts/ready-writer/coverage-step.log 2>&1
+      - name: Require the unchanged full population before accepting timings
+        if: always()
+        run: |
+          python3 eng/verify-ready-writer-budget.py artifacts/ready-writer
+          cat artifacts/ready-writer/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: ready-writer-jit-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/ready-writer
+          if-no-files-found: error
+          retention-days: 30
+
+  native-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Prepare the same disposable measured tree
+        run: |
+          python3 eng/test-ready-writer-native.py
+          python3 eng/prepare-ready-writer.py --apply
+          git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs
+          echo "MEASURED_TREE=$(git write-tree)" >> "$GITHUB_ENV"
+          mkdir -p artifacts/ready-native-evidence
+          git rev-parse HEAD > artifacts/ready-native-evidence/checkout.txt
+          git diff --cached --binary > artifacts/ready-native-evidence/disposable-runtime.patch
+          dotnet --info > artifacts/ready-native-evidence/dotnet.txt
+          lscpu > artifacts/ready-native-evidence/cpu.txt
+      - name: Publish minimal native host and check actual writer path
+        run: |
+          dotnet publish test/SharpLink.ReadyWriterAotEvidence -c Release -r linux-x64 -p:Platform=AnyCPU -o artifacts/ready-native
+          artifacts/ready-native/SharpLink.Benchmarks --ready-writer-self-test
+      - name: Complete NativeAOT transport controls including negative cases
+        run: |
+          python3 eng/run-ready-writer-native.py artifacts/ready-native-evidence --binary artifacts/ready-native/SharpLink.Benchmarks --source "$MEASURED_TREE"
+      - name: Inventory every native process even after collection fails
+        if: always()
+        run: python3 eng/verify-ready-writer-native.py artifacts/ready-native-evidence --coverage-only
+      - name: Require all native cases before accepting timings
+        if: always()
+        run: |
+          python3 eng/verify-ready-writer-native.py artifacts/ready-native-evidence
+          cat artifacts/ready-native-evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: ready-writer-native-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/ready-native-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  stalled-jit-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      DOTNET_TieredCompilation: '1'
+      DOTNET_TieredPGO: '0'
+      DOTNET_ReadyToRun: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build a separate diagnostic binary, not a timing artifact
+        run: |
+          python3 eng/prepare-ready-writer.py --apply
+          git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs
+          echo "SHARPLINK_SOURCE_TREE=$(git write-tree)" >> "$GITHUB_ENV"
+          mkdir -p artifacts/ready-stall
+          dotnet --info > artifacts/ready-stall/dotnet.txt
+          lscpu > artifacts/ready-stall/cpu.txt
+          git diff --cached --binary > artifacts/ready-stall/disposable-runtime.patch
+          echo "CPU_LIST=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0))[:4])))')" >> "$GITHUB_ENV"
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:ReadyWriterDiagnostic=true -p:Platform=AnyCPU
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test > artifacts/ready-stall/self-check.log 2>&1
+      - name: Reproduce the TCP stalled cell with live pre-cancellation snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SHARPLINK_READY_PREPARED_BYTES=0
+          for launch in 0 1 2 3; do
+            export SHARPLINK_READY_ORDER=$((launch % 2))
+            set +e
+            taskset -c "$CPU_LIST" dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-evidence tcp 128 128 4096 12 524288 16 16384 "artifacts/ready-stall/case-$launch.json" > "artifacts/ready-stall/case-$launch.log" 2>&1
+            code=$?
+            set -e
+            printf '%s\n' "$code" > "artifacts/ready-stall/case-$launch.exit"
+            if (( code != 0 )); then exit "$code"; fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: ready-writer-stall-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/ready-stall
+          if-no-files-found: error
+          retention-days: 30
+
+  stalled-owner-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      DOTNET_TieredCompilation: '1'
+      DOTNET_TieredPGO: '0'
+      DOTNET_ReadyToRun: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build the separate credit-owner diagnostic host
+        run: |
+          python3 eng/test-flow-state-transport.py
+          python3 eng/test-ready-writer-native.py
+          python3 eng/prepare-ready-writer.py --apply
+          git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs
+          echo "SHARPLINK_SOURCE_TREE=$(git write-tree)" >> "$GITHUB_ENV"
+          mkdir -p artifacts/owner-stall
+          dotnet --info > artifacts/owner-stall/dotnet.txt
+          lscpu > artifacts/owner-stall/cpu.txt
+          git diff --cached --binary > artifacts/owner-stall/disposable-runtime.patch
+          echo "CPU_LIST=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0))[:4])))')" >> "$GITHUB_ENV"
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:ReadyWriterDiagnostic=true -p:Platform=AnyCPU
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test > artifacts/owner-stall/self-check.log 2>&1
+      - name: Observe the complete failed B2 control before cancellation
+        shell: bash
+        run: |
+          set -euo pipefail
+          for launch in 0 1 2 3; do
+            set +e
+            taskset -c "$CPU_LIST" dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --phase-b-transport-evidence tcp 128 64 4096 8 524288 "artifacts/owner-stall/case-$launch.json" > "artifacts/owner-stall/case-$launch.log" 2>&1
+            code=$?
+            set -e
+            printf '%s\n' "$code" > "artifacts/owner-stall/case-$launch.exit"
+            if (( code != 0 )); then exit "$code"; fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: ready-writer-owner-stall-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/owner-stall
+          if-no-files-found: error
+          retention-days: 30

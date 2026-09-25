@@ -1,0 +1,69 @@
+name: Phase B Matched Transport Control
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/flow-state-phase-b-transport.yml'
+      - 'eng/*flow-state-transport.py'
+      - 'test/SharpLink.FlowStatePhaseB/**'
+      - 'test/SharpLink.Benchmarks/PhaseBTransport*.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: phase-b-transport-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  jit-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        pgo: [0, 1]
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      PGO: ${{ matrix.pgo }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Validate source inventory and model correctness
+        run: |
+          python3 eng/test-flow-state-phase-b.py
+          python3 eng/test-flow-state-fused.py
+          python3 eng/test-flow-state-transport.py
+          dotnet run -c Release --project test/SharpLink.FlowStatePhaseB -- --self-test
+          dotnet build -c Release test/SharpLink.Benchmarks
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --transport-failure-self-test
+      - name: Same-path controls, including all negative cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          for transport in tcp sharedmemory; do
+            for launch in 1 2; do
+              python3 eng/run-flow-state-transport.py --output artifacts/transport --pgo "$PGO" --launch "$launch" --transport "$transport" --group high
+            done
+            for group in small large pressure; do
+              python3 eng/run-flow-state-transport.py --output artifacts/transport --pgo "$PGO" --launch 1 --transport "$transport" --group "$group"
+            done
+          done
+          python3 eng/verify-flow-state-transport.py artifacts/transport
+          python3 - <<'PY'
+          import pathlib
+          reports = [p for p in pathlib.Path('artifacts/transport').glob('*.json') if not p.name.endswith('.exit.json')]
+          if len(reports) != 18:
+              raise SystemExit('Expected all 18 reports for this PGO mode, including negative controls')
+          PY
+          cat artifacts/transport/transport-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain all reports and failures; this is not a production Go gate
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: phase-b-transport-pgo${{ matrix.pgo }}-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/transport
+          if-no-files-found: error
+          retention-days: 30

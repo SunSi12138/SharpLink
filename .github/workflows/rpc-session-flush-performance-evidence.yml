@@ -53,8 +53,6 @@ jobs:
           git worktree add --detach "$BASE_WORKTREE" "$BASE_SHA"
           cp test/SharpLink.Benchmarks/RpcSessionFlushPolicyEvidenceRunner.cs \
             "$BASE_WORKTREE/test/SharpLink.Benchmarks/RpcSessionFlushPolicyEvidenceRunner.cs"
-          cp test/SharpLink.Benchmarks/Program.cs \
-            "$BASE_WORKTREE/test/SharpLink.Benchmarks/Program.cs"
           echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
 
       - name: Build exact base benchmark harness

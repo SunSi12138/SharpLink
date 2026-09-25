@@ -1,0 +1,714 @@
+name: Resolved Flow State Performance Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - '.github/workflows/resolved-flow-state-performance-evidence.yml'
+      - 'src/SharpLink.Client/ClientConnection.cs'
+      - 'src/SharpLink.Runtime/**'
+      - 'test/SharpLink.Benchmarks/ResolvedFlowStateEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - 'test/SharpLink.ResolvedFlowStateAotEvidence/**'
+      - 'test/SharpLink.StreamLoadTest/**'
+      - 'test/SharpLink.StreamLoadTest.Tests/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BASELINE_SHA: 56c643cd308f294cb03df79d9f1214fb8292affb
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ROOT: ${{ github.workspace }}/artifacts/performance/resolved-flow-state
+
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Prepare exact baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ROOT"/{micro,aot,counters,e2e,env,logs}
+
+          cpu_count="$(nproc)"
+          if (( cpu_count >= 4 )); then
+            cpu_list="0-3"
+          elif (( cpu_count >= 2 )); then
+            cpu_list="0-1"
+          else
+            cpu_list="0"
+          fi
+          echo "CPU_LIST=$cpu_list" >> "$GITHUB_ENV"
+
+          baseline="$RUNNER_TEMP/sharplink-flow-baseline"
+          candidate="$RUNNER_TEMP/sharplink-flow-candidate"
+          git worktree add --detach "$baseline" "$BASELINE_SHA"
+          git worktree add --detach "$candidate" "$CANDIDATE_SHA"
+          # Keep the measurement harness identical while linking it against each revision.
+          cp "$candidate/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs" "$baseline/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
+          cp "$candidate/test/SharpLink.StreamLoadTest/Program.cs" "$baseline/test/SharpLink.StreamLoadTest/Program.cs"
+          sha256sum "$candidate/test/SharpLink.StreamLoadTest/Program.cs" > "$ROOT/env/stream-load-harness.sha256"
+          echo "BASELINE_ROOT=$baseline" >> "$GITHUB_ENV"
+          echo "CANDIDATE_ROOT=$candidate" >> "$GITHUB_ENV"
+
+          printf 'baseline=%s\ncandidate=%s\n' "$BASELINE_SHA" "$CANDIDATE_SHA"             > "$ROOT/env/revisions.txt"
+          dotnet --info > "$ROOT/env/dotnet-info.txt"
+          uname -a > "$ROOT/env/uname.txt"
+          lscpu > "$ROOT/env/cpu.txt"
+
+      - name: Build benchmark hosts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for root in "$BASELINE_ROOT" "$CANDIDATE_ROOT"; do
+            project="$root/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            dotnet restore "$project"
+            dotnet build "$project" -c Release --no-restore -p:PublishAot=false -m:1 /nodeReuse:false -v minimal
+
+            stream_project="$root/test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj"
+            dotnet restore "$stream_project"
+            dotnet build "$stream_project" -c Release --no-restore -p:PublishAot=false -m:1 /nodeReuse:false -v minimal
+          done
+
+      - name: Build NativeAOT evidence host
+        shell: bash
+        run: |
+          set -euo pipefail
+          project="$CANDIDATE_ROOT/test/SharpLink.ResolvedFlowStateAotEvidence/SharpLink.ResolvedFlowStateAotEvidence.csproj"
+          dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=true -p:StripSymbols=false -o "$ROOT/aot/bin" -v minimal
+
+      - name: Run resolved-state microkernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          project="$CANDIDATE_ROOT/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+
+          for pgo in 0 1; do
+            for repetition in 1 2 3; do
+              output="$ROOT/micro/pgo${pgo}-r${repetition}.json"
+              log="$ROOT/logs/micro-pgo${pgo}-r${repetition}.log"
+              (
+                cd "$CANDIDATE_ROOT"
+                env                   DOTNET_ReadyToRun=0                   DOTNET_TieredCompilation=1                   DOTNET_TieredPGO="$pgo"                   DOTNET_TC_QuickJitForLoops=1                   taskset -c "$CPU_LIST" dotnet run                     -c Release --no-build --no-restore                     -p:PublishAot=false                     --project "$project" --                     --resolved-flow-state-evidence                     --repetitions 3                     --contention-items 20000                     --output "$output" > "$log"
+              )
+            done
+          done
+
+      - name: Summarize microkernel
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/resolved-flow-state")
+          out = {}
+          lines = ["# Resolved flow-state microkernel", ""]
+
+          for pgo in (1, 0):
+              per_case = {}
+              for path in sorted((root / "micro").glob(f"pgo{pgo}-r*.json")):
+                  rows = json.loads(path.read_text())
+                  by_key = {}
+                  for row in rows:
+                      key = (row["Scenario"], row["ActiveStreams"], row["ItemsPerStream"])
+                      by_key.setdefault(key, {})[row["Mode"]] = row
+                  for key, pair in by_key.items():
+                      if "key" not in pair or "resolved" not in pair:
+                          continue
+                      old = pair["key"]["NanosecondsPerItem"]
+                      new = pair["resolved"]["NanosecondsPerItem"]
+                      gain = (old - new) * 100.0 / old
+                      alloc_delta = (
+                          pair["resolved"]["AllocatedBytesPerItem"] -
+                          pair["key"]["AllocatedBytesPerItem"]
+                      )
+                      lock_delta = (
+                          pair["resolved"]["LockContentionsPerItem"] -
+                          pair["key"]["LockContentionsPerItem"]
+                      )
+                      per_case.setdefault(key, []).append((gain, alloc_delta, lock_delta))
+
+              medians = {
+                  key: (
+                      statistics.median(v[0] for v in values),
+                      statistics.median(v[1] for v in values),
+                      statistics.median(v[2] for v in values),
+                  )
+                  for key, values in per_case.items()
+              }
+
+              def vals(pred):
+                  return [gain for key, (gain, _, _) in medians.items() if pred(key)]
+
+              scenario_summary = {}
+              for scenario in (
+                  "send-no-wait",
+                  "send-periodic-window-update",
+                  "send-starved-control",
+                  "receive-accept",
+                  "receive-consume",
+                  "receive-pair",
+                  "short-stream-control",
+                  "send-contention",
+                  "receive-pair-contention",
+              ):
+                  data = vals(lambda k, s=scenario: k[0] == s)
+                  if data:
+                      scenario_summary[scenario] = statistics.median(data)
+
+              long_lived = vals(lambda k: k[2] >= 1000 and k[0] != "short-stream-control")
+              short = vals(lambda k: k[2] == 1 or k[0] == "short-stream-control")
+              alloc_deltas = [delta for _, delta, _ in medians.values()]
+              lock_deltas = [delta for _, _, delta in medians.values()]
+              out[str(pgo)] = {
+                  "scenarioMedianGainPct": scenario_summary,
+                  "longLivedMedianGainPct": statistics.median(long_lived),
+                  "shortControlMedianGainPct": statistics.median(short),
+                  "maxAllocationDeltaBytesPerItem": max(alloc_deltas),
+                  "maxLockContentionDeltaPerItem": max(lock_deltas),
+              }
+
+              lines += [
+                  f"## Dynamic PGO {'ON' if pgo else 'OFF'}",
+                  "",
+                  f"- long-lived median ns/item improvement: {out[str(pgo)]['longLivedMedianGainPct']:+.2f}%",
+                  f"- short/control median improvement: {out[str(pgo)]['shortControlMedianGainPct']:+.2f}%",
+                  f"- max allocation delta B/item: {out[str(pgo)]['maxAllocationDeltaBytesPerItem']:+.3f}",
+                  f"- max lock-contention delta/item: {out[str(pgo)]['maxLockContentionDeltaPerItem']:+.6f}",
+                  "",
+                  "| Scenario | Median ns/item improvement | Lock contention delta/item |",
+                  "|---|---:|---:|",
+              ]
+              for scenario, value in scenario_summary.items():
+                  lock_values = [
+                      lock_delta
+                      for key, (_, _, lock_delta) in medians.items()
+                      if key[0] == scenario
+                  ]
+                  lines.append(
+                      f"| {scenario} | {value:+.2f}% | {statistics.median(lock_values):+.6f} |"
+                  )
+              lines.append("")
+
+          (root / "micro-summary.json").write_text(json.dumps(out, indent=2) + "\n")
+          (root / "micro-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Run NativeAOT resolved-state microkernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          taskset -c "$CPU_LIST" "$ROOT/aot/bin/SharpLink.Benchmarks" --repetitions 3 --contention-items 20000 --output "$ROOT/aot/micro.json" > "$ROOT/logs/micro-nativeaot.log"
+
+      - name: Summarize NativeAOT microkernel
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/resolved-flow-state")
+          rows = json.loads((root / "aot" / "micro.json").read_text())
+          by_key = {}
+          for row in rows:
+              key = (row["Scenario"], row["ActiveStreams"], row["ItemsPerStream"])
+              by_key.setdefault(key, {})[row["Mode"]] = row
+
+          medians = {}
+          for key, pair in by_key.items():
+              if "key" not in pair or "resolved" not in pair:
+                  continue
+              old = pair["key"]["NanosecondsPerItem"]
+              new = pair["resolved"]["NanosecondsPerItem"]
+              medians[key] = (
+                  (old - new) * 100.0 / old,
+                  pair["resolved"]["AllocatedBytesPerItem"] - pair["key"]["AllocatedBytesPerItem"],
+                  pair["resolved"]["LockContentionsPerItem"] - pair["key"]["LockContentionsPerItem"],
+              )
+
+          scenarios = (
+              "send-no-wait",
+              "send-periodic-window-update",
+              "send-starved-control",
+              "receive-accept",
+              "receive-consume",
+              "receive-pair",
+              "short-stream-control",
+              "send-contention",
+              "receive-pair-contention",
+          )
+          lines = [
+              "# NativeAOT resolved flow-state microkernel",
+              "",
+              "| Scenario | Median ns/item improvement | Lock contention delta/item |",
+              "|---|---:|---:|",
+          ]
+          summary = {}
+          for scenario in scenarios:
+              values = [v for key, v in medians.items() if key[0] == scenario]
+              if not values:
+                  continue
+              gain = statistics.median(v[0] for v in values)
+              lock_delta = statistics.median(v[2] for v in values)
+              summary[scenario] = {
+                  "gainPct": gain,
+                  "lockContentionDeltaPerItem": lock_delta,
+              }
+              lines.append(f"| {scenario} | {gain:+.2f}% | {lock_delta:+.6f} |")
+
+          long_lived = [
+              gain
+              for key, (gain, _, _) in medians.items()
+              if key[2] >= 1000 and key[0] != "short-stream-control"
+          ]
+          alloc_deltas = [delta for _, delta, _ in medians.values()]
+          lines += [
+              "",
+              f"- long-lived median ns/item improvement: {statistics.median(long_lived):+.2f}%",
+              f"- max allocation delta B/item: {max(alloc_deltas):+.3f}",
+              "",
+          ]
+          (root / "aot-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          (root / "aot-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Capture instruction and branch attribution
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v valgrind >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq valgrind
+          fi
+
+          jit_dll="$CANDIDATE_ROOT/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"
+          aot_bin="$ROOT/aot/bin/SharpLink.Benchmarks"
+
+          run_callgrind() {
+            local runtime="$1"
+            local mode="$2"
+            local output="$ROOT/counters/callgrind-$runtime-$mode.out"
+            local result="$ROOT/counters/$runtime-$mode.json"
+            local log="$ROOT/logs/counter-$runtime-$mode.log"
+            local status=0
+
+            set +e
+            if [[ "$runtime" == "jit" ]]; then
+              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output" \
+                dotnet "$jit_dll" --resolved-flow-state-evidence \
+                --scenario receive-pair --mode "$mode" --active-streams 32 \
+                --items-per-stream 1000 --repetitions 2 --skip-contention \
+                --output "$result" > "$log" 2>&1
+              status=$?
+            else
+              valgrind --tool=callgrind --branch-sim=yes --callgrind-out-file="$output" \
+                "$aot_bin" --scenario receive-pair --mode "$mode" --active-streams 32 \
+                --items-per-stream 1000 --repetitions 2 --skip-contention \
+                --output "$result" > "$log" 2>&1
+              status=$?
+            fi
+            set -e
+
+            if (( status != 0 )); then
+              printf 'Callgrind unavailable for %s/%s (exit %d); continuing with n/a counters.\n' \
+                "$runtime" "$mode" "$status" | tee -a "$log"
+              rm -f "$output"
+            fi
+          }
+
+          run_callgrind jit key
+          run_callgrind jit resolved
+          run_callgrind aot key
+          run_callgrind aot resolved
+
+          python3 - <<'PY'
+          import pathlib
+
+          root = pathlib.Path("artifacts/performance/resolved-flow-state")
+          # Runner executes one warm-up operation plus two measured repetitions.
+          items = 3 * 32 * 1000
+
+          def load(path):
+              if not path.exists():
+                  return None
+              events = None
+              summary = None
+              try:
+                  for line in path.read_text().splitlines():
+                      if line.startswith("events: "):
+                          events = line.split()[1:]
+                      elif line.startswith("summary: "):
+                          summary = [int(value) for value in line.split()[1:]]
+              except (OSError, ValueError):
+                  return None
+              if events is None or summary is None:
+                  return None
+              values = dict(zip(events, summary))
+              if "Ir" not in values or "Bc" not in values or "Bi" not in values:
+                  return None
+              return values
+
+          data = {}
+          for runtime in ("jit", "aot"):
+              for mode in ("key", "resolved"):
+                  data[(runtime, mode)] = load(
+                      root / "counters" / f"callgrind-{runtime}-{mode}.out"
+                  )
+
+          lines = [
+              "# Receive-pair c32 instruction/branch attribution",
+              "",
+              "GitHub-hosted runners do not expose the hardware PMU. CI attempts "
+              "Valgrind/Callgrind simulation; unsupported runtime/image combinations "
+              "are reported as n/a and do not block the production A/B evidence.",
+              "",
+              "| Runtime | Mode | Instructions/item | Branches/item | Branch mispredicts/item |",
+              "|---|---|---:|---:|---:|",
+          ]
+          for runtime in ("jit", "aot"):
+              for mode in ("key", "resolved"):
+                  row = data[(runtime, mode)]
+                  if row is None:
+                      lines.append(f"| {runtime} | {mode} | n/a | n/a | n/a |")
+                      continue
+                  branches = row["Bc"] + row["Bi"]
+                  misses = row.get("Bcm", 0) + row.get("Bim", 0)
+                  lines.append(
+                      f"| {runtime} | {mode} | "
+                      f"{row['Ir'] / items:.2f} | "
+                      f"{branches / items:.2f} | "
+                      f"{misses / items:.4f} |"
+                  )
+
+          lines += [
+              "",
+              "Static hot-path lookup attribution for receive-pair:",
+              "",
+              "- keyed path: 2 stream-state dictionary lookups/item; 2 flow-controller gate entries/item",
+              "- resolved path: 0 stream-state dictionary lookups/item after one lifecycle resolve; 2 flow-controller gate entries/item",
+              "",
+          ]
+          (root / "counter-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Run end-to-end TCP and SharedMemory streaming A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          scenarios=(
+            Server1x16
+            Server100x16
+            Server100x4096
+            Client100x16
+            Client100x4096
+            Duplex100x16
+            Duplex100x4096
+          )
+          transports=(tcp sharedmemory)
+
+          run_one() {
+            local label="$1"
+            local root="$2"
+            local sha="$3"
+            local repetition="$4"
+            local scenario="$5"
+            local transport="$6"
+            local output="$ROOT/e2e/$transport-$label-r$repetition-$scenario.json"
+            local log="$ROOT/logs/e2e-$transport-$label-r$repetition-$scenario.log"
+            (
+              cd "$root"
+              env SHARPLINK_BENCHMARK_SHA="$sha" DOTNET_ReadyToRun=0 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 DOTNET_TC_QuickJitForLoops=1 taskset -c "$CPU_LIST" dotnet run -c Release --no-build --no-restore -p:PublishAot=false --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -- --generated-abi-streaming-evidence "$scenario" 30 5 200000 "$output" "$transport" > "$log"
+            )
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              revisions=(
+                "baseline:$BASELINE_ROOT:$BASELINE_SHA"
+                "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
+              )
+              order=("${scenarios[@]}")
+            else
+              revisions=(
+                "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
+                "baseline:$BASELINE_ROOT:$BASELINE_SHA"
+              )
+              order=(
+                Duplex100x4096 Duplex100x16
+                Client100x4096 Client100x16
+                Server100x4096 Server100x16 Server1x16
+              )
+            fi
+
+            for transport in "${transports[@]}"; do
+              for scenario in "${order[@]}"; do
+                for spec in "${revisions[@]}"; do
+                  IFS=: read -r label root sha <<< "$spec"
+                  run_one "$label" "$root" "$sha" "$repetition" "$scenario" "$transport"
+                done
+              done
+            done
+          done
+
+      - name: Summarize end-to-end A/B
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/resolved-flow-state")
+          scenarios = (
+              "Server1x16",
+              "Server100x16",
+              "Server100x4096",
+              "Client100x16",
+              "Client100x4096",
+              "Duplex100x16",
+              "Duplex100x4096",
+          )
+          transports = ("tcp", "sharedmemory")
+
+          def load(label, transport, scenario):
+              rows = [
+                  json.loads(path.read_text())
+                  for path in sorted((root / "e2e").glob(f"{transport}-{label}-r*-{scenario}.json"))
+              ]
+              if len(rows) != 3:
+                  raise SystemExit(
+                      f"expected 3 {transport}/{label}/{scenario} rows, got {len(rows)}"
+                  )
+              if any(row["validationFailures"] != 0 for row in rows):
+                  raise SystemExit(f"validation failure in {transport}/{label}/{scenario}")
+              return rows
+
+          def med(rows, key):
+              return statistics.median(row[key] for row in rows)
+
+          summary = {}
+          lines = [
+              "# Latest dev vs resolved flow-state candidate",
+              "",
+              "| Transport | Scenario | Items/s | CPU efficiency | P50 | P99 | Alloc/item |",
+              "|---|---|---:|---:|---:|---:|---:|",
+          ]
+          primary = {transport: [] for transport in transports}
+
+          for transport in transports:
+              for scenario in scenarios:
+                  base = load("baseline", transport, scenario)
+                  cand = load("candidate", transport, scenario)
+                  b_items = med(base, "throughputItemsPerSecond")
+                  c_items = med(cand, "throughputItemsPerSecond")
+                  b_cpu = med(base, "cpuUsPerOperation")
+                  c_cpu = med(cand, "cpuUsPerOperation")
+                  b_p50 = med(base, "p50Us")
+                  c_p50 = med(cand, "p50Us")
+                  b_p99 = med(base, "p99Us")
+                  c_p99 = med(cand, "p99Us")
+                  b_alloc = med(base, "allocatedBytesPerItem")
+                  c_alloc = med(cand, "allocatedBytesPerItem")
+
+                  row = {
+                      "itemsPct": (c_items / b_items - 1.0) * 100.0,
+                      "cpuEfficiencyPct": (b_cpu / c_cpu - 1.0) * 100.0,
+                      "p50Pct": (c_p50 / b_p50 - 1.0) * 100.0,
+                      "p99Pct": (c_p99 / b_p99 - 1.0) * 100.0,
+                      "allocItemDelta": c_alloc - b_alloc,
+                  }
+                  summary[f"{transport}/{scenario}"] = row
+                  if scenario != "Server1x16":
+                      primary[transport].append(row["itemsPct"])
+                  lines.append(
+                      f"| {transport} | {scenario} | {row['itemsPct']:+.2f}% | "
+                      f"{row['cpuEfficiencyPct']:+.2f}% | {row['p50Pct']:+.2f}% | "
+                      f"{row['p99Pct']:+.2f}% | {row['allocItemDelta']:+.2f} B |"
+                  )
+
+          lines += [""]
+          for transport in transports:
+              lines.append(
+                  f"- {transport} median throughput delta across 100-item scenarios: "
+                  f"{statistics.median(primary[transport]):+.2f}%"
+              )
+          lines.append("")
+
+          (root / "e2e-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          (root / "e2e-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Run bounded-window c8 stream-load A/B
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ROOT/c8"
+          # Int32 items use byte credits, while the dispatcher also has a 4096-item cap.
+          # The default 1 MiB window can overflow that cap on either revision. Measure
+          # long streams with identical explicit windows; do not raise the runtime cap.
+
+          run_one() {
+            local label="$1"
+            local root="$2"
+            local sha="$3"
+            local repetition="$4"
+            local transport="$5"
+            local stream_size="$6"
+            local output="$ROOT/c8/$transport-size$stream_size-$label-r$repetition.json"
+            local log="$ROOT/logs/c8-$transport-size$stream_size-$label-r$repetition.log"
+            (
+              cd "$root"
+              env SHARPLINK_COMMIT="$sha" DOTNET_ReadyToRun=0 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 DOTNET_TC_QuickJitForLoops=1                 taskset -c "$CPU_LIST" dotnet run -c Release --no-build --no-restore -p:PublishAot=false                 --project test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj --                 --mode local --transport "$transport" --operation all                 --stream-size "$stream_size" --concurrency 8                 --stream-receive-window-bytes 8192 --connection-receive-window-bytes 65536                 --warmup 1 --duration 2 --recording off --json-output "$output" > "$log"
+            )
+          }
+
+          for repetition in 1 2 3; do
+            if (( repetition % 2 == 1 )); then
+              revisions=(
+                "baseline:$BASELINE_ROOT:$BASELINE_SHA"
+                "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
+              )
+            else
+              revisions=(
+                "candidate:$CANDIDATE_ROOT:$CANDIDATE_SHA"
+                "baseline:$BASELINE_ROOT:$BASELINE_SHA"
+              )
+            fi
+
+            for transport in tcp sharedmemory; do
+              for stream_size in 1 10000; do
+                for spec in "${revisions[@]}"; do
+                  IFS=: read -r label root sha <<< "$spec"
+                  run_one "$label" "$root" "$sha" "$repetition" "$transport" "$stream_size"
+                done
+              done
+            done
+          done
+
+      - name: Summarize bounded-window c8 stream-load A/B
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import math
+          import os
+          import pathlib
+          import statistics
+
+          root = pathlib.Path("artifacts/performance/resolved-flow-state")
+          transports = ("tcp", "sharedmemory")
+          sizes = (1, 10000)
+          operations = ("c2s", "s2c", "duplex")
+
+          def load(label, transport, size):
+              expected_sha = os.environ["BASELINE_SHA" if label == "baseline" else "CANDIDATE_SHA"]
+              paths = sorted((root / "c8").glob(f"{transport}-size{size}-{label}-r*.json"))
+              if len(paths) != 3:
+                  raise SystemExit(
+                      f"expected 3 {transport}/size{size}/{label} reports, got {len(paths)}"
+                  )
+              by_operation = {operation: [] for operation in operations}
+              for path in paths:
+                  report = json.loads(path.read_text())
+                  if report.get("SourceCommit") != expected_sha:
+                      raise SystemExit(
+                          f"source commit mismatch in {path}: "
+                          f"expected {expected_sha}, got {report.get('SourceCommit')}"
+                      )
+                  configuration = report["Configuration"]
+                  if (configuration.get("StreamReceiveWindowBytes") != 8192 or
+                          configuration.get("ConnectionReceiveWindowBytes") != 65536 or
+                          configuration.get("StreamSize") != size or
+                          configuration.get("ConcurrencyConfig") != [8]):
+                      raise SystemExit(f"c8 workload configuration mismatch in {path}")
+                  seen_operations = set()
+                  for row in report["Results"]:
+                      operation = row["Operation"]
+                      if operation not in by_operation:
+                          continue
+                      if operation in seen_operations:
+                          raise SystemExit(f"duplicate stream-load operation in {path}: {operation}")
+                      seen_operations.add(operation)
+                      if (row["Failure"] != 0 or row["ValidationFailure"] != 0 or
+                              row["Cancelled"] != 0):
+                          raise SystemExit(
+                              f"stream-load failure in {path}: {operation}"
+                          )
+                      if row["Success"] <= 0 or not math.isfinite(row["Qps"]) or row["Qps"] <= 0:
+                          raise SystemExit(f"invalid stream-load sample in {path}: {operation}")
+                      by_operation[operation].append(row)
+                  if seen_operations != set(operations):
+                      raise SystemExit(f"missing stream-load operations in {path}")
+              return by_operation
+
+          lines = [
+              "# Bounded-window stream-load c8 A/B",
+              "",
+              "Production runtime with explicit 8 KiB stream / 64 KiB connection windows; not a default-window result.",
+              "",
+              "| Transport | Items/stream | Shape | Streams/s delta |",
+              "|---|---:|---|---:|",
+          ]
+          summary = {}
+          for transport in transports:
+              for size in sizes:
+                  base = load("baseline", transport, size)
+                  cand = load("candidate", transport, size)
+                  for operation in operations:
+                      b = statistics.median(row["Qps"] for row in base[operation])
+                      c = statistics.median(row["Qps"] for row in cand[operation])
+                      delta = (c / b - 1.0) * 100.0
+                      key = f"{transport}/size{size}/{operation}"
+                      summary[key] = delta
+                      lines.append(
+                          f"| {transport} | {size} | {operation} | {delta:+.2f}% |"
+                      )
+
+          (root / "c8-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          (root / "c8-summary.md").write_text("\n".join(lines) + "\n")
+          print("\n".join(lines))
+          PY
+
+      - name: Publish evidence summary
+        shell: bash
+        run: |
+          cat "$ROOT/micro-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$ROOT/aot-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$ROOT/counter-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$ROOT/e2e-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf '\n---\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$ROOT/c8-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: resolved-flow-state-${{ github.sha }}
+          path: artifacts/performance/resolved-flow-state
+          if-no-files-found: error
+          retention-days: 30

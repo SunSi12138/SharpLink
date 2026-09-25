@@ -29,6 +29,8 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     private IStreamDispatcher? _dispatcher;
     private IStreamDispatchLease? _childLease;
     private Action<long, ushort, int>? _bytesConsumed;
+    private ResolvedStreamBytesCallback? _resolvedBytesConsumed;
+    private StreamFlowController.ResolvedReceiveCreditLease _receiveCreditLease;
     private long _requestId;
     private ushort _streamId;
     private Exception? _completion;
@@ -527,6 +529,42 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         }
     }
 
+    public bool TrySetResolvedBytesConsumedCallback(
+        ResolvedStreamBytesCallback? callback,
+        in StreamFlowController.ResolvedReceiveCreditLease lease)
+    {
+        IStreamConsumptionAwareDispatcher? consumptionAware = null;
+        var childLeaseAcquired = false;
+        lock (_gate)
+        {
+            _resolvedBytesConsumed = callback;
+            _receiveCreditLease = lease;
+            _configurationVersion++;
+            if (!_attachmentInProgress && !_childClosed && !_childDetached &&
+                _dispatcher is IStreamConsumptionAwareDispatcher child &&
+                TryAcquireChildDispatchLocked(out _))
+            {
+                consumptionAware = child;
+                childLeaseAcquired = true;
+            }
+        }
+
+        if (consumptionAware is not null)
+        {
+            try
+            {
+                _ = consumptionAware.TrySetResolvedBytesConsumedCallback(callback, in lease);
+            }
+            finally
+            {
+                if (childLeaseAcquired)
+                    ReleaseChildDispatch();
+            }
+        }
+
+        return true;
+    }
+
     ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
         ReadOnlySequence<byte> payload,
         int encodedByteCount)
@@ -797,6 +835,8 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         while (true)
         {
             Action<long, ushort, int>? bytesConsumed;
+            ResolvedStreamBytesCallback? resolvedBytesConsumed;
+            StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease;
             long requestId;
             ushort streamId;
             int version;
@@ -808,13 +848,23 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                     return;
                 }
                 bytesConsumed = _bytesConsumed;
+                resolvedBytesConsumed = _resolvedBytesConsumed;
+                receiveCreditLease = _receiveCreditLease;
                 requestId = _requestId;
                 streamId = _streamId;
                 version = _configurationVersion;
             }
 
             if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+            {
                 consumptionAware.SetBytesConsumedCallback(bytesConsumed, requestId, streamId);
+                if (resolvedBytesConsumed is not null && receiveCreditLease.IsResolved)
+                {
+                    _ = consumptionAware.TrySetResolvedBytesConsumedCallback(
+                        resolvedBytesConsumed,
+                        in receiveCreditLease);
+                }
+            }
             if (!dispatchStateBound && dispatcher is IStreamDispatchLease dispatchLease)
             {
                 dispatchLease.BindDispatchState(this);
@@ -1061,7 +1111,12 @@ internal sealed partial class PreAdmissionStreamDispatcher(
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void NotifyBytesConsumed(int encodedByteCount)
-        => _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+    {
+        if (_resolvedBytesConsumed is { } resolved)
+            resolved(in _receiveCreditLease, encodedByteCount);
+        else
+            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+    }
 
     private sealed record RetentionPolicy(
         Func<int, bool> ReserveBytes,

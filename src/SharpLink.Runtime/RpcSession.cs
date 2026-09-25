@@ -98,7 +98,10 @@ internal sealed partial class RpcSession
             OnStreamBytesConsumed,
             OnReceiveStreamCompleted,
             creationOptions.RuntimeContext.Protocol.MaxConcurrentStreamsPerConnection,
-            Fault);
+            Fault,
+            ResolveReceiveCreditLease,
+            AcceptReceivedStreamBytes,
+            OnStreamBytesConsumed);
         _flushOptions = creationOptions.FlushOptions;
         _telemetrySide = creationOptions.TelemetrySide;
     }
@@ -121,6 +124,83 @@ internal sealed partial class RpcSession
     internal void ReturnUnsentStreamCredit(long requestId, ushort streamId, int encodedBytes)
         => Volatile.Read(ref _protocolState).FlowController?.ReturnUnsentCredit(requestId, streamId, encodedBytes);
 
+    internal ValueTask<StreamFlowController.ResolvedSendCreditLease> AcquireStreamSendCreditAsync(
+        StreamFlowController.ResolvedSendCreditLease lease,
+        long requestId,
+        ushort streamId,
+        int encodedBytes,
+        CancellationToken cancellationToken)
+    {
+        var controller = Volatile.Read(ref _protocolState).FlowController;
+        if (controller is null)
+            return new ValueTask<StreamFlowController.ResolvedSendCreditLease>(lease);
+
+        if (lease.IsResolved)
+        {
+            var pending = controller.AcquireSendCreditAsync(in lease, encodedBytes, cancellationToken);
+            if (pending.IsCompletedSuccessfully)
+            {
+                pending.GetAwaiter().GetResult();
+                return new ValueTask<StreamFlowController.ResolvedSendCreditLease>(lease);
+            }
+
+            return AwaitResolvedSendCreditAsync(pending, lease);
+        }
+
+        return controller.AcquireSendCreditLeaseAsync(
+            requestId,
+            streamId,
+            encodedBytes,
+            cancellationToken);
+    }
+
+    private static async ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        AwaitResolvedSendCreditAsync(
+            ValueTask pending,
+            StreamFlowController.ResolvedSendCreditLease lease)
+    {
+        await pending.ConfigureAwait(false);
+        return lease;
+    }
+
+    internal bool TryAcquireStreamSendCredit(
+        StreamFlowController.ResolvedSendCreditLease lease,
+        long requestId,
+        ushort streamId,
+        int encodedBytes,
+        out StreamFlowController.ResolvedSendCreditLease resolvedLease)
+    {
+        var controller = Volatile.Read(ref _protocolState).FlowController;
+        if (controller is null)
+        {
+            resolvedLease = lease;
+            return true;
+        }
+
+        if (lease.IsResolved)
+        {
+            resolvedLease = lease;
+            return controller.TryAcquireSendCredit(in lease, encodedBytes);
+        }
+
+        return controller.TryAcquireSendCreditLease(requestId, streamId, encodedBytes, out resolvedLease);
+    }
+
+    internal void ReturnUnsentStreamCredit(
+        StreamFlowController.ResolvedSendCreditLease lease,
+        long requestId,
+        ushort streamId,
+        int encodedBytes)
+    {
+        var controller = Volatile.Read(ref _protocolState).FlowController;
+        if (controller is null)
+            return;
+        if (lease.IsResolved)
+            controller.ReturnUnsentCredit(in lease, encodedBytes);
+        else
+            controller.ReturnUnsentCredit(requestId, streamId, encodedBytes);
+    }
+
     internal void ApplyWindowUpdate(long requestId, in ProtocolV2WindowUpdate update)
     {
         var controller = Volatile.Read(ref _protocolState).FlowController ??
@@ -136,8 +216,38 @@ internal sealed partial class RpcSession
     internal void AbortSendStreams(long requestId, Exception exception)
         => Volatile.Read(ref _protocolState).FlowController?.AbortSendStreams(requestId, exception);
 
+    private StreamFlowController.ResolvedReceiveCreditLease ResolveReceiveCreditLease(
+        long requestId,
+        ushort streamId)
+    {
+        var controller = Volatile.Read(ref _protocolState).FlowController;
+        return controller is null
+            ? default
+            : controller.ResolveReceiveCreditLease(requestId, streamId);
+    }
+
     private void AcceptReceivedStreamBytes(long requestId, ushort streamId, int encodedBytes)
         => Volatile.Read(ref _protocolState).FlowController?.AcceptReceived(requestId, streamId, encodedBytes);
+
+    private void AcceptReceivedStreamBytes(
+        in StreamFlowController.ResolvedReceiveCreditLease lease,
+        int encodedBytes)
+    {
+        var controller = Volatile.Read(ref _protocolState).FlowController;
+        if (controller is not null)
+            controller.AcceptReceived(in lease, encodedBytes);
+    }
+
+    private void OnStreamBytesConsumed(
+        in StreamFlowController.ResolvedReceiveCreditLease lease,
+        int encodedBytes)
+    {
+        var controller = Volatile.Read(ref _protocolState).FlowController;
+        var credit = controller?.RecordConsumed(in lease, encodedBytes) ?? 0;
+        if (credit != 0)
+            TrySendWindowUpdate(lease.RequestId, lease.StreamId, credit);
+        DrainConsumedCreditUpdates(controller);
+    }
 
     private void OnStreamBytesConsumed(long requestId, ushort streamId, int encodedBytes)
     {
