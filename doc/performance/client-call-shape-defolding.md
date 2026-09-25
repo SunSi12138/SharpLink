@@ -100,10 +100,11 @@ runtime branches, and NativeAOT rooting. It is an attribution prototype, not a s
 claim.
 
 Before the A/B/C/D probes run, the harness also inventories the real
-`SharpLink.Benchmarks/obj/Generated` tree: generated file/LOC/byte count, total generated
-`Invoke*Async` call sites, and unique emitted closed-generic `Invoke*Async<...>` spellings by
-lifecycle entry point. That is an emitted-source generic-instantiation proxy; CLR/JIT canonical
-sharing can reduce the native instantiation count.
+`SharpLink.Benchmarks/obj/Generated` tree for generated file/LOC/byte count and `Invoke*Async`
+call sites. Because generated C# relies on type inference rather than spelling generic arguments,
+the compiled benchmark assembly is then inspected for actual `IRpcChannel.Invoke*Async` MethodSpec
+calls. The report records unique closed-generic instantiations by lifecycle entry point; CLR/JIT
+canonical sharing may still reduce the amount of distinct native code.
 
 For each variant the harness records:
 
@@ -175,10 +176,11 @@ links the exact same contract, service, and `ClientCallShapeEvidenceRunner` sour
 - `DOTNET_TieredCompilation=1`, `DOTNET_TieredPGO=1`;
 - NativeAOT `linux-x64`.
 
-The A/B/C/D attribution workload also runs in PGO OFF, PGO ON, and NativeAOT. NativeAOT restore is
-performed before build timing starts, so package acquisition is not charged to A. The full-RPC host
-records its own NativeAOT executable size and publish time separately from the synthetic A/B/C/D
-code-growth experiment.
+The A/B/C/D attribution workload also runs in PGO OFF, PGO ON, and NativeAOT. A RID-specific restore
+is performed before build timing starts; the timed publish is allowed to run its normal no-op restore
+phase so .NET 10 can populate NativeAOT runtime-pack items correctly. The full-RPC host records its
+own NativeAOT executable size and publish time separately from the synthetic A/B/C/D code-growth
+experiment.
 
 ## Predeclared decision gates
 
