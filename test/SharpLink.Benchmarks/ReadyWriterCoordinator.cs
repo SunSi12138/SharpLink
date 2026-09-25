@@ -256,7 +256,8 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
 
     // The following methods, including all B3 credit reads/writes, are owner-only.
     public bool HasWork => !_stopToken.IsCancellationRequested && Volatile.Read(ref _stopped) == 0 &&
-        (Volatile.Read(ref _retirementRequested) != 0 || Volatile.Read(ref _notificationsPending) != 0 ||
+        ((_dynamicLifetimes && Volatile.Read(ref _admissionRequested) != 0) ||
+            Volatile.Read(ref _retirementRequested) != 0 || Volatile.Read(ref _notificationsPending) != 0 ||
             Volatile.Read(ref _updatesPending) != 0 || (!_blocked && _ready.Count != 0));
 
     private void DrainNotifications()
@@ -287,6 +288,9 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         }
         if (Volatile.Read(ref _retirementRequested) != 0 && Interlocked.Exchange(ref _retirementRequested, 0) != 0)
             foreach (var stream in _streams) TryRetireStream(stream);
+        if (_dynamicLifetimes && Volatile.Read(ref _admissionRequested) != 0 &&
+            Interlocked.Exchange(ref _admissionRequested, 0) != 0)
+            ServiceCapacityAdmission();
         CheckSettled();
     }
 

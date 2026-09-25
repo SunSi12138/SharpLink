@@ -58,6 +58,8 @@ internal sealed partial class ReadyWriterCoordinator
 
         _notifications.Writer.TryComplete(error);
         _updates.Writer.TryComplete(error);
+        _pendingAdmission?.Fail(error);
+        _pendingAdmission = null;
         while (_updates.Reader.TryRead(out var pending)) pending.Operation?.Fail(error);
         try { _cancel.Cancel(); }
         catch (Exception failure) { Record(failure); }

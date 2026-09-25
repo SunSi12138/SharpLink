@@ -7,7 +7,9 @@ internal static class ReadyWriterChecks
 {
     internal static async Task RunAsync()
     {
-        var checks = await ReadyWriterCoordinator.RunLifecycleChecksAsync();
+        var checks = await ReadyWriterCoordinator.RunAdmissionChecksAsync();
+        checks += await ReadyWriterCoordinator.RunAdmissionPipeChecksAsync();
+        checks += await ReadyWriterCoordinator.RunLifecycleChecksAsync();
         checks += await ReadyWriterCoordinator.RunLifecyclePipeChecksAsync();
         checks += await ReadyWriterCoordinator.RunWirePermissionChecksAsync();
         checks += await ReadyWriterCoordinator.RunBlockedCancellationChecksAsync();

@@ -75,6 +75,7 @@ internal sealed partial class ReadyWriterCoordinator
     private StreamHandle OpenStreamOnWriter(long requestId, ushort streamId)
     {
         RequireLifecycleControl();
+        ServiceCapacityAdmission();
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(requestId);
         var identity = new StreamIdentity(requestId, streamId);
         if (_identities.ContainsKey(identity)) throw new InvalidOperationException("Active stream or retained tombstone exists.");
@@ -151,6 +152,7 @@ internal sealed partial class ReadyWriterCoordinator
             stream.Retired = true; stream.WireAttached = false;
             _retiredStreams.Push(stream); _retiredLifetimes++;
         }
+        ServiceCapacityAdmission();
     }
 }
 #endif
