@@ -1,4 +1,4 @@
-namespace SharpLink.Client;
+﻿namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
@@ -17,6 +17,9 @@ internal sealed partial class SharpLinkClient
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: true, interceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
+        // NOTE: the increment above is the single increment for every unary shape. The simple 1:1
+        // shape releases it from the physical attempt's completion observer; every other shape
+        // releases it through CompleteLogicalInvocation below, exactly as before.
         try
         {
             ValueTask<TResponse> invocation;
@@ -24,6 +27,11 @@ internal sealed partial class SharpLinkClient
                 invocation = InvokeUnaryWithTelemetryAsync(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             else if (interceptors.Count != 0)
                 invocation = InvokeUnaryInterceptedAsync(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
+            else if (IsSimpleOneToOneUnaryShape(method, control))
+                // Simple 1:1 unary shape: the single physical attempt releases the logical
+                // invocation through its exactly-once completion observer, so no outer async
+                // wrapper (and no per-call state-machine box) is created for this shape.
+                return InvokeUnarySimpleShapeAsync(method, request, requestCodec, responseCodec, control, cancellationToken);
             else
                 invocation = InvokeUnaryWithOptionalRetryAsync(method, request, requestCodec, responseCodec, control, cancellationToken);
             return CompleteLogicalInvocation(invocation);
@@ -366,13 +374,27 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         IRpcCodec<TResponse> responseCodec,
         ResolvedCallControl control,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        // Set only by InvokeUnarySimpleShapeAsync. When true the logical invocation is released by
+        // the physical attempt's exactly-once completion observer instead of by an outer async
+        // wrapper, so the caller must not also apply CompleteLogicalInvocation.
+        bool specializeLogicalShape = false)
     {
-        var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
+        // The endpoint admission outcome needs the pending table's single completion-observer slot,
+        // so the two are mutually exclusive; a single volatile read decides which one owns it.
+        var useShapeObserver = specializeLogicalShape && _endpointAdmissionPolicy is null;
+        AttemptOutcomeState? outcome = null;
+        if (!useShapeObserver && _endpointAdmissionPolicy is not null)
+            outcome = new AttemptOutcomeState(this, method);
         if (outcome is null)
             SharpLinkTelemetry.RecordClientAttempt();
         ClientConnection? connection = null;
         var reservationOwned = false;
+        // Sound "the observer owns the release" boundary. `invocation.IsCompleted` is NOT sound: a
+        // synchronous send failure, or a concurrent connection close during registration, can
+        // complete the attempt while this method is still running, so an already-completed
+        // ValueTask means the observer has ALREADY released this logical call.
+        var attemptRegistered = false;
         try
         {
             // Connection selection is the first step that can block, so the pre-registration
@@ -387,11 +409,12 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 cancellationToken,
                 out var requestId,
-                outcome,
+                useShapeObserver ? GetOrCreateLogicalShapeObserver() : (IPendingCallCompletionObserver?)outcome,
                 hasResponsePayload: method.HasResponsePayload,
                 responseNullable: method.ResponseNullable);
+            attemptRegistered = true;
             reservationOwned = false;
-            return StartUnaryCall(
+            var invocation = StartUnaryCall(
                 connection,
                 method.ContractId,
                 method.MethodId,
@@ -402,11 +425,47 @@ internal sealed partial class SharpLinkClient
                 operation,
                 control,
                 cancellationToken);
+            if (specializeLogicalShape && !useShapeObserver)
+            {
+                // The admission policy became non-null between the caller's predicate and the
+                // single read above, so this attempt did not arm the observer and the caller
+                // skipped the wrapper: reproduce the wrapper here so the release still happens
+                // exactly once.
+                return AwaitLogicalInvocationAsync(invocation);
+            }
+            return invocation;
         }
         catch (Exception exception)
         {
             if (reservationOwned)
                 connection!.ReleaseCallAdmissionReservation();
+
+            if (specializeLogicalShape)
+            {
+                if (!attemptRegistered)
+                {
+                    // Registration never happened, so no observer can fire: release inline,
+                    // exactly once, before returning. ArbitrateShapeLogicalFailure cannot throw,
+                    // so nothing after this release can escape to the caller's own catch.
+                    EndLogicalInvocation();
+                    return ValueTask.FromException<TResponse>(
+                        ArbitrateShapeLogicalFailure(control, exception, outcome));
+                }
+
+                if (useShapeObserver)
+                {
+                    // The armed observer owns the single release; do not release here.
+                    return ValueTask.FromException<TResponse>(
+                        ArbitrateShapeLogicalFailure(control, exception, outcome));
+                }
+
+                // Registered, but the admission outcome owned the slot: the reproduced wrapper
+                // performs the release, including for this failure.
+                exception = ArbitrateLogicalCallFailure(control, exception);
+                outcome?.CompleteLocalFailure(exception);
+                return AwaitLogicalInvocationAsync(ValueTask.FromException<TResponse>(exception));
+            }
+
             exception = ArbitrateLogicalCallFailure(control, exception);
             outcome?.CompleteLocalFailure(exception);
             return ValueTask.FromException<TResponse>(exception);

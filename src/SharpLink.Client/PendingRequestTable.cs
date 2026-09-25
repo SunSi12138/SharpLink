@@ -1,4 +1,4 @@
-namespace SharpLink.Client;
+﻿namespace SharpLink.Client;
 
 internal enum PendingCallKind : byte
 {
@@ -792,8 +792,22 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     private void CompleteRegistrationIfDisposed(PendingCall call)
     {
-        if (Volatile.Read(ref _disposed) != 0)
+        if (Volatile.Read(ref _disposed) == 0)
+            return;
+
+        // The call is already published at this point, so its terminal transition has been
+        // committed and cannot be undone. A throwing terminal observer (the owner callback does
+        // stream-manager and dispatcher work) must therefore not surface as a registration
+        // failure: a caller cannot roll back a published call, and a completion observer that has
+        // already run must not be double-released by a caller that believes registration failed.
+        try
+        {
             TryComplete(call.Id, PendingCallCompletionReason.ConnectionClosed);
+        }
+        catch (Exception)
+        {
+            // Diagnostics-only: the call is terminal either way.
+        }
     }
 
     private bool TryTakeMatchingCall(
