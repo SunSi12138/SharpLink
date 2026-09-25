@@ -553,6 +553,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 
@@ -560,21 +561,44 @@ namespace Inspector;
 
 internal static class Program
 {
+    private static readonly OpCode[] SOneByteOpCodes = BuildOpCodes(twoByte: false);
+    private static readonly OpCode[] STwoByteOpCodes = BuildOpCodes(twoByte: true);
+
     public static int Main(string[] args)
     {
-        if (args.Length != 3)
-            throw new ArgumentException("Usage: Inspector <assembly> <representatives.txt> <output-json>");
+        if (args.Length == 3 &&
+            string.Equals(args[0], "--client-entrypoints", StringComparison.Ordinal))
+        {
+            InspectClientEntrypoints(args[1], args[2]);
+            return 0;
+        }
 
-        var assembly = Assembly.LoadFrom(Path.GetFullPath(args[0]));
+        if (args.Length != 3)
+        {
+            throw new ArgumentException(
+                "Usage: Inspector <assembly> <representatives.txt> <output-json> | " +
+                "--client-entrypoints <assembly> <output-json>");
+        }
+
+        InspectStateMachines(args[0], args[1], args[2]);
+        return 0;
+    }
+
+    private static void InspectStateMachines(
+        string assemblyPath,
+        string representativePath,
+        string outputPath)
+    {
+        var assembly = Assembly.LoadFrom(Path.GetFullPath(assemblyPath));
         var host = assembly.GetType("ShapeProbe.Program", throwOnError: true)!;
-        var names = File.ReadAllLines(args[1])
+        var names = File.ReadAllLines(representativePath)
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .ToArray();
         var rows = new List<object>();
         foreach (var name in names)
         {
             var stateMachine = host.GetNestedTypes(BindingFlags.NonPublic)
-                .Single(type => type.Name.StartsWith($"<{name}>d__", StringComparison.Ordinal));
+                .Single(type => type.Name.StartsWith($"<${name}>d__", StringComparison.Ordinal));
             var fields = stateMachine.GetFields(
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             var moveNext = stateMachine.GetMethod(
@@ -598,21 +622,200 @@ internal static class Program
             });
         }
 
-        var output = new
+        WriteJson(outputPath, new
         {
-            assembly = Path.GetFileName(args[0]),
+            assembly = Path.GetFileName(assemblyPath),
             methods = rows
+        });
+    }
+
+    private static void InspectClientEntrypoints(string assemblyPath, string outputPath)
+    {
+        var assembly = Assembly.LoadFrom(Path.GetFullPath(assemblyPath));
+        var names = new[]
+        {
+            "InvokeUnaryAsync",
+            "InvokeOneWayAsync",
+            "InvokeClientStreamingAsync",
+            "InvokeServerStreamingAsync",
+            "InvokeDuplexStreamingAsync"
         };
+        var wanted = new HashSet<string>(names, StringComparer.Ordinal);
+        var signatures = names.ToDictionary(
+            static name => name,
+            static _ => new List<string>(),
+            StringComparer.Ordinal);
+
+        foreach (var type in assembly.GetTypes())
+        {
+            var typeArguments = type.IsGenericType ? type.GetGenericArguments() : Type.EmptyTypes;
+            foreach (var method in type.GetMethods(
+                BindingFlags.Instance |
+                BindingFlags.Static |
+                BindingFlags.Public |
+                BindingFlags.NonPublic |
+                BindingFlags.DeclaredOnly))
+            {
+                var il = method.GetMethodBody()?.GetILAsByteArray();
+                if (il is null || il.Length == 0)
+                    continue;
+
+                var methodArguments = method.IsGenericMethod
+                    ? method.GetGenericArguments()
+                    : Type.EmptyTypes;
+                foreach (var token in EnumerateCallTokens(il))
+                {
+                    MethodBase? target;
+                    try
+                    {
+                        target = method.Module.ResolveMethod(token, typeArguments, methodArguments);
+                    }
+                    catch (ArgumentException)
+                    {
+                        continue;
+                    }
+
+                    if (target is not MethodInfo info ||
+                        !string.Equals(
+                            info.DeclaringType?.FullName,
+                            "SharpLink.Abstractions.IRpcChannel",
+                            StringComparison.Ordinal) ||
+                        !wanted.Contains(info.Name))
+                    {
+                        continue;
+                    }
+
+                    var genericArguments = info.IsGenericMethod
+                        ? info.GetGenericArguments()
+                        : Type.EmptyTypes;
+                    var signature = genericArguments.Length == 0
+                        ? info.Name
+                        : $"${info.Name}<${string.Join(",", genericArguments.Select(FormatType))}>";
+                    signatures[info.Name].Add(signature);
+                }
+            }
+        }
+
+        var all = signatures.Values.SelectMany(static values => values).ToArray();
+        var byEntrypoint = signatures.ToDictionary(
+            static pair => pair.Key,
+            static pair => new
+            {
+                callSites = pair.Value.Count,
+                uniqueClosedGenericInstantiations = pair.Value
+                    .Distinct(StringComparer.Ordinal)
+                    .Count()
+            },
+            StringComparer.Ordinal);
+
+        WriteJson(outputPath, new
+        {
+            assembly = Path.GetFileName(assemblyPath),
+            clientEntrypointCallSites = all.Length,
+            uniqueClosedGenericClientEntrypoints = all
+                .Distinct(StringComparer.Ordinal)
+                .Count(),
+            byEntrypoint,
+            note = "Closed generic calls are resolved from compiled IL MethodSpec tokens. " +
+                "CLR/JIT canonical generic sharing can still reduce native code duplication."
+        });
+    }
+
+    private static IEnumerable<int> EnumerateCallTokens(byte[] il)
+    {
+        var offset = 0;
+        while (offset < il.Length)
+        {
+            var first = il[offset++];
+            OpCode opCode;
+            if (first == 0xFE)
+            {
+                if (offset >= il.Length)
+                    yield break;
+                opCode = STwoByteOpCodes[il[offset++]];
+            }
+            else
+            {
+                opCode = SOneByteOpCodes[first];
+            }
+
+            var operandOffset = offset;
+            var operandSize = GetOperandSize(opCode.OperandType, il, operandOffset);
+            if ((opCode.Value == OpCodes.Call.Value || opCode.Value == OpCodes.Callvirt.Value) &&
+                operandSize == 4)
+            {
+                yield return BitConverter.ToInt32(il, operandOffset);
+            }
+
+            offset = checked(offset + operandSize);
+        }
+    }
+
+    private static int GetOperandSize(OperandType operandType, byte[] il, int offset)
+        => operandType switch
+        {
+            OperandType.InlineNone => 0,
+            OperandType.ShortInlineBrTarget or
+            OperandType.ShortInlineI or
+            OperandType.ShortInlineVar => 1,
+            OperandType.InlineVar => 2,
+            OperandType.InlineBrTarget or
+            OperandType.InlineField or
+            OperandType.InlineI or
+            OperandType.InlineMethod or
+            OperandType.InlineSig or
+            OperandType.InlineString or
+            OperandType.InlineTok or
+            OperandType.InlineType or
+            OperandType.ShortInlineR => 4,
+            OperandType.InlineI8 or OperandType.InlineR => 8,
+            OperandType.InlineSwitch => checked(
+                4 + BitConverter.ToInt32(il, offset) * 4),
+            _ => throw new InvalidOperationException(
+                $"Unsupported IL operand type ${operandType}.")
+        };
+
+    private static OpCode[] BuildOpCodes(bool twoByte)
+    {
+        var values = new OpCode[256];
+        foreach (var field in typeof(OpCodes).GetFields(
+            BindingFlags.Public | BindingFlags.Static))
+        {
+            if (field.GetValue(null) is not OpCode opCode)
+                continue;
+            var value = unchecked((ushort)opCode.Value);
+            if (!twoByte && value < 0x100)
+                values[value] = opCode;
+            else if (twoByte && (value & 0xFF00) == 0xFE00)
+                values[value & 0xFF] = opCode;
+        }
+        return values;
+    }
+
+    private static string FormatType(Type type)
+    {
+        if (!type.IsGenericType)
+            return type.FullName ?? type.Name;
+
+        var definition = type.GetGenericTypeDefinition();
+        var name = definition.FullName ?? definition.Name;
+        var tick = name.IndexOf('`');
+        if (tick >= 0)
+            name = name[..tick];
+        return $"${name}<${string.Join(",", type.GetGenericArguments().Select(FormatType))}>";
+    }
+
+    private static void WriteJson(string outputPath, object value)
+    {
         var options = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = true
         };
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[2]))!);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
         File.WriteAllText(
-            args[2],
-            JsonSerializer.Serialize(output, options) + Environment.NewLine);
-        return 0;
+            outputPath,
+            JsonSerializer.Serialize(value, options) + Environment.NewLine);
     }
 
     private static int SizeOf(Type type)
