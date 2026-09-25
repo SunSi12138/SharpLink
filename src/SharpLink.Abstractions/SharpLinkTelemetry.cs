@@ -141,7 +141,12 @@ public static class SharpLinkTelemetry
         Meter.CreateHistogram<double>("sharplink.client.multicluster.mutation.duration", unit: "ms");
 
     internal static CallScope StartClientCall(RpcMethodDescriptor method)
-        => StartCall(ClientActivitySource, ActivityKind.Client, "client", method, requestId: 0);
+        => StartCall(
+            ClientActivitySource,
+            ActivityKind.Client,
+            "client",
+            CallIdentity.FromDescriptor(method),
+            requestId: 0);
 
     /// <summary>Starts telemetry for one physical attempt within a logical client call.</summary>
     /// <remarks>
@@ -170,8 +175,17 @@ public static class SharpLinkTelemetry
         return new AttemptScope(activity);
     }
 
-    internal static CallScope StartServerCall(RpcMethodDescriptor method, long requestId)
-        => StartCall(ServerActivitySource, ActivityKind.Server, "server", method, requestId);
+    internal static CallScope StartServerCall(
+        long contractId,
+        long methodId,
+        RpcMethodShape shape,
+        long requestId)
+        => StartCall(
+            ServerActivitySource,
+            ActivityKind.Server,
+            "server",
+            new CallIdentity(contractId, methodId, shape.Kind),
+            requestId);
 
     internal static bool ClientCallsEnabled =>
         ClientActivitySource.HasListeners() || CallMetricsEnabled;
@@ -388,7 +402,7 @@ public static class SharpLinkTelemetry
         ActivitySource source,
         ActivityKind kind,
         string side,
-        RpcMethodDescriptor method,
+        in CallIdentity method,
         long requestId)
     {
         if (!source.HasListeners() && !CallMetricsEnabled)
@@ -450,7 +464,7 @@ public static class SharpLinkTelemetry
         Counter<long> instrument,
         long value,
         string side,
-        RpcMethodDescriptor method,
+        in CallIdentity method,
         SharpLinkErrorCode? status)
     {
         if (!instrument.Enabled)
@@ -470,7 +484,7 @@ public static class SharpLinkTelemetry
         UpDownCounter<long> instrument,
         long value,
         string side,
-        RpcMethodDescriptor method)
+        in CallIdentity method)
     {
         if (!instrument.Enabled)
             return;
@@ -482,10 +496,31 @@ public static class SharpLinkTelemetry
             new KeyValuePair<string, object?>("rpc.sharplink.method_id", method.MethodId));
     }
 
+    /// <summary>
+    /// Carries the three telemetry facts a call scope actually reads. Resolving a full
+    /// <see cref="RpcMethodDescriptor"/> is therefore never required to start server telemetry.
+    /// </summary>
+    internal readonly struct CallIdentity
+    {
+        internal CallIdentity(long contractId, long methodId, RpcMethodKind kind)
+        {
+            ContractId = contractId;
+            MethodId = methodId;
+            Kind = kind;
+        }
+
+        internal long ContractId { get; }
+        internal long MethodId { get; }
+        internal RpcMethodKind Kind { get; }
+
+        internal static CallIdentity FromDescriptor(in RpcMethodDescriptor descriptor)
+            => new(descriptor.ContractId, descriptor.MethodId, descriptor.Kind);
+    }
+
     internal struct CallScope
     {
         private readonly string? _side;
-        private readonly RpcMethodDescriptor _method;
+        private readonly CallIdentity _method;
         private readonly Activity? _activity;
         private readonly long _started;
         private bool _completed;
@@ -493,6 +528,15 @@ public static class SharpLinkTelemetry
         internal CallScope(
             string side,
             RpcMethodDescriptor method,
+            Activity? activity,
+            long started)
+            : this(side, CallIdentity.FromDescriptor(method), activity, started)
+        {
+        }
+
+        internal CallScope(
+            string side,
+            in CallIdentity method,
             Activity? activity,
             long started)
         {

@@ -263,15 +263,16 @@ namespace SharpLink.Abstractions
         var start = manifest.IndexOf(marker, StringComparison.Ordinal);
         if (start < 0)
             throw new Exception("Expected generated method descriptor.");
-        var end = manifest.IndexOf("),", start, StringComparison.Ordinal);
-        if (end < 0)
-            throw new Exception("Expected generated method descriptor terminator.");
-        var quotedLines = manifest[start..end]
-            .Split('\n')
-            .Select(static line => line.Trim())
-            .Where(static line => line.StartsWith("\"", StringComparison.Ordinal))
-            .ToArray();
-        if (quotedLines.Length < 4)
+        var quotedLines = new System.Collections.Generic.List<string>();
+        foreach (var rawLine in manifest[start..].Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.StartsWith("}),", StringComparison.Ordinal))
+                break;
+            if (line.StartsWith("\"", StringComparison.Ordinal))
+                quotedLines.Add(line);
+        }
+        if (quotedLines.Count < 4)
             throw new Exception("Expected generated method fingerprint line.");
         return quotedLines[^1].TrimEnd(',').Trim('"');
     }

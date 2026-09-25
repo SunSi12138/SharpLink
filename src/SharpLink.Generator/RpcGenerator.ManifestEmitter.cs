@@ -175,13 +175,13 @@ public partial class RpcGenerator
             sb.AppendLine($"            \"{contract.Fingerprint}\",");
             sb.AppendLine("            Array.AsReadOnly(new SharpLinkGeneratedMethodDescriptor[]");
             sb.AppendLine("            {");
+            var (_, timeoutOrdinals) = BuildMethodTimeoutTable(contract.Methods);
             foreach (var method in contract.Methods.OrderBy(static method => method.Hash))
             {
                 sb.AppendLine("                new SharpLinkGeneratedMethodDescriptor(");
                 sb.AppendLine($"                    \"{EscapeString(method.Name)}\",");
                 sb.AppendLine($"                    {method.Hash}L,");
-                sb.AppendLine($"                    RpcMethodKind.{GetMethodKind(method)},");
-                sb.AppendLine($"                    {(method.HasCancellationToken || method.IsStreamReturn || method.Parameters.Any(static parameter => parameter.IsStream) ? "true" : "false")},");
+                sb.AppendLine($"                    new RpcMethodShape(0x{GetPackedMethodShape(method, timeoutOrdinals):x8}u),");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
                 sb.AppendLine($"                    \"{method.Fingerprint}\"),");

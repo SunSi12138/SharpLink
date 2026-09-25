@@ -88,7 +88,9 @@ public interface ISharpLinkClientInterceptor
 public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnapshot
 {
     internal SharpLinkServerInvocationContext(
-        RpcMethodDescriptor method,
+        IRpcStub? stub,
+        long methodId,
+        RpcMethodShape shape,
         long requestId,
         string connectionId,
         EndPoint? localEndPoint,
@@ -102,12 +104,19 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
         : base(connectionId, authentication, deadline, deadlineTimeProvider, metadata)
     {
         InterceptorGeneration = interceptorGeneration;
-        Method = method;
+        _stub = stub;
+        _methodId = methodId;
+        _shape = shape;
         RequestId = requestId;
         LocalEndPoint = localEndPoint;
         RemoteEndPoint = remoteEndPoint;
         CancellationToken = cancellationToken;
     }
+
+    private readonly IRpcStub? _stub;
+    private readonly long _methodId;
+    private readonly RpcMethodShape _shape;
+    private RpcMethodDescriptor? _projectedMethod;
 
     internal object? InterceptorGeneration { get; }
     internal bool InterceptorTerminalReached { get; set; }
@@ -120,8 +129,30 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
     internal TimeProvider? InterceptorTimeProvider { get; set; }
     internal long InterceptorStarted { get; set; }
 
-    /// <summary>Gets generated method metadata.</summary>
-    public RpcMethodDescriptor Method { get; }
+    /// <summary>Gets the packed generated method facts resolved once for this call.</summary>
+    public RpcMethodShape Shape => _shape;
+
+    /// <summary>
+    /// Gets generated method metadata, projected from <see cref="Shape"/> on first read so that
+    /// interceptors which only need the packed facts never materialize a descriptor.
+    /// </summary>
+    public RpcMethodDescriptor Method
+    {
+        get
+        {
+            if (_projectedMethod is { } cached)
+                return cached;
+
+            RpcMethodDescriptor descriptor;
+            if (_stub is null)
+                descriptor = RpcMethodDescriptor.FromShape(0, _methodId, _shape);
+            else
+                _stub.DescribeMethod(_methodId, _shape, out descriptor);
+
+            _projectedMethod = descriptor;
+            return descriptor;
+        }
+    }
     /// <summary>Gets the request identifier.</summary>
     public long RequestId { get; }
     /// <summary>Gets the transport connection identifier.</summary>

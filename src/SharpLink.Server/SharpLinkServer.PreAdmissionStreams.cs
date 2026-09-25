@@ -198,13 +198,15 @@ internal sealed partial class SharpLinkServer
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out long contractId) ||
             !reader.TryReadLittleEndian(out long methodId) ||
-            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration) ||
-            !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
+            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration))
         {
             return UnresolvedClientStreamCount;
         }
 
-        return descriptor.ClientStreamCount;
+        // A rejected OneWay request needs an exact stream count to drain the peer's receive credit;
+        // anything the stub cannot describe keeps the connection-terminating sentinel.
+        var shape = registration.Stub.ResolveMethodShape(methodId);
+        return shape.IsKnown ? shape.ClientStreamCount : UnresolvedClientStreamCount;
     }
 
     private static void CompleteFailedRequestStreams(
@@ -224,6 +226,16 @@ internal sealed partial class SharpLinkServer
             return;
 
         session.StreamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
+    }
+
+    private static ValueTask TerminateUnresolvableOneWayRequest(
+        RpcSession session,
+        long requestId)
+    {
+        session.NotifyDisconnected(new SharpLinkException(
+            SharpLinkErrorCode.ConnectionClosed,
+            $"OneWay request {requestId} could not resolve its service or method registration; closing the connection because its client-stream shape is unknown."));
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -329,4 +341,5 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
             _retainedPermit?.Dispose();
         }
     }
+
 }
