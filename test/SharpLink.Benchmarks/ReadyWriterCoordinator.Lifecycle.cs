@@ -23,12 +23,18 @@ internal sealed partial class ReadyWriterCoordinator
 
     // Lifecycle commands are cold and independently owned even when results are held.
     // Unlike wire updates, they allocate. No lifecycle allocation is hidden in B/item.
-    private sealed class WriterOperation<T>(Func<T> execute) : IWriterOperation
+    private sealed class WriterOperation<T>(ReadyWriterCoordinator owner, Func<T> execute) : IWriterOperation
     {
         internal readonly TaskCompletionSource<T> Result = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public void Execute()
         {
-            try { Result.TrySetResult(execute()); }
+            try
+            {
+                // Reap canceled registration before a cold owner operation observes
+                // state. DATA selection and ordinary wire updates do not pay for this.
+                owner.ServiceCapacityAdmission();
+                Result.TrySetResult(execute());
+            }
             catch (Exception error) { Result.TrySetException(error); }
         }
         public void Fail(Exception error) => Result.TrySetException(error);
@@ -41,7 +47,7 @@ internal sealed partial class ReadyWriterCoordinator
 
     private async Task<T> OnWriterAsync<T>(Func<T> action)
     {
-        var operation = new WriterOperation<T>(action);
+        var operation = new WriterOperation<T>(this, action);
         await _updates.Writer.WriteAsync(new WriterEvent(default, operation), _stopToken).ConfigureAwait(false);
         Interlocked.Increment(ref _updatesPending);
         _session.SignalReadyWriterExperiment();

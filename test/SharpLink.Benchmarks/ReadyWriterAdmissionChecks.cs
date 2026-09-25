@@ -197,5 +197,108 @@ internal sealed partial class ReadyWriterCoordinator
     }
 
     private static async Task Capture(Func<ValueTask> action) => await action();
+
+    internal static async Task<int> RunAdmissionOrderingChecksAsync()
+    {
+        string[] scenarios = ["canceled-before-delivery", "canceled-before-retirement", "canceled-live-limit", "canceled-before-observer"];
+        var failures = new List<Exception>();
+        foreach (var scenario in scenarios)
+        {
+            try
+            {
+                await CheckAdmissionOrderingAsync(scenario).WaitAsync(TimeSpan.FromSeconds(10));
+                Console.WriteLine($"PASS admission-order/{scenario}");
+            }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine($"FAIL admission-order/{scenario}: {error}");
+                failures.Add(error);
+            }
+        }
+        if (failures.Count != 0) throw new AggregateException("Registration cancellation ordering failed.", failures);
+        return scenarios.Length;
+    }
+
+    private static async Task CheckAdmissionOrderingAsync(string scenario)
+    {
+        await using var fixture = await LifecycleFixture.CreateAsync(1);
+        var owner = fixture.Owner;
+        var state = owner._streams[0];
+        var first = new StreamHandle(owner, 0, 1);
+        using var cancel = new CancellationTokenSource();
+        if (scenario == "canceled-before-delivery")
+            await fixture.CloseAsync(first);
+        else if (scenario != "canceled-live-limit")
+        {
+            var frame = await fixture.TakeAsync(first, 1, 1);
+            fixture.Release(frame);
+            await fixture.CloseAsync(first);
+        }
+
+        var pending = owner.AcquireStreamAsync(2, 1, cancel.Token);
+        if (scenario is "canceled-before-retirement" or "canceled-before-observer")
+        {
+            owner.DrainNotifications();
+            RequireWire(owner._pendingAdmission is not null && !pending.IsCompleted,
+                "The fixture must first park behind a real retained lifetime.");
+        }
+        if (scenario == "canceled-before-observer")
+        {
+            cancel.Cancel();
+            await ExpectAdmissionCanceledAsync(pending, cancel.Token);
+            // A cold command is an owner observation boundary. It must not see a
+            // canceled request occupying the sole registration wait slot.
+            var observed = owner.OnWriterAsync(() => owner._pendingAdmission is null);
+            owner.DrainNotifications();
+            RequireWire(await observed, "Canceled admission must be reaped before the next owner operation observes state.");
+            RequireWire(state.Generation == 1 && state.Outstanding == 16 && owner._identities.Count == 1,
+                "Reaping registration must not release the retained DATA lifetime.");
+            return;
+        }
+
+        // Cancel marks the original token before running callbacks, in LIFO order.
+        // This later callback delays forwarding to the linked request token. The
+        // writer must observe the original token rather than wait for that callback.
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var blocker = cancel.Token.UnsafeRegister(_ =>
+        {
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(8)))
+                throw new TimeoutException("Cancellation-order fixture was not released.");
+        }, null);
+        var cancellation = Task.Run(cancel.Cancel);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            RequireWire(cancel.IsCancellationRequested && !pending.IsCompleted,
+                "The original token must be canceled while its forwarding callback is held.");
+            if (scenario == "canceled-before-retirement")
+                await fixture.UpdateAsync(1, 1, 16);
+            else
+                owner.DrainNotifications();
+            await ExpectAdmissionCanceledAsync(pending, cancel.Token);
+            RequireWire(state.Generation == 1 && owner._pendingAdmission is null,
+                "Cancellation observed before claim cannot grant or retain an unobserved generation.");
+            if (scenario == "canceled-live-limit")
+            {
+                RequireWire(owner._identities.Count == 1 && !state.Retired && state.RequestId == 1,
+                    "Canceled registration cannot mutate the existing live identity.");
+            }
+            else
+            {
+                RequireWire(state.Retired && owner._identities.Count == 0,
+                    "A canceled request cannot consume the released slot.");
+                var replacement = await fixture.OpenAsync(3, 1);
+                RequireWire(replacement.Generation == 2 && replacement.Slot == first.Slot,
+                    "The successor must receive the same slot without a hidden generation increment.");
+            }
+        }
+        finally
+        {
+            release.Set();
+            await cancellation.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
 }
 #endif

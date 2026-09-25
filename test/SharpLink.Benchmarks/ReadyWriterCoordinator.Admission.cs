@@ -49,15 +49,25 @@ internal sealed partial class ReadyWriterCoordinator
         private int _state;
         internal bool IsWaiting => Volatile.Read(ref _state) == 0;
 
+        internal bool ObserveCancellation()
+        {
+            // The original token is marked before its callbacks run. A blocked
+            // callback may delay forwarding to our linked token; it must not let
+            // this request claim a generation after cancellation was observed.
+            if (token.IsCancellationRequested || owner._stopToken.IsCancellationRequested) Cancel();
+            return IsWaiting;
+        }
+
         public void Execute()
         {
-            if (!IsWaiting) return;
+            if (!ObserveCancellation()) return;
             try { owner.QueueOrAdmit(this); }
             catch (Exception error) { Fail(error); }
         }
 
         internal void Admit()
         {
+            if (!ObserveCancellation()) return;
             if (Interlocked.CompareExchange(ref _state, 1, 0) != 0) return;
             try
             {
@@ -126,7 +136,7 @@ internal sealed partial class ReadyWriterCoordinator
     {
         var pending = _pendingAdmission;
         if (pending is null) return;
-        if (!pending.IsWaiting)
+        if (!pending.ObserveCancellation())
         {
             _pendingAdmission = null;
             return;
