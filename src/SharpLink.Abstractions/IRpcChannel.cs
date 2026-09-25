@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace SharpLink.Abstractions;
 
 /// <summary>Identifies one generated RPC invocation shape.</summary>
@@ -20,6 +22,13 @@ public enum RpcMethodKind : byte
 }
 
 /// <summary>Immutable metadata emitted once for an RPC contract method.</summary>
+/// <remarks>
+/// This type is the observability projection of <see cref="RpcMethodShape"/>: the RPC hot paths
+/// resolve the packed shape and only project a descriptor when a consumer (telemetry listener,
+/// interceptor, retry policy) actually reads it. Its constructor assigns explicit readonly fields
+/// instead of <c>init</c> auto-properties, which keeps the projection off accessor calls and out of
+/// the generated method-fact tables.
+/// </remarks>
 public readonly record struct RpcMethodDescriptor
 {
     private const byte HasResponsePayloadFlag = 1 << 0;
@@ -27,6 +36,13 @@ public readonly record struct RpcMethodDescriptor
     private const byte HasMethodTimeoutFlag = 1 << 2;
     private const byte IsIdempotentFlag = 1 << 3;
     private const byte ResponseNullableFlag = 1 << 4;
+
+    private readonly long _contractId;
+    private readonly long _methodId;
+    private readonly TimeSpan? _methodTimeout;
+    private readonly int _clientStreamCount;
+    private readonly RpcMethodKind _kind;
+    private readonly byte _flags;
 
     /// <summary>Creates metadata for a generated RPC contract method.</summary>
     /// <param name="ContractId">Stable generated contract identifier.</param>
@@ -51,11 +67,11 @@ public readonly record struct RpcMethodDescriptor
         int ClientStreamCount = 0,
         bool ResponseNullable = false)
     {
-        this.ContractId = ContractId;
-        this.MethodId = MethodId;
-        this.Kind = Kind;
-        this.MethodTimeout = MethodTimeout;
-        this.ClientStreamCount = ClientStreamCount;
+        _contractId = ContractId;
+        _methodId = MethodId;
+        _kind = Kind;
+        _methodTimeout = MethodTimeout;
+        _clientStreamCount = ClientStreamCount;
         _flags = (byte)(
             (HasResponsePayload ? HasResponsePayloadFlag : 0) |
             (HasClientStreams ? HasClientStreamsFlag : 0) |
@@ -64,51 +80,68 @@ public readonly record struct RpcMethodDescriptor
             (ResponseNullable ? ResponseNullableFlag : 0));
     }
 
+    /// <summary>
+    /// Projects one already-resolved packed shape into its descriptor form. Kept to four arguments so
+    /// the JIT can inline the projection instead of marshalling the ten-argument constructor.
+    /// </summary>
+    /// <param name="contractId">Stable generated contract identifier.</param>
+    /// <param name="methodId">Stable generated method identifier.</param>
+    /// <param name="shape">The resolved generated method shape.</param>
+    /// <param name="methodTimeout">The declared timeout when the shape declares one.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public RpcMethodDescriptor(
+        long contractId,
+        long methodId,
+        RpcMethodShape shape,
+        TimeSpan? methodTimeout)
+    {
+        _contractId = contractId;
+        _methodId = methodId;
+        _kind = shape.Kind;
+        _methodTimeout = methodTimeout;
+        _clientStreamCount = shape.HasKnownClientStreamCount ? shape.ClientStreamCount : 0;
+        _flags = (byte)(
+            (shape.HasResponsePayload ? HasResponsePayloadFlag : 0) |
+            (shape.HasKnownClientStreamCount && shape.HasClientStreams ? HasClientStreamsFlag : 0) |
+            (shape.HasMethodTimeout ? HasMethodTimeoutFlag : 0) |
+            (shape.IsIdempotent ? IsIdempotentFlag : 0) |
+            (shape.ResponseNullable ? ResponseNullableFlag : 0));
+    }
+
+    /// <summary>Projects one already-resolved packed shape into its descriptor form.</summary>
+    /// <param name="contractId">Stable generated contract identifier.</param>
+    /// <param name="methodId">Stable generated method identifier.</param>
+    /// <param name="shape">The resolved generated method shape.</param>
+    /// <param name="methodTimeout">The declared timeout when the shape declares one.</param>
+    /// <returns>The projected descriptor.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static RpcMethodDescriptor FromShape(
+        long contractId,
+        long methodId,
+        RpcMethodShape shape,
+        TimeSpan? methodTimeout = null)
+        => new(contractId, methodId, shape, methodTimeout);
+
     /// <summary>Gets the stable generated contract identifier.</summary>
-    public long ContractId { get; init; }
+    public long ContractId => _contractId;
     /// <summary>Gets the stable generated method identifier.</summary>
-    public long MethodId { get; init; }
+    public long MethodId => _methodId;
     /// <summary>Gets the explicit method timeout, or <see langword="null"/> to use the client default.</summary>
-    public TimeSpan? MethodTimeout { get; init; }
+    public TimeSpan? MethodTimeout => _methodTimeout;
     /// <summary>Gets the number of client-stream parameters owned by the request.</summary>
-    public int ClientStreamCount { get; init; }
+    public int ClientStreamCount => _clientStreamCount;
     /// <summary>Gets the generated invocation shape.</summary>
-    public RpcMethodKind Kind { get; init; }
+    public RpcMethodKind Kind => _kind;
     /// <summary>Gets whether a successful response contains a business payload.</summary>
-    public bool HasResponsePayload
-    {
-        get => (_flags & HasResponsePayloadFlag) != 0;
-        init => _flags = SetFlag(_flags, HasResponsePayloadFlag, value);
-    }
+    public bool HasResponsePayload => (_flags & HasResponsePayloadFlag) != 0;
     /// <summary>Gets whether the request owns one or more client streams.</summary>
-    public bool HasClientStreams
-    {
-        get => (_flags & HasClientStreamsFlag) != 0;
-        init => _flags = SetFlag(_flags, HasClientStreamsFlag, value);
-    }
+    public bool HasClientStreams => (_flags & HasClientStreamsFlag) != 0;
     /// <summary>Gets whether the contract method declares an explicit timeout.</summary>
-    public bool HasMethodTimeout
-    {
-        get => (_flags & HasMethodTimeoutFlag) != 0;
-        init => _flags = SetFlag(_flags, HasMethodTimeoutFlag, value);
-    }
+    public bool HasMethodTimeout => (_flags & HasMethodTimeoutFlag) != 0;
     /// <summary>Gets whether the contract permits idempotent retry policies.</summary>
-    public bool IsIdempotent
-    {
-        get => (_flags & IsIdempotentFlag) != 0;
-        init => _flags = SetFlag(_flags, IsIdempotentFlag, value);
-    }
+    public bool IsIdempotent => (_flags & IsIdempotentFlag) != 0;
     /// <summary>Gets whether a successful reference-type response may be <see langword="null"/>.</summary>
-    public bool ResponseNullable
-    {
-        get => (_flags & ResponseNullableFlag) != 0;
-        init => _flags = SetFlag(_flags, ResponseNullableFlag, value);
-    }
-
-    private readonly byte _flags;
-
-    private static byte SetFlag(byte flags, byte flag, bool value)
-        => value ? (byte)(flags | flag) : (byte)(flags & ~flag);
+    public bool ResponseNullable => (_flags & ResponseNullableFlag) != 0;
 
     /// <summary>Deconstructs the descriptor without the response-nullability flag.</summary>
     /// <param name="ContractId">Receives the contract identifier.</param>
@@ -131,15 +164,15 @@ public readonly record struct RpcMethodDescriptor
         out bool IsIdempotent,
         out int ClientStreamCount)
     {
-        ContractId = this.ContractId;
-        MethodId = this.MethodId;
-        Kind = this.Kind;
+        ContractId = _contractId;
+        MethodId = _methodId;
+        Kind = _kind;
         HasResponsePayload = this.HasResponsePayload;
         HasClientStreams = this.HasClientStreams;
         HasMethodTimeout = this.HasMethodTimeout;
-        MethodTimeout = this.MethodTimeout;
+        MethodTimeout = _methodTimeout;
         IsIdempotent = this.IsIdempotent;
-        ClientStreamCount = this.ClientStreamCount;
+        ClientStreamCount = _clientStreamCount;
     }
 
     /// <summary>Deconstructs all descriptor values.</summary>

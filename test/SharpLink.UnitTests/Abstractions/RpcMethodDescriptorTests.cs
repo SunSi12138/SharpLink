@@ -24,7 +24,19 @@ public class RpcMethodDescriptorTests
             oldTimeout, idempotent, streamCount) = descriptor;
         descriptor.Deconstruct(
             out _, out _, out _, out _, out _, out _, out _, out _, out _, out var nullable);
-        var changed = descriptor with { ResponseNullable = false, HasClientStreams = false };
+        // RpcMethodDescriptor is no longer an init-only record, so the modified variant is built
+        // through the constructor: both flags false while ClientStreamCount stays 2.
+        var changed = new RpcMethodDescriptor(
+            contractId,
+            methodId,
+            RpcMethodKind.DuplexStreaming,
+            HasResponsePayload: true,
+            HasClientStreams: false,
+            HasMethodTimeout: true,
+            MethodTimeout: timeout,
+            IsIdempotent: true,
+            ClientStreamCount: 2,
+            ResponseNullable: false);
 
         await Assert.That(Unsafe.SizeOf<RpcMethodDescriptor>()).IsLessThanOrEqualTo(48);
         await Assert.That(contractId).IsEqualTo(11);
@@ -34,6 +46,7 @@ public class RpcMethodDescriptorTests
         await Assert.That(oldTimeout).IsEqualTo(timeout);
         await Assert.That(streamCount).IsEqualTo(2);
         await Assert.That(changed.ResponseNullable || changed.HasClientStreams).IsFalse();
+        await Assert.That(changed.ClientStreamCount).IsEqualTo(2);
         await Assert.That(changed.HasResponsePayload && changed.HasMethodTimeout && changed.IsIdempotent).IsTrue();
     }
 }

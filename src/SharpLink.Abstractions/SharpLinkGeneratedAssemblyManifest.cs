@@ -74,8 +74,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
 public sealed record SharpLinkGeneratedMethodDescriptor(
     string Name,
     long MethodId,
-    RpcMethodKind Kind,
-    bool SupportsCancellation,
+    RpcMethodShape Shape,
     string RequestSchema,
     string ResponseSchema,
     string Fingerprint);

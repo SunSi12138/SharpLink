@@ -13,6 +13,34 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
 
+    /// <summary>
+    /// Decodes the packed literals emitted by the generator. The authoritative round-trip test for
+    /// this layout lives in <c>SharpLink.UnitTests</c>; this mirror exists because the generator test
+    /// project intentionally references no production assembly.
+    /// </summary>
+    private const int KindOneWay = 1;
+    private const int KindClientStreaming = 2;
+
+    private static IReadOnlyList<(int Kind, int ClientStreamCount, bool SupportsCancellation)> DecodeGeneratedShapes(
+        string generated)
+    {
+        var shapes = new List<(int, int, bool)>();
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                     generated,
+                     @"new RpcMethodShape\(0x([0-9a-f]{8})u\)"))
+        {
+            var packed = Convert.ToUInt32(match.Groups[1].Value, 16);
+            if ((packed & 0b11u) != 2u)
+                throw new Exception("Every generated shape literal must be a known shape.");
+            shapes.Add((
+                (int)((packed >> 2) & 0b111u),
+                (int)((packed >> 5) & 0b1111u),
+                (packed & (1u << 9)) != 0));
+        }
+
+        return shapes;
+    }
+
     [Test]
     public Task GeneratedApi4ShouldUseLiteralManifestStampAndAbstractionsOnlyServerBridge()
     {
@@ -199,19 +227,22 @@ public sealed class HelloService : IHelloService
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
-        Ensure(allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
-            "streaming stubs must publish framework cancellation support");
-        Ensure(allGenerated.Contains(
-                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1, false)",
-                StringComparison.Ordinal),
-            "single client-stream count must be generated deterministically");
-        Ensure(allGenerated.Contains(
-                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2, false)",
-                StringComparison.Ordinal),
-            "multiple client-stream count must be generated deterministically");
-        var supportsCancellationCases = allGenerated.Split("=> true", StringSplitOptions.None).Length - 1;
-        Ensure(supportsCancellationCases >= 3,
+        Ensure(allGenerated.Contains("public RpcMethodShape ResolveMethodShape(long methodHash)"),
+            "stubs must publish one packed method-fact table");
+        Ensure(!allGenerated.Contains("TryGetMethodDescriptor"),
+            "the legacy per-method descriptor table must not be generated");
+        Ensure(!allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
+            "the duplicate cancellation table must not be generated");
+        var generatedShapes = DecodeGeneratedShapes(allGenerated);
+        Ensure(generatedShapes.Count >= 6, "every declared method must publish a packed shape");
+        Ensure(generatedShapes.Count(static shape => shape.SupportsCancellation) >= 3,
             "client, server, and duplex streaming methods must all support framework cancellation");
+        Ensure(generatedShapes.Count(static shape => shape.ClientStreamCount == 1) >= 2,
+            "single client-stream count must be generated deterministically");
+        Ensure(generatedShapes.Count(static shape => shape.ClientStreamCount == 2) >= 1,
+            "multiple client-stream count must be generated deterministically");
+        Ensure(generatedShapes.Count(static shape => shape.Kind == KindOneWay) >= 1,
+            "OneWay must be generated as its own packed kind");
         return Task.CompletedTask;
     }
 

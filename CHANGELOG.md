@@ -4,7 +4,16 @@
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Server method facts are now resolved once per RPC as one packed value. `IRpcStub` no longer declares `TryGetMethodDescriptor(long, out RpcMethodDescriptor)` or `SupportsCancellation(long)`; it declares `RpcMethodShape ResolveMethodShape(long methodHash)` and `void DescribeMethod(long methodHash, RpcMethodShape shape, out RpcMethodDescriptor descriptor)` instead. Custom `IRpcStub` implementations keep working through the default implementations, which report the conservative `RpcMethodShape.Unresolvable` value, but implementations that described their methods through the removed members must move to `ResolveMethodShape`.
+- `RpcMethodDescriptor` is now an observability projection with explicit readonly fields and no `init` accessors, so `with` expressions and object initializers over it no longer compile. Use the constructor or `RpcMethodDescriptor.FromShape`.
+- `SharpLinkGeneratedMethodDescriptor` carries `RpcMethodShape Shape` instead of `RpcMethodKind Kind` and `bool SupportsCancellation`.
+- `SharpLinkServerInvocationContext` gained `Shape`, and its `Method` property now projects `RpcMethodDescriptor` on first read instead of being supplied by the constructor.
+- Generated stubs no longer publish a per-method descriptor table or a separate cancellation table; both are replaced by one packed `RpcMethodShape` table. The generated ABI version must move from API 4 to API 5 at the 3.0 release boundary so a 2.0-generated assembly is rejected instead of silently treated as unresolvable; that version bump and the public API baseline regeneration are release-boundary actions and are not part of this change.
+
 ### Changed
+
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
 
