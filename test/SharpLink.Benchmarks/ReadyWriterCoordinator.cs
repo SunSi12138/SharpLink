@@ -12,7 +12,7 @@ namespace SharpLink.Benchmarks;
 
 // Research-only bounded producer rings. The SAME rings/pump/flush contract serve
 // A-ready (full existing producer-side controller) and B3-ready (pump-owned credit).
-// This is not a general RPC lifecycle implementation. No stream object is reused.
+// Dynamic lifecycle APIs are owner-ordered research controls, not a full RPC adapter.
 internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
 {
     private readonly RpcSession _session;
@@ -23,8 +23,8 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
     private int _turnStream = -1, _turnRemaining, _lastEmitted = -1, _consecutive, _maxConsecutive;
     private long _writerTurns;
     private readonly Stream[] _streams;
-    private readonly Channel<Stream> _notifications;
-    private readonly Channel<Update> _updates;
+    private readonly Channel<ReadyNotification> _notifications;
+    private readonly Channel<WriterEvent> _updates;
     private readonly LinkedList<Stream> _ready = new();
     private readonly TaskCompletionSource _settled = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private long _connectionCredit, _updatesWritten, _releases, _returned;
@@ -39,8 +39,10 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
     private long _discarded;
 
     internal ReadyWriterCoordinator(RpcSession session, SharpLinkRuntimeContext context, CancellationTokenSource cancel,
-        bool reference, int streams, int items, int bytes, int window, int connectionWindow, int slots, int quantum = 1, int preparedByteBudget = 0)
+        bool reference, int streams, int items, int bytes, int window, int connectionWindow, int slots, int quantum = 1, int preparedByteBudget = 0, bool dynamicLifetimes = false)
     {
+        if (dynamicLifetimes && reference) throw new NotSupportedException("Dynamic lifetimes currently belong to the B3 control.");
+        _dynamicLifetimes = dynamicLifetimes;
         if (preparedByteBudget < 0) throw new ArgumentOutOfRangeException(nameof(preparedByteBudget));
         if (streams < 1 || slots < 1 || slots > 256 || bytes <= 0 || items <= 0 || quantum < 1 || quantum > 64) throw new ArgumentOutOfRangeException(nameof(slots));
         _session = session; _context = context; _cancel = cancel; _window = window; _connectionWindow = connectionWindow;
@@ -48,17 +50,27 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         _stopToken = cancel.Token;
         if (reference) _reference = new StreamFlowController(window, connectionWindow, context.Protocol.MaxFramePayloadBytes, streams);
         _streams = new Stream[streams];
-        for (var i = 0; i < streams; i++) _streams[i] = new Stream(i, slots, window, this, preparedByteBudget);
-        _notifications = Channel.CreateBounded<Stream>(new BoundedChannelOptions(streams)
+        for (var i = 0; i < streams; i++)
+        {
+            var stream = new Stream(i, slots, window, this, preparedByteBudget);
+            _streams[i] = stream;
+            _identities.Add(new StreamIdentity(i + 1, 1), stream);
+        }
+        _notifications = Channel.CreateBounded<ReadyNotification>(new BoundedChannelOptions(streams)
         { SingleReader = true, FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
         _capacityCancellation = _stopToken.UnsafeRegister(static state => ((ReadyWriterCoordinator)state!).CancelCapacityWaits(), this);
-        _updates = Channel.CreateBounded<Update>(new BoundedChannelOptions(checked(streams * 4))
-        { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
+        _updates = Channel.CreateBounded<WriterEvent>(new BoundedChannelOptions(checked(streams * 4))
+        { SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
     }
 
     private sealed class Stream : IValueTaskSource, IReadyFrameCompletion
     {
         internal readonly int Index;
+        internal long Generation = 1, RequestId;
+        internal ushort StreamId = 1;
+        internal bool Closed, Retired, NotificationPending, WireAttached, CleanupFailed;
+        internal bool HasHeldSpace => _spaceActive;
+        internal IReadyFrameCompletion ReleaseTarget;
         private readonly ReadyWriterCoordinator? _completionOwner;
         internal readonly Lock Gate = new();
         internal readonly Queue<IRpcByteBufferWriter> Frames;
@@ -77,13 +89,13 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         internal int Taken, Released;
         internal StreamFlowController.ResolvedSendCreditLease Lease;
         internal Stream(int index, int slots, int window, ReadyWriterCoordinator? completionOwner = null, int preparedByteBudget = 0)
-        { PreparedByteBudget = preparedByteBudget; _completionOwner = completionOwner; Index = index; Frames = new Queue<IRpcByteBufferWriter>(slots); Capacity = slots; Node = new(this); Credit = window; _space.RunContinuationsAsynchronously = true; }
+        { RequestId = index + 1; ReleaseTarget = this; PreparedByteBudget = preparedByteBudget; _completionOwner = completionOwner; Index = index; Frames = new Queue<IRpcByteBufferWriter>(slots); Capacity = slots; Node = new(this); Credit = window; _space.RunContinuationsAsynchronously = true; }
 
         public void Complete(Exception? error)
         {
-            // Called only by the pump, after buffer return. The fixed stream retains
-            // this target for its whole measured lifetime; it is never pool-reused.
-            _completionOwner!.Released(Index, _completionOwner._bytes, admitted: true, error);
+            // This embedded completion belongs ONLY to generation one. Later lifetimes
+            // have immutable epoch targets, so an old callback cannot address new DATA.
+            _completionOwner!.ReleaseGeneration(Index, 1, _completionOwner._bytes, admitted: true, error);
         }
 
         internal bool CanFit(int packetBytes)
@@ -92,14 +104,15 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
 
         internal ValueTask WaitForSpace(CancellationToken token, int packetBytes = 0)
         {
-            lock (Gate)
-            {
-                token.ThrowIfCancellationRequested();
-                if (CanFit(packetBytes)) return ValueTask.CompletedTask;
-                if (_spaceActive) throw new InvalidOperationException("Capacity result is still owned by its consumer.");
-                _space.Reset(); _spaceRequiredBytes = packetBytes; _spaceActive = true; _spaceSignaled = false; CapacityWaits++;
-                return new ValueTask(this, _space.Version);
-            }
+            lock (Gate) return WaitForSpaceLocked(token, packetBytes);
+        }
+        internal ValueTask WaitForSpaceLocked(CancellationToken token, int packetBytes)
+        {
+            token.ThrowIfCancellationRequested();
+            if (CanFit(packetBytes)) return ValueTask.CompletedTask;
+            if (_spaceActive) throw new InvalidOperationException("Capacity result is still owned by its consumer.");
+            _space.Reset(); _spaceRequiredBytes = packetBytes; _spaceActive = true; _spaceSignaled = false; CapacityWaits++;
+            return new ValueTask(this, _space.Version);
         }
         internal void SignalSpace(Exception? error = null)
         {
@@ -116,7 +129,12 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             {
                 if (!_spaceActive || token != _space.Version || _space.GetStatus(token) == ValueTaskSourceStatus.Pending)
                     throw new InvalidOperationException("Invalid capacity result consumption.");
-                try { _space.GetResult(token); } finally { _spaceActive = false; }
+                try { _space.GetResult(token); }
+                finally
+                {
+                    _spaceActive = false;
+                    if (Closed) _completionOwner?.RequestRetirement();
+                }
             }
         }
         public ValueTaskSourceStatus GetStatus(short token)
@@ -142,26 +160,42 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
 
     // Packet ownership transfers on entry, including cancellation/failure. Serialization
     // and arbitrary outbound extensions are completed by the caller BEFORE this entry.
+    // Legacy control callers refer to the original lifetime, never a newly reused slot.
+    internal ValueTask EnqueueAsync(int index, IRpcByteBufferWriter packet)
+        => EnqueueAsync(new StreamHandle(this, index, 1), packet);
+
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
-    internal async ValueTask EnqueueAsync(int index, IRpcByteBufferWriter packet)
+    internal async ValueTask EnqueueAsync(StreamHandle handle, IRpcByteBufferWriter packet)
     {
-        var stream = _streams[index];
-        if (Interlocked.Exchange(ref stream.ProducerBusy, 1) != 0)
-        { _context.Buffers.Return(packet); throw new InvalidOperationException("Only one producer per stream is supported by this control."); }
-        var debited = false; var transferred = false;
+        Stream? stream = null;
+        var debited = false; var transferred = false; var ownsProducer = false;
         try
         {
-            await stream.WaitForSpace(_stopToken, packet.WrittenCount).ConfigureAwait(false);
+            if (!ReferenceEquals(handle.Owner, this) || (uint)handle.Slot >= (uint)_streams.Length)
+                throw new InvalidOperationException("Foreign or invalid stream handle.");
+            stream = _streams[handle.Slot];
+            ValueTask capacity;
+            lock (stream.Gate)
+            {
+                ValidateHandle(handle, stream);
+                if (stream.Closed) throw new InvalidOperationException("Closed stream.");
+                if (stream.ProducerBusy != 0) throw new InvalidOperationException("Only one producer per stream is supported by this control.");
+                stream.ProducerBusy = 1; ownsProducer = true;
+                capacity = stream.WaitForSpaceLocked(_stopToken, packet.WrittenCount);
+            }
+            await capacity.ConfigureAwait(false);
             if (_reference is not null)
             {
                 if (stream.Lease.IsResolved) await _reference.AcquireSendCreditAsync(in stream.Lease, _bytes, _stopToken).ConfigureAwait(false);
-                else stream.Lease = await _reference.AcquireSendCreditLeaseAsync(index + 1, 1, _bytes, _stopToken).ConfigureAwait(false);
+                else stream.Lease = await _reference.AcquireSendCreditLeaseAsync(stream.RequestId, stream.StreamId, _bytes, _stopToken).ConfigureAwait(false);
                 debited = true;
             }
             var notify = false;
             lock (stream.Gate)
             {
                 _stopToken.ThrowIfCancellationRequested();
+                ValidateHandle(handle, stream);
+                if (stream.Closed) throw new InvalidOperationException("Closed stream.");
                 if (Volatile.Read(ref _stopped) != 0) throw new InvalidOperationException("Ready writer stopped.");
                 if (!stream.CanFit(packet.WrittenCount)) throw new InvalidOperationException("Producer ring count/byte bound exceeded.");
                 stream.Frames.Enqueue(packet); transferred = true;
@@ -169,13 +203,13 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                 stream.MaximumPacketBytes = Math.Max(stream.MaximumPacketBytes, packet.WrittenCount);
                 stream.MaximumQueuedBytes = Math.Max(stream.MaximumQueuedBytes, stream.QueuedBytes);
                 stream.MaxDepth = Math.Max(stream.MaxDepth, stream.Frames.Count);
-                if (!stream.Scheduled) { stream.Scheduled = true; stream.ReadyEvents++; notify = true; }
+                if (!stream.Scheduled) { stream.Scheduled = true; stream.NotificationPending = true; stream.ReadyEvents++; notify = true; }
             }
             if (notify)
             {
                 // One outstanding notification/node per stream, so this bounded queue
                 // cannot overflow from producer activity. A violation is a failed run.
-                if (!_notifications.Writer.TryWrite(stream)) throw new InvalidOperationException("Duplicate or lost ready notification.");
+                if (!_notifications.Writer.TryWrite(new ReadyNotification(stream, handle.Generation))) throw new InvalidOperationException("Duplicate or lost ready notification.");
                 // Publish queue contents before the hint. The single reader consumes
                 // only counted messages; a late hint always signals after publication.
                 Interlocked.Increment(ref _notificationsPending);
@@ -186,20 +220,27 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         {
             if (!transferred)
             {
-                if (debited) _reference!.ReturnUnsentCredit(in stream.Lease, _bytes);
+                if (debited) _reference!.ReturnUnsentCredit(in stream!.Lease, _bytes);
                 _context.Buffers.Return(packet);
 
             }
             throw;
         }
-        finally { Volatile.Write(ref stream.ProducerBusy, 0); }
+        finally
+        {
+            if (ownsProducer)
+            {
+                Volatile.Write(ref stream!.ProducerBusy, 0);
+                if (Volatile.Read(ref stream.Closed)) RequestRetirement();
+            }
+        }
     }
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     internal async ValueTask EnqueueUpdateAsync(long requestId, ushort streamId, int bytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
-        await _updates.Writer.WriteAsync(new Update(requestId, streamId, bytes), _stopToken).ConfigureAwait(false);
+        await _updates.Writer.WriteAsync(new WriterEvent(new Update(requestId, streamId, bytes), null), _stopToken).ConfigureAwait(false);
         _updatesWritten++; // The transport has exactly one sequential credit reader.
         Interlocked.Increment(ref _updatesPending);
         _session.SignalReadyWriterExperiment();
@@ -207,17 +248,25 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
 
     // The following methods, including all B3 credit reads/writes, are owner-only.
     public bool HasWork => !_stopToken.IsCancellationRequested && Volatile.Read(ref _stopped) == 0 &&
-        (Volatile.Read(ref _notificationsPending) != 0 || Volatile.Read(ref _updatesPending) != 0 || (!_blocked && _ready.Count != 0));
+        (Volatile.Read(ref _retirementRequested) != 0 || Volatile.Read(ref _notificationsPending) != 0 ||
+            Volatile.Read(ref _updatesPending) != 0 || (!_blocked && _ready.Count != 0));
 
     private void DrainNotifications()
     {
         while (Volatile.Read(ref _notificationsPending) != 0)
         {
             _channelReadCalls++;
-            if (!_notifications.Reader.TryRead(out var stream)) throw new InvalidOperationException("Published ready count has no message.");
+            if (!_notifications.Reader.TryRead(out var notification)) throw new InvalidOperationException("Published ready count has no message.");
             Interlocked.Decrement(ref _notificationsPending);
-            if (stream.Node.List is not null) throw new InvalidOperationException("A stream was scheduled twice.");
-            _ready.AddLast(stream.Node); _blocked = false;
+            var stream = notification.Stream;
+            lock (stream.Gate)
+            {
+                if (stream.Generation != notification.Generation || stream.Retired) { _staleEvents++; continue; }
+                stream.NotificationPending = false;
+                if (stream.Closed) { stream.Scheduled = false; TryRetireStream(stream); continue; }
+                if (stream.Node.List is not null) throw new InvalidOperationException("A stream was scheduled twice.");
+                _ready.AddLast(stream.Node); _blocked = false;
+            }
         }
         var count = 0;
         while (count++ < 256 && Volatile.Read(ref _updatesPending) != 0)
@@ -225,8 +274,11 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             _channelReadCalls++;
             if (!_updates.Reader.TryRead(out var update)) throw new InvalidOperationException("Published credit count has no message.");
             Interlocked.Decrement(ref _updatesPending);
-            ApplyWireUpdate(update);
+            if (update.Operation is { } operation) operation.Execute();
+            else ApplyWireUpdate(update.Update);
         }
+        if (Volatile.Read(ref _retirementRequested) != 0 && Interlocked.Exchange(ref _retirementRequested, 0) != 0)
+            foreach (var stream in _streams) TryRetireStream(stream);
         CheckSettled();
     }
 
@@ -254,7 +306,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                 // already removed belongs to the writer; a canceled queued head may not
                 // acquire budget or credit after the cleanup has won this boundary.
                 if (_stopToken.IsCancellationRequested || Volatile.Read(ref _stopped) != 0) return false;
-                if (stream.Frames.Count == 0)
+                if (stream.Closed || stream.Frames.Count == 0)
                 {
                     stream.Scheduled = false; _ready.Remove(node); node = next; continue;
                 }
@@ -272,6 +324,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                 if (_reference is null)
                 {
                     stream.Credit -= _bytes; _connectionCredit -= _bytes;
+                    stream.WireAttached = true;
                     _creditDebits++;
                 }
                 var packet = stream.Frames.Dequeue(); stream.QueuedBytes -= packet.WrittenCount; stream.Taken++;
@@ -291,7 +344,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                 _consecutive = _lastEmitted == stream.Index ? _consecutive + 1 : 1;
                 _lastEmitted = stream.Index; _maxConsecutive = Math.Max(_maxConsecutive, _consecutive);
                 stream.SignalSpace();
-                frame = new ReadyStreamFrame(packet, stream.Index, _bytes, stream);
+                frame = new ReadyStreamFrame(packet, stream.Index, _bytes, stream.ReleaseTarget);
                 return true;
             }
         }
@@ -304,10 +357,14 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
 
     // No-throw pump completion callback; a failure is published to the joined task.
     public void Released(int slot, int creditBytes, bool admitted, Exception? error)
+        => ReleaseGeneration(slot, 1, creditBytes, admitted, error);
+
+    private void ReleaseGeneration(int slot, long generation, int creditBytes, bool admitted, Exception? error)
     {
         try
         {
             var stream = _streams[slot];
+            if (stream.Generation != generation || stream.Retired) { _staleEvents++; return; }
             if (creditBytes != _bytes || stream.Released >= stream.Taken) throw new InvalidOperationException("Invalid or duplicate settlement.");
             if (!admitted)
             {
@@ -316,6 +373,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             }
             stream.Released++; _releases++;
             if (error is not null) _settled.TrySetException(error);
+            TryRetireStream(stream);
             CheckSettled();
         }
         catch (Exception failure) { _settled.TrySetException(failure); }
@@ -323,6 +381,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
 
     private void CheckSettled()
     {
+        if (_dynamicLifetimes) return; // A dynamic caller joins explicit close operations, not a fixed item total.
         var total = checked((long)_streams.Length * _items);
         if (_releases != total || _returned != total * _bytes) return;
         if (_reference is null)

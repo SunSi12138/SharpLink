@@ -10,13 +10,12 @@ internal sealed partial class ReadyWriterCoordinator
     private void ApplyWireUpdate(Update update)
     {
         _wireCreditBytesObserved = checked(_wireCreditBytesObserved + update.Bytes);
-        if (update.StreamId != 1 || update.RequestId < 1 || update.RequestId > _streams.Length)
+        if (!_identities.TryGetValue(new StreamIdentity(update.RequestId, update.StreamId), out var target))
         {
             _ignoredWireUpdates++;
             return;
         }
-        var target = _streams[checked((int)update.RequestId - 1)];
-        if (_reference is null && target.Taken == 0)
+        if (_reference is null && !target.WireAttached)
         {
             // Fixed slots are not send-state admission. Like the original controller,
             // a key with no first admission cannot manufacture connection permission.
@@ -40,6 +39,8 @@ internal sealed partial class ReadyWriterCoordinator
         target.Outstanding -= returned;
         _returned = checked(_returned + returned);
         _excessWireCreditBytes = checked(_excessWireCreditBytes + update.Bytes - returned);
+        if (target.Closed && target.Credit == _window) target.WireAttached = false;
+        TryRetireStream(target);
         _blocked = false;
     }
 
