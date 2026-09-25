@@ -65,15 +65,16 @@ AOT_HOST_PUBLISH="$AOT_HOST_ROOT/native-aot"
 dotnet build "$BENCHMARK_PROJECT" -c Release -v minimal   > "$OUTPUT_ROOT/benchmark-build.log"
 python3 eng/client-call-shape-defolding.py generated-inventory   test/SharpLink.Benchmarks/obj/Generated   "$OUTPUT_ROOT/generated-code-inventory.json"
 
-dotnet build "$AOT_HOST_PROJECT" -c Release -v minimal   > "$AOT_HOST_ROOT-jit-build.log"
-dotnet restore "$AOT_HOST_PROJECT"   -r linux-x64 -p:PublishAot=true -v minimal   > "$AOT_HOST_ROOT-aot-restore.log"
-mkdir -p "$AOT_HOST_PUBLISH"
-/usr/bin/time -f '%e' -o "$AOT_HOST_ROOT-aot-build-seconds.txt"   dotnet publish "$AOT_HOST_PROJECT"     -c Release -r linux-x64 -p:PublishAot=true --no-restore     -o "$AOT_HOST_PUBLISH" -v minimal     > "$AOT_HOST_ROOT-aot-build.log"
-stat -c '%s' "$AOT_HOST_PUBLISH/SharpLink.CallShapeAotEvidence"   > "$AOT_HOST_ROOT-aot-image-bytes.txt"
-
 INSPECTOR="$OUTPUT_ROOT/inspector"
 python3 eng/client-call-shape-defolding.py generate-inspector "$INSPECTOR"
 dotnet build "$INSPECTOR/Inspector.csproj" -c Release -v minimal -o "$INSPECTOR/bin"   > "$INSPECTOR/build.log"
+dotnet "$INSPECTOR/bin/Inspector.dll"   --client-entrypoints   test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll   "$OUTPUT_ROOT/generated-client-instantiations.json"
+
+dotnet build "$AOT_HOST_PROJECT" -c Release -v minimal   > "$AOT_HOST_ROOT-jit-build.log"
+dotnet restore "$AOT_HOST_PROJECT"   -r linux-x64 -p:PublishAot=true -v minimal   > "$AOT_HOST_ROOT-aot-restore.log"
+mkdir -p "$AOT_HOST_PUBLISH"
+/usr/bin/time -f '%e' -o "$AOT_HOST_ROOT-aot-build-seconds.txt"   dotnet publish "$AOT_HOST_PROJECT"     -c Release -r linux-x64 -p:PublishAot=true     -o "$AOT_HOST_PUBLISH" -v minimal     > "$AOT_HOST_ROOT-aot-build.log"
+stat -c '%s' "$AOT_HOST_PUBLISH/SharpLink.CallShapeAotEvidence"   > "$AOT_HOST_ROOT-aot-image-bytes.txt"
 
 for variant in A B C D; do
   directory="$OUTPUT_ROOT/probe/$variant"
@@ -100,7 +101,7 @@ for variant in A B C D; do
 
   dotnet restore "$directory/ShapeProbe.csproj"     -r linux-x64 -p:PublishAot=true -v minimal     > "$directory/aot-restore.log"
 
-  /usr/bin/time -f '%e' -o "$directory/aot-build-seconds.txt"     dotnet publish "$directory/ShapeProbe.csproj"       -c Release -r linux-x64 -p:PublishAot=true --no-restore       -o "$directory/aot" -v minimal       > "$directory/aot-build.log"
+  /usr/bin/time -f '%e' -o "$directory/aot-build-seconds.txt"     dotnet publish "$directory/ShapeProbe.csproj"       -c Release -r linux-x64 -p:PublishAot=true       -o "$directory/aot" -v minimal       > "$directory/aot-build.log"
 
   "$directory/aot/ShapeProbe"     "$AOT_PROBE_ITERATIONS" "$directory/aot-run.json"     > "$directory/aot-run.stdout"
 done
