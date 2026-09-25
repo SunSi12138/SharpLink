@@ -34,6 +34,8 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
     private bool _blocked;
     private int _stopped;
     private readonly CancellationTokenRegistration _capacityCancellation;
+    private readonly CancellationToken _stopToken;
+    private Exception? _preparationCleanupFailure;
     private long _discarded;
 
     internal ReadyWriterCoordinator(RpcSession session, SharpLinkRuntimeContext context, CancellationTokenSource cancel,
@@ -43,12 +45,13 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         if (streams < 1 || slots < 1 || slots > 256 || bytes <= 0 || items <= 0 || quantum < 1 || quantum > 64) throw new ArgumentOutOfRangeException(nameof(slots));
         _session = session; _context = context; _cancel = cancel; _window = window; _connectionWindow = connectionWindow;
         _items = items; _bytes = bytes; _connectionCredit = connectionWindow; _quantum = quantum;
+        _stopToken = cancel.Token;
         if (reference) _reference = new StreamFlowController(window, connectionWindow, context.Protocol.MaxFramePayloadBytes, streams);
         _streams = new Stream[streams];
         for (var i = 0; i < streams; i++) _streams[i] = new Stream(i, slots, window, this, preparedByteBudget);
         _notifications = Channel.CreateBounded<Stream>(new BoundedChannelOptions(streams)
         { SingleReader = true, FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
-        _capacityCancellation = cancel.Token.UnsafeRegister(static state => ((ReadyWriterCoordinator)state!).CancelCapacityWaits(), this);
+        _capacityCancellation = _stopToken.UnsafeRegister(static state => ((ReadyWriterCoordinator)state!).CancelCapacityWaits(), this);
         _updates = Channel.CreateBounded<Update>(new BoundedChannelOptions(checked(streams * 4))
         { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
     }
@@ -133,10 +136,6 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             }
         }
     }
-    private void CancelCapacityWaits()
-    {
-        foreach (var stream in _streams) stream.SignalSpace(new OperationCanceledException(_cancel.Token));
-    }
     private readonly record struct Update(long RequestId, ushort StreamId, int Bytes);
     internal Task Completion => _settled.Task;
     internal void Attach() => _session.AttachReadyWriterExperiment(this);
@@ -152,17 +151,17 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         var debited = false; var transferred = false;
         try
         {
-            await stream.WaitForSpace(_cancel.Token, packet.WrittenCount).ConfigureAwait(false);
+            await stream.WaitForSpace(_stopToken, packet.WrittenCount).ConfigureAwait(false);
             if (_reference is not null)
             {
-                if (stream.Lease.IsResolved) await _reference.AcquireSendCreditAsync(in stream.Lease, _bytes, _cancel.Token).ConfigureAwait(false);
-                else stream.Lease = await _reference.AcquireSendCreditLeaseAsync(index + 1, 1, _bytes, _cancel.Token).ConfigureAwait(false);
+                if (stream.Lease.IsResolved) await _reference.AcquireSendCreditAsync(in stream.Lease, _bytes, _stopToken).ConfigureAwait(false);
+                else stream.Lease = await _reference.AcquireSendCreditLeaseAsync(index + 1, 1, _bytes, _stopToken).ConfigureAwait(false);
                 debited = true;
             }
             var notify = false;
             lock (stream.Gate)
             {
-                _cancel.Token.ThrowIfCancellationRequested();
+                _stopToken.ThrowIfCancellationRequested();
                 if (Volatile.Read(ref _stopped) != 0) throw new InvalidOperationException("Ready writer stopped.");
                 if (!stream.CanFit(packet.WrittenCount)) throw new InvalidOperationException("Producer ring count/byte bound exceeded.");
                 stream.Frames.Enqueue(packet); transferred = true;
@@ -200,14 +199,15 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
     internal async ValueTask EnqueueUpdateAsync(long requestId, ushort streamId, int bytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
-        await _updates.Writer.WriteAsync(new Update(requestId, streamId, bytes), _cancel.Token).ConfigureAwait(false);
+        await _updates.Writer.WriteAsync(new Update(requestId, streamId, bytes), _stopToken).ConfigureAwait(false);
         _updatesWritten++; // The transport has exactly one sequential credit reader.
         Interlocked.Increment(ref _updatesPending);
         _session.SignalReadyWriterExperiment();
     }
 
     // The following methods, including all B3 credit reads/writes, are owner-only.
-    public bool HasWork => Volatile.Read(ref _notificationsPending) != 0 || Volatile.Read(ref _updatesPending) != 0 || (!_blocked && _ready.Count != 0);
+    public bool HasWork => !_stopToken.IsCancellationRequested && Volatile.Read(ref _stopped) == 0 &&
+        (Volatile.Read(ref _notificationsPending) != 0 || Volatile.Read(ref _updatesPending) != 0 || (!_blocked && _ready.Count != 0));
 
     private void DrainNotifications()
     {
@@ -257,7 +257,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
     public bool TryTake(IReadyFrameAdmission admission, out ReadyStreamFrame frame)
     {
         frame = default;
-        if (Volatile.Read(ref _stopped) != 0) return false;
+        if (_stopToken.IsCancellationRequested || Volatile.Read(ref _stopped) != 0) return false;
         DrainNotifications();
         var node = _ready.First;
         while (node is not null)
@@ -265,6 +265,10 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             var next = node.Next; var stream = node.Value;
             lock (stream.Gate)
             {
+                // Cancellation cleans the same prepared ring under this gate. A frame
+                // already removed belongs to the writer; a canceled queued head may not
+                // acquire budget or credit after the cleanup has won this boundary.
+                if (_stopToken.IsCancellationRequested || Volatile.Read(ref _stopped) != 0) return false;
                 if (stream.Frames.Count == 0)
                 {
                     stream.Scheduled = false; _ready.Remove(node); node = next; continue;
@@ -346,52 +350,11 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         _settled.TrySetResult();
     }
 
-    public void Stopped(Exception error)
-    {
-        if (Interlocked.Exchange(ref _stopped, 1) != 0) return;
-        List<Exception>? failures = null;
-        void Record(Exception failure) => (failures ??= [error]).Add(failure);
-
-        _notifications.Writer.TryComplete(error);
-        _updates.Writer.TryComplete(error);
-        // Cancel invokes arbitrary registered callbacks. A callback failure must not
-        // skip returning prepared buffers or refunding the reference's queued debits.
-        try { _cancel.Cancel(); }
-        catch (Exception failure) { Record(failure); }
-
-        foreach (var stream in _streams)
-        {
-            lock (stream.Gate)
-            {
-                while (stream.Frames.TryDequeue(out var packet))
-                {
-                    stream.QueuedBytes -= packet.WrittenCount;
-                    try { _context.Buffers.Return(packet); _discarded++; }
-                    catch (Exception failure) { Record(failure); }
-                    // This frame never transferred to the writer. An earlier admitted
-                    // frame is absent from Frames and cannot be refunded by stop.
-                    if (_reference is not null)
-                    {
-                        try { _reference.ReturnUnsentCredit(in stream.Lease, _bytes); }
-                        catch (Exception failure) { Record(failure); }
-                    }
-                }
-                // Also wake a producer if its cancellation source was already disposed
-                // or a caller-supplied callback failed. Single-consumption is unchanged.
-                try { stream.SignalSpace(error); }
-                catch (Exception failure) { Record(failure); }
-            }
-        }
-        // Unregister outside stream locks; Dispose may wait for a running callback.
-        try { _capacityCancellation.Dispose(); }
-        catch (Exception failure) { Record(failure); }
-        _settled.TrySetException(failures is null
-            ? error : new AggregateException("Ready writer stop and cleanup failed.", failures));
-    }
-
     internal Dictionary<string, long> Metrics() => new()
     {
-        ["SchedulingQuantum"] = _quantum, ["WriterTurns"] = _writerTurns, ["MaxConsecutiveFrames"] = _maxConsecutive,
+        ["SchedulingQuantum"] = _quantum,
+        ["WriterTurns"] = _writerTurns,
+        ["MaxConsecutiveFrames"] = _maxConsecutive,
         ["RingCapacityWaits"] = System.Linq.Enumerable.Sum(_streams, x => x.CapacityWaits),
         ["MaximumRingDepth"] = System.Linq.Enumerable.Max(_streams, x => x.MaxDepth),
         ["RingSlotsPerStream"] = _streams[0].Capacity,
@@ -403,10 +366,14 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         ["RemainingQueuedBytes"] = System.Linq.Enumerable.Sum(_streams, x => x.QueuedBytes),
         ["UnadmittedBuffersReturnedOnStop"] = _discarded,
         ["ReadyNotifications"] = System.Linq.Enumerable.Sum(_streams, x => x.ReadyEvents),
-        ["EventChannelReadCalls"] = _channelReadCalls, ["WireUpdateNotifications"] = _updatesWritten,
-        ["FramesReleased"] = _releases, ["CreditBytesApplied"] = _returned,
-        ["PumpOwnedCreditDebits"] = _creditDebits, ["SelectionChecks"] = _selectionChecks,
-        ["StreamBlockedChecks"] = _streamBlocked, ["ConnectionBlockedChecks"] = _connectionBlocked,
+        ["EventChannelReadCalls"] = _channelReadCalls,
+        ["WireUpdateNotifications"] = _updatesWritten,
+        ["FramesReleased"] = _releases,
+        ["CreditBytesApplied"] = _returned,
+        ["PumpOwnedCreditDebits"] = _creditDebits,
+        ["SelectionChecks"] = _selectionChecks,
+        ["StreamBlockedChecks"] = _streamBlocked,
+        ["ConnectionBlockedChecks"] = _connectionBlocked,
         ["NormalQueueRejections"] = _normalQueueRejected,
         ["ProducerSideCreditGateOperations"] = _reference is null ? 0 : _streams.Length * (long)_items,
         ["CreditOwnerQueueCompletions"] = 0,
