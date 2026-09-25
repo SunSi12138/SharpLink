@@ -57,6 +57,25 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--client-call-shape-evidence", StringComparison.Ordinal))
+        {
+            var runner = typeof(Program).Assembly.GetType(
+                "SharpLink.Benchmarks.ClientCallShapeEvidenceRunner",
+                throwOnError: false);
+            var runAsync = runner?.GetMethod(
+                "RunAsync",
+                System.Reflection.BindingFlags.Public |
+                System.Reflection.BindingFlags.Static);
+            if (runAsync is null)
+            {
+                throw new InvalidOperationException(
+                    "Client call-shape evidence runner is not available in this build.");
+            }
+
+            await (Task)runAsync.Invoke(null, new object?[] { args[1..] })!;
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--generated-abi-streaming-evidence", StringComparison.Ordinal))
         {
             await GeneratedAbiStreamingEvidenceRunner.RunAsync(args[1..]);
