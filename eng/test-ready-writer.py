@@ -47,6 +47,18 @@ class Guards(unittest.TestCase):
         self.assertNotIn('ReadySource { get;',owned)
         self.assertIn('Volatile.Read(ref _readyWriterExperiment) is null &&',pump)
         self.assertIn('frame.ReadyCompletion?.Complete(exception);',pump)
+    def test_wire_permission_counters_validate_balanced_measurements(self):
+        document,case=self.fixture()
+        for sample in document['samples']:
+            sample['ReadyWriterMetrics'].update(WireCreditBytesObserved=sample['BytesReturned'],ExcessWireCreditBytes=0,IgnoredWireUpdates=0)
+        self.assertEqual(len(verify.validate_report(document,'a'*40,case)),16)
+        for field in ('WireCreditBytesObserved','ExcessWireCreditBytes','IgnoredWireUpdates'):
+            bad=copy.deepcopy(document);bad['samples'][0]['ReadyWriterMetrics'][field]+=1
+            with self.assertRaises(ValueError):verify.validate_report(bad,'a'*40,case)
+    def test_partial_wire_accounting_cannot_be_hidden(self):
+        document,case=self.fixture()
+        document['samples'][0]['ReadyWriterMetrics']['ExcessWireCreditBytes']=0
+        with self.assertRaises(ValueError):verify.validate_report(document,'a'*40,case)
     def test_drift_and_duplicate_anchors_fail(self):
         with self.assertRaises(ValueError):prepare.transform('OwnedFrame.cs','altered source')
         with self.assertRaises(ValueError):prepare.once('xx','x','y')

@@ -47,6 +47,13 @@ def validate_report(doc, source, expected, check_reads=True):
         q=16 if s['Mode'].endswith('/q16') else 1
         if rm['SchedulingQuantum']!=q or rm['RingSlotsPerStream']!=16 or rm['MaximumRingDepth']>16:raise ValueError('ring or quantum bound mismatch')
         if rm['FramesReleased']!=total or rm['CreditBytesApplied']!=total*bytes_ or rm['NormalQueueRejections']!=0:raise ValueError('unsettled writer/credit')
+        # Historical reports have no wire/debt split counters. When present, require
+        # the complete new group and reject excess/unknown updates in timing runs.
+        # Compatibility regressions deliberately exercise them outside this population.
+        wire_fields={'WireCreditBytesObserved','ExcessWireCreditBytes','IgnoredWireUpdates'}
+        if wire_fields.intersection(rm):
+            if not wire_fields.issubset(rm):raise ValueError('incomplete wire permission accounting')
+            if rm['WireCreditBytesObserved']!=total*bytes_ or rm['ExcessWireCreditBytes']!=0 or rm['IgnoredWireUpdates']!=0:raise ValueError('unbalanced wire timing control')
         if rm['WireUpdateNotifications']!=s['UpdateFrames'] or not streams<=rm['ReadyNotifications']<=total:raise ValueError('notification count mismatch')
         if check_reads and rm['EventChannelReadCalls']!=rm['ReadyNotifications']+rm['WireUpdateNotifications']:raise ValueError('unbacked or empty event-channel read')
         if rm['ExistingPumpBudgetRmwLowerBound']!=2*total:raise ValueError('cannot hide remaining pump RMWs')

@@ -225,22 +225,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             _channelReadCalls++;
             if (!_updates.Reader.TryRead(out var update)) throw new InvalidOperationException("Published credit count has no message.");
             Interlocked.Decrement(ref _updatesPending);
-            // Fixed lifecycle control: no retired/reused identity can appear in these
-            // measured balanced runs. Composite key validation is not generation proof.
-            if (update.StreamId != 1 || update.RequestId < 1 || update.RequestId > _streams.Length)
-                throw new InvalidDataException("Unknown wire identity.");
-            var target = _streams[checked((int)update.RequestId - 1)];
-            if (_reference is not null) _reference.ApplyWindowUpdate(update.RequestId, update.StreamId, update.Bytes);
-            else
-            {
-                // EXACT independent permission clamps, like the frozen controller;
-                // unlike grant B2 there are no unspent local credit reservations here.
-                target.Credit = Math.Min(checked(target.Credit + update.Bytes), _window);
-                _connectionCredit = Math.Min(checked(_connectionCredit + update.Bytes), _connectionWindow);
-                if (update.Bytes > target.Outstanding) throw new InvalidDataException("Excess update is outside the balanced transport control.");
-                target.Outstanding -= update.Bytes;
-            }
-            _returned = checked(_returned + update.Bytes); _blocked = false;
+            ApplyWireUpdate(update);
         }
         CheckSettled();
     }
@@ -287,9 +272,10 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                 if (_reference is null)
                 {
                     stream.Credit -= _bytes; _connectionCredit -= _bytes;
-                    stream.Outstanding += _bytes; _creditDebits++;
+                    _creditDebits++;
                 }
                 var packet = stream.Frames.Dequeue(); stream.QueuedBytes -= packet.WrittenCount; stream.Taken++;
+                stream.Outstanding += _bytes; // Same owner-only settlement ledger in both modes.
                 // A bounded scheduling quantum, NOT wire item batching or credit grants.
                 // Peer updates/progress are still checked between frames by the pump.
                 if (_turnStream != stream.Index || _turnRemaining == 0)
@@ -326,8 +312,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             if (!admitted)
             {
                 _normalQueueRejected++;
-                if (_reference is not null) _reference.ReturnUnsentCredit(in stream.Lease, creditBytes);
-                else { stream.Credit += creditBytes; _connectionCredit += creditBytes; stream.Outstanding -= creditBytes; }
+                ReturnWriterUnsent(stream, creditBytes);
             }
             stream.Released++; _releases++;
             if (error is not null) _settled.TrySetException(error);
@@ -343,10 +328,11 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         if (_reference is null)
         {
             if (_connectionCredit != _connectionWindow) throw new InvalidOperationException("Connection permission leaked.");
-            foreach (var stream in _streams)
-                if (stream.Credit != _window || stream.Outstanding != 0 || stream.Taken != _items || stream.Released != _items)
-                    throw new InvalidOperationException("Stream credit or a publication did not settle.");
+
         }
+        foreach (var stream in _streams)
+            if ((_reference is null && stream.Credit != _window) || stream.Outstanding != 0 || stream.Taken != _items || stream.Released != _items)
+                throw new InvalidOperationException("Stream credit or a publication did not settle.");
         _settled.TrySetResult();
     }
 
@@ -370,6 +356,9 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         ["WireUpdateNotifications"] = _updatesWritten,
         ["FramesReleased"] = _releases,
         ["CreditBytesApplied"] = _returned,
+        ["WireCreditBytesObserved"] = _wireCreditBytesObserved,
+        ["ExcessWireCreditBytes"] = _excessWireCreditBytes,
+        ["IgnoredWireUpdates"] = _ignoredWireUpdates,
         ["PumpOwnedCreditDebits"] = _creditDebits,
         ["SelectionChecks"] = _selectionChecks,
         ["StreamBlockedChecks"] = _streamBlocked,

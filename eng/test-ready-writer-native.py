@@ -255,6 +255,7 @@ class NativeEvidenceTests(unittest.TestCase):
                     "ReadyWriterCoordinator.cs", "ReadyWriterCoordinator.Checks.cs",
                     "ReadyWriterCoordinator.PreparedChecks.cs", "ReadyWriterCoordinator.StopChecks.cs",
                     "ReadyWriterCoordinator.Cancellation.cs", "ReadyWriterCancellationChecks.cs",
+                    "ReadyWriterCoordinator.Wire.cs", "ReadyWriterWirePermissionChecks.cs",
                     "ReadyWriterQueueBudgetChecks.cs", "ReadyWriterProgressChecks.cs", "ReadyWriterChecks.cs", "ReadyWriterEvidence.cs", "ReadyWriterJson.cs", "ReadyWriterStallDiagnostics.cs",
                     "GrantAuthority.cs", "GrantAuthority.Commands.cs", "GrantAuthority.Publication.cs",
                     "GrantAuthority.Wire.cs", "ReusableOwnerCommand.cs"}
