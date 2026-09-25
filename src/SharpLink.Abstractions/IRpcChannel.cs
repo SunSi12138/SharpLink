@@ -68,8 +68,23 @@ public readonly record struct RpcMethodDescriptor
     public long ContractId { get; init; }
     /// <summary>Gets the stable generated method identifier.</summary>
     public long MethodId { get; init; }
+    // Declared ahead of the 4-byte and 1-byte members below. The struct uses sequential layout,
+    // so a long declared after them would be padded back to an 8-byte boundary and the descriptor
+    // would stay 40 bytes wide however the timeout were stored.
+    private readonly long _methodTimeoutTicks;
+
     /// <summary>Gets the explicit method timeout, or <see langword="null"/> to use the client default.</summary>
-    public TimeSpan? MethodTimeout { get; init; }
+    /// <remarks>
+    /// Persisted as a tick count with a negative sentinel rather than as
+    /// <see cref="Nullable{T}"/> of <see cref="TimeSpan"/>. The nullable form occupies 16 bytes and
+    /// padded the descriptor to 40; one 8-byte field keeps it at 32. The descriptor is passed by
+    /// value through every client invocation boundary, so its width is on the hot path.
+    /// </remarks>
+    public TimeSpan? MethodTimeout
+    {
+        get => _methodTimeoutTicks < 0 ? null : TimeSpan.FromTicks(_methodTimeoutTicks);
+        init => _methodTimeoutTicks = value?.Ticks ?? NoMethodTimeoutTicks;
+    }
     /// <summary>Gets the number of client-stream parameters owned by the request.</summary>
     public int ClientStreamCount { get; init; }
     /// <summary>Gets the generated invocation shape.</summary>
@@ -104,6 +119,8 @@ public readonly record struct RpcMethodDescriptor
         get => (_flags & ResponseNullableFlag) != 0;
         init => _flags = SetFlag(_flags, ResponseNullableFlag, value);
     }
+
+    private const long NoMethodTimeoutTicks = -1;
 
     private readonly byte _flags;
 
