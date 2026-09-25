@@ -922,6 +922,7 @@ def pct_delta(value: float, baseline: float) -> float:
 def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
     lattice = load_json(root / "lattice.json")
     generated_inventory = load_json(root / "generated-code-inventory.json")
+    generic_inventory = load_json(root / "generated-client-instantiations.json")
     variants: dict[str, dict[str, object]] = {}
     for variant in "ABCD":
         directory = root / "probe" / variant
@@ -1058,6 +1059,7 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
     result = {
         "lattice": lattice,
         "generatedCodeInventory": generated_inventory,
+        "generatedClientInstantiations": generic_inventory,
         "variants": variants,
         "comparisonsVsA": comparisons,
         "fullRpcHost": full_rpc_host,
@@ -1085,19 +1087,20 @@ def summarize(root: Path, output_markdown: Path, output_json: Path) -> None:
         "",
         f"- benchmark generated source: **{generated_inventory['files']} files / {generated_inventory['lines']:,} LOC / {generated_inventory['bytes'] / 1024:.1f} KiB**",
         f"- generated client Invoke* call sites: **{generated_inventory['clientEntrypointCallSites']}**",
-        f"- unique emitted closed-generic Invoke* spellings: **{generated_inventory['uniqueClosedGenericClientEntrypoints']}**",
+        f"- compiled closed-generic client entry points: **{generic_inventory['uniqueClosedGenericClientEntrypoints']}**",
         "",
-        "| Entry point | Call sites | Unique closed-generic spellings |",
+        "| Entry point | Generated call sites | Unique compiled closed generics |",
         "| --- | ---: | ---: |",
     ]
     for entrypoint, inventory in generated_inventory["byEntrypoint"].items():
+        compiled = generic_inventory["byEntrypoint"][entrypoint]
         lines.append(
             f"| {entrypoint} | {inventory['callSites']} | "
-            f"{inventory['uniqueClosedGenericCallSites']} |"
+            f"{compiled['uniqueClosedGenericInstantiations']} |"
         )
     lines += [
         "",
-        "The closed-generic count is emitted-source evidence; CLR/JIT canonical sharing can reduce native instantiations.",
+        "Closed-generic counts are resolved from compiled IL MethodSpec calls; CLR/JIT canonical sharing can still reduce native code duplication.",
         "Native code footprint below is used as the hosted-runner i-cache/locality proxy; no hardware PMU counter is claimed.",
         "",
         "## Prototype codegen / cost",
