@@ -10,7 +10,9 @@ namespace SharpLink.Runtime;
 internal static class RpcUnsafeBlitPlatform
 {
     private const int SupportedNativePointerSize = 8;
+#if !SHARPLINK_NATIVEAOT
     private const string ReflectionFallbackSwitchName = "SharpLink.Runtime.UnsafeBlitReflectionFallback";
+#endif
     private static readonly bool DateTimeOffsetRawAbiSupported = ProbeDateTimeOffsetRawAbi();
 
 #if SHARPLINK_NATIVEAOT
