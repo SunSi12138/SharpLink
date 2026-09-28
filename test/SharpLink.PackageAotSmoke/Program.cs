@@ -17,12 +17,6 @@ public struct PackageAotPayload
     public long Stamp;
 }
 
-[StructLayout(LayoutKind.Sequential)]
-public struct UnregisteredPackageAotPayload
-{
-    public int Value;
-}
-
 [RpcContract]
 public interface IPackageAotContract : IService
 {
@@ -32,6 +26,12 @@ public interface IPackageAotContract : IService
 
 public static class Program
 {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnregisteredPackageAotPayload
+    {
+        public int Value;
+    }
+
     public static void Main()
     {
         if (!SharpLinkGeneratedUnsafeBlitCatalog.TryGet(
