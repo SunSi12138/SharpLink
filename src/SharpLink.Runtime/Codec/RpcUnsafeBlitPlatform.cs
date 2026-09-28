@@ -16,11 +16,11 @@ internal static class RpcUnsafeBlitPlatform
     private static readonly bool DateTimeOffsetRawAbiSupported = ProbeDateTimeOffsetRawAbi();
 
 #if SHARPLINK_NATIVEAOT
-    private static bool ReflectionFallbackEnabled => false;
+    internal static bool ReflectionFallbackEnabled => false;
 #else
     [FeatureSwitchDefinition(ReflectionFallbackSwitchName)]
     [FeatureGuard(typeof(RequiresUnreferencedCodeAttribute))]
-    private static bool ReflectionFallbackEnabled =>
+    internal static bool ReflectionFallbackEnabled =>
         AppContext.TryGetSwitch(ReflectionFallbackSwitchName, out var enabled)
             ? enabled
             : true;
