@@ -33,6 +33,7 @@ internal sealed partial class ReadyWriterCoordinator
                 // Reap canceled registration before a cold owner operation observes
                 // state. DATA selection and ordinary wire updates do not pay for this.
                 owner.ServiceCapacityAdmission();
+                owner.ServiceStreamAborts();
                 Result.TrySetResult(execute());
             }
             catch (Exception error) { Result.TrySetException(error); }
@@ -96,7 +97,7 @@ internal sealed partial class ReadyWriterCoordinator
             _retiredStreams.Pop();
             stream.Generation = generation;
             stream.RequestId = requestId; stream.StreamId = streamId;
-            stream.Retired = false; stream.Closed = false; stream.WireAttached = false;
+            stream.Retired = false; stream.Closed = false; stream.WireAttached = false; stream.AbortRequested = null;
             stream.Scheduled = false; stream.ReleaseTarget = completion;
             stream.Credit = _window; stream.Outstanding = 0;
             stream.Taken = stream.Released = 0;

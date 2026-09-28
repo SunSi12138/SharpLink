@@ -14,6 +14,7 @@ internal static class ReadyWriterChecks
         checks += await ReadyWriterCoordinator.RunLifecyclePipeChecksAsync();
         checks += await ReadyWriterCoordinator.RunWirePermissionChecksAsync();
         checks += await ReadyWriterCoordinator.RunBlockedCancellationChecksAsync();
+        checks += await ReadyWriterCoordinator.RunPerStreamAbortChecksAsync();
         checks += await PhaseBTransportCase.RunCreditStalledProgressChecksAsync();
         checks += await ReadyWriterCoordinator.RunQueueBudgetChecksAsync();
         checks += await PhaseBTransportFailureChecks.RunAsync();

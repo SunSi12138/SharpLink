@@ -37,6 +37,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
     private readonly CancellationToken _stopToken;
     private Exception? _preparationCleanupFailure;
     private long _discarded;
+    private int _streamAbortRequested;
 
     internal ReadyWriterCoordinator(RpcSession session, SharpLinkRuntimeContext context, CancellationTokenSource cancel,
         bool reference, int streams, int items, int bytes, int window, int connectionWindow, int slots, int quantum = 1, int preparedByteBudget = 0, bool dynamicLifetimes = false)
@@ -77,6 +78,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         internal long Generation = 1, RequestId;
         internal ushort StreamId = 1;
         internal bool Closed, Retired, NotificationPending, WireAttached, CleanupFailed;
+        internal Exception? AbortRequested;
         internal bool HasHeldSpace => _spaceActive;
         internal IReadyFrameCompletion ReleaseTarget;
         private readonly ReadyWriterCoordinator? _completionOwner;
@@ -186,6 +188,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             lock (stream.Gate)
             {
                 ValidateHandle(handle, stream);
+                if (stream.AbortRequested is { } requestedAbort) throw requestedAbort;
                 if (stream.Closed) throw new InvalidOperationException("Closed stream.");
                 if (stream.ProducerBusy != 0) throw new InvalidOperationException("Only one producer per stream is supported by this control.");
                 stream.ProducerBusy = 1; ownsProducer = true;
@@ -203,6 +206,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             {
                 _stopToken.ThrowIfCancellationRequested();
                 ValidateHandle(handle, stream);
+                if (stream.AbortRequested is { } requestedAbort) throw requestedAbort;
                 if (stream.Closed) throw new InvalidOperationException("Closed stream.");
                 if (Volatile.Read(ref _stopped) != 0) throw new InvalidOperationException("Ready writer stopped.");
                 if (!stream.CanFit(packet.WrittenCount)) throw new InvalidOperationException("Producer ring count/byte bound exceeded.");
@@ -256,12 +260,15 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
 
     // The following methods, including all B3 credit reads/writes, are owner-only.
     public bool HasWork => !_stopToken.IsCancellationRequested && Volatile.Read(ref _stopped) == 0 &&
-        ((_dynamicLifetimes && Volatile.Read(ref _admissionRequested) != 0) ||
+        ((_dynamicLifetimes && (Volatile.Read(ref _admissionRequested) != 0 || Volatile.Read(ref _streamAbortRequested) != 0)) ||
             Volatile.Read(ref _retirementRequested) != 0 || Volatile.Read(ref _notificationsPending) != 0 ||
             Volatile.Read(ref _updatesPending) != 0 || (!_blocked && _ready.Count != 0));
 
     private void DrainNotifications()
     {
+        if (_dynamicLifetimes && Volatile.Read(ref _streamAbortRequested) != 0 &&
+            Interlocked.Exchange(ref _streamAbortRequested, 0) != 0)
+            ServiceStreamAborts();
         while (Volatile.Read(ref _notificationsPending) != 0)
         {
             _channelReadCalls++;

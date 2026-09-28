@@ -5,6 +5,54 @@ namespace SharpLink.Benchmarks;
 
 internal sealed partial class ReadyWriterCoordinator
 {
+    // Generation-bound call abort can run while Flush is blocked. It owns only
+    // prepared buffers; the writer remains the sole owner of lifecycle/map state.
+    internal bool RequestStreamAbort(StreamHandle handle, Exception error)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+        if (!ReferenceEquals(handle.Owner, this) || (uint)handle.Slot >= (uint)_streams.Length)
+            throw new InvalidOperationException("Foreign or invalid stream handle.");
+        var stream = _streams[handle.Slot];
+        List<Exception>? failures = null;
+        void Record(Exception failure) => (failures ??= []).Add(failure);
+        lock (stream.Gate)
+        {
+            if (stream.Retired || stream.Closed || stream.Generation != handle.Generation) return false;
+            if (stream.AbortRequested is not null) return false;
+            stream.AbortRequested = error;
+            DiscardPreparedLocked(stream, Record);
+            try { stream.SignalSpace(error); }
+            catch (Exception failure) { Record(failure); }
+            if (failures is not null) stream.CleanupFailed = true;
+        }
+        Interlocked.Exchange(ref _streamAbortRequested, 1);
+        _session.SignalReadyWriterExperiment();
+        if (failures is not null)
+            throw new AggregateException("Stream abort preparation cleanup failed.", failures);
+        return true;
+    }
+
+    private void ServiceStreamAborts()
+    {
+        foreach (var stream in _streams)
+        {
+            StreamHandle handle;
+            lock (stream.Gate)
+            {
+                if (stream.AbortRequested is null) continue;
+                if (stream.Retired || stream.Closed)
+                {
+                    stream.AbortRequested = null;
+                    continue;
+                }
+                handle = new StreamHandle(this, stream.Index, stream.Generation);
+            }
+            CloseStreamOnWriter(handle);
+            lock (stream.Gate)
+                if (stream.Generation == handle.Generation) stream.AbortRequested = null;
+        }
+    }
+
     private void CancelCapacityWaits()
     {
         List<Exception>? failures = null;
