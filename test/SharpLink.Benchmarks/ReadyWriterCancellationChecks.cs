@@ -51,6 +51,11 @@ internal sealed partial class ReadyWriterCoordinator
 
     private static async Task CheckPerStreamAbortAsync(int bytes)
     {
+        static void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException(message);
+        }
+
         var outgoing = new Pipe(); var incoming = new Pipe();
         var output = new PausedCancellationWriter(outgoing.Writer);
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
