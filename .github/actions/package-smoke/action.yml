@@ -16,6 +16,36 @@ runs:
         NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
       run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
 
+    - name: Restore packaged NativeAOT consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-aot-smoke
+      run: >-
+        dotnet restore
+        test/SharpLink.PackageAotSmoke/SharpLink.PackageAotSmoke.csproj
+        --force
+        --no-cache
+        --configfile test/SharpLink.PackageSmoke/NuGet.config
+        -r linux-x64
+
+    - name: Publish packaged NativeAOT consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-aot-smoke
+      run: >-
+        dotnet publish
+        test/SharpLink.PackageAotSmoke/SharpLink.PackageAotSmoke.csproj
+        --no-restore
+        -c Release
+        -r linux-x64
+        --self-contained true
+        -o artifacts/package-aot-smoke
+        /p:TrimmerSingleWarn=false
+
+    - name: Run packaged NativeAOT consumer
+      shell: bash
+      run: ./artifacts/package-aot-smoke/SharpLink.PackageAotSmoke
+
     - name: Run Quick Start Package Smoke
       shell: bash
       run: ./eng/run-quickstart-package-smoke.sh artifacts/nuget
