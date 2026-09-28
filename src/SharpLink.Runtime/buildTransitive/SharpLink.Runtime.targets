@@ -1,0 +1,14 @@
+<Project>
+  <!--
+    Published Runtime assemblies are compiled before the final application decides whether it
+    will be trimmed or NativeAOT. Disable the reflection-only UnsafeBlit fallback at the final
+    consumer publish boundary so the trimmer can remove that call graph. Generated ABI metadata
+    remains the supported path and missing metadata continues to fail closed.
+  -->
+  <ItemGroup Condition="'$(PublishTrimmed)' == 'true' or '$(PublishAot)' == 'true'">
+    <RuntimeHostConfigurationOption Remove="SharpLink.Runtime.UnsafeBlitReflectionFallback" />
+    <RuntimeHostConfigurationOption Include="SharpLink.Runtime.UnsafeBlitReflectionFallback"
+                                    Value="false"
+                                    Trim="true" />
+  </ItemGroup>
+</Project>
