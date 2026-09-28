@@ -17,6 +17,12 @@ public struct PackageAotPayload
     public long Stamp;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+public struct UnregisteredPackageAotPayload
+{
+    public int Value;
+}
+
 [RpcContract]
 public interface IPackageAotContract : IService
 {
@@ -61,6 +67,18 @@ public static class Program
         {
             throw new InvalidOperationException(
                 "Packaged NativeAOT UnsafeBlit round-trip failed.");
+        }
+
+        try
+        {
+            _ = context.Codecs.GetCodec<UnregisteredPackageAotPayload>();
+            throw new InvalidOperationException(
+                "Packaged NativeAOT consumer accepted UnsafeBlit without generated ABI metadata.");
+        }
+        catch (PlatformNotSupportedException exception)
+            when (exception.Message.Contains("source-generated ABI metadata", StringComparison.Ordinal))
+        {
+            // Expected: packaged trimmed/NativeAOT consumers remain fail-closed without generated metadata.
         }
     }
 }
