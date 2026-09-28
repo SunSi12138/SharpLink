@@ -15,6 +15,10 @@
     <ItemGroup>
       <Compile Include="..\SharpLink.Shared\RpcBuiltinCollectionWireCatalog.cs"
                Link="Shared\RpcBuiltinCollectionWireCatalog.cs" />
+      <None Update="buildTransitive\SharpLink.Runtime.targets"
+            Pack="true"
+            PackagePath="buildTransitive\SharpLink.Runtime.targets"
+            Visible="false" />
     </ItemGroup>
 
     <ItemGroup>
