@@ -42,11 +42,6 @@ public sealed partial class PackageSmokeEnvelope
     public List<int> Values { get; set; } = [];
 }
 
-public struct PackageSmokeStandaloneBlit
-{
-    public int Value;
-}
-
 [RpcService]
 public sealed class PackageSmokeService : IPackageSmokeService
 {
@@ -58,6 +53,11 @@ public sealed class PackageSmokeService : IPackageSmokeService
 
 public static class Program
 {
+    private struct PackageSmokeStandaloneBlit
+    {
+        public int Value;
+    }
+
     private static readonly string[] RuntimeRawDispatcherTypeNames =
     [
         "SharpLink.Runtime.IStreamDispatcher",
