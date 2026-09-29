@@ -27,6 +27,7 @@ runs:
         --no-cache
         --configfile test/SharpLink.PackageSmoke/NuGet.config
         -r linux-x64
+        /p:SelfContained=true
 
     - name: Publish packaged NativeAOT consumer with trimming warnings as errors
       shell: bash
