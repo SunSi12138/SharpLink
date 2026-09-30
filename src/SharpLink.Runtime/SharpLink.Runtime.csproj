@@ -19,6 +19,9 @@
             Pack="true"
             PackagePath="buildTransitive\SharpLink.Runtime.targets"
             Visible="false" />
+      <EmbeddedResource Include="ILLink.Substitutions.xml">
+        <LogicalName>ILLink.Substitutions.xml</LogicalName>
+      </EmbeddedResource>
     </ItemGroup>
 
     <ItemGroup>
