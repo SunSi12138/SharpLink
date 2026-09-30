@@ -3,10 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RID="${SHARPLINK_TRIM_RID:-}"
-OUTPUT="${SHARPLINK_TRIM_OUTPUT:-$ROOT/artifacts/project-reference-trim-smoke}"
-WORK="$OUTPUT/source"
-SDK_ARTIFACTS="$OUTPUT/sdk-artifacts"
-PUBLISH="$OUTPUT/publish"
+ARTIFACTS_ROOT="$ROOT/artifacts"
 
 if [[ -z "$RID" ]]; then
   case "$(uname -s)-$(uname -m)" in
@@ -17,6 +14,31 @@ if [[ -z "$RID" ]]; then
   esac
 fi
 
+mkdir -p "$ARTIFACTS_ROOT"
+ARTIFACTS_ROOT="$(realpath "$ARTIFACTS_ROOT")"
+
+if [[ -n "${SHARPLINK_TRIM_OUTPUT:-}" ]]; then
+  requested="$(realpath -m "$SHARPLINK_TRIM_OUTPUT")"
+  case "$requested" in
+    "$ARTIFACTS_ROOT"/*) OUTPUT_PARENT="$requested" ;;
+    *)
+      echo "SHARPLINK_TRIM_OUTPUT must be a child of $ARTIFACTS_ROOT: $requested" >&2
+      exit 2
+      ;;
+  esac
+  mkdir -p "$OUTPUT_PARENT"
+else
+  OUTPUT_PARENT="$ARTIFACTS_ROOT"
+fi
+
+OUTPUT="$(mktemp -d "$OUTPUT_PARENT/project-reference-trim-smoke.XXXXXX")"
+WORK="$OUTPUT/source"
+
+cleanup() {
+  rm -rf "$OUTPUT"
+}
+trap cleanup EXIT
+
 GENERATOR="$ROOT/src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll"
 if [[ ! -f "$GENERATOR" ]]; then
   dotnet build "$ROOT/src/SharpLink.Generator/SharpLink.Generator.csproj" \
@@ -26,8 +48,7 @@ if [[ ! -f "$GENERATOR" ]]; then
     -v minimal
 fi
 
-rm -rf "$OUTPUT"
-mkdir -p "$WORK" "$PUBLISH"
+mkdir -p "$WORK"
 
 cat > "$WORK/ProjectReferenceTrimSmoke.csproj" <<'XML'
 <Project Sdk="Microsoft.NET.Sdk">
@@ -38,7 +59,7 @@ cat > "$WORK/ProjectReferenceTrimSmoke.csproj" <<'XML'
     <Nullable>enable</Nullable>
     <PublishTrimmed>true</PublishTrimmed>
     <PublishAot>false</PublishAot>
-    <TrimMode>full</TrimMode>
+    <TrimMode Condition="'$(TrimMode)' == ''">full</TrimMode>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnablePackageValidation>false</EnablePackageValidation>
     <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
@@ -140,19 +161,32 @@ public static class Program
 }
 CS
 
-dotnet publish "$WORK/ProjectReferenceTrimSmoke.csproj" \
-  -c Release \
-  -r "$RID" \
-  --self-contained true \
-  --artifacts-path "$SDK_ARTIFACTS" \
-  -o "$PUBLISH" \
-  /p:TrimmerSingleWarn=false \
-  -v minimal
+run_trim_mode() {
+  local mode="$1"
+  local sdk_artifacts="$OUTPUT/sdk-artifacts-$mode"
+  local publish="$OUTPUT/publish-$mode"
 
-EXE="$PUBLISH/ProjectReferenceTrimSmoke"
-if [[ "$RID" == win-* ]]; then
-  EXE="$EXE.exe"
-fi
+  dotnet publish "$WORK/ProjectReferenceTrimSmoke.csproj" \
+    -c Release \
+    -r "$RID" \
+    --self-contained true \
+    --artifacts-path "$sdk_artifacts" \
+    -o "$publish" \
+    -p:TrimMode="$mode" \
+    /p:TrimmerSingleWarn=false \
+    -v minimal
 
-"$EXE" | tee "$OUTPUT/run.log"
-grep -q "PROJECT_REFERENCE_TRIM_SMOKE_PASS" "$OUTPUT/run.log"
+  local exe="$publish/ProjectReferenceTrimSmoke"
+  if [[ "$RID" == win-* ]]; then
+    exe="$exe.exe"
+  fi
+
+  "$exe" | tee "$OUTPUT/run-$mode.log"
+  grep -q "PROJECT_REFERENCE_TRIM_SMOKE_PASS" "$OUTPUT/run-$mode.log"
+}
+
+run_trim_mode full
+run_trim_mode partial
+
+trap - EXIT
+rm -rf "$OUTPUT"
