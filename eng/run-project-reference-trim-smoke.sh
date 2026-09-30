@@ -17,6 +17,15 @@ if [[ -z "$RID" ]]; then
   esac
 fi
 
+GENERATOR="$ROOT/src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll"
+if [[ ! -f "$GENERATOR" ]]; then
+  dotnet build "$ROOT/src/SharpLink.Generator/SharpLink.Generator.csproj" \
+    -c Release \
+    /p:PublishTrimmed=false \
+    /p:TrimMode=partial \
+    -v minimal
+fi
+
 rm -rf "$OUTPUT"
 mkdir -p "$WORK" "$PUBLISH"
 
@@ -36,11 +45,7 @@ cat > "$WORK/ProjectReferenceTrimSmoke.csproj" <<'XML'
   <ItemGroup>
     <ProjectReference Include="../../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
     <ProjectReference Include="../../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
-    <ProjectReference Include="../../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
-    <ProjectReference Include="../../../src/SharpLink.Generator/SharpLink.Generator.csproj"
-                      OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile;PublishTrimmed;TrimMode" />
+    <Analyzer Include="../../../src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll" />
   </ItemGroup>
 </Project>
 XML
