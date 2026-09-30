@@ -40,7 +40,7 @@ cat > "$WORK/ProjectReferenceTrimSmoke.csproj" <<'XML'
     <ProjectReference Include="../../../src/SharpLink.Generator/SharpLink.Generator.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile;PublishTrimmed" />
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile;PublishTrimmed;TrimMode" />
   </ItemGroup>
 </Project>
 XML
