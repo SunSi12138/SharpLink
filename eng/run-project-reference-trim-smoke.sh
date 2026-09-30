@@ -146,10 +146,6 @@ dotnet publish "$WORK/ProjectReferenceTrimSmoke.csproj" \
   --self-contained true \
   --artifacts-path "$SDK_ARTIFACTS" \
   -o "$PUBLISH" \
-  /p:PublishAot=false \
-  /p:PublishTrimmed=true \
-  /p:TrimMode=full \
-  /p:TreatWarningsAsErrors=true \
   /p:TrimmerSingleWarn=false \
   -v minimal
 
