@@ -40,6 +40,9 @@ cat > "$WORK/ProjectReferenceTrimSmoke.csproj" <<'XML'
     <PublishAot>false</PublishAot>
     <TrimMode>full</TrimMode>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
