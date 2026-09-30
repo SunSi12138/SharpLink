@@ -3,7 +3,7 @@
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <DefineConstants Condition="'$(PublishAot)' == 'true'">$(DefineConstants);SHARPLINK_NATIVEAOT</DefineConstants>
+        <DefineConstants Condition="'$(PublishAot)' == 'true' or '$(PublishTrimmed)' == 'true'">$(DefineConstants);SHARPLINK_NATIVEAOT</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
