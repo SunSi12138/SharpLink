@@ -53,7 +53,7 @@ jobs:
       - name: Run ProjectReference trim-only UnsafeBlit smoke
         env:
           SHARPLINK_TRIM_RID: linux-x64
-        run: ./eng/run-project-reference-trim-smoke.sh
+        run: bash ./eng/run-project-reference-trim-smoke.sh
 
       - name: Run isolated NativeAOT smoke before packaging
         env:
