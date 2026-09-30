@@ -16,6 +16,37 @@ runs:
         NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
       run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
 
+    - name: Restore packaged trim-only consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-trim-smoke
+      run: >-
+        dotnet restore
+        test/SharpLink.PackageTrimSmoke/SharpLink.PackageTrimSmoke.csproj
+        --force
+        --no-cache
+        --configfile test/SharpLink.PackageSmoke/NuGet.config
+        -r linux-x64
+        /p:SelfContained=true
+
+    - name: Publish packaged trim-only consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-trim-smoke
+      run: >-
+        dotnet publish
+        test/SharpLink.PackageTrimSmoke/SharpLink.PackageTrimSmoke.csproj
+        --no-restore
+        -c Release
+        -r linux-x64
+        --self-contained true
+        -o artifacts/package-trim-smoke
+        /p:TrimmerSingleWarn=false
+
+    - name: Run packaged trim-only consumer
+      shell: bash
+      run: ./artifacts/package-trim-smoke/SharpLink.PackageTrimSmoke
+
     - name: Restore packaged NativeAOT consumer
       shell: bash
       env:
