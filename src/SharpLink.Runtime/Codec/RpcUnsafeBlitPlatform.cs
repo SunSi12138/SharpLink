@@ -19,7 +19,6 @@ internal static class RpcUnsafeBlitPlatform
     internal static bool ReflectionFallbackEnabled => false;
 #else
     [FeatureSwitchDefinition(ReflectionFallbackSwitchName)]
-    [FeatureGuard(typeof(RequiresUnreferencedCodeAttribute))]
     internal static bool ReflectionFallbackEnabled =>
         AppContext.TryGetSwitch(ReflectionFallbackSwitchName, out var enabled)
             ? enabled
