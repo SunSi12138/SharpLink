@@ -23,6 +23,7 @@ on:
       - 'src/SharpLink.Server/**'
       - 'test/SharpLink.PackageSmoke/**'
       - 'test/SharpLink.PackageAotSmoke/**'
+      - 'test/SharpLink.PackageTrimSmoke/**'
       - 'Directory.Build.props'
       - 'Directory.Packages.props'
       - 'Sharplink.slnx'
