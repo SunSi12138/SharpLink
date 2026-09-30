@@ -18,16 +18,17 @@ internal static class RpcUnsafeBlitPlatform
 #if SHARPLINK_NATIVEAOT
     internal static bool ReflectionFallbackEnabled => false;
 #else
-    // SharpLink.Runtime is IsTrimmable=true, so both full and partial trimming use link action.
-    // The embedded ILLink substitution and package feature switch force this false at final linking.
     [FeatureSwitchDefinition(ReflectionFallbackSwitchName)]
-    [FeatureGuard(typeof(RequiresUnreferencedCodeAttribute))]
     internal static bool ReflectionFallbackEnabled =>
         AppContext.TryGetSwitch(ReflectionFallbackSwitchName, out var enabled)
             ? enabled
             : true;
 #endif
 
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026",
+        Justification = "SharpLink.Runtime is IsTrimmable and its embedded linker substitution forces the reflection fallback off for both full and partial trimming; ProjectReference full/partial smoke tests publish with warnings-as-errors and verify fail-closed behavior.")]
     internal static void EnsureSupported(Type targetType)
     {
         ArgumentNullException.ThrowIfNull(targetType);
@@ -58,6 +59,10 @@ internal static class RpcUnsafeBlitPlatform
     internal static bool IsSupported(Type targetType, int nativePointerSize)
         => IsSupported(targetType, nativePointerSize, DateTimeOffsetRawAbiSupported);
 
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026",
+        Justification = "SharpLink.Runtime is IsTrimmable and its embedded linker substitution forces the reflection fallback off for both full and partial trimming; ProjectReference full/partial smoke tests publish with warnings-as-errors and verify fail-closed behavior.")]
     internal static bool IsSupported(
         Type targetType,
         int nativePointerSize,
