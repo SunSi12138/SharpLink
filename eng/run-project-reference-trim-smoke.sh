@@ -15,23 +15,7 @@ if [[ -z "$RID" ]]; then
 fi
 
 mkdir -p "$ARTIFACTS_ROOT"
-ARTIFACTS_ROOT="$(realpath "$ARTIFACTS_ROOT")"
-
-if [[ -n "${SHARPLINK_TRIM_OUTPUT:-}" ]]; then
-  requested="$(realpath -m "$SHARPLINK_TRIM_OUTPUT")"
-  case "$requested" in
-    "$ARTIFACTS_ROOT"/*) OUTPUT_PARENT="$requested" ;;
-    *)
-      echo "SHARPLINK_TRIM_OUTPUT must be a child of $ARTIFACTS_ROOT: $requested" >&2
-      exit 2
-      ;;
-  esac
-  mkdir -p "$OUTPUT_PARENT"
-else
-  OUTPUT_PARENT="$ARTIFACTS_ROOT"
-fi
-
-OUTPUT="$(mktemp -d "$OUTPUT_PARENT/project-reference-trim-smoke.XXXXXX")"
+OUTPUT="$(mktemp -d "$ARTIFACTS_ROOT/project-reference-trim-smoke.XXXXXX")"
 WORK="$OUTPUT/source"
 
 cleanup() {
