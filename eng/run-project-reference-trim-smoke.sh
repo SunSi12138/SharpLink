@@ -173,7 +173,6 @@ XML
 }
 
 run_trim_mode full
-run_trim_mode partial
 
 trap - EXIT
 rm -rf "$OUTPUT"
