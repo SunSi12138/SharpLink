@@ -16,6 +16,7 @@ on:
       - 'eng/run-project-reference-trim-smoke.sh'
       - 'eng/run-shared-memory-aot-process-smoke.sh'
       - 'src/SharpLink.Runtime/**'
+      - 'src/SharpLink.Generator/**'
       - 'src/SharpLink.Sdk/**'
       - 'src/SharpLink.Abstractions/**'
       - 'src/SharpLink.Client/**'
