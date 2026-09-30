@@ -18,7 +18,7 @@ fi
 
 mkdir -p "$OUTPUT"
 dotnet publish "$ROOT/test/SharpLink.AotSmoke/SharpLink.AotSmoke.csproj" \
-  -c Release -r "$RID" -p:PublishAot=true \
+  -c Release -r "$RID" \
   --artifacts-path "$SDK_ARTIFACTS" \
   -o "$OUTPUT" -v minimal
 
@@ -58,7 +58,7 @@ grep -q "AOT_SMOKE_PASS transport=tcp" "$LOCAL_LOG"
 SIDECAR_OUTPUT="$OUTPUT/sharppack-sidecar"
 mkdir -p "$SIDECAR_OUTPUT"
 dotnet publish "$ROOT/test/SharpLink.SharpPackAotSmoke/SharpLink.SharpPackAotSmoke.csproj" \
-  -c Release -r "$RID" -p:PublishAot=true \
+  -c Release -r "$RID" \
   --artifacts-path "$SDK_ARTIFACTS" \
   -o "$SIDECAR_OUTPUT" -v minimal
 
@@ -74,7 +74,7 @@ grep -q "SHARPPACK_SIDECAR_AOT_PASS" "$SIDECAR_LOG"
 PRECREDIT_OUTPUT="$OUTPUT/precredit"
 mkdir -p "$PRECREDIT_OUTPUT"
 dotnet publish "$ROOT/test/SharpLink.PreCreditAotSmoke/SharpLink.PreCreditAotSmoke.csproj" \
-  -c Release -r "$RID" -p:PublishAot=true \
+  -c Release -r "$RID" \
   --artifacts-path "$SDK_ARTIFACTS" \
   -o "$PRECREDIT_OUTPUT" -v minimal
 
