@@ -5,7 +5,7 @@
                       Condition="'$(PublishAot)' != 'true'"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false"
-                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile;PublishTrimmed" />
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile;PublishTrimmed;TrimMode" />
   </ItemGroup>
 
   <ItemGroup>
