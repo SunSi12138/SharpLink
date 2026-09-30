@@ -18,7 +18,10 @@ internal static class RpcUnsafeBlitPlatform
 #if SHARPLINK_NATIVEAOT
     internal static bool ReflectionFallbackEnabled => false;
 #else
+    // SharpLink.Runtime is IsTrimmable=true, so both full and partial trimming use link action.
+    // The embedded ILLink substitution and package feature switch force this false at final linking.
     [FeatureSwitchDefinition(ReflectionFallbackSwitchName)]
+    [FeatureGuard(typeof(RequiresUnreferencedCodeAttribute))]
     internal static bool ReflectionFallbackEnabled =>
         AppContext.TryGetSwitch(ReflectionFallbackSwitchName, out var enabled)
             ? enabled
