@@ -50,30 +50,6 @@ fi
 
 mkdir -p "$WORK"
 
-cat > "$WORK/ProjectReferenceTrimSmoke.csproj" <<'XML'
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <PublishTrimmed>true</PublishTrimmed>
-    <PublishAot>false</PublishAot>
-    <TrimMode Condition="'$(TrimMode)' == ''">full</TrimMode>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <EnablePackageValidation>false</EnablePackageValidation>
-    <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
-    <IsPackable>false</IsPackable>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="../../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
-    <ProjectReference Include="../../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
-    <Analyzer Include="../../../src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll" />
-  </ItemGroup>
-</Project>
-XML
-
 cat > "$WORK/Program.cs" <<'CS'
 using System.Buffers;
 using System.Runtime.InteropServices;
@@ -163,16 +139,43 @@ CS
 
 run_trim_mode() {
   local mode="$1"
+  local mode_work="$WORK/$mode"
   local sdk_artifacts="$OUTPUT/sdk-artifacts-$mode"
   local publish="$OUTPUT/publish-$mode"
 
-  dotnet publish "$WORK/ProjectReferenceTrimSmoke.csproj" \
+  mkdir -p "$mode_work"
+  cp "$WORK/Program.cs" "$mode_work/Program.cs"
+
+  cat > "$mode_work/ProjectReferenceTrimSmoke.csproj" <<XML
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishTrimmed>true</PublishTrimmed>
+    <PublishAot>false</PublishAot>
+    <TrimMode>$mode</TrimMode>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <Analyzer Include="../../../../src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll" />
+  </ItemGroup>
+</Project>
+XML
+
+  dotnet publish "$mode_work/ProjectReferenceTrimSmoke.csproj" \
     -c Release \
     -r "$RID" \
     --self-contained true \
     --artifacts-path "$sdk_artifacts" \
     -o "$publish" \
-    -p:TrimMode="$mode" \
     /p:TrimmerSingleWarn=false \
     -v minimal
 
