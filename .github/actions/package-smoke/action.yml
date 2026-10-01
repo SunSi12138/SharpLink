@@ -47,6 +47,28 @@ runs:
       shell: bash
       run: ./artifacts/package-trim-smoke/SharpLink.PackageTrimSmoke
 
+    - name: Restore late-set trimming configuration consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-late-trim-smoke
+      run: >-
+        dotnet restore
+        test/SharpLink.PackageLateTrimSmoke/SharpLink.PackageLateTrimSmoke.csproj
+        --force
+        --no-cache
+        --configfile test/SharpLink.PackageSmoke/NuGet.config
+
+    - name: Verify late-set PackageReference trimming configuration
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-late-trim-smoke
+      run: >-
+        dotnet msbuild
+        test/SharpLink.PackageLateTrimSmoke/SharpLink.PackageLateTrimSmoke.csproj
+        --no-restore
+        -t:VerifySharpLinkLateTrimConfiguration
+        -v:minimal
+
     - name: Restore packaged partial-trim consumer
       shell: bash
       env:
