@@ -1,25 +1,22 @@
 <Project>
   <!--
-    Published Runtime assemblies are compiled before the final application decides whether it
-    will be trimmed or NativeAOT. Disable the reflection-only UnsafeBlit fallback at the final
-    consumer publish boundary so the trimmer can remove that call graph. Generated ABI metadata
-    remains the supported path and missing metadata continues to fail closed.
+    PublishTrimmed is not guaranteed to be known during project evaluation. Apple workloads,
+    for example, compute it in _ComputePublishTrimmed. Configure the final-consumer switch at
+    target execution time, after that late computation when present, and before both runtimeconfig
+    generation and ILLink consume RuntimeHostConfigurationOption.
   -->
-  <ItemGroup Condition="'$(PublishTrimmed)' == 'true' or '$(PublishAot)' == 'true'">
-    <RuntimeHostConfigurationOption Remove="SharpLink.Runtime.UnsafeBlitReflectionFallback" />
-    <RuntimeHostConfigurationOption Include="SharpLink.Runtime.UnsafeBlitReflectionFallback"
-                                    Value="false"
-                                    Trim="true" />
-  </ItemGroup>
-
-  <!--
-    Under TrimMode=partial the Runtime package is intentionally a copy assembly, so its
-    embedded substitutions are not applied. The runtime switch above is still authoritative,
-    but ILLink analyzes the copied bodies and otherwise reports warnings for code that cannot
-    execute with the switch disabled. Keep these suppressions package-only so unsupported
-    ProjectReference partial trimming remains warning-visible.
-  -->
-  <ItemGroup Condition="'$(PublishTrimmed)' == 'true' and '$(TrimMode)' == 'partial'">
-    <_ILLinkSuppressions Include="$(MSBuildThisFileDirectory)SharpLink.Runtime.TrimSuppressions.xml" />
-  </ItemGroup>
+  <Target Name="SharpLinkConfigureUnsafeBlitTrimming"
+          AfterTargets="_ComputePublishTrimmed"
+          BeforeTargets="_GenerateRuntimeConfigurationFilesInputCache;_PrepareTrimConfiguration"
+          Condition="'$(PublishTrimmed)' == 'true' or '$(PublishAot)' == 'true'">
+    <ItemGroup>
+      <RuntimeHostConfigurationOption Remove="SharpLink.Runtime.UnsafeBlitReflectionFallback" />
+      <RuntimeHostConfigurationOption Include="SharpLink.Runtime.UnsafeBlitReflectionFallback"
+                                      Value="false"
+                                      Trim="true" />
+    </ItemGroup>
+    <PropertyGroup>
+      <SharpLinkUnsafeBlitTrimConfigurationApplied>true</SharpLinkUnsafeBlitTrimConfigurationApplied>
+    </PropertyGroup>
+  </Target>
 </Project>
