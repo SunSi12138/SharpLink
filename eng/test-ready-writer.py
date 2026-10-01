@@ -43,10 +43,12 @@ class Guards(unittest.TestCase):
         originals={n:((backup/n) if (dest/'RpcSession.ReadyWriter.cs').exists() else dest/n).read_text() for n in prepare.HASHES}
         owned=prepare.transform('OwnedFrame.cs',originals['OwnedFrame.cs']);pump=prepare.transform('RpcSession.SendPump.cs',originals['RpcSession.SendPump.cs'])
         self.assertEqual(owned.count('private readonly object? _completionState;'),1)
-        self.assertIn('_completionState = ready.Completion',owned)
+        self.assertIn('_completionState = ready.Completion; _readyCreditBytes = ready.CreditBytes',owned)
+        self.assertIn('public int Length => Memory.Length;',owned)
+        self.assertIn('internal int ReadyCreditBytes => _readyCreditBytes;',owned)
         self.assertNotIn('ReadySource { get;',owned)
         self.assertIn('Volatile.Read(ref _readyWriterExperiment) is null &&',pump)
-        self.assertIn('frame.ReadyCompletion?.Complete(exception);',pump)
+        self.assertIn('frame.ReadyCompletion?.Complete(frame.ReadyCreditBytes, exception);',pump)
     def test_wire_permission_counters_validate_balanced_measurements(self):
         document,case=self.fixture()
         for sample in document['samples']:

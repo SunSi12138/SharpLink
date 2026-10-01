@@ -4,7 +4,7 @@ namespace SharpLink.Runtime;
 internal interface IReadyFrameCompletion
 {
     // One persistent completion target per fixed-lifecycle stream. No per-frame allocation.
-    void Complete(Exception? error);
+    void Complete(int creditBytes, Exception? error);
 }
 internal readonly record struct ReadyStreamFrame(IRpcByteBufferWriter Packet, int Slot, int CreditBytes, IReadyFrameCompletion Completion);
 

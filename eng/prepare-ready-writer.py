@@ -15,14 +15,20 @@ def once(text, old, new):
 def transform(name, text):
     if hashlib.sha256(text.encode()).hexdigest() != HASHES[name]: raise ValueError("runtime source drift: " + name)
     if name == "OwnedFrame.cs":
-        # Reuse the existing object slot. The measured queue record must not grow,
-        # nor should a per-frame delegate/marker be allocated for the experiment.
-        return once(text, "    private readonly object? _completionState;", """    private readonly object? _completionState;
+        # Reuse the existing Length backing-field footprint for ready credit bytes.
+        # Memory.Length is already the serialized frame length, so the measured queue
+        # record does not grow and no per-frame marker/delegate is allocated.
+        text = once(text, "    private readonly object? _completionState;", """    private readonly object? _completionState;
+    private readonly int _readyCreditBytes;
     internal IReadyFrameCompletion? ReadyCompletion => _completionState as IReadyFrameCompletion;
+    internal int ReadyCreditBytes => _readyCreditBytes;
     internal OwnedFrame(ReadyStreamFrame ready)
         : this(ready.Packet, false, null, false)
-    { _completionState = ready.Completion; }
+    { _completionState = ready.Completion; _readyCreditBytes = ready.CreditBytes; }
 """)
+        text = once(text, "        Length = owner.WrittenCount;", "        _readyCreditBytes = 0;")
+        text = once(text, "    public int Length { get; }", "    public int Length => Memory.Length;")
+        return text
     text=once(text,"private sealed class SendPump","private sealed partial class SendPump")
     text=once(text,"private bool HasNormalFrames() => _normalQueue.Reader.TryPeek(out _);", """private bool HasNormalFrames() => _normalQueue.Reader.TryPeek(out _) ||
             HasReadyWriterWork();""")
@@ -33,7 +39,7 @@ def transform(name, text):
                         _flushPolicyState.Capture().ExplicitBatchWindowEnabled &&""")
     text=once(text,"                DrainQueuedFrames(terminalException);", """                DrainQueuedFrames(terminalException);
                 Volatile.Read(ref _readyWriterExperiment)?.Stopped(terminalException);""")
-    text=once(text,"                PulseCapacityWaiters();\n                // This belongs", """                frame.ReadyCompletion?.Complete(exception);
+    text=once(text,"                PulseCapacityWaiters();\n                // This belongs", """                frame.ReadyCompletion?.Complete(frame.ReadyCreditBytes, exception);
                 WakeReadyWriterForCapacity();
                 PulseCapacityWaiters();
                 // This belongs""")

@@ -72,6 +72,8 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         { SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait, AllowSynchronousContinuations = false });
     }
 
+    private readonly record struct PreparedFrame(IRpcByteBufferWriter Packet, int CreditBytes);
+
     private sealed class Stream : IValueTaskSource, IReadyFrameCompletion
     {
         internal readonly int Index;
@@ -83,7 +85,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         internal IReadyFrameCompletion ReleaseTarget;
         private readonly ReadyWriterCoordinator? _completionOwner;
         internal readonly Lock Gate = new();
-        internal readonly Queue<IRpcByteBufferWriter> Frames;
+        internal readonly Queue<PreparedFrame> Frames;
         internal readonly int Capacity;
         internal readonly int PreparedByteBudget;
         internal long QueuedBytes, MaximumQueuedBytes;
@@ -99,13 +101,13 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         internal int Taken, Released;
         internal StreamFlowController.ResolvedSendCreditLease Lease;
         internal Stream(int index, int slots, int window, ReadyWriterCoordinator? completionOwner = null, int preparedByteBudget = 0)
-        { RequestId = index + 1; ReleaseTarget = this; PreparedByteBudget = preparedByteBudget; _completionOwner = completionOwner; Index = index; Frames = new Queue<IRpcByteBufferWriter>(slots); Capacity = slots; Node = new(this); Credit = window; _space.RunContinuationsAsynchronously = true; }
+        { RequestId = index + 1; ReleaseTarget = this; PreparedByteBudget = preparedByteBudget; _completionOwner = completionOwner; Index = index; Frames = new Queue<PreparedFrame>(slots); Capacity = slots; Node = new(this); Credit = window; _space.RunContinuationsAsynchronously = true; }
 
-        public void Complete(Exception? error)
+        public void Complete(int creditBytes, Exception? error)
         {
             // This embedded completion belongs ONLY to generation one. Later lifetimes
             // have immutable epoch targets, so an old callback cannot address new DATA.
-            _completionOwner!.ReleaseGeneration(Index, 1, _completionOwner._bytes, admitted: true, error);
+            _completionOwner!.ReleaseGeneration(Index, 1, creditBytes, admitted: true, error);
         }
 
         internal bool CanFit(int packetBytes)
@@ -172,15 +174,25 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
     // and arbitrary outbound extensions are completed by the caller BEFORE this entry.
     // Legacy control callers refer to the original lifetime, never a newly reused slot.
     internal ValueTask EnqueueAsync(int index, IRpcByteBufferWriter packet)
-        => EnqueueAsync(new StreamHandle(this, index, 1), packet);
+        => EnqueueAsync(new StreamHandle(this, index, 1), packet, _bytes);
+
+    internal ValueTask EnqueueAsync(int index, IRpcByteBufferWriter packet, int creditBytes)
+        => EnqueueAsync(new StreamHandle(this, index, 1), packet, creditBytes);
+
+    internal ValueTask EnqueueAsync(StreamHandle handle, IRpcByteBufferWriter packet)
+        => EnqueueAsync(handle, packet, _bytes);
 
     [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
-    internal async ValueTask EnqueueAsync(StreamHandle handle, IRpcByteBufferWriter packet)
+    internal async ValueTask EnqueueAsync(StreamHandle handle, IRpcByteBufferWriter packet, int creditBytes)
     {
         Stream? stream = null;
         var debited = false; var transferred = false; var ownsProducer = false;
         try
         {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(creditBytes);
+            if (creditBytes > _context.Protocol.MaxFramePayloadBytes - sizeof(ushort))
+                throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
+                    $"Encoded stream item exceeds the {_context.Protocol.MaxFramePayloadBytes}-byte frame limit.");
             if (!ReferenceEquals(handle.Owner, this) || (uint)handle.Slot >= (uint)_streams.Length)
                 throw new InvalidOperationException("Foreign or invalid stream handle.");
             stream = _streams[handle.Slot];
@@ -197,8 +209,8 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
             await capacity.ConfigureAwait(false);
             if (_reference is not null)
             {
-                if (stream.Lease.IsResolved) await _reference.AcquireSendCreditAsync(in stream.Lease, _bytes, _stopToken).ConfigureAwait(false);
-                else stream.Lease = await _reference.AcquireSendCreditLeaseAsync(stream.RequestId, stream.StreamId, _bytes, _stopToken).ConfigureAwait(false);
+                if (stream.Lease.IsResolved) await _reference.AcquireSendCreditAsync(in stream.Lease, creditBytes, _stopToken).ConfigureAwait(false);
+                else stream.Lease = await _reference.AcquireSendCreditLeaseAsync(stream.RequestId, stream.StreamId, creditBytes, _stopToken).ConfigureAwait(false);
                 debited = true;
             }
             var notify = false;
@@ -210,7 +222,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                 if (stream.Closed) throw new InvalidOperationException("Closed stream.");
                 if (Volatile.Read(ref _stopped) != 0) throw new InvalidOperationException("Ready writer stopped.");
                 if (!stream.CanFit(packet.WrittenCount)) throw new InvalidOperationException("Producer ring count/byte bound exceeded.");
-                stream.Frames.Enqueue(packet); transferred = true;
+                stream.Frames.Enqueue(new PreparedFrame(packet, creditBytes)); transferred = true;
                 stream.QueuedBytes = checked(stream.QueuedBytes + packet.WrittenCount);
                 stream.MaximumPacketBytes = Math.Max(stream.MaximumPacketBytes, packet.WrittenCount);
                 stream.MaximumQueuedBytes = Math.Max(stream.MaximumQueuedBytes, stream.QueuedBytes);
@@ -232,7 +244,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         {
             if (!transferred)
             {
-                if (debited) _reference!.ReturnUnsentCredit(in stream!.Lease, _bytes);
+                if (debited) _reference!.ReturnUnsentCredit(in stream!.Lease, creditBytes);
                 _context.Buffers.Return(packet);
 
             }
@@ -330,24 +342,27 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                     stream.Scheduled = false; _ready.Remove(node); node = next; continue;
                 }
                 _selectionChecks++;
+                var prepared = stream.Frames.Peek();
+                var creditBytes = prepared.CreditBytes;
                 if (_reference is null)
                 {
-                    if (!Available(stream.Credit, _window, _bytes)) { _streamBlocked++; node = next; continue; }
-                    if (!Available(_connectionCredit, _connectionWindow, _bytes))
+                    if (!Available(stream.Credit, _window, creditBytes)) { _streamBlocked++; node = next; continue; }
+                    if (!Available(_connectionCredit, _connectionWindow, creditBytes))
                     { _connectionBlocked++; _blocked = true; return false; }
                 }
                 // The full serialized frame must fit the pump before B3 credit is
                 // debited or either variant removes its ready head. A transient
                 // miss keeps order and ownership unchanged for the next owner turn.
-                if (!admission.TryReserve(stream.Frames.Peek().WrittenCount)) return false;
+                if (!admission.TryReserve(prepared.Packet.WrittenCount)) return false;
                 if (_reference is null)
                 {
-                    stream.Credit -= _bytes; _connectionCredit -= _bytes;
+                    stream.Credit -= creditBytes; _connectionCredit -= creditBytes;
                     stream.WireAttached = true;
                     _creditDebits++;
                 }
-                var packet = stream.Frames.Dequeue(); stream.QueuedBytes -= packet.WrittenCount; stream.Taken++;
-                stream.Outstanding += _bytes; // Same owner-only settlement ledger in both modes.
+                prepared = stream.Frames.Dequeue();
+                var packet = prepared.Packet; stream.QueuedBytes -= packet.WrittenCount; stream.Taken++;
+                stream.Outstanding += creditBytes; // Same owner-only settlement ledger in both modes.
                 // A bounded scheduling quantum, NOT wire item batching or credit grants.
                 // Peer updates/progress are still checked between frames by the pump.
                 if (_turnStream != stream.Index || _turnRemaining == 0)
@@ -363,7 +378,7 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
                 _consecutive = _lastEmitted == stream.Index ? _consecutive + 1 : 1;
                 _lastEmitted = stream.Index; _maxConsecutive = Math.Max(_maxConsecutive, _consecutive);
                 stream.SignalSpace();
-                frame = new ReadyStreamFrame(packet, stream.Index, _bytes, stream.ReleaseTarget);
+                frame = new ReadyStreamFrame(packet, stream.Index, creditBytes, stream.ReleaseTarget);
                 return true;
             }
         }
@@ -384,7 +399,8 @@ internal sealed partial class ReadyWriterCoordinator : IReadyStreamWorkSource
         {
             var stream = _streams[slot];
             if (stream.Generation != generation || stream.Retired) { _staleEvents++; return; }
-            if (creditBytes != _bytes || stream.Released >= stream.Taken) throw new InvalidOperationException("Invalid or duplicate settlement.");
+            if (creditBytes <= 0 || creditBytes > _context.Protocol.MaxFramePayloadBytes - sizeof(ushort) ||
+                stream.Released >= stream.Taken) throw new InvalidOperationException("Invalid or duplicate settlement.");
             if (!admitted)
             {
                 _normalQueueRejected++;

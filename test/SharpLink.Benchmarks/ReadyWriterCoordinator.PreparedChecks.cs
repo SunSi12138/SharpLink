@@ -14,9 +14,9 @@ internal sealed partial class ReadyWriterCoordinator
         var stream = new Stream(0, 16, 8192, preparedByteBudget: 8192);
         using var packet = new PooledByteBufferWriter(4096);
         packet.Advance(4096);
-        stream.Frames.Enqueue(packet); stream.QueuedBytes = 4096;
+        stream.Frames.Enqueue(new PreparedFrame(packet, 1)); stream.QueuedBytes = 4096;
         Check(stream.CanFit(4096) && !stream.CanFit(4097), "serialized byte bound independent of 16-slot count");
-        stream.Frames.Enqueue(packet); stream.QueuedBytes = 8192;
+        stream.Frames.Enqueue(new PreparedFrame(packet, 1)); stream.QueuedBytes = 8192;
         var wait = stream.WaitForSpace(CancellationToken.None, 4096);
         Check(!wait.IsCompleted, "byte-exhausted ring blocks before count exhaustion");
         stream.SignalSpace();
@@ -28,7 +28,7 @@ internal sealed partial class ReadyWriterCoordinator
         Check(!large.IsCompleted, "oversized prepared packet cannot share a nonempty ring");
         stream.Frames.Clear(); stream.QueuedBytes = 0; stream.SignalSpace(); large.GetAwaiter().GetResult();
         Check(stream.CanFit(16384), "one oversized prepared packet may progress in an empty ring");
-        stream.Frames.Enqueue(packet); stream.QueuedBytes = 16384;
+        stream.Frames.Enqueue(new PreparedFrame(packet, 1)); stream.QueuedBytes = 16384;
         Check(!stream.CanFit(1), "oversized borrowed preparation slot excludes all further packets");
         var cancel = stream.WaitForSpace(CancellationToken.None, 1);
         stream.SignalSpace(new OperationCanceledException());
@@ -37,7 +37,7 @@ internal sealed partial class ReadyWriterCoordinator
         stream.Frames.Clear(); stream.QueuedBytes = 0;
         for (var i = 0; i < 100000; i++)
         {
-            stream.Frames.Enqueue(packet); stream.QueuedBytes = 8192;
+            stream.Frames.Enqueue(new PreparedFrame(packet, 1)); stream.QueuedBytes = 8192;
             var next = stream.WaitForSpace(CancellationToken.None, 1);
             stream.Frames.Clear(); stream.QueuedBytes = 0; stream.SignalSpace(); next.GetAwaiter().GetResult();
         }

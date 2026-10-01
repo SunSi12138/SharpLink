@@ -79,8 +79,9 @@ internal sealed partial class ReadyWriterCoordinator
 
     private void DiscardPreparedLocked(Stream stream, Action<Exception> record)
     {
-        while (stream.Frames.TryDequeue(out var packet))
+        while (stream.Frames.TryDequeue(out var prepared))
         {
+            var packet = prepared.Packet;
             stream.QueuedBytes -= packet.WrittenCount;
             try
             {
@@ -92,7 +93,7 @@ internal sealed partial class ReadyWriterCoordinator
             catch (Exception error) { record(error); }
             if (_reference is not null)
             {
-                try { _reference.ReturnUnsentCredit(in stream.Lease, _bytes); }
+                try { _reference.ReturnUnsentCredit(in stream.Lease, prepared.CreditBytes); }
                 catch (Exception error) { record(error); }
             }
         }

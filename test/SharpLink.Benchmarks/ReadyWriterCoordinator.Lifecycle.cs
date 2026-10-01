@@ -43,7 +43,7 @@ internal sealed partial class ReadyWriterCoordinator
 
     private sealed class EpochCompletion(ReadyWriterCoordinator owner, int slot, long generation) : IReadyFrameCompletion
     {
-        public void Complete(Exception? error) => owner.ReleaseGeneration(slot, generation, owner._bytes, true, error);
+        public void Complete(int creditBytes, Exception? error) => owner.ReleaseGeneration(slot, generation, creditBytes, true, error);
     }
 
     private async Task<T> OnWriterAsync<T>(Func<T> action)

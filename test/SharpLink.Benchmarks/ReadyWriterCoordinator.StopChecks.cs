@@ -100,7 +100,7 @@ internal sealed partial class ReadyWriterCoordinator
                 if (hasInFlight) context.Buffers.Return(inFlight.Packet);
                 // Cleanup the intentionally leaking old implementation after a red assertion.
                 foreach (var stream in owner._streams)
-                    while (stream.Frames.TryDequeue(out var packet)) context.Buffers.Return(packet);
+                    while (stream.Frames.TryDequeue(out var prepared)) context.Buffers.Return(prepared.Packet);
                 try { await owner.Completion; } catch (Exception) { }
                 await session.DisposeAsync();
                 await peer.DisposeAsync();
