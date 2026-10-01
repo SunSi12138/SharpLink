@@ -18,11 +18,14 @@ internal static class RpcUnsafeBlitPlatform
 #if SHARPLINK_NATIVEAOT
     internal static bool ReflectionFallbackEnabled => false;
 #else
+#pragma warning disable IL4000 // Final-consumer MSBuild logic disables this feature for supported trimmed/AOT package builds.
     [FeatureSwitchDefinition(ReflectionFallbackSwitchName)]
+    [FeatureGuard(typeof(RequiresUnreferencedCodeAttribute))]
     internal static bool ReflectionFallbackEnabled =>
         AppContext.TryGetSwitch(ReflectionFallbackSwitchName, out var enabled)
             ? enabled
             : true;
+#pragma warning restore IL4000
 #endif
 
     internal static void EnsureSupported(Type targetType)
