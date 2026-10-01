@@ -19,6 +19,10 @@
             Pack="true"
             PackagePath="buildTransitive\SharpLink.Runtime.targets"
             Visible="false" />
+      <None Update="buildTransitive\SharpLink.Runtime.TrimSuppressions.xml"
+            Pack="true"
+            PackagePath="buildTransitive\SharpLink.Runtime.TrimSuppressions.xml"
+            Visible="false" />
       <EmbeddedResource Include="ILLink.Substitutions.xml">
         <LogicalName>ILLink.Substitutions.xml</LogicalName>
       </EmbeddedResource>
