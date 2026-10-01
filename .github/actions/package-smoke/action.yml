@@ -47,6 +47,37 @@ runs:
       shell: bash
       run: ./artifacts/package-trim-smoke/SharpLink.PackageTrimSmoke
 
+    - name: Restore packaged partial-trim consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-partial-trim-smoke
+      run: >-
+        dotnet restore
+        test/SharpLink.PackagePartialTrimSmoke/SharpLink.PackagePartialTrimSmoke.csproj
+        --force
+        --no-cache
+        --configfile test/SharpLink.PackageSmoke/NuGet.config
+        -r linux-x64
+        /p:SelfContained=true
+
+    - name: Publish packaged partial-trim consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-partial-trim-smoke
+      run: >-
+        dotnet publish
+        test/SharpLink.PackagePartialTrimSmoke/SharpLink.PackagePartialTrimSmoke.csproj
+        --no-restore
+        -c Release
+        -r linux-x64
+        --self-contained true
+        -o artifacts/package-partial-trim-smoke
+        /p:TrimmerSingleWarn=false
+
+    - name: Run packaged partial-trim consumer
+      shell: bash
+      run: ./artifacts/package-partial-trim-smoke/SharpLink.PackagePartialTrimSmoke
+
     - name: Restore packaged NativeAOT consumer
       shell: bash
       env:
