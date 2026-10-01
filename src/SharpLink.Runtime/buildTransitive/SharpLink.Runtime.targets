@@ -11,4 +11,15 @@
                                     Value="false"
                                     Trim="true" />
   </ItemGroup>
+
+  <!--
+    Under TrimMode=partial the Runtime package is intentionally a copy assembly, so its
+    embedded substitutions are not applied. The runtime switch above is still authoritative,
+    but ILLink analyzes the copied bodies and otherwise reports warnings for code that cannot
+    execute with the switch disabled. Keep these suppressions package-only so unsupported
+    ProjectReference partial trimming remains warning-visible.
+  -->
+  <ItemGroup Condition="'$(PublishTrimmed)' == 'true' and '$(TrimMode)' == 'partial'">
+    <_ILLinkSuppressions Include="$(MSBuildThisFileDirectory)SharpLink.Runtime.TrimSuppressions.xml" />
+  </ItemGroup>
 </Project>
