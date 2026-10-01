@@ -27,6 +27,7 @@ on:
       - 'test/SharpLink.PackageAotSmoke/**'
       - 'test/SharpLink.PackageTrimSmoke/**'
       - 'test/SharpLink.PackagePartialTrimSmoke/**'
+      - 'test/SharpLink.PackageLateTrimSmoke/**'
       - 'Directory.Build.props'
       - 'Directory.Packages.props'
       - 'Sharplink.slnx'
