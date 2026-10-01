@@ -70,13 +70,16 @@ internal sealed partial class ReadyWriterCoordinator
             }
             var head = owner._streams[0].Frames.Peek();
             var gate = new AdmissionProbe();
-            if (owner.TryTake(gate, out _) || gate.LastLength != head.WrittenCount || gate.Accepted != 0 ||
+            var afterDenied = default(PreparedFrame);
+            if (owner.TryTake(gate, out _) || gate.LastLength != head.Packet.WrittenCount || gate.Accepted != 0 ||
                 owner._creditDebits != 0 || owner._streams[0].Taken != 0 || owner._streams[1].Taken != 0 ||
-                !ReferenceEquals(owner._streams[0].Frames.Peek(), head))
+                (afterDenied = owner._streams[0].Frames.Peek()).CreditBytes != head.CreditBytes ||
+                !ReferenceEquals(afterDenied.Packet, head.Packet))
                 throw new InvalidOperationException("A denied budget must not debit, dequeue or bypass its ready head.");
             gate.Allow = true;
-            if (!owner.TryTake(gate, out var ready) || ready.Slot != 0 || !ReferenceEquals(ready.Packet, head) ||
-                gate.Accepted != 1 || owner._creditDebits != (reference ? 0 : 1))
+            if (!owner.TryTake(gate, out var ready) || ready.Slot != 0 || ready.CreditBytes != head.CreditBytes ||
+                !ReferenceEquals(ready.Packet, head.Packet) || gate.Accepted != 1 ||
+                owner._creditDebits != (reference ? 0 : 1))
                 throw new InvalidOperationException("A released budget must admit the same head exactly once.");
             context.Buffers.Return(ready.Packet);
             owner.Released(ready.Slot, ready.CreditBytes, true, null);
