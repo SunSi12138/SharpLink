@@ -90,11 +90,17 @@ unzip -p "$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg" lib/net10.0/S
 runtime_package="$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg"
 unzip -Z1 "$runtime_package" |
   grep -Fx "buildTransitive/SharpLink.Runtime.targets" >/dev/null
+unzip -Z1 "$runtime_package" |
+  grep -Fx "buildTransitive/SharpLink.Runtime.TrimSuppressions.xml" >/dev/null
 unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
   grep -F 'RuntimeHostConfigurationOption Include="SharpLink.Runtime.UnsafeBlitReflectionFallback"' >/dev/null
 unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
   grep -F 'Value="false"' >/dev/null
 unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
   grep -F 'Trim="true"' >/dev/null
+unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
+  grep -F '_ILLinkSuppressions Include="$(MSBuildThisFileDirectory)SharpLink.Runtime.TrimSuppressions.xml"' >/dev/null
+unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.TrimSuppressions.xml |
+  grep -F 'M:SharpLink.Runtime.RpcUnsafeBlitPlatform.EnsureSupported(System.Type)' >/dev/null
 
 echo "Verified ${#PACKAGES[@]} package and symbol pairs for $EXPECTED_VERSION at $EXPECTED_COMMIT."
