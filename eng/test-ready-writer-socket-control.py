@@ -15,26 +15,17 @@ def load(name):
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); return module
 
 
-prepare = load('prepare-ready-writer-socket-control')
 run = load('run-ready-writer-socket-control')
 
 
 class Controls(unittest.TestCase):
-    def test_exact_overlay_both_sides_and_compile_fence(self):
-        text = prepare.transform((ROOT/prepare.PAIR).read_text())
-        self.assertIn('#if !SHARPLINK_READY_WRITER_DIAGNOSTIC\n#error', text)
-        self.assertEqual(text.count(', socketOptions)'), 1)
-        self.assertEqual(text.count(', options: socketOptions)'), 1)
-        self.assertIn('"default" => null', text)
-        self.assertEqual(text.count('ReceiveBufferBytes = 262144'), 1)
-        self.assertNotIn('NoDelay =', text)
-        self.assertNotIn('SendBufferBytes =', text)
-        self.assertIn('TimeSpan.FromSeconds(10)', text)
-
-    def test_unreviewed_source_cannot_be_patched(self):
-        text = (ROOT/prepare.PAIR).read_text()
-        for drift in (text+'\n', text.replace('AcceptAsync', 'OtherAsync')):
-            with self.assertRaises(ValueError): prepare.transform(drift)
+    def test_direct_benchmark_knob_is_explicit_and_test_only(self):
+        text=(ROOT/'test/SharpLink.Benchmarks/PhaseBTransportPair.cs').read_text()
+        self.assertIn('#if SHARPLINK_READY_WRITER_EXPERIMENT',text)
+        self.assertIn('SHARPLINK_READY_TCP_RECEIVE_BUFFER',text)
+        self.assertEqual(text.count('ReceiveBufferBytes = 262144'),1)
+        self.assertIn('receiveBufferText != "262144"',text)
+        self.assertNotIn('SHARPLINK_READY_TCP_RECEIVE_BUFFER',(ROOT/'src/SharpLink.Runtime/RpcSession.SendPump.cs').read_text())
 
     def test_abba_all_once_even_if_default_fails(self):
         self.assertEqual(run.PLAN, [('default',0),('262144',0),('262144',1),('default',1)])
@@ -50,7 +41,7 @@ class Controls(unittest.TestCase):
             for args,kwargs in calls:
                 self.assertEqual(kwargs['timeout'],180)
                 self.assertEqual(args[args.index('--ready-writer-evidence')+1:-1], ['tcp','128','128','4096','12','524288','16','16384'])
-                self.assertEqual(kwargs['env']['SHARPLINK_READY_PREPARED_BYTES'],'0')
+                self.assertEqual(kwargs['env']['SHARPLINK_READY_PREPARED_BYTES'],'0');self.assertIn(kwargs['env']['SHARPLINK_READY_TCP_RECEIVE_BUFFER'],('0','262144'))
             with self.assertRaises(FileExistsError): run.execute(ROOT,Path(directory),Path('/unused.dll'),[0,1,2,3])
 
     def test_diagnostic_marker_and_partial_data_required(self):

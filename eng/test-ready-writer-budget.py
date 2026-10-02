@@ -54,6 +54,7 @@ class Guards(unittest.TestCase):
         self.assertIn("exit['code']!=0",code);self.assertIn('enumerate(expected_plan())',code)
     def test_tcp_buffer_is_report_bound_not_product_default(self):
         d,c=self.fixture();c[0]='tcp';d['metadata']['transport']='tcp';d['metadata']['tcpReceiveBufferBytes']=262144
+        for row in d['samples']:row['Transport']='tcp'
         self.assertEqual(len(verify.validate_document(d,'a'*40,c,262144)),16)
         with self.assertRaises(ValueError):verify.validate_document(d,'a'*40,c,0)
         pair=(ROOT/'test/SharpLink.Benchmarks/PhaseBTransportPair.cs').read_text()

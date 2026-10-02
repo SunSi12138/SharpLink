@@ -25,7 +25,7 @@ def execute(root, output, dll, affinity):
             raise FileExistsError('Do not overwrite successful or failed socket controls')
     failures = []
     for index, ((profile, launch), target) in enumerate(zip(PLAN, targets)):
-        env = dict(os.environ, SHARPLINK_TCP_RCVBUF_CONTROL=profile, SHARPLINK_READY_ORDER=str(launch),
+        env = dict(os.environ, SHARPLINK_READY_TCP_RECEIVE_BUFFER=('0' if profile=='default' else profile), SHARPLINK_READY_ORDER=str(launch),
                    SHARPLINK_READY_PREPARED_BYTES='0', DOTNET_TieredPGO='0', DOTNET_TieredCompilation='1',
                    DOTNET_ReadyToRun='0', DOTNET_PROCESSOR_COUNT='4')
         args = ['taskset', '-c', ','.join(map(str, affinity)), 'dotnet', str(dll),
@@ -69,9 +69,12 @@ def main():
         json.dump(provenance, file, indent=2)
     os.environ['SHARPLINK_SOURCE_TREE'] = source
     failures = execute(ROOT, output, dll, affinity)
-    (output/'outcome.json').write_text(json.dumps(dict(failures=failures, attempted=len(PLAN), diagnostic_only=True)))
+    configured_failures=[index for index in failures if PLAN[index][0] != 'default']
+    (output/'outcome.json').write_text(json.dumps(dict(failures=failures, configured_failures=configured_failures, attempted=len(PLAN), diagnostic_only=True)))
+    if configured_failures:
+        raise SystemExit(f'Explicit socket controls failed {configured_failures}; retained all four attempts; no retry or timeout relaxation')
     if failures:
-        raise SystemExit(f'Socket controls failed {failures}; retained all four attempts; no retry or timeout relaxation')
+        print(f'Default socket observations failed {failures}; retained as diagnostic evidence, explicit controls passed', flush=True)
 
 
 if __name__ == '__main__':

@@ -42,17 +42,17 @@ jobs:
             path="/proc/sys/net/ipv4/$key"
             if [[ -r "$path" ]]; then printf '%s=' "$key"; cat "$path"; fi
           done > artifacts/socket-control/sysctl-readonly.txt
-      - name: Prepare same hash-checked writer plus diagnostic-only socket overlay
+      - name: Prepare same hash-checked writer; socket knob is benchmark-only
         run: |
           python3 eng/prepare-ready-writer.py --apply
-          python3 eng/prepare-ready-writer-socket-control.py
-          git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs test/SharpLink.Benchmarks/PhaseBTransportPair.cs
+          git add src/SharpLink.Runtime/OwnedFrame.cs src/SharpLink.Runtime/RpcSession.SendPump.cs src/SharpLink.Runtime/RpcSession.ReadyWriter.cs
           git diff --cached --binary > artifacts/socket-control/disposable.patch
           dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:ReadyWriterDiagnostic=true -p:Platform=AnyCPU
       - name: Check actual default and explicit-buffer pairs before the control
         run: |
           for profile in default 262144; do
-            env SHARPLINK_TCP_RCVBUF_CONTROL="$profile" dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test > "artifacts/socket-control/self-test-$profile.log" 2>&1
+            value=0; [[ "$profile" == 262144 ]] && value=262144
+            env SHARPLINK_READY_TCP_RECEIVE_BUFFER="$value" dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test > "artifacts/socket-control/self-test-$profile.log" 2>&1
           done
       - name: Collect both profiles in AB/BA order without suppressing failed defaults
         run: python3 eng/run-ready-writer-socket-control.py artifacts/socket-control
