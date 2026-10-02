@@ -13,10 +13,6 @@ internal enum SharpLinkDynamicModuleState : byte
 
 internal static class SharpLinkAssemblyManifestLoader
 {
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(
-        "Trimming",
-        "IL2072",
-        Justification = "Generated SharpLink manifest locator constructor arguments already require PublicParameterlessConstructor via DynamicallyAccessedMembers; CustomAttributeData.ConstructorArguments.Value does not preserve that dataflow fact.")]
     internal static SharpLinkAssemblyRegistrationResult TryLoad(
         Assembly? assembly,
         out ISharpLinkGeneratedAssemblyManifest? manifest)
