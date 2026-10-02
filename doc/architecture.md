@@ -13,7 +13,7 @@
 | Client | Client 配置、连接/端点拓扑、请求状态、重连、取消/deadline 与 `IRpcChannel` | [Client 架构](architecture-client.md) |
 | Server | Server 配置、监听/会话编排、服务注册与调用生命周期、认证/异常边界 | [Server 架构](architecture-server.md) |
 
-`SharpLink.Abstractions` 是跨子系统的稳定公共契约层；`SharpLink.Sdk` 是契约项目的包入口并以 analyzer-only 方式携带 Generator；`SharpLink.Hosting` 提供 Generic Host 集成；`SharpLink.Serializer.SharpPack` 提供序列化 Adapter 集成。
+`SharpLink.Abstractions` 是跨子系统的稳定公共契约层；`SharpLink.Sdk` 是契约项目的包入口并以 analyzer-only 方式携带 Generator；`SharpLink.GenerationControl` 提供可选的 peer generation 声明/同步契约；`SharpLink.Hosting` 提供 Generic Host 集成；`SharpLink.Serializer.SharpPack` 提供序列化 Adapter 集成。
 
 ## 生产依赖方向
 
@@ -21,6 +21,8 @@
 
 ```mermaid
 graph LR
+    GenerationControl[SharpLink.GenerationControl] --> Abstractions[SharpLink.Abstractions]
+    GenerationControl -. analyzer-only .-> Generator[SharpLink.Generator]
     Runtime[SharpLink.Runtime] --> Abstractions[SharpLink.Abstractions]
     Client[SharpLink.Client] --> Runtime
     Client --> Abstractions
@@ -40,7 +42,7 @@ graph LR
 - `SharpLink.Abstractions` 不依赖其他 SharpLink 生产项目。
 - `SharpLink.Runtime` 只向下依赖 `SharpLink.Abstractions`，不能依赖 Client、Server 或 Hosting。
 - Client 与 Server 是同级边界，彼此不能直接引用；二者只共享 Runtime 机制和 Abstractions 契约。
-- `SharpLink.Generator` 没有生产程序集引用；`SharpLink.Sdk -> SharpLink.Generator` 只能是 analyzer-only 引用，不能变成运行时程序集依赖。
+- `SharpLink.Generator` 没有生产程序集引用；`SharpLink.Sdk -> SharpLink.Generator` 与 `SharpLink.GenerationControl -> SharpLink.Generator` 只能是 analyzer-only 引用，不能变成运行时程序集依赖。
 - Hosting 到 Client/Server 的两个现有引用是显式临时例外，不应被解释为可扩张的架构先例。
 - 任何新增生产项目或引用边都必须同时更新规范边界；不能用“传递依赖已经存在”作为新增直接引用的理由。
 
@@ -134,5 +136,5 @@ Streaming 沿用相同边界：Runtime 拥有 frame/stream/flow-control 机制�
 [ADR 0001](adr/0001-2.0-public-api-and-packages.md) 固定业务 API、扩展 SPI 和 generated
 infrastructure 的分类。生成程序集只引用 Abstractions；Catalog 是弱引用 bootstrap，
 `SharpLinkRuntimeContext` 是实例级服务容器，普通应用通过 Client/Server Builder 配置。
-内部 Session/StreamManager 的创建、发布和关闭只能由 owner 完成。八个发布包的实际 public API
+内部 Session/StreamManager 的创建、发布和关闭只能由 owner 完成。九个发布包的实际 public API
 由 [API baseline](../eng/public-api/2.0.0) 和 Release Gate 检查；SharedMemory/Telemetry 本轮不拆包。

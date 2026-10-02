@@ -1,6 +1,7 @@
 ﻿<Solution>
     <Project Path="demo\DemoBase\DemoBase.csproj" />
     <Project Path="src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <Project Path="src/SharpLink.GenerationControl/SharpLink.GenerationControl.csproj" />
     <Project Path="src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
     <Project Path="src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj" />
     <Project Path="src/SharpLink.Generator/SharpLink.Generator.csproj" />

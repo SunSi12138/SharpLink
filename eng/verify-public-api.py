@@ -14,6 +14,7 @@ PACKAGES = (
     "SharpLink.Client",
     "SharpLink.Server",
     "SharpLink.Hosting",
+    "SharpLink.GenerationControl",
     "SharpLink.Sdk",
     "SharpLink.Serializer.SharpPack",
     "SharpLink.Compression.Zstd",
@@ -73,7 +74,7 @@ def main():
         diff = options.output / "public-api.diff"
         diff.write_text("".join(differences), encoding="utf-8")
         raise ValueError(f"Unreviewed public API changes; inspect {diff}")
-    print("Verified the complete public/protected API, including SDK type forwards, of all eight packages.")
+    print("Verified the complete public/protected API, including SDK type forwards, of all nine packages.")
 
 
 if __name__ == "__main__":
