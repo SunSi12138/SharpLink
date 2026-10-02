@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Fixed trimmed and NativeAOT consumption of `SharpLink.Runtime`: PackageReference consumers use a packaged feature switch for trimming/AOT, while ProjectReference consumers are covered for NativeAOT and `TrimMode=full` through the embedded linker substitution without changing Runtime's established mobile copy/link semantics. Generated UnsafeBlit ABI metadata remains the supported trimmed/AOT path, missing metadata fails closed, untrimmed JIT retains the reflective fallback, and package/source smoke tests run with warnings-as-errors. ProjectReference + `TrimMode=partial` remains outside the 2.x support contract and is tracked for the 3.x structural cleanup.
 - Fixed a hung OneWay call with client streams when the logical deadline elapsed while the producer was still running. The pending call was terminated by the deadline first, and the invoker then awaited the pooled lease operation a second time, which never completes; the invocation never returned, its producer stayed alive, and the client's logical invocation accounting never drained. The invoker now publishes the local send/producer failure to the pending request table and observes the lease operation exactly once on every path, so the terminal that actually won - local completion, send failure, deadline, caller cancellation, or a connection close - is what the caller sees, and the pooled operation is always returned.
 
 ## [2.0.1] - 2026-09-19

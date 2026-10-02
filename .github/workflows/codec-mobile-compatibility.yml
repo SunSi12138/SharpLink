@@ -20,7 +20,9 @@ on:
       - 'test/SharpLink.CodecCompatibility.Browser/portable-artifacts.mjs'
 
 concurrency:
-  group: codec-mobile-evidence-${{ github.event.pull_request.number || github.ref }}
+  # Include the caller workflow so a Release Gate workflow_call cannot cancel, or be cancelled by,
+  # the standalone mobile-evidence workflow for the same pull request.
+  group: codec-mobile-evidence-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

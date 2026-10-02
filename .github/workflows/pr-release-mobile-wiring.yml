@@ -1,0 +1,70 @@
+name: PR Release Mobile Wiring
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+    paths:
+      - '.github/workflows/release-gate.yml'
+      - '.github/workflows/codec-mobile-compatibility.yml'
+      - '.github/workflows/pr-release-mobile-wiring.yml'
+  workflow_dispatch:
+
+jobs:
+  codec-mobile-evidence:
+    uses: ./.github/workflows/codec-mobile-compatibility.yml
+
+  verify-release-wiring:
+    needs: [codec-mobile-evidence]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify Release Gate mobile caller integration
+        shell: bash
+        env:
+          MOBILE_RESULT: ${{ needs.codec-mobile-evidence.result }}
+        run: |
+          if [[ "$MOBILE_RESULT" != "success" ]]; then
+            echo "::error::Codec Mobile Evidence reusable workflow did not succeed: $MOBILE_RESULT"
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import pathlib
+          import re
+
+          text = pathlib.Path(".github/workflows/release-gate.yml").read_text(encoding="utf-8")
+
+          caller = re.search(
+              r"(?ms)^  codec-mobile-evidence:\n"
+              r"    uses: \.\/\.github\/workflows\/codec-mobile-compatibility\.yml\s*$",
+              text,
+          )
+          if caller is None:
+              raise SystemExit(
+                  "Release Gate does not call codec-mobile-compatibility.yml as codec-mobile-evidence."
+              )
+
+          summary = re.search(
+              r"(?ms)^  release-summary:\n.*?^    needs:\s*\[([^\]]+)\]",
+              text,
+          )
+          if summary is None:
+              raise SystemExit("Release Gate release-summary needs list was not found.")
+
+          required = {item.strip() for item in summary.group(1).split(",")}
+          if "codec-mobile-evidence" not in required:
+              raise SystemExit(
+                  "Release Gate release-summary does not require codec-mobile-evidence."
+              )
+
+          print("Release Gate mobile reusable-workflow wiring is present and blocking.")
+          PY
