@@ -199,13 +199,19 @@ internal sealed class StreamManager
                 // still-live state and then replace this route before retirement.
                 if (dispatcher is not PreAdmissionStreamDispatcher)
                     ClearBytesConsumedCallback(dispatcher);
-                PublishReceiveTerminal(requestId, streamId, entry);
             }
             finally
             {
-                _ = requestDispatchers.FinishRetirement(streamId, entry);
-                entry.Detach();
-                RemoveEmptyRequest(requestId, requestDispatchers);
+                try
+                {
+                    PublishReceiveTerminal(requestId, streamId, entry);
+                }
+                finally
+                {
+                    _ = requestDispatchers.FinishRetirement(streamId, entry);
+                    entry.Detach();
+                    RemoveEmptyRequest(requestId, requestDispatchers);
+                }
             }
         }
     }
@@ -428,8 +434,16 @@ internal sealed class StreamManager
         }
         catch
         {
-            entry.Detach();
-            RemoveEmptyRequest(requestId, requestDispatchers);
+            try
+            {
+                PublishReceiveTerminal(requestId, streamId, entry);
+            }
+            finally
+            {
+                _ = requestDispatchers.FinishRetirement(streamId, entry);
+                entry.Detach();
+                RemoveEmptyRequest(requestId, requestDispatchers);
+            }
             throw;
         }
         if (!entry.HasActiveDispatches)
@@ -464,13 +478,19 @@ internal sealed class StreamManager
         try
         {
             ClearBytesConsumedCallback(entry.Dispatcher);
-            PublishReceiveTerminal(requestId, streamId, entry);
         }
         finally
         {
-            _ = requestDispatchers.FinishRetirement(streamId, entry);
-            entry.Detach();
-            RemoveEmptyRequest(requestId, requestDispatchers);
+            try
+            {
+                PublishReceiveTerminal(requestId, streamId, entry);
+            }
+            finally
+            {
+                _ = requestDispatchers.FinishRetirement(streamId, entry);
+                entry.Detach();
+                RemoveEmptyRequest(requestId, requestDispatchers);
+            }
         }
     }
 
@@ -587,6 +607,13 @@ internal sealed class StreamManager
             try
             {
                 ClearBytesConsumedCallback(item.Entry.Dispatcher);
+            }
+            catch (Exception completionException)
+            {
+                (failures ??= []).Add(completionException);
+            }
+            try
+            {
                 PublishReceiveTerminal(requestId, item.StreamId, item.Entry);
             }
             catch (Exception completionException)
@@ -627,6 +654,13 @@ internal sealed class StreamManager
             try
             {
                 ClearBytesConsumedCallback(item.Entry.Dispatcher);
+            }
+            catch (Exception completionException)
+            {
+                (failures ??= []).Add(completionException);
+            }
+            try
+            {
                 PublishReceiveTerminal(requestId, item.StreamId, item.Entry);
             }
             catch (Exception completionException)
