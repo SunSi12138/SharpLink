@@ -32,6 +32,8 @@
            Text="SharpLink UnsafeBlit reflection fallback switch must be false for late trimming." />
     <Error Condition="'@(_SharpLinkUnsafeBlitSwitch->'%(Trim)')' != 'true'"
            Text="SharpLink UnsafeBlit reflection fallback switch must participate in trimming." />
+    <Error Condition="'@(_ILLinkSuppressions)' == ''"
+           Text="SharpLink partial-trim package suppression was not added after late PublishTrimmed computation." />
     <Message Importance="high" Text="PACKAGE_LATE_TRIM_CONFIGURATION_PASS" />
   </Target>
 </Project>
