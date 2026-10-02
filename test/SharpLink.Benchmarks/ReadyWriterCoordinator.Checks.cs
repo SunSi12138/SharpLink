@@ -1,6 +1,7 @@
 #if SHARPLINK_READY_WRITER_EXPERIMENT
 using System;
 using System.Threading.Tasks;
+using System.Linq;
 using SharpLink.Abstractions;
 using SharpLink.Runtime;
 namespace SharpLink.Benchmarks;

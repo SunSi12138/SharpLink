@@ -188,8 +188,8 @@ internal sealed partial class ReadyWriterCoordinator
             var second = await fixture.TakeAsync(current, 1, 7);
             var outstanding = slot.Outstanding; var releases = owner._releases;
             // Do not double-return a buffer: only replay the retired immutable callback.
-            first.Completion.Complete(null);
-            originalObject.Complete(null); // the embedded generation-one target
+            first.Completion.Complete(first.CreditBytes, null);
+            originalObject.Complete(first.CreditBytes, null); // the embedded generation-one target
             RequireWire(slot.Outstanding == outstanding && owner._releases == releases && slot.Released == 0,
                 "Old callback completed a new writer frame.");
             fixture.Release(second);
@@ -269,7 +269,7 @@ internal sealed partial class ReadyWriterCoordinator
             RequireWire(Owner.TryTake(out var frame), "Expected ready DATA for a live generation.");
             return frame;
         }
-        internal void Release(ReadyStreamFrame frame) { _context.Buffers.Return(frame.Packet); frame.Completion.Complete(null); }
+        internal void Release(ReadyStreamFrame frame) { _context.Buffers.Return(frame.Packet); frame.Completion.Complete(frame.CreditBytes, null); }
         internal async Task CloseAsync(StreamHandle handle)
         { var pending = Owner.CloseStreamAsync(handle); Owner.DrainNotifications(); RequireWire(await pending, "Expected initial close."); }
         internal async Task<StreamHandle> OpenAsync(long requestId, ushort streamId)
