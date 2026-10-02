@@ -130,19 +130,7 @@ internal sealed partial class StreamManager
         try
         {
             if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-            {
                 consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
-                if (_resolveReceiveCreditLease is not null && _resolvedBytesConsumed is not null)
-                {
-                    receiveCreditLease = _resolveReceiveCreditLease(requestId, streamId);
-                    if (receiveCreditLease.IsResolved)
-                    {
-                        _ = consumptionAware.TrySetResolvedBytesConsumedCallback(
-                            _resolvedBytesConsumed,
-                            in receiveCreditLease);
-                    }
-                }
-            }
         }
         catch
         {
@@ -152,7 +140,12 @@ internal sealed partial class StreamManager
             throw;
         }
 
-        if (!requestDispatchers.TryRegister(streamId, dispatcher, receiveCreditLease))
+        if (!requestDispatchers.TryRegister(
+                requestId,
+                streamId,
+                dispatcher,
+                _resolveReceiveCreditLease,
+                out receiveCreditLease))
         {
             ClearBytesConsumedCallback(dispatcher);
             SharpLinkTelemetry.AddActiveStreams(-1);
@@ -161,6 +154,25 @@ internal sealed partial class StreamManager
             if (ignoreExisting)
                 return;
             throw new InvalidOperationException("The stream is already registered.");
+        }
+
+        if (dispatcher is IStreamConsumptionAwareDispatcher resolvedConsumptionAware &&
+            _resolvedBytesConsumed is not null &&
+            receiveCreditLease.IsResolved)
+        {
+            try
+            {
+                _ = resolvedConsumptionAware.TrySetResolvedBytesConsumedCallback(
+                    _resolvedBytesConsumed,
+                    in receiveCreditLease);
+            }
+            catch
+            {
+                // The route and receive generation were already published together.
+                // Unregister owns exact-generation retirement before surfacing the callback error.
+                Unregister(requestId, streamId);
+                throw;
+            }
         }
 
         termination = Volatile.Read(ref _termination);

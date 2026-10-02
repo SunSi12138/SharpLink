@@ -11,16 +11,23 @@ internal sealed partial class StreamManager
         private readonly Dictionary<ushort, DispatcherEntry> _byStreamId = [];
 
         public bool TryRegister(
+            long requestId,
             ushort streamId,
             IStreamDispatcher dispatcher,
-            StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease)
+            Func<long, ushort, StreamFlowController.ResolvedReceiveCreditLease>? resolveReceiveCreditLease,
+            out StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease)
         {
             lock (_gate)
             {
                 if (streamId == 0)
                 {
                     if (_defaultDispatcher is not null)
+                    {
+                        receiveCreditLease = default;
                         return false;
+                    }
+
+                    receiveCreditLease = resolveReceiveCreditLease?.Invoke(requestId, streamId) ?? default;
                     Volatile.Write(
                         ref _defaultDispatcher,
                         new DispatcherEntry(dispatcher, receiveCreditLease));
@@ -28,7 +35,12 @@ internal sealed partial class StreamManager
                 }
 
                 if (_byStreamId.ContainsKey(streamId))
+                {
+                    receiveCreditLease = default;
                     return false;
+                }
+
+                receiveCreditLease = resolveReceiveCreditLease?.Invoke(requestId, streamId) ?? default;
                 _byStreamId.Add(streamId, new DispatcherEntry(dispatcher, receiveCreditLease));
                 return true;
             }

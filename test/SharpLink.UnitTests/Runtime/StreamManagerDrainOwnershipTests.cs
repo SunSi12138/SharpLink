@@ -48,8 +48,12 @@ public partial class StreamManagerTests
             maxConcurrentStreams: 2);
         var keyedTerminalCalls = 0;
 
+        var resolveCalls = 0;
         StreamFlowController.ResolvedReceiveCreditLease Resolve(long requestId, ushort streamId)
-            => controller.ResolveReceiveCreditLease(requestId, streamId);
+        {
+            Interlocked.Increment(ref resolveCalls);
+            return controller.ResolveReceiveCreditLease(requestId, streamId);
+        }
         void Accept(
             in StreamFlowController.ResolvedReceiveCreditLease lease,
             int bytes)
@@ -82,7 +86,8 @@ public partial class StreamManagerTests
         var firstDispatcher = new ImmediateConsumptionDispatcher();
         manager.Register(requestId, streamId, firstDispatcher);
         var firstLease = firstDispatcher.ReceiveCreditLease;
-        Ensure(firstLease.IsResolved, "first route must retain a resolved receive lease");
+        Ensure(firstLease.IsResolved && Volatile.Read(ref resolveCalls) == 1,
+            "first route must retain exactly one resolved receive lease");
 
         var terminalEntered = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -121,6 +126,8 @@ public partial class StreamManagerTests
 
         Ensure(!racingDispatcher.ReceiveCreditLease.IsResolved,
             "failed overlapping registration must clear the old resolved lease");
+        Ensure(Volatile.Read(ref resolveCalls) == 1,
+            "a still-mapped retiring key must reject registration before resolving flow state");
         releaseTerminal.TrySetResult();
         await unregister.WaitAsync(RaceCoordinationTimeout);
 
@@ -128,8 +135,9 @@ public partial class StreamManagerTests
         manager.Register(requestId, streamId, replacement);
         var replacementLease = replacement.ReceiveCreditLease;
         Ensure(replacementLease.IsResolved &&
-            replacementLease.Generation != firstLease.Generation,
-            "same-key replacement must bind a new receive generation after old terminal publication");
+            replacementLease.Generation != firstLease.Generation &&
+            Volatile.Read(ref resolveCalls) == 2,
+            "same-key replacement must resolve exactly one new generation after old terminal publication");
 
         await manager.DispatchChunkAsync(
             requestId,
