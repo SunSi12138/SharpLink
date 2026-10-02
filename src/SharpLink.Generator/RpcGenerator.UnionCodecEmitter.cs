@@ -2,7 +2,10 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private static void AppendUnionCodec(StringBuilder sb, GeneratedCodecModel model)
+    private static void AppendUnionCodec(
+        StringBuilder sb,
+        GeneratedCodecModel model,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         var cases = model.Members
             .OrderBy(static member => member.FieldId)
@@ -11,13 +14,13 @@ public partial class RpcGenerator
         sb.AppendLine($"internal sealed class {model.CodecName} : IRpcCodec<{model.TypeName}>");
         sb.AppendLine("{");
         for (var index = 0; index < cases.Length; index++)
-            sb.AppendLine($"    private readonly IRpcCodec<{cases[index].TypeName}> __codec_{index};");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(cases[index].TypeName, cases[index].TypeName, concreteCodecTypes)} __codec_{index};");
         sb.AppendLine();
         sb.AppendLine($"    internal {model.CodecName}(IRpcCodecProvider provider)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(provider);");
         for (var index = 0; index < cases.Length; index++)
-            sb.AppendLine($"        __codec_{index} = provider.GetCodec<{cases[index].TypeName}>();");
+            sb.AppendLine($"        __codec_{index} = {GetCodecResolveExpression("provider", cases[index].TypeName, cases[index].TypeName, concreteCodecTypes)};");
         sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine($"    public void Serialize(in {model.TypeName} value, IBufferWriter<byte> writer)");

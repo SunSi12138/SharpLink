@@ -16,6 +16,9 @@ jobs:
   codec-compatibility:
     uses: ./.github/workflows/codec-compatibility.yml
 
+  codec-mobile-evidence:
+    uses: ./.github/workflows/codec-mobile-compatibility.yml
+
   allocation-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 12
@@ -252,7 +255,7 @@ jobs:
 
   release-summary:
     runs-on: ubuntu-latest
-    needs: [codec-compatibility, allocation-gate, matrix-build-test, aot-smoke, pack, chaos-smoke]
+    needs: [codec-compatibility, codec-mobile-evidence, allocation-gate, matrix-build-test, aot-smoke, pack, chaos-smoke]
     if: ${{ always() }}
     steps:
       - name: Verify every required release job succeeded

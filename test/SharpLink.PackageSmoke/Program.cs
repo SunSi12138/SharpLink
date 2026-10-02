@@ -53,6 +53,11 @@ public sealed class PackageSmokeService : IPackageSmokeService
 
 public static class Program
 {
+    private struct PackageSmokeStandaloneBlit
+    {
+        public int Value;
+    }
+
     private static readonly string[] RuntimeRawDispatcherTypeNames =
     [
         "SharpLink.Runtime.IStreamDispatcher",
@@ -67,6 +72,7 @@ public static class Program
     public static async Task Main()
     {
         AssertEnginePublicApiBoundary();
+        AssertStandaloneUnsafeBlitFallback();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await RunTransportSmokeAsync(useSharedMemory: false, timeout.Token);
         await RunTransportSmokeAsync(useSharedMemory: true, timeout.Token);
@@ -76,6 +82,22 @@ public static class Program
 
     private static void ConfigureZstd(SharpLinkRuntimeOptions options)
     {        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
+    }
+
+    private static void AssertStandaloneUnsafeBlitFallback()
+    {
+        if (SharpLinkGeneratedUnsafeBlitCatalog.TryGet(typeof(PackageSmokeStandaloneBlit), out _))
+            throw new InvalidOperationException("Standalone UnsafeBlit fallback unexpectedly has generated ABI metadata.");
+
+        using var context = new SharpLinkRuntimeContextBuilder().Build();
+        var codec = context.Codecs.GetCodec<PackageSmokeStandaloneBlit>();
+        var writer = new ArrayBufferWriter<byte>();
+        var expected = new PackageSmokeStandaloneBlit { Value = 42 };
+        codec.Serialize(in expected, writer);
+        var payload = new ReadOnlySequence<byte>(writer.WrittenMemory);
+        var actual = codec.Deserialize(in payload);
+        if (actual.Value != expected.Value)
+            throw new InvalidOperationException("Untrimmed packaged UnsafeBlit reflection fallback failed.");
     }
 
     private static async Task RunTransportSmokeAsync(

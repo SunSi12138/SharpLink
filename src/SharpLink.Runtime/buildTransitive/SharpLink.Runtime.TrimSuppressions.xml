@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<linker>
+  <assembly fullname="SharpLink.Runtime">
+    <!--
+      PackageReference + TrimMode=partial keeps SharpLink.Runtime as a copy assembly.
+      The package RuntimeHostConfigurationOption disables the reflection fallback at runtime,
+      but ILLink still analyzes the copied method bodies. These warnings are therefore suppressed
+      only for package consumers after the final trim mode has been resolved.
+    -->
+    <attribute fullname="System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessageAttribute">
+      <argument>ILLink</argument>
+      <argument>IL2026</argument>
+      <property name="Scope">member</property>
+      <property name="Target">M:SharpLink.Runtime.RpcUnsafeBlitPlatform.EnsureSupported(System.Type)</property>
+    </attribute>
+    <attribute fullname="System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessageAttribute">
+      <argument>ILLink</argument>
+      <argument>IL2026</argument>
+      <property name="Scope">member</property>
+      <property name="Target">M:SharpLink.Runtime.RpcUnsafeBlitPlatform.IsSupported(System.Type,System.Int32,System.Boolean)</property>
+    </attribute>
+    <!--
+      Generated manifest locator Type arguments require PublicParameterlessConstructor via DAM.
+      CustomAttributeData.ConstructorArguments.Value does not preserve that dataflow fact.
+    -->
+    <attribute fullname="System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessageAttribute">
+      <argument>ILLink</argument>
+      <argument>IL2072</argument>
+      <property name="Scope">member</property>
+      <property name="Target">M:SharpLink.Runtime.SharpLinkAssemblyManifestLoader.TryLoad(System.Reflection.Assembly,SharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest@)</property>
+    </attribute>
+  </assembly>
+</linker>

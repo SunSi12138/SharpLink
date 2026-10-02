@@ -208,6 +208,7 @@ internal sealed record GeneratedCodecModel(
     Location? Location)
 {
     public bool ElementIsString { get; init; }
+    public bool CustomCodecSupportsConcreteDispatch { get; init; }
     public ulong CodecHashHigh { get; init; }
     public ulong CodecHashLow { get; init; }
 }
