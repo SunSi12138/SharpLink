@@ -140,17 +140,43 @@ internal sealed partial class StreamManager
             throw;
         }
 
-        if (!requestDispatchers.TryRegister(
+        bool registered;
+        try
+        {
+            registered = requestDispatchers.TryRegister(
                 requestId,
                 streamId,
                 dispatcher,
                 _resolveReceiveCreditLease,
-                out receiveCreditLease))
+                out receiveCreditLease);
+        }
+        catch
         {
-            ClearBytesConsumedCallback(dispatcher);
-            SharpLinkTelemetry.AddActiveStreams(-1);
-            Interlocked.Decrement(ref _activeStreamCount);
-            RemoveEmptyRequest(requestId, requestDispatchers);
+            try
+            {
+                ClearBytesConsumedCallback(dispatcher);
+            }
+            finally
+            {
+                SharpLinkTelemetry.AddActiveStreams(-1);
+                Interlocked.Decrement(ref _activeStreamCount);
+                RemoveEmptyRequest(requestId, requestDispatchers);
+            }
+            throw;
+        }
+
+        if (!registered)
+        {
+            try
+            {
+                ClearBytesConsumedCallback(dispatcher);
+            }
+            finally
+            {
+                SharpLinkTelemetry.AddActiveStreams(-1);
+                Interlocked.Decrement(ref _activeStreamCount);
+                RemoveEmptyRequest(requestId, requestDispatchers);
+            }
             if (ignoreExisting)
                 return;
             throw new InvalidOperationException("The stream is already registered.");
