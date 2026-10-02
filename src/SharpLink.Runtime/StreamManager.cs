@@ -613,12 +613,13 @@ internal sealed partial class StreamManager
         RequestDrainEntry[] entries,
         ref List<Exception>? failures)
     {
+        PublishAndReleaseRequestRoutes(requestId, requestDispatchers, entries, ref failures);
         for (var index = 0; index < entries.Length; index++)
         {
-            var item = entries[index];
+            var entry = entries[index].Entry;
             try
             {
-                ClearBytesConsumedCallback(item.Entry.Dispatcher);
+                ClearBytesConsumedCallback(entry.Dispatcher);
             }
             catch (Exception completionException)
             {
@@ -626,23 +627,13 @@ internal sealed partial class StreamManager
             }
             try
             {
-                PublishReceiveTerminal(requestId, item.StreamId, item.Entry);
-            }
-            catch (Exception completionException)
-            {
-                (failures ??= []).Add(completionException);
-            }
-            try
-            {
-                _ = requestDispatchers.FinishRetirement(item.StreamId, item.Entry);
-                item.Entry.Detach();
+                entry.Detach();
             }
             catch (Exception detachException)
             {
                 (failures ??= []).Add(detachException);
             }
         }
-        RemoveEmptyRequest(requestId, requestDispatchers);
     }
 
     private void FinalizeRequestEntries(
@@ -652,25 +643,48 @@ internal sealed partial class StreamManager
         Exception? exception,
         ref List<Exception>? failures)
     {
+        // Publish every old receive generation before exposing any of this request's
+        // route keys to reentrant completion/configuration callbacks.
+        PublishAndReleaseRequestRoutes(requestId, requestDispatchers, entries, ref failures);
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var entry = entries[index].Entry;
+            try
+            {
+                entry.Dispatcher.Complete(exception);
+            }
+            catch (Exception completionException)
+            {
+                (failures ??= []).Add(completionException);
+            }
+            try
+            {
+                ClearBytesConsumedCallback(entry.Dispatcher);
+            }
+            catch (Exception completionException)
+            {
+                (failures ??= []).Add(completionException);
+            }
+            try
+            {
+                entry.Detach();
+            }
+            catch (Exception detachException)
+            {
+                (failures ??= []).Add(detachException);
+            }
+        }
+    }
+
+    private void PublishAndReleaseRequestRoutes(
+        long requestId,
+        RequestDispatchers requestDispatchers,
+        RequestDrainEntry[] entries,
+        ref List<Exception>? failures)
+    {
         for (var index = 0; index < entries.Length; index++)
         {
             var item = entries[index];
-            try
-            {
-                item.Entry.Dispatcher.Complete(exception);
-            }
-            catch (Exception completionException)
-            {
-                (failures ??= []).Add(completionException);
-            }
-            try
-            {
-                ClearBytesConsumedCallback(item.Entry.Dispatcher);
-            }
-            catch (Exception completionException)
-            {
-                (failures ??= []).Add(completionException);
-            }
             try
             {
                 PublishReceiveTerminal(requestId, item.StreamId, item.Entry);
@@ -679,16 +693,21 @@ internal sealed partial class StreamManager
             {
                 (failures ??= []).Add(completionException);
             }
+        }
+
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var item = entries[index];
             try
             {
                 _ = requestDispatchers.FinishRetirement(item.StreamId, item.Entry);
-                item.Entry.Detach();
             }
-            catch (Exception detachException)
+            catch (Exception removalException)
             {
-                (failures ??= []).Add(detachException);
+                (failures ??= []).Add(removalException);
             }
         }
+        RemoveEmptyRequest(requestId, requestDispatchers);
     }
 
     private static void ThrowCompletionFailures(List<Exception>? failures)
