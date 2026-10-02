@@ -38,6 +38,111 @@ public partial class StreamManagerTests
             "the detached dispatcher must be notified exactly once, including a throwing callback");
     }
 
+    [Test]
+    public async Task SameKeyRegistrationCannotCaptureReceiveLeaseBeforeOldRoutePublishesTerminal()
+    {
+        var controller = new StreamFlowController(
+            streamWindow: 4,
+            connectionWindow: 4,
+            maxFramePayloadBytes: 1024,
+            maxConcurrentStreams: 2);
+        var keyedTerminalCalls = 0;
+
+        StreamFlowController.ResolvedReceiveCreditLease Resolve(long requestId, ushort streamId)
+            => controller.ResolveReceiveCreditLease(requestId, streamId);
+        void Accept(
+            in StreamFlowController.ResolvedReceiveCreditLease lease,
+            int bytes)
+            => controller.AcceptReceived(in lease, bytes);
+        void Consumed(
+            in StreamFlowController.ResolvedReceiveCreditLease lease,
+            int bytes)
+            => _ = controller.RecordConsumed(in lease, bytes);
+        void CompleteResolved(StreamFlowController.ResolvedReceiveCreditLease lease)
+            => _ = controller.FlushConsumed(in lease);
+
+        var manager = new StreamManager(
+            new RuntimeConcurrencyOptions(),
+            acceptBytes: null,
+            bytesConsumed: null,
+            streamCompleted: (requestId, streamId) =>
+            {
+                Interlocked.Increment(ref keyedTerminalCalls);
+                _ = controller.FlushConsumed(requestId, streamId);
+            },
+            maxActiveStreams: 2,
+            activeStreamCapacityExceeded: null,
+            resolveReceiveCreditLease: Resolve,
+            acceptResolvedBytes: Accept,
+            resolvedBytesConsumed: Consumed,
+            resolvedStreamCompleted: CompleteResolved);
+
+        const long requestId = 9401;
+        const ushort streamId = 7;
+        var firstDispatcher = new ImmediateConsumptionDispatcher();
+        manager.Register(requestId, streamId, firstDispatcher);
+        var firstLease = firstDispatcher.ReceiveCreditLease;
+        Ensure(firstLease.IsResolved, "first route must retain a resolved receive lease");
+
+        var terminalEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseTerminal = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var unregister = Task.Run(() =>
+        {
+            StreamManagerTestHooks.BeforeReceiveTerminalPublish = (blockedRequest, blockedStream) =>
+            {
+                if (blockedRequest != requestId || blockedStream != streamId)
+                    return;
+                terminalEntered.TrySetResult();
+                releaseTerminal.Task.GetAwaiter().GetResult();
+            };
+            try
+            {
+                manager.Unregister(requestId, streamId);
+            }
+            finally
+            {
+                StreamManagerTestHooks.BeforeReceiveTerminalPublish = null;
+            }
+        });
+
+        await terminalEntered.Task.WaitAsync(RaceCoordinationTimeout);
+
+        var racingDispatcher = new ImmediateConsumptionDispatcher();
+        try
+        {
+            manager.Register(requestId, streamId, racingDispatcher);
+            throw new Exception("a retiring route key became reusable before its receive generation completed");
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        Ensure(!racingDispatcher.ReceiveCreditLease.IsResolved,
+            "failed overlapping registration must clear the old resolved lease");
+        releaseTerminal.TrySetResult();
+        await unregister.WaitAsync(RaceCoordinationTimeout);
+
+        var replacement = new ImmediateConsumptionDispatcher();
+        manager.Register(requestId, streamId, replacement);
+        var replacementLease = replacement.ReceiveCreditLease;
+        Ensure(replacementLease.IsResolved &&
+            replacementLease.Generation != firstLease.Generation,
+            "same-key replacement must bind a new receive generation after old terminal publication");
+
+        await manager.DispatchChunkAsync(
+            requestId,
+            streamId,
+            new ReadOnlySequence<byte>(new byte[] { 1 }));
+        Ensure(replacement.DispatchCount == 1,
+            "replacement route must accept its first frame through the new generation");
+        Ensure(keyedTerminalCalls == 0,
+            "resolved production routes must not fall back to keyed terminal completion");
+
+        manager.Unregister(requestId, streamId);
+    }
+
     private static void ForceInlineDrainContinuation(IStreamDispatchState state)
     {
         _ = state.WaitForDispatchesDrainedAsync(); // materialize the lazy completion holder
@@ -47,6 +152,60 @@ public partial class StreamManagerTests
         var field = holder.GetType().GetField("_dispatchesDrainedCompletion", flags)
             ?? throw new InvalidOperationException("Expected the drain completion field.");
         field.SetValue(holder, new TaskCompletionSource());
+    }
+
+    private sealed class ImmediateConsumptionDispatcher : IStreamConsumptionAwareDispatcher
+    {
+        private ResolvedStreamBytesCallback? _resolvedBytesConsumed;
+        private StreamFlowController.ResolvedReceiveCreditLease _receiveCreditLease;
+        private Action<long, ushort, int>? _bytesConsumed;
+        private long _requestId;
+        private ushort _streamId;
+
+        internal int DispatchCount { get; private set; }
+        internal StreamFlowController.ResolvedReceiveCreditLease ReceiveCreditLease
+            => _receiveCreditLease;
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+            => DispatchAsync(payload, Math.Max(1, checked((int)payload.Length)));
+
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
+        {
+            _ = payload;
+            DispatchCount++;
+            if (_resolvedBytesConsumed is { } resolved)
+                resolved(in _receiveCreditLease, encodedByteCount);
+            else
+                _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+            return ValueTask.CompletedTask;
+        }
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+            _ = isError;
+            _ = errorMessage;
+        }
+
+        public void Complete(Exception? exception) => _ = exception;
+
+        public void SetBytesConsumedCallback(
+            Action<long, ushort, int>? callback,
+            long requestId,
+            ushort streamId)
+        {
+            _bytesConsumed = callback;
+            _requestId = requestId;
+            _streamId = streamId;
+        }
+
+        public bool TrySetResolvedBytesConsumedCallback(
+            ResolvedStreamBytesCallback? callback,
+            in StreamFlowController.ResolvedReceiveCreditLease lease)
+        {
+            _resolvedBytesConsumed = callback;
+            _receiveCreditLease = lease;
+            return true;
+        }
     }
 
     private sealed class DrainOwnershipDispatcher(Exception? failure) : IStreamDispatcher, IStreamDispatchLease

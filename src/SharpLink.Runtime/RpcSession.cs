@@ -101,7 +101,8 @@ internal sealed partial class RpcSession
             Fault,
             ResolveReceiveCreditLease,
             AcceptReceivedStreamBytes,
-            OnStreamBytesConsumed);
+            OnStreamBytesConsumed,
+            OnReceiveStreamCompleted);
         _flushOptions = creationOptions.FlushOptions;
         _telemetrySide = creationOptions.TelemetrySide;
     }
@@ -255,6 +256,16 @@ internal sealed partial class RpcSession
         var credit = controller?.RecordConsumed(requestId, streamId, encodedBytes) ?? 0;
         if (credit != 0)
             TrySendWindowUpdate(requestId, streamId, credit);
+        DrainConsumedCreditUpdates(controller);
+    }
+
+    private void OnReceiveStreamCompleted(
+        StreamFlowController.ResolvedReceiveCreditLease lease)
+    {
+        var controller = Volatile.Read(ref _protocolState).FlowController;
+        var credit = controller?.FlushConsumed(in lease) ?? 0;
+        if (credit != 0)
+            TrySendWindowUpdate(lease.RequestId, lease.StreamId, credit);
         DrainConsumedCreditUpdates(controller);
     }
 
