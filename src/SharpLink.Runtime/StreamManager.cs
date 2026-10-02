@@ -505,7 +505,10 @@ internal sealed class StreamManager
 
         var entries = requestDispatchers.BeginDrain();
         if (entries.Length == 0)
+        {
+            RemoveEmptyRequest(requestId, requestDispatchers);
             return;
+        }
 
         SharpLinkTelemetry.AddActiveStreams(-entries.Length);
         Interlocked.Add(ref _activeStreamCount, -entries.Length);
@@ -529,7 +532,10 @@ internal sealed class StreamManager
 
         var entries = requestDispatchers.BeginDrain();
         if (entries.Length == 0)
+        {
+            RemoveEmptyRequest(requestId, requestDispatchers);
             return ValueTask.CompletedTask;
+        }
 
         SharpLinkTelemetry.AddActiveStreams(-entries.Length);
         Interlocked.Add(ref _activeStreamCount, -entries.Length);
@@ -1222,27 +1228,28 @@ internal sealed class StreamManager
 
         public int CompleteAll(Exception? exception, ref List<Exception>? failures)
         {
-            var defaultDispatcher = Interlocked.Exchange(ref _defaultDispatcher, null);
-            if (defaultDispatcher is not null)
-            {
-                defaultDispatcher.Close();
-                CompleteEntry(defaultDispatcher, exception, ref failures);
-            }
-            var count = defaultDispatcher is null ? 0 : 1;
-
-            DispatcherEntry[] entries;
+            List<DispatcherEntry> claimed = [];
             lock (_gate)
             {
-                count += _byStreamId.Count;
-                entries = [.. _byStreamId.Values];
+                _draining = 1;
+                if (_defaultDispatcher is { } defaultDispatcher)
+                {
+                    Volatile.Write(ref _defaultDispatcher, null);
+                    if (defaultDispatcher.TryClose())
+                        claimed.Add(defaultDispatcher);
+                }
+
+                foreach (var entry in _byStreamId.Values)
+                {
+                    if (entry.TryClose())
+                        claimed.Add(entry);
+                }
                 _byStreamId.Clear();
             }
-            for (var index = 0; index < entries.Length; index++)
-            {
-                entries[index].Close();
-                CompleteEntry(entries[index], exception, ref failures);
-            }
-            return count;
+
+            for (var index = 0; index < claimed.Count; index++)
+                CompleteEntry(claimed[index], exception, ref failures);
+            return claimed.Count;
         }
 
         private static void CompleteEntry(
