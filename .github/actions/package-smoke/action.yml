@@ -65,7 +65,6 @@ runs:
       run: >-
         dotnet msbuild
         test/SharpLink.PackageLateTrimSmoke/SharpLink.PackageLateTrimSmoke.csproj
-        --no-restore
         -t:VerifySharpLinkLateTrimConfiguration
         -v:minimal
 
