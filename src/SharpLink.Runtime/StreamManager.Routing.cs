@@ -9,7 +9,6 @@ internal sealed partial class StreamManager
         private DispatcherEntry? _defaultDispatcher;
         private readonly Lock _gate = new();
         private readonly Dictionary<ushort, DispatcherEntry> _byStreamId = [];
-        private int _draining;
 
         public bool TryRegister(
             ushort streamId,
@@ -18,8 +17,6 @@ internal sealed partial class StreamManager
         {
             lock (_gate)
             {
-                if (_draining != 0)
-                    return false;
                 if (streamId == 0)
                 {
                     if (_defaultDispatcher is not null)
@@ -282,12 +279,13 @@ internal sealed partial class StreamManager
                 var found = streamId == 0
                     ? _defaultDispatcher
                     : _byStreamId.TryGetValue(streamId, out var candidate) ? candidate : null;
-                if (found is null || !found.TryClose())
+                if (found is null || !found.TryClaimRetirement())
                 {
                     entry = null!;
                     return false;
                 }
 
+                found.Close();
                 entry = found;
                 return true;
             }
@@ -319,21 +317,20 @@ internal sealed partial class StreamManager
         {
             lock (_gate)
             {
-                if (_draining != 0)
-                    return [];
-
-                _draining = 1;
                 var entries = new List<RequestDrainEntry>();
                 if (_defaultDispatcher is { } defaultDispatcher &&
-                    defaultDispatcher.TryClose())
+                    defaultDispatcher.TryClaimRetirement())
                 {
+                    defaultDispatcher.Close();
                     entries.Add(new RequestDrainEntry(0, defaultDispatcher));
                 }
 
                 foreach (var pair in _byStreamId)
                 {
-                    if (pair.Value.TryClose())
-                        entries.Add(new RequestDrainEntry(pair.Key, pair.Value));
+                    if (!pair.Value.TryClaimRetirement())
+                        continue;
+                    pair.Value.Close();
+                    entries.Add(new RequestDrainEntry(pair.Key, pair.Value));
                 }
 
                 return [.. entries];
@@ -345,18 +342,22 @@ internal sealed partial class StreamManager
             List<DispatcherEntry> claimed = [];
             lock (_gate)
             {
-                _draining = 1;
                 if (_defaultDispatcher is { } defaultDispatcher)
                 {
                     Volatile.Write(ref _defaultDispatcher, null);
-                    if (defaultDispatcher.TryClose())
+                    if (defaultDispatcher.TryClaimRetirement())
+                    {
+                        defaultDispatcher.Close();
                         claimed.Add(defaultDispatcher);
+                    }
                 }
 
                 foreach (var entry in _byStreamId.Values)
                 {
-                    if (entry.TryClose())
-                        claimed.Add(entry);
+                    if (!entry.TryClaimRetirement())
+                        continue;
+                    entry.Close();
+                    claimed.Add(entry);
                 }
                 _byStreamId.Clear();
             }
@@ -409,6 +410,7 @@ internal sealed partial class StreamManager
         private long _state;
         private int _receiveTerminalPublished;
         private int _peerTerminalReceived;
+        private int _retirementClaimed;
         // Lazily shares the distinct drain/detach completions without growing common entries.
         private DispatcherEntryCompletions? _completions;
 
@@ -436,6 +438,9 @@ internal sealed partial class StreamManager
 
         internal bool TryPublishReceiveTerminal()
             => Interlocked.CompareExchange(ref _receiveTerminalPublished, 1, 0) == 0;
+
+        internal bool TryClaimRetirement()
+            => Interlocked.CompareExchange(ref _retirementClaimed, 1, 0) == 0;
 
         internal bool TryAcquire()
         {
