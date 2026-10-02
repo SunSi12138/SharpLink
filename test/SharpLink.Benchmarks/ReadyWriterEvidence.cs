@@ -35,6 +35,7 @@ internal static class ReadyWriterEvidence
             transport = transport, streams = streams, items = items, bytes = bytes, rounds = rounds,
             connection = connection, slots = slots, flush = flush, orderOffset = orderOffset,
             preparedByteBudget = int.Parse(Environment.GetEnvironmentVariable("SHARPLINK_READY_PREPARED_BYTES") ?? "0", CultureInfo.InvariantCulture),
+            tcpReceiveBufferBytes = int.Parse(Environment.GetEnvironmentVariable("SHARPLINK_READY_TCP_RECEIVE_BUFFER") ?? "0", CultureInfo.InvariantCulture),
             allocationDiagnostic = Environment.GetEnvironmentVariable("SHARPLINK_READY_ALLOCATION_DIAGNOSTIC") == "1",
             Scope = "A-ready: complete frozen controller debits on producer; B3-ready: pump owns debit. Quanta 1/16 are matched independently; SAME bounded producer ring, actual SendPump, transport, receiver and flush. NO per-item emission waiter in EITHER. Fixed stream lifecycles and balanced updates only."
         };

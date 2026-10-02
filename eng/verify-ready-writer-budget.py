@@ -18,9 +18,11 @@ def expected_plan():
                         cases.append([transport,pgo,128,items,size,window,16384,launch,budget])
     return cases
 
-def validate_document(doc, source, case):
+def validate_document(doc, source, case, tcp_receive_buffer=0):
     samples=base.validate_report(doc,source,case[:8]);m=doc['metadata'];budget=case[8]
     if m.get('DiagnosticCapture',False):raise ValueError('Diagnostic timing is not performance evidence')
+    expected_buffer=tcp_receive_buffer if case[0]=='tcp' else 0
+    if m.get('tcpReceiveBufferBytes',0)!=expected_buffer:raise ValueError('wrong TCP receive-buffer evidence control')
     if m.get('preparedByteBudget')!=budget or m.get('allocationDiagnostic') is not False:raise ValueError('wrong byte cap/diagnostic contamination')
     for s in samples:
         rm=s['ReadyWriterMetrics']; maxpacket=rm['MaximumObservedPacketBytes'];peak=rm['MaximumQueuedBytesPerStream']
@@ -31,24 +33,25 @@ def validate_document(doc, source, case):
         if peak>limit or rm['SumOfStreamQueuedBytePeaks']>s['Streams']*limit:raise ValueError('serialized-byte or oversized-ring bound exceeded')
     return samples
 
-def validate_provenance(p):
+def validate_provenance(p, tcp_receive_buffer=0):
     if p.get('plan')!=expected_plan() or p.get('budgets')!=[0,8192,16384] or p.get('allocation_diagnostic') is not False:raise ValueError('altered population')
+    if p.get('tcp_receive_buffer',0)!=tcp_receive_buffer or tcp_receive_buffer not in (0,262144):raise ValueError('altered TCP evidence control')
     for k,size in [('source_tree',40),('host_sha256',64)]:
         if len(p.get(k,''))!=size or any(c not in '0123456789abcdef' for c in p[k]):raise ValueError('invalid revision/digest')
     if p.get('rounds')!=4 or p.get('slots')!=16 or p.get('quanta')!=[1,16]:raise ValueError('changed sample policy')
     affinity=p['cpu_affinity']
     if len(affinity)!=4 or len(set(affinity))!=4 or any(type(x) is not int or x<0 for x in affinity):raise ValueError('wrong affinity')
 
-def summarize(root):
+def summarize(root, tcp_receive_buffer=0):
     root=pathlib.Path(root);p=json.loads((root/'provenance.json').read_text())
-    validate_provenance(p)
+    validate_provenance(p,tcp_receive_buffer)
     rows=[];names=set()
     for i,case in enumerate(expected_plan()):
         t,g,c,n,b,w,f,r,budget=case
         name=f'{i:02}-{t}-pgo{g}-b{b}-w{w}-budget{budget}-r{r}.json';names.add(name);path=root/name
         exit=json.loads(path.with_suffix('.exit').read_text())
         if exit['code']!=0:raise ValueError('nonzero exit')
-        rows.extend(dict(x,Pgo=g,Launch=r,Budget=budget,Report=name) for x in validate_document(json.loads(path.read_text()),p['source_tree'],case))
+        rows.extend(dict(x,Pgo=g,Launch=r,Budget=budget,Report=name) for x in validate_document(json.loads(path.read_text()),p['source_tree'],case,tcp_receive_buffer))
     if {x.name for x in root.glob('[0-9]*.json')}!=names:raise ValueError('extra or missing reports')
     groups=collections.defaultdict(list)
     for x in rows:groups[(x['Transport'],x['Pgo'],x['ItemBytes'],x['Budget'])].append(x)
@@ -68,7 +71,8 @@ def summarize(root):
                 allocation_delta=median(b,'AllocatedBytesPerItem')-median(a,'AllocatedBytesPerItem'),processes=processes,
                 b_events_item=statistics.median((x['ReadyWriterMetrics']['ReadyNotifications']+x['UpdateFrames'])/x['ItemsReceived'] for x in b),
                 a_peak_queued=max(x['ReadyWriterMetrics']['MaximumQueuedBytesPerStream'] for x in a),b_peak_queued=max(x['ReadyWriterMetrics']['MaximumQueuedBytesPerStream'] for x in b)))
-    lines=['# Prepared-byte budget controls','',f"Exact tree: `{p['source_tree']}`. 48 processes / 768 samples. Byte budgets do not change credit windows or pool settings.",'',
+    socket_note = 'default socket receive-buffer behavior' if tcp_receive_buffer==0 else f'explicit {tcp_receive_buffer}-byte TCP receive-buffer evidence control'
+    lines=['# Prepared-byte budget controls','',f"Exact tree: `{p['source_tree']}`. 48 processes / 768 samples. Byte budgets do not change credit windows or pool settings; TCP uses {socket_note}.",'',
            'Each A/B pair uses the same prepared-byte cap, count cap, quantum, flush and transport. Report all budgets; do not choose a winning mode per cell. Non-instrumented timing; positive throughput is faster, positive CPU or allocation is worse.','',
            '| Transport | PGO | Item B | Prepared cap B | Quantum | A item/s | B3 item/s | Throughput | CPU | A B/item | B3 B/item | B3 events/item | Process throughput |',
            '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|']
@@ -80,6 +84,6 @@ def summarize(root):
     return '\n'.join(lines)+'\n',derived,rows
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('root',type=pathlib.Path);args=p.parse_args();text,groups,rows=summarize(args.root)
+    p=argparse.ArgumentParser();p.add_argument('root',type=pathlib.Path);p.add_argument('--tcp-receive-buffer',type=int,choices=(0,262144),default=0);args=p.parse_args();text,groups,rows=summarize(args.root,args.tcp_receive_buffer)
     (args.root/'summary.md').write_text(text);(args.root/'derived.json').write_text(json.dumps(groups,indent=2));print(f'PASS {len(rows)} rows; all 48 process exits/configurations/source/credit/buffers verified')
 if __name__=='__main__':main()

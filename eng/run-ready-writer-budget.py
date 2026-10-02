@@ -39,6 +39,9 @@ def run_selected(output, provenance, dll, begin, end):
         env=dict(os.environ,SHARPLINK_SOURCE_TREE=provenance['source_tree'],DOTNET_PROCESSOR_COUNT='4',DOTNET_TieredCompilation='1',
                  DOTNET_TieredPGO=str(g),DOTNET_ReadyToRun='0',SHARPLINK_READY_ORDER=str(launch),
                  SHARPLINK_READY_PREPARED_BYTES=str(budget),SHARPLINK_READY_ALLOCATION_DIAGNOSTIC='0')
+        env.pop('SHARPLINK_READY_TCP_RECEIVE_BUFFER',None)
+        if t=='tcp' and provenance['tcp_receive_buffer']:
+            env['SHARPLINK_READY_TCP_RECEIVE_BUFFER']=str(provenance['tcp_receive_buffer'])
         cmd=['taskset','-c',','.join(map(str,provenance['cpu_affinity'])),'dotnet',str(dll),
              '--ready-writer-evidence',t,str(c),str(n),str(b),'4',str(w),'16',str(f),str(target.resolve())]
         print('RUN',index,name(index,case),flush=True)
@@ -51,7 +54,8 @@ def run_selected(output, provenance, dll, begin, end):
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('output',type=pathlib.Path)
     parser.add_argument('--source',required=True); parser.add_argument('--begin',type=int,default=0)
-    parser.add_argument('--end',type=int,default=48); args=parser.parse_args()
+    parser.add_argument('--end',type=int,default=48)
+    parser.add_argument('--tcp-receive-buffer',type=int,choices=(0,262144),default=0); args=parser.parse_args()
     if len(args.source)!=40 or any(c not in '0123456789abcdef' for c in args.source):raise ValueError('full tree required')
     actual=subprocess.check_output(['git','write-tree'],cwd=ROOT,text=True).strip()
     subprocess.run(['git','diff','--exit-code'],cwd=ROOT,check=True,stdout=subprocess.DEVNULL)
@@ -59,7 +63,8 @@ def main():
     dll=ROOT/'test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll'
     provenance=dict(source_tree=actual,host_sha256=hashlib.sha256(dll.read_bytes()).hexdigest(),
                     cpu_affinity=sorted(os.sched_getaffinity(0))[:4], plan=plan(),rounds=4,slots=16,
-                    quanta=[1,16],budgets=[0,8192,16384],allocation_diagnostic=False)
+                    quanta=[1,16],budgets=[0,8192,16384],allocation_diagnostic=False,
+                    tcp_receive_buffer=args.tcp_receive_buffer)
     args.output.mkdir(parents=True,exist_ok=True); path=args.output/'provenance.json'
     if path.exists() and json.loads(path.read_text())!=provenance:raise ValueError('mixed source/binary/configuration')
     path.write_text(json.dumps(provenance,indent=2))

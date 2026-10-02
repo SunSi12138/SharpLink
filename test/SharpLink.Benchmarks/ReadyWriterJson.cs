@@ -24,6 +24,7 @@ internal sealed record ReadyWriterRunMetadata
     public int flush { get; init; }
     public int orderOffset { get; init; }
     public int preparedByteBudget { get; init; }
+    public int tcpReceiveBufferBytes { get; init; }
     public bool allocationDiagnostic { get; init; }
     public required string Scope { get; init; }
 }
