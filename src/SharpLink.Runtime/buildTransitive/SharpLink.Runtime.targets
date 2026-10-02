@@ -14,6 +14,8 @@
       <RuntimeHostConfigurationOption Include="SharpLink.Runtime.UnsafeBlitReflectionFallback"
                                       Value="false"
                                       Trim="true" />
+      <_ILLinkSuppressions Include="$(MSBuildThisFileDirectory)SharpLink.Runtime.TrimSuppressions.xml"
+                           Condition="'$(PublishTrimmed)' == 'true' and '$(TrimMode)' == 'partial'" />
     </ItemGroup>
     <PropertyGroup>
       <SharpLinkUnsafeBlitTrimConfigurationApplied>true</SharpLinkUnsafeBlitTrimConfigurationApplied>
