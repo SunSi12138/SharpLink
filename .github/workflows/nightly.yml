@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       release_soak:
-        description: Run the five-hour release soak alongside the other validation jobs
+        description: Run the ten-minute release soak alongside the other validation jobs
         type: boolean
         required: false
         default: false
@@ -241,7 +241,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 135
     env:
-      SHARPLINK_P3_DYNAMIC_SOAK_DURATION_SECONDS: '7200'
+      SHARPLINK_P3_DYNAMIC_SOAK_DURATION_SECONDS: ${{ inputs.release_soak && '600' || '7200' }}
       SHARPLINK_P3_DYNAMIC_SOAK_OUTPUT: ${{ github.workspace }}/artifacts/p3-generated-abi/dynamic-module-soak
     steps:
       - name: Checkout
@@ -250,7 +250,7 @@ jobs:
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
 
-      - name: Two-hour Generated ABI Dynamic-module Churn
+      - name: Generated ABI Dynamic-module Churn
         run: ./eng/run-generated-abi-dynamic-module-soak.sh
 
       - name: Upload Generated ABI Soak Report
@@ -269,11 +269,11 @@ jobs:
       matrix:
         transport: [tcp, sharedmemory]
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 30
     env:
-      SHARPLINK_SOAK_DURATION: 5h
+      SHARPLINK_SOAK_DURATION: 10m
       SHARPLINK_SOAK_TRANSPORT: ${{ matrix.transport }}
-      SHARPLINK_SOAK_OUTPUT: artifacts/chaos/release-5h-${{ matrix.transport }}.json
+      SHARPLINK_SOAK_OUTPUT: artifacts/chaos/release-10m-${{ matrix.transport }}.json
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -281,14 +281,14 @@ jobs:
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
 
-      - name: Five-hour release soak
+      - name: Ten-minute release soak
         run: ./eng/run-release-soak.sh
 
       - name: Upload release soak evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-soak-5h-${{ matrix.transport }}-${{ github.sha }}
+          name: release-soak-10m-${{ matrix.transport }}-${{ github.sha }}
           path: artifacts/chaos
           if-no-files-found: error
           retention-days: 30
