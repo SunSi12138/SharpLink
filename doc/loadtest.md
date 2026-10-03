@@ -210,6 +210,8 @@ StreamLoadTest 专有：
 
 `eng/run-performance-matrix.sh` 的 full tier 覆盖全部适用本机传输、三个 profile、payload `0/32/256/4096/65536/1048576`、连接池 `1/1` 与 `1/4`。小 payload 使用并发 `1/8/32/128/256/512`，64 KiB 使用 `1/8/32/128`，1 MiB 使用 `1/8/32`；显式设置 `SHARPLINK_MATRIX_CONCURRENCY` 时按调用者给定列表执行。正常吞吐场景固定 Client/Server send queue 为 64 MiB（可由 `SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES` 覆盖），避免不同 profile 的队列容量成为吞吐混杂变量。正式 OneWay 把本地 `send_queue_capacity` 作为逻辑发送的可重试流控，等待时间进入延迟并在 `SendQueueBackpressureRetries` 中单独计数；其他 `ResourceExhausted` 仍为失败。`oneway-backpressure` 专项刻意保留 profile 默认队列、禁用该重试并单独报告原始饱和。默认执行五轮，偶数轮反转传输顺序；原始 JSON 写入 `artifacts/performance/current/matrix`。SharedMemory 的正式基线必须同时列出同平台 TCP、UDS、NamedPipe 和 AnonymousPipe，不只选择有利对照。NativeAOT 独立进程 smoke 使用 `eng/run-shared-memory-aot-process-smoke.sh`。
 
+矩阵显式设置每阶段正式样本容量：full 为 3 亿，smoke 为 3000 万；可通过 `SHARPLINK_MATRIX_MAXIMUM_RECORDED_OPERATIONS` 设置正 Int32 值。通用 CLI 默认值仍为 3000 万。full 原始缓冲约占 2.24 GiB，结束后排序另需实际样本数 × 8 字节，最坏再占 2.24 GiB；还应留出业务负载所需内存。容量按 worker 分配，单个 worker 超限也会使整次运行无效。报告保留实际容量与完整样本数，不减少负载时长、并发或重复次数，也不截断样本接受超限结果。
+
 静态 endpoint、动态 Resolver、admission、compression 和 interceptor 使用相应 LoadTest 参数或专项 Benchmark runner。最终性能结论只采用精确 RC 提交上同硬件、同配置、交替多轮的结果；短时 smoke 只证明矩阵可运行且无请求错误。
 
 运行矩阵或 trace 前必须确认同机没有其他 LoadTest、StreamLoadTest、Chaos 或诊断采集进程。存在资源竞争时，整批吞吐、延迟、分配和 trace 均标记无效并从头重跑；错误数与资源归零仍可单独作为正确性线索，但不得转化为性能结论。
