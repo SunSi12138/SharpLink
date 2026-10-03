@@ -50,9 +50,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         internal Type ContractType { get; private set; }
         private Type? ServiceType { get; set; }
 
-        internal static PluginBundle Load(string contextName, bool loadService = true)
+        internal static PluginBundle Load(string contextName, bool loadService = true, bool replacement = false)
         {
-            var directory = GetPluginOutputDirectory();
+            var directory = GetPluginOutputDirectory(replacement);
             var context = new PluginLoadContext(contextName, directory);
             var contract = context.LoadFromAssemblyPath(
                 Path.Combine(directory, "SharpLink.DynamicPlugin.Contracts.dll"));
@@ -126,7 +126,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 _ = Unload();
         }
 
-        private static string GetPluginOutputDirectory()
+        private static string GetPluginOutputDirectory(bool replacement)
         {
             var directory = new DirectoryInfo(AppContext.BaseDirectory);
             while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Sharplink.slnx")))
@@ -136,7 +136,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             return Path.Combine(
                 directory.FullName,
                 "test",
-                "SharpLink.DynamicServices",
+                replacement ? "SharpLink.ReplacementServices" : "SharpLink.DynamicServices",
                 "bin",
                 "Release",
                 "net10.0");
@@ -392,7 +392,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             => _expectedServerStopFailure = message;
 
         internal static async Task<DynamicHarness> CreateAsync(
-            bool registerDynamicServiceDependencies = true)
+            bool registerDynamicServiceDependencies = true,
+            IManifestReadinessControl? control = null)
         {
             var serverCancellation = new CancellationTokenSource();
             var services = new ServiceCollection();
@@ -403,6 +404,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 .UseTcp(0, IPAddress.Loopback.ToString())
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseServiceProvider(serviceProvider);
+            if (control is not null)
+                serverBuilder.ReplaceService(control);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
