@@ -51,50 +51,46 @@ internal static class SharpLinkClientLifecycleReconnectSupport
     }
 
     internal static Task GetStaticReconnectTask(SharpLinkClient client, string endpointId)
-    {
-        var cluster = typeof(SharpLinkClient).GetField(
-            "_cluster",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(client) ?? throw new Exception("client does not own an endpoint cluster");
-        var states = (System.Collections.IEnumerable)(cluster.GetType().GetField(
-            "_endpoints",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(cluster) ?? throw new Exception("cannot find static endpoint states"));
-        foreach (var state in states)
-        {
-            var configuration = state.GetType().GetProperty("Configuration")!.GetValue(state)!;
-            var endpoint = (SharpLinkEndpoint)configuration.GetType()
-                .GetProperty("Endpoint")!
-                .GetValue(configuration)!;
-            if (string.Equals(endpoint.Id, endpointId, StringComparison.Ordinal))
-            {
-                return (Task?)(state.GetType().GetProperty("ReconnectTask")!.GetValue(state))
-                    ?? throw new Exception($"endpoint {endpointId} has no active reconnect owner");
-            }
-        }
-        throw new Exception($"cannot find reconnect endpoint {endpointId}");
-    }
+        => GetReconnectTask(client, endpointId, "_endpoints");
 
     internal static Task GetDynamicReconnectTask(SharpLinkClient client, string endpointId)
+        => GetReconnectTask(client, endpointId, "_current");
+
+    private static Task GetReconnectTask(
+        SharpLinkClient client,
+        string endpointId,
+        string statesFieldName)
     {
         var cluster = typeof(SharpLinkClient).GetField(
             "_cluster",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?.GetValue(client) ?? throw new Exception("client does not own an endpoint cluster");
-        var states = (System.Collections.IEnumerable)(cluster.GetType().GetField(
-            "_current",
+        var gate = (Lock)(cluster.GetType().GetField(
+            "_gate",
             BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(cluster) ?? throw new Exception("cannot find dynamic endpoint states"));
-        foreach (var state in states)
+            ?.GetValue(cluster) ?? throw new Exception("cannot find endpoint cluster gate"));
+
+        // CreateTimer can signal ExpectedTimerArmed before ReconnectAsync returns the Task
+        // that EnsureReconnect publishes. Observe that publication under its own gate, not
+        // by racing the timer signal. Keep the Lock static type: locking an object-cast
+        // would use Monitor instead and would not synchronize with the production gate.
+        lock (gate)
         {
-            var configuration = state.GetType().GetProperty("Configuration")!.GetValue(state)!;
-            var endpoint = (SharpLinkEndpoint)configuration.GetType()
-                .GetProperty("Endpoint")!
-                .GetValue(configuration)!;
-            if (string.Equals(endpoint.Id, endpointId, StringComparison.Ordinal))
+            var states = (System.Collections.IEnumerable)(cluster.GetType().GetField(
+                statesFieldName,
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?.GetValue(cluster) ?? throw new Exception("cannot find endpoint states"));
+            foreach (var state in states)
             {
-                return (Task?)(state.GetType().GetProperty("ReconnectTask")!.GetValue(state))
-                    ?? throw new Exception($"endpoint {endpointId} has no active reconnect owner");
+                var configuration = state.GetType().GetProperty("Configuration")!.GetValue(state)!;
+                var endpoint = (SharpLinkEndpoint)configuration.GetType()
+                    .GetProperty("Endpoint")!
+                    .GetValue(configuration)!;
+                if (string.Equals(endpoint.Id, endpointId, StringComparison.Ordinal))
+                {
+                    return (Task?)(state.GetType().GetProperty("ReconnectTask")!.GetValue(state))
+                        ?? throw new Exception($"endpoint {endpointId} has no active reconnect owner");
+                }
             }
         }
         throw new Exception($"cannot find reconnect endpoint {endpointId}");

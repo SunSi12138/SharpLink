@@ -27,34 +27,27 @@ internal sealed partial class RpcSession
         TimeProvider timeProvider,
         CancellationToken terminalToken)
     {
-        ArgumentNullException.ThrowIfNull(codec);
-        ArgumentNullException.ThrowIfNull(timeProvider);
-        ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
+        var exactSizeCodec = codec as IRpcSizedCodec<T>;
+        if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+            exactSizeCodec = null;
 
-        if (codec is IRpcSizedCodec<T> sizedCodec &&
-            sizedCodec.CanExactSize &&
-            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
-        {
-            return SendClientStreamChunkKnownSizeAsync(
-                requestId,
-                streamId,
-                item,
-                sizedCodec,
-                knownEncodedBytes,
-                sizedSnapshot,
-                deadline,
-                timeProvider,
-                terminalToken);
-        }
-
-        return SendClientUnsizedStreamChunkAsync(
+        var pending = SendClientStreamChunkWithCreditLeaseAsync(
             requestId,
             streamId,
             item,
             codec,
+            exactSizeCodec,
             deadline,
             timeProvider,
-            terminalToken);
+            terminalToken,
+            default);
+        if (pending.IsCompletedSuccessfully)
+        {
+            _ = pending.Result;
+            return ValueTask.CompletedTask;
+        }
+
+        return AwaitClientStreamChunkWithoutLeaseAsync(pending);
     }
 
     internal ValueTask SendClientStreamChunkAsync<T>(
@@ -66,6 +59,37 @@ internal sealed partial class RpcSession
         RpcDeadline deadline,
         TimeProvider timeProvider,
         CancellationToken terminalToken)
+    {
+        var pending = SendClientStreamChunkWithCreditLeaseAsync(
+            requestId,
+            streamId,
+            item,
+            codec,
+            exactSizeCodec,
+            deadline,
+            timeProvider,
+            terminalToken,
+            default);
+        if (pending.IsCompletedSuccessfully)
+        {
+            _ = pending.Result;
+            return ValueTask.CompletedTask;
+        }
+
+        return AwaitClientStreamChunkWithoutLeaseAsync(pending);
+    }
+
+    internal ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        SendClientStreamChunkWithCreditLeaseAsync<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            IRpcCodec<T> codec,
+            IRpcSizedCodec<T>? exactSizeCodec,
+            RpcDeadline deadline,
+            TimeProvider timeProvider,
+            CancellationToken terminalToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease)
     {
         ArgumentNullException.ThrowIfNull(codec);
         ArgumentNullException.ThrowIfNull(timeProvider);
@@ -83,7 +107,8 @@ internal sealed partial class RpcSession
                 sizedSnapshot,
                 deadline,
                 timeProvider,
-                terminalToken);
+                terminalToken,
+                creditLease);
         }
 
         return SendClientUnsizedStreamChunkAsync(
@@ -93,8 +118,13 @@ internal sealed partial class RpcSession
             codec,
             deadline,
             timeProvider,
-            terminalToken);
+            terminalToken,
+            creditLease);
     }
+
+    private static async ValueTask AwaitClientStreamChunkWithoutLeaseAsync(
+        ValueTask<StreamFlowController.ResolvedSendCreditLease> pending)
+        => _ = await pending.ConfigureAwait(false);
 
     internal void SendClientStreamComplete(
         long requestId,
@@ -189,16 +219,18 @@ internal sealed partial class RpcSession
         }
     }
 
-    private async ValueTask SendClientStreamChunkKnownSizeAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
-        IRpcSizedCodec<T> sizedCodec,
-        int encodedBytes,
-        IRpcSizedCodecSnapshot? sizedSnapshot,
-        RpcDeadline deadline,
-        TimeProvider timeProvider,
-        CancellationToken terminalToken)
+    private async ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        SendClientStreamChunkKnownSizeAsync<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            IRpcSizedCodec<T> sizedCodec,
+            int encodedBytes,
+            IRpcSizedCodecSnapshot? sizedSnapshot,
+            RpcDeadline deadline,
+            TimeProvider timeProvider,
+            CancellationToken terminalToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease)
     {
         var creditBytes = Math.Max(1, encodedBytes);
         var creditAcquired = false;
@@ -206,7 +238,8 @@ internal sealed partial class RpcSession
         var ownsWriter = true;
         try
         {
-            await AcquireStreamSendCreditAsync(
+            creditLease = await AcquireStreamSendCreditAsync(
+                creditLease,
                 requestId,
                 streamId,
                 creditBytes,
@@ -243,11 +276,12 @@ internal sealed partial class RpcSession
             ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
             ownsWriter = false;
             SendPacket(writer);
+            return creditLease;
         }
         catch
         {
             if (creditAcquired)
-                ReturnUnsentStreamCredit(requestId, streamId, creditBytes);
+                ReturnUnsentStreamCredit(creditLease, requestId, streamId, creditBytes);
             throw;
         }
         finally
@@ -259,14 +293,16 @@ internal sealed partial class RpcSession
         }
     }
 
-    private ValueTask SendClientUnsizedStreamChunkAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
-        IRpcCodec<T> codec,
-        RpcDeadline deadline,
-        TimeProvider timeProvider,
-        CancellationToken terminalToken)
+    private ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        SendClientUnsizedStreamChunkAsync<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            IRpcCodec<T> codec,
+            RpcDeadline deadline,
+            TimeProvider timeProvider,
+            CancellationToken terminalToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease)
     {
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
@@ -294,9 +330,16 @@ internal sealed partial class RpcSession
                 writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
             ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
 
+            var resolvedLease = creditLease;
             if (!HasStreamFlowControl ||
-                TryAcquireStreamSendCredit(requestId, streamId, encodedBytes))
+                TryAcquireStreamSendCredit(
+                    creditLease,
+                    requestId,
+                    streamId,
+                    encodedBytes,
+                    out resolvedLease))
             {
+                creditLease = resolvedLease;
                 creditAcquired = HasStreamFlowControl;
                 try
                 {
@@ -307,12 +350,13 @@ internal sealed partial class RpcSession
                 catch
                 {
                     if (creditAcquired)
-                        ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+                        ReturnUnsentStreamCredit(creditLease, requestId, streamId, encodedBytes);
                     throw;
                 }
-                return ValueTask.CompletedTask;
+                return new ValueTask<StreamFlowController.ResolvedSendCreditLease>(creditLease);
             }
 
+            creditLease = resolvedLease;
             var budget = GetOrCreatePreCreditSerializedBudget();
             var pendingBudget = budget.AcquireAsync(
                 requestId,
@@ -329,7 +373,8 @@ internal sealed partial class RpcSession
                 budget,
                 deadline,
                 timeProvider,
-                terminalToken);
+                terminalToken,
+                creditLease);
         }
         finally
         {
@@ -338,16 +383,18 @@ internal sealed partial class RpcSession
         }
     }
 
-    private async ValueTask AwaitClientPreCreditBudgetAndFlowCreditAsync(
-        ValueTask pendingBudget,
-        IRpcByteBufferWriter writer,
-        long requestId,
-        ushort streamId,
-        int encodedBytes,
-        PreCreditSerializedBudget budget,
-        RpcDeadline deadline,
-        TimeProvider timeProvider,
-        CancellationToken terminalToken)
+    private async ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        AwaitClientPreCreditBudgetAndFlowCreditAsync(
+            ValueTask pendingBudget,
+            IRpcByteBufferWriter writer,
+            long requestId,
+            ushort streamId,
+            int encodedBytes,
+            PreCreditSerializedBudget budget,
+            RpcDeadline deadline,
+            TimeProvider timeProvider,
+            CancellationToken terminalToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease)
     {
         var ownsWriter = true;
         var ownsBudget = false;
@@ -357,7 +404,8 @@ internal sealed partial class RpcSession
             await pendingBudget.ConfigureAwait(false);
             ownsBudget = true;
 
-            await AcquireStreamSendCreditAsync(
+            creditLease = await AcquireStreamSendCreditAsync(
+                creditLease,
                 requestId,
                 streamId,
                 encodedBytes,
@@ -370,11 +418,12 @@ internal sealed partial class RpcSession
             ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
             ownsWriter = false;
             SendPacket(writer);
+            return creditLease;
         }
         catch
         {
             if (creditAcquired)
-                ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+                ReturnUnsentStreamCredit(creditLease, requestId, streamId, encodedBytes);
             throw;
         }
         finally

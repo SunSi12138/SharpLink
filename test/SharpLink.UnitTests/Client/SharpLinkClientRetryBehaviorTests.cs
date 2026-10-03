@@ -223,12 +223,38 @@ public sealed class SharpLinkClientRetryBehaviorTests
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, request, SharpLinkErrorCode.Unavailable);
         await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
+
+        // EvaluationStarted is raised from inside the synchronous policy callback. Do not
+        // advance fake time until that callback has returned and retry processing has sampled
+        // the deadline once more; otherwise the test races the policy return under CI load.
+        var timestampReadsAtEvaluation = provider.TimestampReadCount;
+        policy.ReleaseEvaluation();
+        await WaitForPostPolicyDeadlineSampleAsync(
+            provider,
+            timestampReadsAtEvaluation,
+            invocation).WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(!invocation.IsCompleted,
+            "the huge retry delay must still be pending before the fake deadline advances");
         provider.Advance(TimeSpan.FromSeconds(5));
 
-        var exception = await EnsureThrows<SharpLinkException>(invocation);
+        var exception = await EnsureThrows<SharpLinkException>(
+            invocation.WaitAsync(TimeSpan.FromSeconds(2)));
         Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded,
             "oversized retry delay must remain bounded by the frozen deadline without overflowing");
         Ensure(policy.Count == 1, "custom retry policy should be evaluated once");
+        await client.StopAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    private static async Task WaitForPostPolicyDeadlineSampleAsync(
+        ManualTimeProvider provider,
+        int baselineTimestampReads,
+        Task invocation)
+    {
+        while (provider.TimestampReadCount <= baselineTimestampReads &&
+               !invocation.IsCompleted)
+        {
+            await Task.Yield();
+        }
     }
 
     [Test]

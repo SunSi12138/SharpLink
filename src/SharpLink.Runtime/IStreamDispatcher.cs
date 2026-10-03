@@ -24,4 +24,13 @@ internal interface IStreamConsumptionAwareDispatcher : IStreamDispatcher
         Action<long, ushort, int>? callback,
         long requestId,
         ushort streamId);
+
+    bool TrySetResolvedBytesConsumedCallback(
+        ResolvedStreamBytesCallback? callback,
+        in StreamFlowController.ResolvedReceiveCreditLease lease)
+        => false;
 }
+
+internal delegate void ResolvedStreamBytesCallback(
+    in StreamFlowController.ResolvedReceiveCreditLease lease,
+    int encodedByteCount);

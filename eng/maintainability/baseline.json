@@ -12,6 +12,12 @@
   "allowances": [
     {
       "domain": "source",
+      "path": "src/SharpLink.Runtime/RpcSession.cs",
+      "maxLoc": 862,
+      "reason": "Issue #735 adds the internal resolved flow-control bridge beside RpcSession's existing keyed flow-control bridge so protocol/session terminal behavior and fallback semantics remain co-located. This is a reviewed narrow exception for the flow-control lifecycle."
+    },
+    {
+      "domain": "source",
       "path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
       "maxLoc": 1930,
       "reason": "Existing dev debt captured by issue #350."
@@ -19,8 +25,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs",
-      "maxLoc": 1638,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1672,
+      "reason": "Issue #735 carries the generation-bound receive-credit lease through the pooled dispatcher's existing consume/local-abort/pool-reset lifecycle. Keeping those fields and callbacks in the same lifecycle owner avoids splitting the one-shot credit-retirement invariant; broader dispatcher decomposition remains tracked by issue #350."
     },
     {
       "domain": "source",
@@ -43,8 +49,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Runtime/StreamManager.cs",
-      "maxLoc": 1347,
-      "reason": "Existing dev debt present when issue #351 enforcement was introduced."
+      "maxLoc": 1435,
+      "reason": "Issue #735 binds resolved receive-credit state to StreamManager's existing stable route and must configure it consistently across registration, dispatch, pre-admission attach, unregister, and drain. A mechanical split would fragment the route-lifecycle invariant; broader routing decomposition remains tracked by issue #351."
     },
     {
       "domain": "source",
@@ -79,8 +85,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Runtime/StreamFlowController.cs",
-      "maxLoc": 958,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1326,
+      "reason": "Issue #735 adds keyed-to-resolved flow-state leases while deliberately retaining one gate, one send map, one receive map, waiter fairness, tombstones, and ABA generation checks in the same invariant owner. Splitting the paired keyed/resolved credit transitions solely for LOC would fragment review of byte-accounting safety; broader controller decomposition remains tracked by issue #350."
     },
     {
       "domain": "source",

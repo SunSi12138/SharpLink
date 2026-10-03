@@ -44,12 +44,12 @@ internal sealed partial class RpcSession
         using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
         var deadlineWon = false;
+        var exactSizeCodec = codec as IRpcSizedCodec<T>;
+        if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+            exactSizeCodec = null;
+        var sendCreditLease = default(StreamFlowController.ResolvedSendCreditLease);
         try
         {
-            var exactSizeCodec = codec as IRpcSizedCodec<T>;
-            if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
-                exactSizeCodec = null;
-
             while (true)
             {
                 var moveNext = enumerator.MoveNextAsync();
@@ -94,10 +94,11 @@ internal sealed partial class RpcSession
                     exactSizeCodec,
                     deadline,
                     deadlineTimeProvider,
-                    lifetimeCancellation.Token);
+                    lifetimeCancellation.Token,
+                    sendCreditLease);
                 if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
                 {
-                    await send.ConfigureAwait(false);
+                    sendCreditLease = await send.ConfigureAwait(false);
                 }
                 else
                 {
@@ -113,7 +114,7 @@ internal sealed partial class RpcSession
                         _ = ObserveAbandonedGeneratedSendAsync(sendTask);
                         throw CreateGeneratedStreamDeadlineExceededException();
                     }
-                    await sendTask.ConfigureAwait(false);
+                    sendCreditLease = await sendTask.ConfigureAwait(false);
                 }
             }
 
@@ -227,20 +228,22 @@ internal sealed partial class RpcSession
     // Keep the generated-server path concrete and codec-bound. Exact-size codecs retain the
     // credit-before-serialize path; only the universal unsized fallback enters the session-owned
     // pre-credit serialized-memory admission helper.
-    private ValueTask SendGeneratedStreamChunkAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
-        IRpcCodec<T> codec,
-        IRpcSizedCodec<T>? exactSizeCodec,
-        RpcDeadline deadline,
-        TimeProvider? deadlineTimeProvider,
-        CancellationToken cancellationToken)
+    private ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        SendGeneratedStreamChunkAsync<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            IRpcCodec<T> codec,
+            IRpcSizedCodec<T>? exactSizeCodec,
+            RpcDeadline deadline,
+            TimeProvider? deadlineTimeProvider,
+            CancellationToken cancellationToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease)
     {
         if (exactSizeCodec is not null &&
             exactSizeCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
         {
-            return SendStreamChunkKnownSizeAsync(
+            return SendStreamChunkKnownSizeWithCreditLeaseAsync(
                 requestId,
                 streamId,
                 item,
@@ -248,18 +251,94 @@ internal sealed partial class RpcSession
                 knownEncodedBytes,
                 sizedSnapshot,
                 cancellationToken,
+                creditLease,
                 deadline,
                 deadlineTimeProvider);
         }
 
-        return SendUnsizedStreamChunkAsync(
+        return SendUnsizedStreamChunkWithCreditLeaseAsync(
             requestId,
             streamId,
             item,
             codec,
             cancellationToken,
+            creditLease,
             deadline,
             deadlineTimeProvider);
+    }
+
+    private async ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        SendStreamChunkKnownSizeWithCreditLeaseAsync<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            IRpcSizedCodec<T> sizedCodec,
+            int encodedBytes,
+            IRpcSizedCodecSnapshot? sizedSnapshot,
+            CancellationToken cancellationToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease,
+            RpcDeadline deadline = default,
+            TimeProvider? deadlineTimeProvider = null)
+    {
+        var creditBytes = Math.Max(1, encodedBytes);
+        var creditAcquired = false;
+        IRpcByteBufferWriter? writer = null;
+        var ownsWriter = true;
+        try
+        {
+            creditLease = await AcquireStreamSendCreditAsync(
+                creditLease,
+                requestId,
+                streamId,
+                creditBytes,
+                cancellationToken).ConfigureAwait(false);
+            creditAcquired = true;
+
+            writer = RuntimeContext.Buffers.Rent(
+                checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes + 4));
+            using (writer.BeginPacketScope(
+                       ProtocolV2FrameType.StreamData,
+                       ProtocolV2FrameFlags.None,
+                       unchecked((ulong)requestId)))
+            {
+                writer.GetSpan(sizeof(ushort) + encodedBytes + 4);
+                writer.Advance(0);
+                var idSpan = writer.GetSpan(sizeof(ushort));
+                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
+                writer.Advance(sizeof(ushort));
+                sizedCodec.SerializeSized(item, writer, encodedBytes, sizedSnapshot);
+                if (sizedSnapshot is not null)
+                {
+                    sizedCodec.ReleaseSnapshot(sizedSnapshot);
+                    sizedSnapshot = null;
+                }
+            }
+
+            var actualEncodedBytes = writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort);
+            if (actualEncodedBytes != encodedBytes)
+            {
+                throw new InvalidOperationException(
+                    "Generated stream item size differed after credit was acquired.");
+            }
+
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+            ownsWriter = false;
+            SendPacket(writer);
+            return creditLease;
+        }
+        catch
+        {
+            if (creditAcquired)
+                ReturnUnsentStreamCredit(creditLease, requestId, streamId, creditBytes);
+            throw;
+        }
+        finally
+        {
+            if (sizedSnapshot is not null)
+                sizedCodec.ReleaseSnapshot(sizedSnapshot);
+            if (ownsWriter && writer is not null)
+                RuntimeContext.Buffers.Return(writer);
+        }
     }
 
     internal async ValueTask SendStreamChunkKnownSizeAsync<T>(
