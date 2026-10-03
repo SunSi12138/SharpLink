@@ -4,10 +4,6 @@
 
 ## [Unreleased]
 
-### Added
-
-- Added cancellable remote wire contract readiness barriers for single and scoped multi-cluster clients. Missing manifests wait for publication, unexpected hashes fail closed, and an explicit previous-hash overload supports known identity replacement without retrying unrelated compatibility failures. Observations cover all currently Ready connections and are not leases or implementation-generation acknowledgements.
-
 ### Changed
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
@@ -17,6 +13,13 @@
 ### Fixed
 
 - Fixed a hung OneWay call with client streams when the logical deadline elapsed while the producer was still running. The pending call was terminated by the deadline first, and the invoker then awaited the pooled lease operation a second time, which never completes; the invocation never returned, its producer stayed alive, and the client's logical invocation accounting never drained. The invoker now publishes the local send/producer failure to the pending request table and observes the lease operation exactly once on every path, so the terminal that actually won - local completion, send failure, deadline, caller cancellation, or a connection close - is what the caller sees, and the pooled operation is always returned.
+
+## [2.0.3] - 2026-10-03
+
+### Fixed
+
+- Fixed the missing public readiness boundary after dynamic registration and replacement (#760): local registration success on a control connection does not acknowledge ContractManifest propagation on a separate Ready data connection. Single and scoped multi-cluster clients can now explicitly await ContractId + exact RpcAssemblyHash, with cancellation, stop and reconnect semantics and fail-closed mismatch handling.
+- Added an explicit previous-hash overload for a declared wire identity replacement. Only that exact old hash may wait for the new identity; unrelated mismatches still fail immediately. Readiness is a point-in-time wire observation, not a lease or implementation-generation acknowledgement. Get stays synchronous and retains its exact compatibility validation; four additive default interface methods preserve old custom-client binary compatibility and report unsupported barriers explicitly.
 
 ## [2.0.2] - 2026-10-02
 
