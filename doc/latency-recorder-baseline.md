@@ -17,6 +17,16 @@ when either semantic version differs.
 - `validation-dual`: exact and legacy recorders are compared within the stated
   1 microsecond or 0.5% tolerance; it is not formal evidence.
 
+For each unary concurrency stage, measurement recorders (including the opt-in
+tail observer) are allocated before the configured warmup. Warmup remains
+recording-off and does not write these measurement buffers. This lets the
+existing warmup run with the actual retained buffers, rather than allocating
+large buffers immediately before timing. Zero warmup still means zero warmup;
+the runner never forces a GC, waits for a GC to finish, or allocates a dummy
+workload recorder in recording-off mode. Recorder writes and their memory/GC
+effects during measurement remain part of the measured cost. This initialization
+order does not establish that the recorder-interference gate passes.
+
 All sample buffers are allocated before the synchronized start gate. Capacity
 exhaustion or drain timeout fails the run; samples are never clamped or silently
 dropped. Throughput uses only `measurementDuration`, while in-flight operations

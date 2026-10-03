@@ -163,6 +163,10 @@ dotnet run -c Release --project test/SharpLink.LoadTest -- \
 
 LoadTest 专有：
 
+每个并发阶段的测量采样缓冲区在既有预热之前分配，独立尾延迟观察器也遵守此顺序。
+预热仍为 recording-off，不写入测量样本；关闭正式采样时不创建虚假正式缓冲区。
+`--warmup 0` 不增加等待，不强制 GC，也不等待 GC 状态；测量期间的采样成本仍计入结果。
+
 - `--operation`: `add | echo | hold`（默认 `add`；另支持现有诊断操作 `empty/oneway/yield/delay`）
 - `--client-count`: `hold` 的独立客户端数量（默认 4，其他操作忽略）
 - `--concurrency-per-client`: `hold` 每个客户端一次性发起的调用数（默认 1,024）
