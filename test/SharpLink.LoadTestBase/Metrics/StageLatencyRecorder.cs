@@ -13,7 +13,7 @@ namespace SharpLink.LoadTestBase;
 /// </summary>
 public sealed class StageLatencyRecorder
 {
-    public const string Version = "worker-local-shared-capacity-v3";
+    public const string Version = "worker-local-shared-capacity-v4";
 
     private readonly WorkerLatencyRecorder[] _workers;
     private readonly long _stopwatchFrequency;
@@ -174,6 +174,9 @@ public sealed class WorkerLatencyRecorder
         _owner = owner;
         _workerIndex = workerIndex;
         _elapsedTicks = GC.AllocateUninitializedArray<long>(capacity);
+        // Initialize the real buffer before publication and synchronized measurement.
+        // This is setup work; no cleared slot counts as a recorded sample.
+        _elapsedTicks.AsSpan().Clear();
         _regionEnd = capacity;
         _capacity = capacity;
     }

@@ -33,7 +33,7 @@ dropped. Throughput uses only `measurementDuration`, while in-flight operations
 complete during the separately reported bounded `drainDuration`.
 
 The standalone CLI default formal hard bound is 30,000,000 samples for both runners.
-The `worker-local-shared-capacity-v3` recorder initially divides preallocated
+The `worker-local-shared-capacity-v4` recorder initially divides preallocated
 storage among workers. A worker that fills its current region can borrow another
 worker's unwritten tail after briefly pausing writers. Recorded prefixes retain
 exclusive ownership; the total sample capacity remains unchanged. Each record
@@ -41,6 +41,18 @@ publishes its worker's entry with a local full memory fence. Rebalancing uses a
 slow-path lock and may allocate region metadata, but never allocates additional
 sample buffers. Its CPU and allocation overhead require fresh measurements;
 historical recorder measurements below do not establish the new version's cost.
+Each worker explicitly clears its newly allocated sample array before publication.
+For the unary runner this happens before the existing recording-off warmup;
+other runners also initialize before their synchronized measurement start.
+It moves first-touch work for the real sample buffers into setup, without
+recording zero values or changing counts, capacity, ownership, or fences.
+Setup writes the full configured capacity, not just the eventual sample count,
+and therefore consumes CPU and memory bandwidth and commits resident pages
+earlier. At the full-tier bound this writes about 2.24 GiB per recorder; an
+enabled tail observer adds its own real buffer. This does not guarantee zero
+subsequent faults or GC, and reduced measurement faults alone do not prove
+that the original tail-latency gate passes.
+
 The worker's recording flag, cursor, and count occupy a private 256-byte inline
 primitive block. This separates different workers' frequently written fields
 for cache lines up to 128 bytes without assuming that managed objects are
