@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace SharpLink.LoadTestBase;
 
@@ -10,10 +12,12 @@ namespace SharpLink.LoadTestBase;
 /// </summary>
 public sealed class StageLatencyRecorder
 {
-    public const string Version = "worker-local-raw-v1";
+    public const string Version = "worker-local-shared-capacity-v2";
 
     private readonly WorkerLatencyRecorder[] _workers;
     private readonly long _stopwatchFrequency;
+    private readonly object _capacityLock = new();
+    private int _rebalancing;
 
     public StageLatencyRecorder(
         int workerCount,
@@ -41,7 +45,7 @@ public sealed class StageLatencyRecorder
         for (var worker = 0; worker < workerCount; worker++)
         {
             var capacity = baseCapacity + (worker < extraCapacity ? 1 : 0);
-            _workers[worker] = new WorkerLatencyRecorder(worker, capacity);
+            _workers[worker] = new WorkerLatencyRecorder(this, worker, capacity);
         }
     }
 
@@ -53,6 +57,56 @@ public sealed class StageLatencyRecorder
 
     public WorkerLatencyRecorder GetWorker(int workerIndex)
         => _workers[workerIndex];
+
+    internal bool IsRebalancing => Volatile.Read(ref _rebalancing) != 0;
+
+    internal void Refill(WorkerLatencyRecorder requester)
+    {
+        lock (_capacityLock)
+        {
+            if (requester.RemainingCapacity != 0)
+                return;
+
+            // A full fence pairs with each writer's local entry fence before any
+            // unwritten region changes owner. No global atomic runs per sample.
+            Interlocked.Exchange(ref _rebalancing, 1);
+            try
+            {
+                foreach (var worker in _workers)
+                {
+                    var spinner = new SpinWait();
+                    while (worker.IsRecording)
+                        spinner.SpinOnce();
+                }
+
+                WorkerLatencyRecorder? donor = null;
+                foreach (var worker in _workers)
+                {
+                    if (worker != requester && worker.RemainingCapacity > (donor?.RemainingCapacity ?? 0))
+                        donor = worker;
+                }
+
+                if (donor is null)
+                {
+                    throw new LatencySampleCapacityExceededException(
+                        $"Formal total latency sample capacity {MaximumTotalSamples} was exhausted; the run is invalid.");
+                }
+
+                donor.DonateTo(requester, Math.Max(1, donor.RemainingCapacity / 2));
+            }
+            finally
+            {
+                Volatile.Write(ref _rebalancing, 0);
+            }
+        }
+    }
+
+    internal void WaitForRebalance()
+    {
+        var spinner = new SpinWait();
+        while (IsRebalancing)
+            spinner.SpinOnce();
+    }
 
     public LatencyStatistics Complete()
     {
@@ -105,19 +159,33 @@ public sealed class StageLatencyRecorder
 /// <summary>A bounded latency buffer owned by one logical workload worker.</summary>
 public sealed class WorkerLatencyRecorder
 {
+    private readonly StageLatencyRecorder _owner;
     private readonly int _workerIndex;
-    private readonly long[] _elapsedTicks;
+    private long[] _elapsedTicks;
+    private int _regionStart;
+    private int _regionEnd;
+    private int _position;
+    private int _capacity;
     private int _count;
+    private int _isRecording;
+    private List<RecordedRegion>? _closedRegions;
 
-    internal WorkerLatencyRecorder(int workerIndex, int capacity)
+    internal WorkerLatencyRecorder(StageLatencyRecorder owner, int workerIndex, int capacity)
     {
+        _owner = owner;
         _workerIndex = workerIndex;
         _elapsedTicks = GC.AllocateUninitializedArray<long>(capacity);
+        _regionEnd = capacity;
+        _capacity = capacity;
     }
 
-    public int Capacity => _elapsedTicks.Length;
+    public int Capacity => _capacity;
 
     public int Count => _count;
+
+    internal int RemainingCapacity => _regionEnd - _position;
+
+    internal bool IsRecording => Volatile.Read(ref _isRecording) != 0;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RecordTicks(int logicalWorkerIndex, long elapsedTicks)
@@ -129,21 +197,70 @@ public sealed class WorkerLatencyRecorder
         }
 
         ArgumentOutOfRangeException.ThrowIfNegative(elapsedTicks);
-        if (_count >= _elapsedTicks.Length)
+        while (true)
         {
-            throw new LatencySampleCapacityExceededException(
-                $"Formal latency sample capacity {_elapsedTicks.Length} was exhausted for worker {_workerIndex}; the run is invalid.");
-        }
+            if (_owner.IsRebalancing)
+                _owner.WaitForRebalance();
 
-        _elapsedTicks[_count++] = elapsedTicks;
+            // This worker-local full fence prevents a rebalance from missing
+            // entry while the writer misses the pause through store buffering.
+            Interlocked.Exchange(ref _isRecording, 1);
+            try
+            {
+                if (_owner.IsRebalancing)
+                    continue;
+
+                if (_position < _regionEnd)
+                {
+                    _elapsedTicks[_position++] = elapsedTicks;
+                    _count++;
+                    return;
+                }
+            }
+            finally
+            {
+                Volatile.Write(ref _isRecording, 0);
+            }
+
+            // Never retain the recording flag while taking the global slow
+            // path: another rebalance may already be waiting for this worker.
+            _owner.Refill(this);
+        }
+    }
+
+    internal void DonateTo(WorkerLatencyRecorder requester, int length)
+    {
+        // Prepare metadata before publishing either side of the transfer.
+        (requester._closedRegions ??= []).Add(new RecordedRegion(
+            requester._elapsedTicks, requester._regionStart, requester._position - requester._regionStart));
+
+        var end = _regionEnd;
+        _regionEnd -= length;
+        _capacity -= length;
+        requester._elapsedTicks = _elapsedTicks;
+        requester._regionStart = end - length;
+        requester._position = requester._regionStart;
+        requester._regionEnd = end;
+        requester._capacity += length;
     }
 
     internal void CopyTo(Span<long> destination)
     {
         if (destination.Length != _count)
             throw new ArgumentException("Destination length must equal the recorded sample count.", nameof(destination));
-        _elapsedTicks.AsSpan(0, _count).CopyTo(destination);
+        var offset = 0;
+        if (_closedRegions is not null)
+        {
+            foreach (var region in _closedRegions)
+            {
+                region.Buffer.AsSpan(region.Start, region.Length).CopyTo(destination[offset..]);
+                offset += region.Length;
+            }
+        }
+        _elapsedTicks.AsSpan(_regionStart, _position - _regionStart).CopyTo(destination[offset..]);
     }
+
+    private readonly record struct RecordedRegion(long[] Buffer, int Start, int Length);
 }
 
 public sealed class LatencySampleCapacityExceededException : InvalidOperationException

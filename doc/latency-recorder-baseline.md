@@ -22,16 +22,25 @@ exhaustion or drain timeout fails the run; samples are never clamped or silently
 dropped. Throughput uses only `measurementDuration`, while in-flight operations
 complete during the separately reported bounded `drainDuration`.
 
-The standalone CLI default formal hard bound is 30,000,000 samples for both runners. Each
-worker owns its own preallocated buffer. The merged sort buffer is allocated
+The standalone CLI default formal hard bound is 30,000,000 samples for both runners.
+The `worker-local-shared-capacity-v2` recorder initially divides preallocated
+storage among workers. A worker that fills its current region can borrow another
+worker's unwritten tail after briefly pausing writers. Recorded prefixes retain
+exclusive ownership; the total sample capacity remains unchanged. Each record
+publishes its worker's entry with a local full memory fence. Rebalancing uses a
+slow-path lock and may allocate region metadata, but never allocates additional
+sample buffers. Its CPU and allocation overhead require fresh measurements;
+historical recorder measurements below do not establish the new version's cost.
+The merged sort buffer is allocated
 only after measurement and drain, so it cannot perturb workload timing.
 
 `eng/run-performance-matrix.sh` explicitly sets the bound to 300,000,000 for
 the full tier and 30,000,000 for smoke. Override it with
 `SHARPLINK_MATRIX_MAXIMUM_RECORDED_OPERATIONS` (a positive Int32). This changes
 storage capacity only; measurement duration, concurrency, repetitions, exact
-sample recording, and overflow failure remain unchanged. Capacity is divided
-among workers, so a worker can exhaust its share before the aggregate is full.
+sample recording, and overflow failure remain unchanged. Capacity exhaustion
+now means the aggregate hard bound is full, rather than an individual worker's
+initial share being full.
 The full-tier raw buffers require about 2.24 GiB; sorting additionally requires
 eight bytes per recorded sample, up to another 2.24 GiB. Allow memory for the
 client/server workload as well, and retain the reported maximum capacity with
