@@ -67,7 +67,7 @@ jobs:
               )
 
           publish = re.search(
-              r"(?ms)^  publish-nuget:\n(?:(?!^  \S).)*?^    if:\s*(.+)$",
+              r"(?ms)^  publish-nuget:\n(?:(?!^  \S).)*?^    if:[ \t]*([^\n]+)$",
               text,
           )
           expected = "${{ success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
