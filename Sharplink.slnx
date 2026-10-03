@@ -44,6 +44,8 @@
     <Project Path="test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj" />
     <Project Path="test/SharpLink.ChaosTests/SharpLink.ChaosTests.csproj" />
     <Project Path="test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj" />
+    <Project Path="test/SharpLink.ReplacementContracts/SharpLink.ReplacementContracts.csproj" />
+    <Project Path="test/SharpLink.ReplacementServices/SharpLink.ReplacementServices.csproj" />
     <Project Path="test/SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj" />
     <Project Path="test/SharpLink.DynamicServices/SharpLink.DynamicServices.csproj" />
     <Project Path="test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj" />
