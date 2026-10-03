@@ -19,6 +19,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
     private readonly Task _serverTask;
     private readonly ISharpLinkServer _server;
     private readonly ISharpLinkClient _client;
+    private readonly AllocationReadProbe? _serverReadProbe;
 
     public IBenchmarkRpc Rpc { get; }
     public BenchmarkRpcService LocalService { get; }
@@ -29,7 +30,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         CancellationTokenSource shutdown,
         Task serverTask,
         ISharpLinkServer server,
-        ISharpLinkClient client)
+        ISharpLinkClient client,
+        AllocationReadProbe? serverReadProbe = null)
     {
         Rpc = rpc;
         LocalService = localService;
@@ -37,6 +39,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         _serverTask = serverTask;
         _server = server;
         _client = client;
+        _serverReadProbe = serverReadProbe;
     }
 
     public static async Task<BenchmarkEnvironment> CreateAsync(
@@ -95,12 +98,15 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
         Action<SharpLinkRuntimeOptions>? configureClientRuntime = null,
         Action<ISharpLinkServer>? configureBuiltServer = null,
-        Action<ISharpLinkClient>? configureBuiltClient = null)
+        Action<ISharpLinkClient>? configureBuiltClient = null,
+        bool observeServerReadWaits = false)
     {
         var name = $"sharplink-allocation-{Guid.NewGuid():N}";
         var localService = new BenchmarkRpcService();
+        var serverReadProbe = observeServerReadWaits ? new AllocationReadProbe() : null;
+        var transport = new SharedMemoryServerTransportListener(name);
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseSharedMemory(name)
+            .UseTransport(serverReadProbe?.Wrap(transport) ?? transport)
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
         if (configureServerRuntime is not null)
             serverBuilder.UseRuntime(configureServerRuntime);
@@ -131,7 +137,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         {
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
             return new BenchmarkEnvironment(
-                client.Get<IBenchmarkRpc>(), localService, shutdown, serverTask, server, client);
+                client.Get<IBenchmarkRpc>(), localService, shutdown, serverTask, server, client, serverReadProbe);
         }
         catch
         {
@@ -144,6 +150,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
     }
 
     internal ISharpLinkClient Client => _client;
+    internal bool HasPendingServerRead => _serverReadProbe?.HasPendingRead ?? false;
     internal ISharpLinkServer Server => _server;
 
     public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();
