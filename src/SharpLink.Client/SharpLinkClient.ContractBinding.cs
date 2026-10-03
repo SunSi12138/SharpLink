@@ -37,6 +37,7 @@ internal sealed partial class SharpLinkClient
                 snapshot[index++] = new RemoteContractManifestBinding(pair.Key, pair.Value);
             Volatile.Write(ref _remoteContractManifestSnapshot, snapshot);
         }
+        PulseRemoteContractWaiters();
 
         // Get<T>() historically supports pre-connection proxy acquisition. The first manifest
         // for a session validates every proxy that already escaped to user code before that

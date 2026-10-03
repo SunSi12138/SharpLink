@@ -15,6 +15,7 @@
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.AotSmoke\SharpLink.AotSmoke.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.DynamicContracts\SharpLink.DynamicContracts.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\SharpLink.ReplacementServices\SharpLink.ReplacementServices.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.DynamicServices\SharpLink.DynamicServices.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.ReferencedCodecProvider\SharpLink.ReferencedCodecProvider.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.ReferencedCodecConsumer\SharpLink.ReferencedCodecConsumer.csproj" ReferenceOutputAssembly="false" />

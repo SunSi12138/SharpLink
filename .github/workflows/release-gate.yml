@@ -273,7 +273,7 @@ jobs:
 
   publish-nuget:
     needs: [release-summary, pack]
-    if: ${{ success() && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release

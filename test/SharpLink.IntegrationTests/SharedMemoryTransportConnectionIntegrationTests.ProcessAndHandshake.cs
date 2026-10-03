@@ -6,6 +6,7 @@ using System.IO.Pipelines;
 using System.IO.Pipes;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Channels;
 using PipeStreamOptions = System.IO.Pipes.PipeOptions;
 
 namespace SharpLink.IntegrationTests;
@@ -193,7 +194,12 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
             HandshakeTimeout = TimeSpan.FromMilliseconds(100)
         };
         await using var listener = new SharedMemoryServerTransportListener(name, options);
+        var iterations = Channel.CreateUnbounded<int>();
+        var iteration = 0;
+        listener.AcceptIterationStartedForTesting = () =>
+            iterations.Writer.TryWrite(Interlocked.Increment(ref iteration));
         var accept = listener.AcceptAsync().AsTask();
+        await WaitForAcceptIterationAsync(1);
 
         await using (var unknownVersion = CreateRawSharedMemoryPipe(name))
         {
@@ -205,6 +211,7 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
             await unknownVersion.WriteAsync(invalidHello);
             await unknownVersion.FlushAsync();
         }
+        await WaitForAcceptIterationAsync(2);
 
         await using (var truncated = CreateRawSharedMemoryPipe(name))
         {
@@ -212,11 +219,12 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
             await truncated.WriteAsync(new byte[] { 0x31, 0x4D, 0x48, 0x53 });
             await truncated.FlushAsync();
         }
+        await WaitForAcceptIterationAsync(3);
 
         await using (var idle = CreateRawSharedMemoryPipe(name))
         {
             await idle.ConnectAsync();
-            await Task.Delay(200);
+            await WaitForAcceptIterationAsync(4);
         }
 
         // The listener's 100ms timeout is the contract under test for rejecting an
@@ -230,6 +238,13 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         await using var factory = new SharedMemoryClientTransportFactory(name, clientOptions);
         await using var client = await factory.ConnectAsync();
         await using var server = await accept.WaitAsync(TimeSpan.FromSeconds(2));
+
+        async Task WaitForAcceptIterationAsync(int expected)
+        {
+            var observed = await iterations.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(observed == expected, $"expected accept iteration {expected}, observed {observed}");
+            Ensure(!accept.IsCompleted, "a rejected handshake must leave the original accept pending");
+        }
     }
 
     [Test]
