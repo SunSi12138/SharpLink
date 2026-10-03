@@ -445,8 +445,8 @@ public static class Program
         var diagnosticHistogram = LatencyRecordingPolicy.CreatesDiagnosticRecorder(recordingMode)
             ? new SharpLink.LoadTestBase.LatencyHistogram()
             : null;
-        SharpLink.LoadTestBase.LatencyHistogram? realtimeRef = LatencyRecordingPolicy.StartsRealtimeReporter(recordingMode)
-            ? new SharpLink.LoadTestBase.LatencyHistogram(200_000)
+        var realtime = LatencyRecordingPolicy.StartsRealtimeReporter(recordingMode)
+            ? new RealtimeLatencyState()
             : null;
         var lifecycle = new MeasurementStageLifecycle(
             concurrency,
@@ -455,7 +455,6 @@ public static class Program
             ? new StageLatencyRecorder(1, options.TailObserverMaximumRecordedOperations)
             : null;
         var failures = new FailureRecorder();
-        long realtimeSuccess = 0;
         var workers = new Task<WorkerStageOutcome>[concurrency];
         using var reporterStop = new CancellationTokenSource();
 
@@ -479,9 +478,9 @@ public static class Program
                     var now = Stopwatch.GetTimestamp();
                     var windowSeconds = Math.Max(0.001, Stopwatch.GetElapsedTime(lastUpdate, now).TotalSeconds);
                     lastUpdate = now;
-                    var windowSuccess = Interlocked.Exchange(ref realtimeSuccess, 0);
+                    var windowSuccess = Interlocked.Exchange(ref realtime!.Success, 0);
                     var windowHistogram = Interlocked.Exchange(
-                        ref realtimeRef,
+                        ref realtime!.Histogram,
                         new SharpLink.LoadTestBase.LatencyHistogram(200_000))!;
 
                     metrics.UpdateRealtime(new RealtimeResult(
@@ -548,99 +547,10 @@ public static class Program
             var echoPayload = operation == "echo"
                 ? CreateEchoPayload(options.PayloadSize, options.PayloadPattern, workerIndex)
                 : string.Empty;
-            workers[i] = Task.Run(async () =>
-            {
-                long success = 0;
-                long failure = 0;
-                long sendQueueBackpressureRetries = 0;
-                long operationsStarted = 0;
-                await lifecycle.ReadyAndWaitForStartAsync(workerIndex).ConfigureAwait(false);
-
-                while (lifecycle.TryBeginOperationStart(workerIndex, out var admission))
-                {
-                    operationsStarted++;
-                    var start = workerRecorder is not null || diagnosticHistogram is not null
-                        ? Stopwatch.GetTimestamp()
-                        : 0;
-                    while (true)
-                    {
-                        try
-                        {
-                            PendingLoadOperation pendingOperation;
-                            using (admission)
-                                pendingOperation = StartLoadOperation(rpc, operation, echoPayload);
-                            switch (pendingOperation.Kind)
-                            {
-                                case PendingLoadOperationKind.Void:
-                                    await pendingOperation.VoidCompletion.ConfigureAwait(false);
-                                    break;
-                                case PendingLoadOperationKind.Int32:
-                                    _ = await pendingOperation.Int32Completion.ConfigureAwait(false);
-                                    break;
-                                case PendingLoadOperationKind.String:
-                                    _ = await pendingOperation.StringCompletion.ConfigureAwait(false);
-                                    break;
-                                default:
-                                    throw new InvalidOperationException("Unknown pending load operation kind.");
-                            }
-
-                            if (workerRecorder is not null)
-                            {
-                                var elapsedTicks = Stopwatch.GetTimestamp() - start;
-                                workerRecorder.RecordTicks(workerIndex, elapsedTicks);
-                                if (diagnosticHistogram is not null)
-                                    diagnosticHistogram.Record(formalRecorder!.TicksToMicroseconds(elapsedTicks));
-                            }
-                            else if (diagnosticHistogram is not null)
-                            {
-                                var elapsedUs = Stopwatch.GetElapsedTime(start).TotalMicroseconds;
-                                diagnosticHistogram.Record(elapsedUs);
-                                Volatile.Read(ref realtimeRef)!.Record(elapsedUs);
-                            }
-
-                            success++;
-                            if (recordingMode == LatencyRecordingMode.Diagnostic)
-                                Interlocked.Increment(ref realtimeSuccess);
-                            break;
-                        }
-                        catch (LatencySampleCapacityExceededException)
-                        {
-                            throw;
-                        }
-                        catch (Exception ex)
-                        {
-                            if (ShouldRetryOneWaySendQueueBackpressure(
-                                    retryOneWaySendQueueBackpressure,
-                                    operation,
-                                    ex))
-                            {
-                                sendQueueBackpressureRetries++;
-                                await Task.Yield();
-                                if (!lifecycle.TryBeginOperationStart(workerIndex, out admission))
-                                {
-                                    failures.Record(ex);
-                                    failure++;
-                                    break;
-                                }
-
-                                continue;
-                            }
-
-                            failures.Record(ex);
-                            failure++;
-                            if (ShouldYieldAfterBackpressure(operation, ex))
-                                await Task.Yield();
-                            break;
-                        }
-                    }
-                }
-
-                return new WorkerStageOutcome(
-                    success,
-                    failure,
-                    sendQueueBackpressureRetries,
-                    operationsStarted);
-            }, CancellationToken.None);
+            workers[i] = Task.Run(() => LoadTestWorker.RunAsync(
+                rpc, operation, echoPayload, workerIndex, lifecycle, workerRecorder,
+                formalRecorder, diagnosticHistogram, realtime, failures,
+                retryOneWaySendQueueBackpressure), CancellationToken.None);
         }
 
         var workersTask = Task.WhenAll(workers);
@@ -768,20 +678,6 @@ public static class Program
         => microseconds.HasValue
             ? $"{microseconds.Value.ToString("F2", CultureInfo.InvariantCulture)}us"
             : "n/a";
-
-    private static PendingLoadOperation StartLoadOperation(
-        ILoadTestService rpc,
-        string operation,
-        string echoPayload)
-        => operation switch
-        {
-            "echo" => PendingLoadOperation.From(rpc.EchoAsync(echoPayload)),
-            "empty" => PendingLoadOperation.From(rpc.PingAsync()),
-            "yield" => PendingLoadOperation.From(rpc.YieldAsync(7, 9)),
-            "delay" => PendingLoadOperation.From(rpc.DelayAsync(7, 9)),
-            "oneway" => PendingLoadOperation.From(rpc.NotifyAsync(7, 9)),
-            _ => PendingLoadOperation.From(rpc.AddAsync(7, 9))
-        };
 
     internal static bool ShouldYieldAfterBackpressure(string operation, Exception exception)
         => operation == "oneway" &&
