@@ -50,12 +50,13 @@ public class SharpLinkClientHealthTests
             transport,
             builder => builder.UseLoggerFactory(loggerFactory));
 
-        await client.StartAsync();
-        await transport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        transport.ReleaseFailure();
-        await loggerFactory.SupervisorFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(2));
         try
         {
+            await client.StartAsync();
+            await transport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            transport.ReleaseFailure();
+            await loggerFactory.SupervisorFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
             Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
                 "connection failure must not fault the local runtime lifecycle");
             Ensure(client.State == SharpLinkConnectionState.Faulted,
