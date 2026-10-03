@@ -53,7 +53,7 @@ internal static class AllocationGateRunner
             var rpcCases = selected.Where(static item => item.Kind != CaseKind.SendPumpIdleWake).ToArray();
             if (rpcCases.Length > 0)
             {
-                await using var environment = await BenchmarkEnvironment.CreateSharedMemoryAsync().ConfigureAwait(false);
+                await using var environment = await BenchmarkEnvironment.CreateSharedMemoryAsync(observeServerReadWaits: true).ConfigureAwait(false);
                 foreach (var definition in rpcCases)
                 {
                     report.Cases.Add(await RunRpcCaseAsync(
@@ -147,6 +147,7 @@ internal static class AllocationGateRunner
             var nextPublished = environment.LocalService.PublishedCount;
             operation = async () =>
             {
+                WaitUntilReceiveIsPending(environment);
                 var target = Interlocked.Increment(ref nextPublished);
                 await environment.Rpc.PublishEventAsync(7, 11, "allocation-gate").ConfigureAwait(false);
                 WaitUntilPublished(environment.LocalService, target);
@@ -199,6 +200,18 @@ internal static class AllocationGateRunner
         {
             if (Stopwatch.GetTimestamp() >= deadline)
                 throw new TimeoutException($"OneWay fixture did not publish operation {target} within five seconds.");
+            spin.SpinOnce();
+        }
+    }
+
+    private static void WaitUntilReceiveIsPending(BenchmarkEnvironment environment)
+    {
+        var deadline = Stopwatch.GetTimestamp() + 5L * Stopwatch.Frequency;
+        var spin = new SpinWait();
+        while (!environment.HasPendingServerRead)
+        {
+            if (Stopwatch.GetTimestamp() >= deadline)
+                throw new TimeoutException("OneWay fixture did not reach a pending server read within five seconds.");
             spin.SpinOnce();
         }
     }

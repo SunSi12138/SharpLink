@@ -40,6 +40,7 @@ internal sealed partial class RpcSession
         private int _faulted;
 
         internal bool IsStopRequested => Volatile.Read(ref _stopped) != 0;
+        internal bool HasPendingIdleWait => _wakeup.HasPendingIdleWait;
 
         public SendPump(
             PipeWriter output,
