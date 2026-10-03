@@ -70,7 +70,7 @@ jobs:
               r"(?ms)^  publish-nuget:\n(?:(?!^  \S).)*?^    if:[ \t]*([^\n]+)$",
               text,
           )
-          expected = "${{ success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
+          expected = "$" + "{{ success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
           if publish is None or publish.group(1).strip() != expected:
               raise SystemExit(
                   "Release Gate publishing must require successful prerequisites and a v* tag push; manual runs only verify."
