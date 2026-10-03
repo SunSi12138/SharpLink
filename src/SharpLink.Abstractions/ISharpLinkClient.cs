@@ -88,6 +88,60 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     }
 
     /// <summary>
+    /// Starts or joins connectivity and waits until every currently Ready connection advertises
+    /// the requested wire contract with the exact assembly hash, with at least one Ready connection.
+    /// </summary>
+    /// <remarks>
+    /// A missing contract waits for manifest propagation; an advertised different hash fails closed
+    /// immediately. This is a point-in-time observation, not a lease: reconnect, replacement or
+    /// unregister can change availability before a subsequent synchronous Get. Manifest generations
+    /// are ordered within each connection, never across connections. The wait does not acquire a
+    /// proxy or retain a contract Type/Assembly and does not retry RPC payloads. Cancellation affects
+    /// only this wait. Custom implementations must override this member to support the barrier.
+    /// </remarks>
+    /// <param name="contractId">The generated wire contract identifier.</param>
+    /// <param name="rpcAssemblyHash">The exact, nonempty generated RPC assembly identity.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <exception cref="ArgumentException"><paramref name="rpcAssemblyHash"/> is empty.</exception>
+    /// <exception cref="NotSupportedException">The client does not support this barrier.</exception>
+    /// <exception cref="OperationCanceledException">The caller canceled this wait.</exception>
+    /// <exception cref="SharpLinkException">
+    /// An advertised identity differs, connectivity faults, or the client starts stopping.
+    /// </exception>
+    ValueTask WaitForRemoteContractAsync(
+        long contractId,
+        RpcHash128 rpcAssemblyHash,
+        CancellationToken cancellationToken = default)
+    {
+        if (contractId == 0)
+            throw new ArgumentOutOfRangeException(nameof(contractId), "A nonzero wire contract ID is required.");
+        if (rpcAssemblyHash.IsEmpty)
+            throw new ArgumentException("An exact nonempty RPC assembly hash is required.", nameof(rpcAssemblyHash));
+        return ValueTask.FromException(new NotSupportedException(
+            "This ISharpLinkClient implementation does not support remote contract readiness waits."));
+    }
+
+    /// <summary>Waits for an explicitly declared wire identity replacement on every Ready connection.</summary>
+    /// <remarks>
+    /// Only a missing contract or the exact caller-supplied previous hash may remain pending.
+    /// Any third hash fails closed immediately. A matching target hash completes even if it equals
+    /// the previous hash; this API observes wire compatibility, not registry or implementation
+    /// generation. All other lifecycle and point-in-time semantics match the ordinary barrier.
+    /// </remarks>
+    /// <param name="contractId">The nonzero generated wire contract identifier.</param>
+    /// <param name="rpcAssemblyHash">The exact nonempty target assembly identity.</param>
+    /// <param name="previousRpcAssemblyHash">The exact nonempty identity being replaced.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <exception cref="NotSupportedException">The client does not support this barrier.</exception>
+    ValueTask WaitForRemoteContractAsync(
+        long contractId,
+        RpcHash128 rpcAssemblyHash,
+        RpcHash128 previousRpcAssemblyHash,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException(new NotSupportedException(
+            "This ISharpLinkClient implementation does not support remote contract replacement waits."));
+
+    /// <summary>
     /// Atomically replaces the client interceptor pipeline for logical RPCs that start after this call returns.
     /// Calls already in progress retain the interceptor generation captured at their invocation boundary.
     /// </summary>

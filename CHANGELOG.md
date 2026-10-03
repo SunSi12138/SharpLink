@@ -14,6 +14,13 @@
 
 - Fixed a hung OneWay call with client streams when the logical deadline elapsed while the producer was still running. The pending call was terminated by the deadline first, and the invoker then awaited the pooled lease operation a second time, which never completes; the invocation never returned, its producer stayed alive, and the client's logical invocation accounting never drained. The invoker now publishes the local send/producer failure to the pending request table and observes the lease operation exactly once on every path, so the terminal that actually won - local completion, send failure, deadline, caller cancellation, or a connection close - is what the caller sees, and the pooled operation is always returned.
 
+## [2.0.3] - 2026-10-03
+
+### Fixed
+
+- Fixed the missing public readiness boundary after dynamic registration and replacement (#760): local registration success on a control connection does not acknowledge ContractManifest propagation on a separate Ready data connection. Single and scoped multi-cluster clients can now explicitly await ContractId + exact RpcAssemblyHash, with cancellation, stop and reconnect semantics and fail-closed mismatch handling.
+- Added an explicit previous-hash overload for a declared wire identity replacement. Only that exact old hash may wait for the new identity; unrelated mismatches still fail immediately. Readiness is a point-in-time wire observation, not a lease or implementation-generation acknowledgement. Get stays synchronous and retains its exact compatibility validation; four additive default interface methods preserve old custom-client binary compatibility and report unsupported barriers explicitly.
+
 ## [2.0.2] - 2026-10-02
 
 ### Changed

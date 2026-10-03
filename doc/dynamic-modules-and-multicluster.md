@@ -138,6 +138,30 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 替换不是覆盖字典：新 generation 先完整验证并发布，旧 generation 进入 draining；已开始调用继续使用旧服务/Codec，新的调用路由到新 generation。注销等待 active calls/streams 和 adapter scope 释放，超时不会假装成功。
 
+## 远端 wire contract 可见性
+
+本地 `RegisterAssembly` / `ReplaceAssemblyAsync` 成功不代表另一条已 Ready 连接已收到新的 ContractManifest。
+调用方用公开 generated Manifest 的 `Contracts[].ContractId` 和 `RpcAssemblyHash` 建立显式屏障：
+
+```csharp
+await client.WaitForRemoteContractAsync(contractId, expectedHash, cancellationToken);
+var proxy = client.Get<IContract>();
+// 多集群只等待目标 slot：
+await clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, cancellationToken);
+```
+
+普通屏障在所有当前 Ready 连接都广告目标 ID 和完全相同哈希时完成，至少需要一条 Ready 连接。
+缺少 contract 继续等清单；存在但哈希不同立即 `FailedPrecondition`，不重试 RPC 或异常文本。
+如果业务明确发起旧 wire identity 到新 identity 的替换，可使用额外 `previousRpcAssemblyHash`
+参数的重载。只有完全匹配的旧哈希允许等待传播，任何第三种哈希仍立即拒绝；调用方的取消
+只结束自己的等待。初次等待加入连接生命周期，重连重新观察新连接的清单，停机终止等待。
+注销后的缺失合同等待后续注册或取消，不保留代理、Type 或 Assembly。
+
+每条连接独立按 manifest generation 排序，不能比较不同连接的 generation。成功是当前观察，
+不是 lease，随后重连、注销或替换仍可能使同步 `Get` 失败。相同 ID/hash 已可见时立即成功，
+包括哈希相同的替换；它不证明业务实现或 Artifact generation 已发布。`Get` 继续保持同步，
+不会偷偷发起网络调用。自定义客户端默认明确抛出 `NotSupportedException`，不会伪装成已支持。
+
 ## AssemblyLoadContext 所有权
 
 要真正卸载插件，插件及其依赖必须位于 collectible `AssemblyLoadContext`，且应用不能保留：
