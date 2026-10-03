@@ -33,7 +33,7 @@ dropped. Throughput uses only `measurementDuration`, while in-flight operations
 complete during the separately reported bounded `drainDuration`.
 
 The standalone CLI default formal hard bound is 30,000,000 samples for both runners.
-The `worker-local-shared-capacity-v2` recorder initially divides preallocated
+The `worker-local-shared-capacity-v3` recorder initially divides preallocated
 storage among workers. A worker that fills its current region can borrow another
 worker's unwritten tail after briefly pausing writers. Recorded prefixes retain
 exclusive ownership; the total sample capacity remains unchanged. Each record
@@ -41,6 +41,12 @@ publishes its worker's entry with a local full memory fence. Rebalancing uses a
 slow-path lock and may allocate region metadata, but never allocates additional
 sample buffers. Its CPU and allocation overhead require fresh measurements;
 historical recorder measurements below do not establish the new version's cost.
+The worker's recording flag, cursor, and count occupy a private 256-byte inline
+primitive block. This separates different workers' frequently written fields
+for cache lines up to 128 bytes without assuming that managed objects are
+cache-line aligned. It adds fixed per-worker metadata storage, not sample slots;
+the necessary local full fence remains. This layout guard alone does not prove
+cache contention caused historical tails or that the interference gate passes.
 The merged sort buffer is allocated
 only after measurement and drain, so it cannot perturb workload timing.
 

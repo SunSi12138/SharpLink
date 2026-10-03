@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace SharpLink.LoadTestBase;
@@ -12,7 +13,7 @@ namespace SharpLink.LoadTestBase;
 /// </summary>
 public sealed class StageLatencyRecorder
 {
-    public const string Version = "worker-local-shared-capacity-v2";
+    public const string Version = "worker-local-shared-capacity-v3";
 
     private readonly WorkerLatencyRecorder[] _workers;
     private readonly long _stopwatchFrequency;
@@ -164,10 +165,8 @@ public sealed class WorkerLatencyRecorder
     private long[] _elapsedTicks;
     private int _regionStart;
     private int _regionEnd;
-    private int _position;
+    private WorkerRecordingState _hot;
     private int _capacity;
-    private int _count;
-    private int _isRecording;
     private List<RecordedRegion>? _closedRegions;
 
     internal WorkerLatencyRecorder(StageLatencyRecorder owner, int workerIndex, int capacity)
@@ -181,11 +180,11 @@ public sealed class WorkerLatencyRecorder
 
     public int Capacity => _capacity;
 
-    public int Count => _count;
+    public int Count => _hot.Count;
 
-    internal int RemainingCapacity => _regionEnd - _position;
+    internal int RemainingCapacity => _regionEnd - _hot.Position;
 
-    internal bool IsRecording => Volatile.Read(ref _isRecording) != 0;
+    internal bool IsRecording => Volatile.Read(ref _hot.IsRecording) != 0;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RecordTicks(int logicalWorkerIndex, long elapsedTicks)
@@ -204,22 +203,22 @@ public sealed class WorkerLatencyRecorder
 
             // This worker-local full fence prevents a rebalance from missing
             // entry while the writer misses the pause through store buffering.
-            Interlocked.Exchange(ref _isRecording, 1);
+            Interlocked.Exchange(ref _hot.IsRecording, 1);
             try
             {
                 if (_owner.IsRebalancing)
                     continue;
 
-                if (_position < _regionEnd)
+                if (_hot.Position < _regionEnd)
                 {
-                    _elapsedTicks[_position++] = elapsedTicks;
-                    _count++;
+                    _elapsedTicks[_hot.Position++] = elapsedTicks;
+                    _hot.Count++;
                     return;
                 }
             }
             finally
             {
-                Volatile.Write(ref _isRecording, 0);
+                Volatile.Write(ref _hot.IsRecording, 0);
             }
 
             // Never retain the recording flag while taking the global slow
@@ -232,21 +231,21 @@ public sealed class WorkerLatencyRecorder
     {
         // Prepare metadata before publishing either side of the transfer.
         (requester._closedRegions ??= []).Add(new RecordedRegion(
-            requester._elapsedTicks, requester._regionStart, requester._position - requester._regionStart));
+            requester._elapsedTicks, requester._regionStart, requester._hot.Position - requester._regionStart));
 
         var end = _regionEnd;
         _regionEnd -= length;
         _capacity -= length;
         requester._elapsedTicks = _elapsedTicks;
         requester._regionStart = end - length;
-        requester._position = requester._regionStart;
+        requester._hot.Position = requester._regionStart;
         requester._regionEnd = end;
         requester._capacity += length;
     }
 
     internal void CopyTo(Span<long> destination)
     {
-        if (destination.Length != _count)
+        if (destination.Length != _hot.Count)
             throw new ArgumentException("Destination length must equal the recorded sample count.", nameof(destination));
         var offset = 0;
         if (_closedRegions is not null)
@@ -257,7 +256,18 @@ public sealed class WorkerLatencyRecorder
                 offset += region.Length;
             }
         }
-        _elapsedTicks.AsSpan(_regionStart, _position - _regionStart).CopyTo(destination[offset..]);
+        _elapsedTicks.AsSpan(_regionStart, _hot.Position - _regionStart).CopyTo(destination[offset..]);
+    }
+
+    // The hot group occupies 12 bytes within its own 256-byte primitive block.
+    // Non-overlapping blocks cannot share a hot cache line of up to 128 bytes,
+    // even when the containing objects are not themselves cache-line aligned.
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct WorkerRecordingState
+    {
+        [FieldOffset(128)] public int IsRecording;
+        [FieldOffset(132)] public int Position;
+        [FieldOffset(136)] public int Count;
     }
 
     private readonly record struct RecordedRegion(long[] Buffer, int Start, int Length);
