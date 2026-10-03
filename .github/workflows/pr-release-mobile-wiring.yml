@@ -27,7 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Verify Release Gate mobile caller integration
+      - name: Verify Release Gate mobile integration and publishing policy
         shell: bash
         env:
           MOBILE_RESULT: ${{ needs.codec-mobile-evidence.result }}
@@ -66,5 +66,15 @@ jobs:
                   "Release Gate release-summary does not require codec-mobile-evidence."
               )
 
-          print("Release Gate mobile reusable-workflow wiring is present and blocking.")
+          publish = re.search(
+              r"(?ms)^  publish-nuget:\n(?:(?!^  \S).)*?^    if:\s*(.+)$",
+              text,
+          )
+          expected = "${{ success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}"
+          if publish is None or publish.group(1).strip() != expected:
+              raise SystemExit(
+                  "Release Gate publishing must require successful prerequisites and a v* tag push; manual runs only verify."
+              )
+
+          print("Release Gate mobile wiring is blocking and publishing is limited to tag pushes.")
           PY
