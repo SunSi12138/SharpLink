@@ -1,16 +1,39 @@
 # #735 acceptance review
 
-This page is the reviewer-facing acceptance map for #735. It intentionally
-checks observable protocol/lifecycle contracts rather than requiring the new
-implementation to reproduce the frozen controller's internal dictionary, lock
-or waiter representation.
+This page is the reviewer-facing acceptance map for #735. It checks observable
+protocol/lifecycle contracts rather than requiring the new implementation to
+reproduce the frozen controller's internal dictionary, lock, or waiter layout.
+
+## Evidence identity
+
+The latest production-runtime code under test is
+`e62cb674c6b640d29c4a612808df2c6423fc1b1d`.
+
+Later review-head commits may change tests, workflow gating, or this document
+without changing runtime behavior. Performance numbers below therefore identify
+their exact workflow run/artifact instead of calling the documentation commit an
+"exact-head" runtime measurement.
+
+Current retained evidence for runtime SHA `e62cb674`:
+
+- correctness: Ready Writer run `36965020947`, build 0 warnings/errors,
+  **171/171** ready-writer checks and full UnitTests **1898/1898**;
+- stable JIT: artifact `11209965696`,
+  SHA256 `e887d67a8261e84f27603755065a2b704fa7fb530cd1c76c99cd8c625f7b46da`;
+- NativeAOT: artifact `11209129203`,
+  SHA256 `6b021b5023966ac267e8d124e0e616618fd0bc094a1ea30322ef781528b918a0`;
+- resolved-state evidence: run `36965020943`, artifact `11209877876`,
+  SHA256 `ae174ec4792cda308d9e0d0b3f84813fd45d21a6603b430c24c8cbab66d6c5cc`.
+
+The stable JIT/NativeAOT disposable measured tree is
+`d474c43ee68b94edd78060d96eb033dacbab6b01`.
 
 ## Review scope
 
 The production change resolves generation-bound send/receive flow-control state
-once and carries the resolved handle through steady-state streaming paths. The
-Phase B work demonstrates why removing only the lookup exposes the connection
-gate, and validates a single-writer credit/scheduling shape without making that
+once and carries the resolved handle through steady-state streaming paths. Phase
+B evidence demonstrates why removing only lookup exposes the connection gate and
+validates a single-writer credit/scheduling direction without making that
 research hook a product default.
 
 Hard requirements retained from #735:
@@ -32,7 +55,7 @@ The ready-writer TCP receive-buffer control is benchmark-only under
 
 | # | #735 requirement | Direct coverage |
 |---|---|---|
-| 1 | same-key old lifecycle handle cannot hit reused pooled state | `ResolvedSendLeaseShouldNotReachReusedSameKeyState`, `ResolvedReceiveLeaseShouldNotReachReusedSameKeyState` |
+| 1 | same-key old lifecycle handle cannot hit reused pooled state | `ResolvedSendLeaseShouldNotReachReusedSameKeyState`, `ResolvedReceiveLeaseShouldNotReachReusedSameKeyState`, `SameKeyRegistrationCannotCaptureReceiveLeaseBeforeOldRoutePublishesTerminal` |
 | 2 | `CompleteSendStream` + late `WindowUpdate` | `LateWindowUpdateForRemovedStreamShouldBeDiscarded`, `FailedSendStreamShouldAcceptInFlightCreditBeforeReusingCapacity`, completed-send tombstone tests |
 | 3 | `ReturnUnsentCredit` exactly once | `ResolvedUnsentCreditShouldBeReturnedExactlyOnce`, `UnsentFrameShouldReturnCreditAndAdmitTheNextWaiter`, writer queue-rejection boundary test |
 | 4 | `AbortSendStreams` | `AbortSendStreamsShouldPoisonResolvedLeaseWithoutDoubleReturn` |
@@ -45,6 +68,14 @@ The ready-writer TCP receive-buffer control is benchmark-only under
 | 11 | waiter cancellation | `ResolvedSendWaiterCancellationShouldPreserveCurrentLease`, `FirstAdmissionShouldPreserveFifoAndCancellation` |
 | 12 | max concurrent stream pressure | `ResolvedReceiveLeaseShouldRespectConcurrentStreamLimit`, retained-send tombstone capacity tests |
 | 13 | multiple handles cannot double debit / return | `MultipleResolvedSendHandlesShouldNotDoubleReturnCredit`, `MultipleResolvedReceiveHandlesShouldNotDoubleReturnCredit` |
+
+The production receive route now keeps a retiring route key mapped until the
+entry's own generation-bound `FlushConsumed(in lease)` terminal publication
+completes. Same-key registration checks the registry key before resolving flow
+state, so it cannot capture an old generation and publish it as a new route.
+The deterministic regression pauses old terminal publication without sleeps,
+proves the overlapping registration does not even call the resolver, then proves
+the replacement resolves a different generation and accepts its first frame.
 
 Additional contract controls:
 
@@ -63,76 +94,88 @@ Additional contract controls:
 - blocked-Flush stream-abort tests preserve writer-owned DATA while immediately
   cleaning only unadmitted prepared buffers.
 
-Latest exact-head correctness on `c9fc3858`: build 0 warnings / 0 errors,
-171/171 ready-writer checks and full UnitTests 1897/1897.
-
 ## Performance acceptance
 
-### Phase A: resolved handle removes lookup
+### Phase A — resolved handle removes lookup
 
 Exact baseline is dev `56c643cd308f294cb03df79d9f1214fb8292affb`.
-The latest Resolved Flow State Performance Evidence run succeeds.
+Resolved Flow State Performance Evidence run `36965020943` succeeds.
 
 NativeAOT microkernel medians:
 
 | Scenario | ns/item improvement |
 |---|---:|
-| send no-wait | +16.49% |
-| send periodic update | +12.84% |
-| receive accept | +12.43% |
-| receive consume | +18.58% |
-| receive accept+consume | +23.84% |
-| long-lived aggregate | +13.08% |
-| short-stream control | -0.33% |
+| send no-wait | +16.79% |
+| send periodic WindowUpdate | +11.80% |
+| send starved control | +8.53% |
+| receive accept | +12.21% |
+| receive consume | +19.44% |
+| receive accept+consume | +23.45% |
+| long-lived aggregate | +13.45% |
+| short-stream control | -0.14% |
 
-The microkernel max allocation delta is +0.000 B/item.
+Maximum measured micro allocation delta is **+0.000 B/item**.
+
+Dynamic-PGO ON medians include send no-wait **+24.70%**, receive accept
+**+30.85%**, receive pair **+27.73%**, and long-lived aggregate **+23.85%**.
+PGO OFF send no-wait is **+22.11%**, receive pair **+28.83%**, and long-lived
+aggregate **+20.04%**.
 
 Receive-pair c32 attribution:
 
 | Runtime | keyed instructions/item | resolved instructions/item |
 |---|---:|---:|
-| JIT | 5560.04 | 4652.42 |
-| NativeAOT | 611.36 | 513.99 |
+| JIT | 5559.86 | 4738.87 |
+| NativeAOT | 611.36 | 513.70 |
 
 Static attribution changes from two stream-state dictionary lookups/item to zero
 after one lifecycle resolve, while still entering the same controller gate twice.
-The contention controls regress after lookup removal, which is the evidence that
-the connection-wide gate becomes the next bottleneck and justifies Phase B rather
-than invalidating the resolved-handle result.
+Contention controls regress after lookup removal, which is the evidence that the
+connection-wide gate becomes the next bottleneck and motivates Phase B rather
+than invalidating Phase A.
 
-### Phase B: stable writer-owned control
+The production end-to-end 100-item median is deliberately reported separately:
+TCP **+0.57%** throughput and SharedMemory **+2.12%**. Therefore the much larger
+Phase B tiny-item gains are not attributed to lookup removal alone.
 
-The accepted research configuration is quantum 16 with the same 8 KiB prepared
-byte cap on A-ready and B3-ready. The stable JIT gate keeps SharedMemory unchanged
-and uses an explicit 262144-byte loopback TCP receive buffer on both A/B endpoints
-to remove hosted-runner receive-window autotuning noise. It does not change any
+### Phase B — stable writer-owned research control
+
+Accepted comparison is quantum 16 with the same 8 KiB prepared-byte cap on
+A-ready and B3-ready. The stable JIT gate keeps SharedMemory unchanged and uses
+an explicit 262144-byte loopback TCP receive buffer on both A/B endpoints to
+remove hosted-runner receive-window autotuning noise. It does not change any
 flow-control window or product socket default.
 
 Stable JIT, c128 / 16-byte items / 8 KiB cap / q16:
 
 | Transport | PGO | throughput | CPU | A B/item -> B3 B/item |
 |---|---:|---:|---:|---:|
-| SharedMemory | off | +50.57% | -33.78% | 183.448 -> 25.454 |
-| SharedMemory | on | +57.03% | -39.18% | 158.089 -> 25.590 |
-| TCP | off | +58.32% | -38.16% | 175.294 -> 23.480 |
-| TCP | on | +69.02% | -44.38% | 168.723 -> 28.111 |
+| SharedMemory | off | +64.56% | -39.34% | 185.281 -> 17.600 |
+| SharedMemory | on | +69.10% | -41.85% | 174.425 -> 17.904 |
+| TCP | off | +55.78% | -35.81% | 177.118 -> 19.493 |
+| TCP | on | +61.67% | -37.17% | 181.642 -> 17.721 |
 
-The same 8 KiB cap / q16 4 KiB controls are +0.74% to +2.63% throughput in
-the stable JIT matrix and also reduce measured B/item substantially.
+Matching 4 KiB / 8 KiB cap / q16 controls remain visible:
+
+| Transport | PGO | throughput | CPU |
+|---|---:|---:|---:|
+| SharedMemory | off | +1.40% | -5.73% |
+| SharedMemory | on | -5.09% | +3.70% |
+| TCP | off | +1.55% | +0.36% |
+| TCP | on | -1.02% | +0.38% |
 
 NativeAOT, same 8 KiB cap:
 
 | Transport | Item | q | throughput | CPU | allocation delta B/item |
 |---|---:|---:|---:|---:|---:|
-| SharedMemory | 16 | 16 | +77.79% | -44.82% | -159.947 |
-| TCP | 16 | 16 | +57.05% | -37.28% | -153.459 |
-| SharedMemory | 4096 | 16 | -0.92% | -1.28% | -435.312 |
-| TCP | 4096 | 16 | -1.66% | -0.73% | -386.434 |
+| SharedMemory | 16 | 16 | +72.01% | -38.90% | -159.278 |
+| TCP | 16 | 16 | +61.23% | -35.96% | -154.371 |
+| SharedMemory | 4096 | 16 | -1.48% | +2.42% | -431.387 |
+| TCP | 4096 | 16 | +1.08% | +1.32% | -388.704 |
 
-The large-item native controls retain small throughput negatives rather than
-hiding them; CPU and allocation do not regress in q16. The issue's Go condition
-is met by large, repeated tiny-item throughput/CPU gains and by the Phase A
-microkernel result.
+Large-item negative controls are retained rather than hidden. The issue's Go
+condition is met by repeated tiny-item throughput/CPU improvements and by the
+Phase A microkernel result.
 
 ## Diagnostic versus gate
 
@@ -141,10 +184,14 @@ in CI artifacts and are never retried to green. Hosted Linux receive-window
 autotuning has produced both completion and slow-progress timeout on the same
 code. Those jobs are diagnostic observations, not protocol-correctness gates.
 
-Hard gates remain: production correctness, full UnitTests, exact-source guards,
-Phase A evidence, stable JIT, NativeAOT, package/code quality, matched transport,
-TCP explicit control, and the other repository workflows. On `c9fc3858` every
-top-level workflow is successful.
+The older B1/B2 `Phase B Matched Transport Control` workflow is also retained as
+research evidence. Its own upload step already states that it is **not a
+production Go gate**; a failed negative/default TCP cell remains in its artifact
+but does not override the stable B3 JIT/NativeAOT gates.
+
+Hard gates are production correctness, full UnitTests, exact-source guards,
+Phase A evidence, stable JIT, NativeAOT, allocation/package/code-quality gates,
+the explicit TCP control, and the ordinary repository validation workflows.
 
 ## Review conclusion
 

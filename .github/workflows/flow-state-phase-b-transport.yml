@@ -17,6 +17,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   jit-control:
+    # Retained B1/B2 transport research. Failures remain in artifacts, but this workflow
+    # is explicitly not a production Go gate; stable B3 JIT/NativeAOT are the hard gates.
+    continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
