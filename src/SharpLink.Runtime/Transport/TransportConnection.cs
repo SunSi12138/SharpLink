@@ -97,19 +97,64 @@ internal class StreamTransportConnection : ITransportConnection
 }
 
 /// <summary>
-/// Keeps completion of a stream-backed reader behind release of its current
-/// <see cref="ReadResult"/>. <see cref="PipeReader.CompleteAsync(Exception?)"/> may otherwise
-/// return pooled segments while the single protocol consumer is still dispatching a frame.
+/// Issue #740 <b>Variant D</b> - LOCAL RESEARCH ONLY, never shipped.
+/// <para>
+/// Semantics are intended to be identical to the production
+/// <c>ReadOwnershipPipeReader</c>: a <see cref="ReadResult"/> must be released before
+/// <see cref="PipeReader.CompleteAsync(Exception?)"/> is allowed to complete the inner reader,
+/// and a suspended read that faults or cancels must release ownership exactly once.
+/// </para>
+/// <para>
+/// The difference is <i>how</i> a suspended read is represented. Production returns the result of
+/// an <c>async ValueTask&lt;ReadResult&gt;</c> wrapper, so every true suspension allocates a
+/// compiler-generated state-machine box (measured: exactly one 248-byte object). Variant D
+/// instead makes this reader its own <see cref="IValueTaskSource{T}"/>, reusing one
+/// <see cref="ManualResetValueTaskSourceCore{T}"/> per reader and forwarding the inner
+/// completion through a single cached delegate, so a suspension allocates nothing.
+/// </para>
 /// </summary>
-internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
+internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<ReadResult>
 {
+    private readonly PipeReader _inner;
     private readonly Lock _gate = new();
+
+    /// <summary>Cached once per reader; registering it must not allocate per read.</summary>
+    private readonly Action _onInnerCompleted;
+
+    private ManualResetValueTaskSourceCore<ReadResult> _readSource;
+
+    /// <summary>The inner read being forwarded. Only valid while a suspension is armed.</summary>
+    private ValueTask<ReadResult> _pendingInner;
+
     private TaskCompletionSource? _readReleased;
     private Task? _completionTask;
     private bool _readActive;
     private int _completionRequested;
 
+    internal ReadOwnershipPipeReader(PipeReader inner)
+    {
+        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        _onInnerCompleted = OnInnerReadCompleted;
+#if SHARPLINK_ISSUE740_VARIANT_D_ASYNC_CONTINUATIONS
+        // Match the production wrapper's Task-like scheduling instead of resuming the consumer
+        // inline on whichever thread completed the inner read.
+        _readSource.RunContinuationsAsynchronously = true;
+#endif
+    }
+
     internal bool CompletionRequested => Volatile.Read(ref _completionRequested) != 0;
+
+    /// <summary>
+    /// Mirrors the continuation policy of the production wrapper. The compiler-generated
+    /// <c>AsyncValueTaskMethodBuilder</c> box used by production behaves like a <see cref="Task"/>
+    /// (continuations are not run inline on the completing thread); this switch exists so the
+    /// prototype can be measured both ways.
+    /// </summary>
+    internal bool RunContinuationsAsynchronously
+    {
+        get => _readSource.RunContinuationsAsynchronously;
+        set => _readSource.RunContinuationsAsynchronously = value;
+    }
 
     public override void AdvanceTo(SequencePosition consumed)
         => AdvanceTo(consumed, consumed);
@@ -118,7 +163,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
     {
         try
         {
-            inner.AdvanceTo(consumed, examined);
+            _inner.AdvanceTo(consumed, examined);
         }
         finally
         {
@@ -126,7 +171,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
         }
     }
 
-    public override void CancelPendingRead() => inner.CancelPendingRead();
+    public override void CancelPendingRead() => _inner.CancelPendingRead();
 
     public override void Complete(Exception? exception = null)
         => _ = CompleteAsync(exception);
@@ -162,7 +207,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
         ValueTask<ReadResult> read;
         try
         {
-            read = inner.ReadAsync(cancellationToken);
+            read = _inner.ReadAsync(cancellationToken);
         }
         catch
         {
@@ -170,9 +215,20 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
             throw;
         }
 
-        return read.IsCompletedSuccessfully
-            ? read
-            : AwaitReadAsync(read);
+        if (read.IsCompletedSuccessfully)
+            return read;
+
+        // Arm the reusable completion owner. TryAcquireRead guarantees no other arm is outstanding,
+        // so Reset() here cannot invalidate a live continuation. The version is captured before the
+        // inner continuation is registered: if the inner read has already completed by the time
+        // UnsafeOnCompleted runs it invokes OnInnerReadCompleted inline, and a consumer that
+        // observes that inline completion may legally re-arm this reader before ReadAsync returns.
+        _readSource.Reset();
+        var version = _readSource.Version;
+        _pendingInner = read;
+        read.GetAwaiter().UnsafeOnCompleted(_onInnerCompleted);
+
+        return new ValueTask<ReadResult>(this, version);
     }
 
     public override bool TryRead(out ReadResult result)
@@ -185,7 +241,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
 
         try
         {
-            if (inner.TryRead(out result))
+            if (_inner.TryRead(out result))
                 return true;
         }
         catch
@@ -197,6 +253,38 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
         ReleaseRead();
         return false;
     }
+
+    /// <summary>
+    /// Forwards the inner completion to the reused source. Runs on whichever thread completed the
+    /// inner read, exactly like the continuation of the production wrapper's <c>await</c>.
+    /// </summary>
+    private void OnInnerReadCompleted()
+    {
+        var inner = _pendingInner;
+        _pendingInner = default;
+
+        try
+        {
+            _readSource.SetResult(inner.GetAwaiter().GetResult());
+        }
+        catch (Exception exception)
+        {
+            // Same ordering as production: ownership is released before the failure is published.
+            ReleaseRead();
+            _readSource.SetException(exception);
+        }
+    }
+
+    ReadResult IValueTaskSource<ReadResult>.GetResult(short token) => _readSource.GetResult(token);
+
+    ValueTaskSourceStatus IValueTaskSource<ReadResult>.GetStatus(short token) => _readSource.GetStatus(token);
+
+    void IValueTaskSource<ReadResult>.OnCompleted(
+        Action<object?> continuation,
+        object? state,
+        short token,
+        ValueTaskSourceOnCompletedFlags flags)
+        => _readSource.OnCompleted(continuation, state, token, flags);
 
     private bool TryAcquireRead()
     {
@@ -225,19 +313,6 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
         released?.TrySetResult();
     }
 
-    private async ValueTask<ReadResult> AwaitReadAsync(ValueTask<ReadResult> read)
-    {
-        try
-        {
-            return await read.ConfigureAwait(false);
-        }
-        catch
-        {
-            ReleaseRead();
-            throw;
-        }
-    }
-
     private async Task CompleteAfterReadReleaseAsync(Task? release, Exception? exception)
     {
         // CompleteAsync can be entered while the state gate is still held. Move transport
@@ -246,7 +321,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
         await Task.Yield();
         try
         {
-            inner.CancelPendingRead();
+            _inner.CancelPendingRead();
         }
         catch (Exception ex) when (StreamTransportConnection.IsExpectedDisposeException(ex))
         {
@@ -254,7 +329,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
 
         if (release is not null)
             await release.ConfigureAwait(false);
-        await inner.CompleteAsync(exception).ConfigureAwait(false);
+        await _inner.CompleteAsync(exception).ConfigureAwait(false);
     }
 }
 
