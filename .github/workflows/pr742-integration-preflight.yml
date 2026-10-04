@@ -1,0 +1,62 @@
+name: PR742 integration preflight
+on:
+  push:
+    branches: [work/742-integration-preflight-20261004]
+permissions:
+  contents: read
+jobs:
+  sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export pinned public source trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pr742-integration"
+          mkdir -p "$out"
+          for pair in 'head 26f2857b6af39c1d431b8e6f7bc422308b777463' 'dev 0fe26024b114bb6e78411a9b86276086c045d03d' 'base 56c643cd308f294cb03df79d9f1214fb8292affb'; do
+            read -r name sha <<< "$pair"
+            git archive --format=tar "$sha" | gzip -1 > "$out/$name.tar.gz"
+            printf '%s %s %s\n' "$name" "$sha" "$(git rev-parse "$sha^{tree}")" >> "$out/identities.txt"
+          done
+          git merge-base 26f2857b6af39c1d431b8e6f7bc422308b777463 0fe26024b114bb6e78411a9b86276086c045d03d > "$out/merge-base.txt"
+          git log --oneline 56c643cd308f294cb03df79d9f1214fb8292affb..0fe26024b114bb6e78411a9b86276086c045d03d > "$out/dev-commits.txt"
+          sha256sum "$out"/*.tar.gz > "$out/SHA256SUMS"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr742-pinned-integration-sources
+          path: ${{ runner.temp }}/pr742-integration
+          retention-days: 7
+          if-no-files-found: error
+      - uses: ./.github/actions/setup-dotnet
+      - name: Restore reviewed dependencies
+        run: dotnet restore Sharplink.slnx
+      - name: Export public packages and selected SDK only
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pr742-dependencies"
+          mkdir -p "$out"
+          dotnet_root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          paths=(dotnet "sdk/$(dotnet --version)")
+          for family in host/fxr shared/Microsoft.NETCore.App shared/Microsoft.AspNetCore.App packs/Microsoft.NETCore.App.Ref packs/Microsoft.AspNetCore.App.Ref packs/Microsoft.NETCore.App.Host.linux-x64; do
+            for directory in "$dotnet_root/$family"/10.*; do
+              if [[ -d "$directory" ]]; then paths+=("${directory#"$dotnet_root/"}"); fi
+            done
+          done
+          tar -C "$dotnet_root" -czf "$out/dotnet.tar.gz" "${paths[@]}"
+          tar -C "$HOME/.nuget" -czf "$out/packages.tar.gz" packages
+          dotnet --info > "$out/dotnet-info.txt"
+          sha256sum "$out"/*.tar.gz > "$out/SHA256SUMS"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr742-public-integration-dependencies
+          path: ${{ runner.temp }}/pr742-dependencies
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
