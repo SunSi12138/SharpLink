@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Sdk;
@@ -18,9 +19,31 @@ public class BenchmarkRpcService : IBenchmarkRpc
 
     public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
 
+    public ValueTask<int> AddNonIdempotentAsync(int left, int right)
+        => ValueTask.FromResult(left + right);
+
+    public ValueTask<int> AddTimedIdempotentAsync(int left, int right)
+        => ValueTask.FromResult(left + right);
+
+    public ValueTask<int> AddCancellableAsync(
+        int left,
+        int right,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(left + right);
+    }
+
+    public ValueTask<int> PingAsync() => ValueTask.FromResult(7);
+
+    public ValueTask TouchAsync() => ValueTask.CompletedTask;
+
     public ValueTask<string> EchoAsync(string value) => ValueTask.FromResult(value);
 
-    public ValueTask<BenchmarkPayload> EchoPayloadAsync(BenchmarkPayload payload) => ValueTask.FromResult(payload);
+    public ValueTask<string?> EchoNullableAsync(string? value) => ValueTask.FromResult(value);
+
+    public ValueTask<BenchmarkPayload> EchoPayloadAsync(BenchmarkPayload payload)
+        => ValueTask.FromResult(payload);
 
     public ValueTask<byte[]> EchoBytesAsync(byte[] value) => ValueTask.FromResult(value);
 
@@ -45,10 +68,55 @@ public class BenchmarkRpcService : IBenchmarkRpc
         return ValueTask.CompletedTask;
     }
 
+    public ValueTask PublishTimedEventAsync(int code)
+    {
+        _ = code;
+        Interlocked.Increment(ref _publishedCount);
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask PublishCancellableEventAsync(
+        int code,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _ = code;
+        Interlocked.Increment(ref _publishedCount);
+        return ValueTask.CompletedTask;
+    }
+
+    public async ValueTask PublishNumbersAsync(IAsyncEnumerable<int> numbers)
+    {
+        await foreach (var number in numbers)
+            _ = number;
+        Interlocked.Increment(ref _publishedCount);
+    }
+
+    public async ValueTask PublishTwoStreamsAsync(
+        IAsyncEnumerable<int> left,
+        IAsyncEnumerable<int> right)
+    {
+        await foreach (var number in left)
+            _ = number;
+        await foreach (var number in right)
+            _ = number;
+        Interlocked.Increment(ref _publishedCount);
+    }
+
     public async ValueTask<int> UploadNumbersAsync(IAsyncEnumerable<int> numbers)
     {
         var sum = 0;
         await foreach (var number in numbers)
+            sum += number;
+        return sum;
+    }
+
+    public async ValueTask<int> UploadNumbersCancellableAsync(
+        IAsyncEnumerable<int> numbers,
+        CancellationToken cancellationToken = default)
+    {
+        var sum = 0;
+        await foreach (var number in numbers.WithCancellation(cancellationToken))
             sum += number;
         return sum;
     }
@@ -62,13 +130,35 @@ public class BenchmarkRpcService : IBenchmarkRpc
         }
     }
 
+    public async IAsyncEnumerable<int> DownloadNumbersCancellableAsync(
+        int count,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return i;
+            await Task.CompletedTask;
+        }
+    }
+
     public async IAsyncEnumerable<string> DuplexAsync(IAsyncEnumerable<string> values)
     {
         await foreach (var value in values)
             yield return value;
     }
 
-    public async ValueTask<int> MergeStreamsAsync(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right)
+    public async IAsyncEnumerable<string> DuplexCancellableAsync(
+        IAsyncEnumerable<string> values,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var value in values.WithCancellation(cancellationToken))
+            yield return value;
+    }
+
+    public async ValueTask<int> MergeStreamsAsync(
+        IAsyncEnumerable<int> left,
+        IAsyncEnumerable<int> right)
     {
         var sum = 0;
         await foreach (var value in left)
