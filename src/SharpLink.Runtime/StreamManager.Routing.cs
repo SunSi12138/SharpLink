@@ -13,36 +13,38 @@ internal sealed partial class StreamManager
         public bool TryRegister(
             long requestId,
             ushort streamId,
-            IStreamDispatcher dispatcher,
+            DispatcherEntry entry,
             Func<long, ushort, StreamFlowController.ResolvedReceiveCreditLease>? resolveReceiveCreditLease,
             out StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease)
         {
             lock (_gate)
             {
-                if (streamId == 0)
-                {
-                    if (_defaultDispatcher is not null)
-                    {
-                        receiveCreditLease = default;
-                        return false;
-                    }
-
-                    receiveCreditLease = resolveReceiveCreditLease?.Invoke(requestId, streamId) ?? default;
-                    Volatile.Write(
-                        ref _defaultDispatcher,
-                        new DispatcherEntry(dispatcher, receiveCreditLease));
-                    return true;
-                }
-
-                if (_byStreamId.ContainsKey(streamId))
+                if (streamId == 0 ? _defaultDispatcher is not null : _byStreamId.ContainsKey(streamId))
                 {
                     receiveCreditLease = default;
                     return false;
                 }
 
-                receiveCreditLease = resolveReceiveCreditLease?.Invoke(requestId, streamId) ?? default;
-                _byStreamId.Add(streamId, new DispatcherEntry(dispatcher, receiveCreditLease));
-                return true;
+                // The entry has already bound its dispatcher. Only a free route key may
+                // attach receive flow state, and only this captured generation may be rolled back.
+                try
+                {
+                    receiveCreditLease = resolveReceiveCreditLease?.Invoke(requestId, streamId) ?? default;
+                    entry.ReceiveCreditLease = receiveCreditLease;
+                    if (streamId == 0)
+                        Volatile.Write(ref _defaultDispatcher, entry);
+                    else
+                        _byStreamId.Add(streamId, entry);
+                    return true;
+                }
+                catch
+                {
+                    // If insertion failed after resolution, retire only the generation this
+                    // unpublished entry captured. Never re-resolve a route key during rollback.
+                    var lease = entry.ReceiveCreditLease;
+                    _ = lease.Owner?.FlushConsumed(in lease);
+                    throw;
+                }
             }
         }
 
@@ -416,6 +418,7 @@ internal sealed partial class StreamManager
     {
         private const long ClosedMask = long.MinValue;
         private const long DetachedMask = 1L << 32;
+        private const long ReceiveRetirementPendingMask = 1L << 33;
         private const long CountMask = int.MaxValue;
         // One atomic word orders the last release against detach. Separate count and
         // detached reads can both claim the same pooled-dispatcher drain notification.
@@ -437,9 +440,12 @@ internal sealed partial class StreamManager
         }
 
         internal IStreamDispatcher Dispatcher { get; }
-        internal StreamFlowController.ResolvedReceiveCreditLease ReceiveCreditLease { get; }
+        internal StreamFlowController.ResolvedReceiveCreditLease ReceiveCreditLease { get; set; }
 
-        public bool HasActiveDispatches => (Volatile.Read(ref _state) & CountMask) != 0;
+        // A detached pooled dispatcher is still pinned while final receive cleanup is
+        // running, even after the final DATA acquisition has decremented the count.
+        public bool HasActiveDispatches
+            => (Volatile.Read(ref _state) & (CountMask | ReceiveRetirementPendingMask)) != 0;
 
         public bool IsDetached => (Volatile.Read(ref _state) & DetachedMask) != 0;
 
@@ -475,10 +481,43 @@ internal sealed partial class StreamManager
                 throw new InvalidOperationException("Stream dispatcher lease underflowed.");
             if ((state & ClosedMask) != 0 && (state & CountMask) == 0)
             {
-                Volatile.Read(ref _completions)?.SignalDispatchesDrained();
+                var completions = Volatile.Read(ref _completions);
+                completions?.SignalDispatchesDrained();
+                RunAfterDispatchesDrained(completions);
                 // Use this release's atomic snapshot, not a new read after signaling:
                 // a drain continuation may have detached and notified in the meantime.
-                if ((state & DetachedMask) != 0 && Dispatcher is IStreamDispatchLease lease)
+                if ((state & DetachedMask) != 0 && (state & ReceiveRetirementPendingMask) == 0 &&
+                    Dispatcher is IStreamDispatchLease lease)
+                    lease.OnDispatchesDrained();
+            }
+        }
+
+        internal void RunWhenDispatchesDrained(Action continuation)
+        {
+            if ((Interlocked.Or(ref _state, ReceiveRetirementPendingMask) & ReceiveRetirementPendingMask) != 0)
+                throw new InvalidOperationException("Receive retirement already has a drain owner.");
+            var completions = GetOrCreateCompletions();
+            completions.SetAfterDispatchesDrained(continuation);
+            // Close excludes new acquisitions. The cleanup pin must not count as DATA
+            // when deciding who runs the continuation.
+            if ((Volatile.Read(ref _state) & CountMask) == 0)
+                RunAfterDispatchesDrained(completions);
+        }
+
+        private void RunAfterDispatchesDrained(DispatcherEntryCompletions? completions)
+        {
+            var continuation = completions?.TakeAfterDispatchesDrained();
+            if (continuation is null)
+                return;
+            try
+            {
+                continuation();
+            }
+            finally
+            {
+                var state = Interlocked.And(ref _state, ~ReceiveRetirementPendingMask);
+                if ((state & DetachedMask) != 0 && (state & CountMask) == 0 &&
+                    Dispatcher is IStreamDispatchLease lease)
                     lease.OnDispatchesDrained();
             }
         }
@@ -535,7 +574,8 @@ internal sealed partial class StreamManager
             Volatile.Read(ref _completions)?.SignalDetached();
             // Whichever transition observes both detached and zero leases owns the
             // notification. Last Release handles a detach that still had active leases.
-            if ((state & CountMask) == 0 && Dispatcher is IStreamDispatchLease lease)
+            if ((state & (CountMask | ReceiveRetirementPendingMask)) == 0 &&
+                Dispatcher is IStreamDispatchLease lease)
                 lease.OnDispatchesDrained();
         }
 
@@ -555,6 +595,16 @@ internal sealed partial class StreamManager
             private int _detachedSignaled;
             private TaskCompletionSource? _dispatchesDrainedCompletion;
             private TaskCompletionSource? _detachedCompletion;
+            private Action? _afterDispatchesDrained;
+
+            internal void SetAfterDispatchesDrained(Action continuation)
+            {
+                if (Interlocked.CompareExchange(ref _afterDispatchesDrained, continuation, null) is not null)
+                    throw new InvalidOperationException("Receive retirement already has a drain continuation.");
+            }
+
+            internal Action? TakeAfterDispatchesDrained()
+                => Interlocked.Exchange(ref _afterDispatchesDrained, null);
 
             internal void SignalDispatchesDrained()
             {

@@ -126,11 +126,12 @@ internal sealed partial class StreamManager
         }
 
         SharpLinkTelemetry.AddActiveStreams(1);
-        var receiveCreditLease = default(StreamFlowController.ResolvedReceiveCreditLease);
+        DispatcherEntry entry;
         try
         {
-            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
-                consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
+            // Binding validates dispatcher ownership before changing its callbacks or
+            // attaching any receive state. A failed bind must not damage an existing route.
+            entry = new DispatcherEntry(dispatcher, default);
         }
         catch
         {
@@ -140,13 +141,38 @@ internal sealed partial class StreamManager
             throw;
         }
 
+        var receiveCreditLease = default(StreamFlowController.ResolvedReceiveCreditLease);
+        try
+        {
+            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+                consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
+        }
+        catch
+        {
+            try
+            {
+                ClearBytesConsumedCallback(dispatcher);
+            }
+            finally
+            {
+                try { entry.Detach(); }
+                finally
+                {
+                    SharpLinkTelemetry.AddActiveStreams(-1);
+                    Interlocked.Decrement(ref _activeStreamCount);
+                    RemoveEmptyRequest(requestId, requestDispatchers);
+                }
+            }
+            throw;
+        }
+
         bool registered;
         try
         {
             registered = requestDispatchers.TryRegister(
                 requestId,
                 streamId,
-                dispatcher,
+                entry,
                 _resolveReceiveCreditLease,
                 out receiveCreditLease);
         }
@@ -158,9 +184,13 @@ internal sealed partial class StreamManager
             }
             finally
             {
-                SharpLinkTelemetry.AddActiveStreams(-1);
-                Interlocked.Decrement(ref _activeStreamCount);
-                RemoveEmptyRequest(requestId, requestDispatchers);
+                try { entry.Detach(); }
+                finally
+                {
+                    SharpLinkTelemetry.AddActiveStreams(-1);
+                    Interlocked.Decrement(ref _activeStreamCount);
+                    RemoveEmptyRequest(requestId, requestDispatchers);
+                }
             }
             throw;
         }
@@ -173,9 +203,13 @@ internal sealed partial class StreamManager
             }
             finally
             {
-                SharpLinkTelemetry.AddActiveStreams(-1);
-                Interlocked.Decrement(ref _activeStreamCount);
-                RemoveEmptyRequest(requestId, requestDispatchers);
+                try { entry.Detach(); }
+                finally
+                {
+                    SharpLinkTelemetry.AddActiveStreams(-1);
+                    Interlocked.Decrement(ref _activeStreamCount);
+                    RemoveEmptyRequest(requestId, requestDispatchers);
+                }
             }
             if (ignoreExisting)
                 return;
@@ -230,27 +264,8 @@ internal sealed partial class StreamManager
             var dispatcher = entry.Dispatcher;
             SharpLinkTelemetry.AddActiveStreams(-1);
             Interlocked.Decrement(ref _activeStreamCount);
-            try
-            {
-                // Keep the closed route key visible until its own generation has published
-                // receive terminal. A racing same-key registration may not resolve the
-                // still-live state and then replace this route before retirement.
-                if (dispatcher is not PreAdmissionStreamDispatcher)
-                    ClearBytesConsumedCallback(dispatcher);
-            }
-            finally
-            {
-                try
-                {
-                    PublishReceiveTerminal(requestId, streamId, entry);
-                }
-                finally
-                {
-                    _ = requestDispatchers.FinishRetirement(streamId, entry);
-                    entry.Detach();
-                    RemoveEmptyRequest(requestId, requestDispatchers);
-                }
-            }
+            RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
+                clearCallback: dispatcher is not PreAdmissionStreamDispatcher);
         }
     }
 
@@ -266,6 +281,7 @@ internal sealed partial class StreamManager
             dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
             requestDispatchers.TryAcquire(streamId, out var entry))
         {
+            ValueTask dispatch;
             try
             {
                 ThrowIfPeerTerminal(entry);
@@ -282,24 +298,23 @@ internal sealed partial class StreamManager
                     }
                     else
                         _acceptBytes?.Invoke(requestId, streamId, encodedByteCount);
-                    return CompleteDispatch(
-                        entry,
-                        dispatcher is IStreamDispatchLease leased
-                            ? leased.DispatchAcquiredAsync(payload, encodedByteCount)
-                            : consumptionAware.DispatchAsync(payload, encodedByteCount));
+                    dispatch = dispatcher is IStreamDispatchLease leased
+                        ? leased.DispatchAcquiredAsync(payload, encodedByteCount)
+                        : consumptionAware.DispatchAsync(payload, encodedByteCount);
                 }
-
-                return CompleteDispatch(
-                    entry,
-                    dispatcher is IStreamDispatchLease dispatchLease
+                else
+                {
+                    dispatch = dispatcher is IStreamDispatchLease dispatchLease
                         ? dispatchLease.DispatchAcquiredAsync(payload, encodedByteCount)
-                        : dispatcher.DispatchAsync(payload));
+                        : dispatcher.DispatchAsync(payload);
+                }
             }
             catch
             {
                 entry.Release();
                 throw;
             }
+            return CompleteDispatch(entry, dispatch);
         }
 
         Interlocked.Increment(ref _droppedStreamFrames);
@@ -386,16 +401,8 @@ internal sealed partial class StreamManager
             }
             finally
             {
-                try
-                {
-                    PublishReceiveTerminal(requestId, streamId, entry);
-                }
-                finally
-                {
-                    _ = requestDispatchers.FinishRetirement(streamId, entry);
-                    entry.Detach();
-                    RemoveEmptyRequest(requestId, requestDispatchers);
-                }
+                RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
+                    clearCallback: false);
             }
         }
     }
@@ -432,16 +439,8 @@ internal sealed partial class StreamManager
             }
             finally
             {
-                try
-                {
-                    PublishReceiveTerminal(requestId, streamId, entry);
-                }
-                finally
-                {
-                    _ = requestDispatchers.FinishRetirement(streamId, entry);
-                    entry.Detach();
-                    RemoveEmptyRequest(requestId, requestDispatchers);
-                }
+                RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
+                    clearCallback: false);
             }
         }
     }
@@ -472,16 +471,8 @@ internal sealed partial class StreamManager
         }
         catch
         {
-            try
-            {
-                PublishReceiveTerminal(requestId, streamId, entry);
-            }
-            finally
-            {
-                _ = requestDispatchers.FinishRetirement(streamId, entry);
-                entry.Detach();
-                RemoveEmptyRequest(requestId, requestDispatchers);
-            }
+            RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
+                clearCallback: true);
             throw;
         }
         if (!entry.HasActiveDispatches)
@@ -571,8 +562,17 @@ internal sealed partial class StreamManager
         SharpLinkTelemetry.AddActiveStreams(-entries.Length);
         Interlocked.Add(ref _activeStreamCount, -entries.Length);
         List<Exception>? failures = null;
-        FinalizeRequestEntries(requestId, entries, requestDispatchers, exception, ref failures);
-        RemoveEmptyRequest(requestId, requestDispatchers);
+        if (entries.All(static item => !item.Entry.HasActiveDispatches))
+        {
+            FinalizeRequestEntries(requestId, entries, requestDispatchers, exception, ref failures);
+            RemoveEmptyRequest(requestId, requestDispatchers);
+        }
+        else
+        {
+            // Complete the mailbox now so acquired DATA is discarded/consumed, but retain
+            // callbacks, the receive generation and route keys until all acquisitions release.
+            CompleteRequestEntriesWhenDrained(requestId, requestDispatchers, entries, exception, ref failures);
+        }
         ThrowCompletionFailures(failures);
     }
 
@@ -828,6 +828,7 @@ internal sealed partial class StreamManager
             return false;
         }
 
+        var matched = true;
         try
         {
             ThrowIfPeerTerminal(entry);
@@ -840,12 +841,9 @@ internal sealed partial class StreamManager
                 }
                 else
                     _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
-                dispatch = CompleteDispatch(
-                    entry,
-                    preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount));
-                return true;
+                dispatch = preAdmission.DispatchCompressedAsync(wirePayload, originalByteCount);
             }
-            if (entry.Dispatcher is DiscardingStreamDispatcher discarding)
+            else if (entry.Dispatcher is DiscardingStreamDispatcher discarding)
             {
                 if (_acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved)
                 {
@@ -854,21 +852,26 @@ internal sealed partial class StreamManager
                 }
                 else
                     _acceptBytes?.Invoke(requestId, streamId, originalByteCount);
-                dispatch = CompleteDispatch(
-                    entry,
-                    discarding.DispatchAsync(wirePayload, originalByteCount));
-                return true;
+                dispatch = discarding.DispatchAsync(wirePayload, originalByteCount);
             }
-
-            entry.Release();
-            dispatch = default;
-            return false;
+            else
+            {
+                dispatch = default;
+                matched = false;
+            }
         }
         catch
         {
             entry.Release();
             throw;
         }
+        if (!matched)
+        {
+            entry.Release();
+            return false;
+        }
+        dispatch = CompleteDispatch(entry, dispatch);
+        return true;
     }
 
     private void CompleteTerminatedRegistration(
@@ -888,16 +891,8 @@ internal sealed partial class StreamManager
         }
         finally
         {
-            try
-            {
-                PublishReceiveTerminal(requestId, streamId, entry);
-            }
-            finally
-            {
-                _ = requestDispatchers.FinishRetirement(streamId, entry);
-                entry.Detach();
-                RemoveEmptyRequest(requestId, requestDispatchers);
-            }
+            RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
+                clearCallback: false);
         }
     }
 

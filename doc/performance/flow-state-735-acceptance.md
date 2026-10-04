@@ -1,8 +1,22 @@
-# #735 acceptance review
+# #735 acceptance review — performance acceptance blocked
 
 This page is the reviewer-facing acceptance map for #735. It checks observable
 protocol/lifecycle contracts rather than requiring the new implementation to
 reproduce the frozen controller's internal dictionary, lock, or waiter layout.
+
+## Current blocking review
+
+The integrated `885306c66ee2e61c6fdd400bc52e2143aa48d6db` evidence does **not**
+meet the complete #735 Go requirements. The workflow verifies collection and
+report integrity; its success is not a performance-threshold verdict.
+NativeAOT short-stream latency and short-stream allocation regressions remain
+blocking. Historical `e62cb674` gains below cannot override them, and the isolated
+B3 research result is not a substitute for the production candidate's costs.
+
+See [the integrated review and regression controls](flow-state-735-integrated-review.md)
+for the exact run/artifact, negative results, receive-credit drain fix and bind-failure
+rollback coverage. This follow-up keeps #735 open and #742 Draft. New-head CI must
+be identified separately; no earlier result is relabeled as validation of this fix.
 
 ## Evidence identity
 
@@ -198,9 +212,10 @@ NativeAOT, same 8 KiB cap:
 | SharedMemory | 4096 | 16 | -1.48% | +2.42% | -431.387 |
 | TCP | 4096 | 16 | +1.08% | +1.32% | -388.704 |
 
-Large-item negative controls are retained rather than hidden. The issue's Go
-condition is met by repeated tiny-item throughput/CPU improvements and by the
-Phase A microkernel result.
+These are historical results, not an acceptance decision for the integrated
+production candidate. Positive tiny-item or microkernel results alone do not
+satisfy #735: allocation must not increase and NativeAOT must not materially
+regress. The integrated short-stream results currently block that decision.
 
 ## Diagnostic versus gate
 
