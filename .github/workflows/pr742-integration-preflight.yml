@@ -5,58 +5,52 @@ on:
 permissions:
   contents: read
 jobs:
-  sources:
+  integrated-tree:
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-          persist-credentials: false
-      - name: Export pinned public source trees
+      - name: Reconstruct exact locally reviewed merge tree
         shell: bash
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/pr742-integration"
+          out="$RUNNER_TEMP/pr742-integrated-tree"
           mkdir -p "$out"
-          for pair in 'head 26f2857b6af39c1d431b8e6f7bc422308b777463' 'dev 0fe26024b114bb6e78411a9b86276086c045d03d' 'base 56c643cd308f294cb03df79d9f1214fb8292affb'; do
-            read -r name sha <<< "$pair"
-            git archive --format=tar "$sha" | gzip -1 > "$out/$name.tar.gz"
-            printf '%s %s %s\n' "$name" "$sha" "$(git rev-parse "$sha^{tree}")" >> "$out/identities.txt"
-          done
-          git merge-base 26f2857b6af39c1d431b8e6f7bc422308b777463 0fe26024b114bb6e78411a9b86276086c045d03d > "$out/merge-base.txt"
-          git log --oneline 56c643cd308f294cb03df79d9f1214fb8292affb..0fe26024b114bb6e78411a9b86276086c045d03d > "$out/dev-commits.txt"
-          sha256sum "$out"/*.tar.gz > "$out/SHA256SUMS"
+          cat .github/pr742-integration/part-{0,1,2,3} | gzip -d > "$out/integration-edits.patch"
+          echo "54c7a9f9282e8bebec2d92803b7cfa04beb2b5c143c1e9da2475a968b56b4745  $out/integration-edits.patch" | sha256sum --check
+          head=26f2857b6af39c1d431b8e6f7bc422308b777463
+          dev=0fe26024b114bb6e78411a9b86276086c045d03d
+          git config user.name 'PR742 integration verification'
+          git config user.email 'noreply@github.com'
+          git checkout --detach "$head"
+          set +e
+          git merge --no-commit --no-ff "$dev" > "$out/merge.log" 2>&1
+          result=$?
+          set -e
+          test "$result" -eq 1
+          git diff --name-only --diff-filter=U | sort > "$out/conflicts.txt"
+          printf '%s\n' test/SharpLink.UnitTests/Client/SharpLinkClientDeadlinePublicationTests.cs test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleHeartbeatTests.cs test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleReconnectSupport.cs | sort > "$out/expected-conflicts.txt"
+          cmp "$out/conflicts.txt" "$out/expected-conflicts.txt"
+          git checkout "$dev" -- test/SharpLink.UnitTests/Client/SharpLinkClientDeadlinePublicationTests.cs test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleHeartbeatTests.cs test/SharpLink.UnitTests/Client/SharpLinkClientLifecycleReconnectSupport.cs
+          test "$(git write-tree)" = c267c67d80f67b3a3a70146c1687a791cee6de22
+          git apply --index "$out/integration-edits.patch"
+          git diff --cached --check
+          tree="$(git write-tree)"
+          test "$tree" = 6f9d979e803afdc8a88c8060e3ea35c30e2a8704
+          # Only this temporary object-transfer branch is written. The original PR
+          # branch is updated separately after checking the two review rounds.
+          commit="$(printf '%s\n' 'Temporary verified integrated tree for PR742' | git commit-tree "$tree" -p "$head" -p "$dev")"
+          git push origin "$commit:refs/heads/work/742-integrated-tree-20261004"
+          printf 'head=%s\ndev=%s\ntree=%s\ntransport_commit=%s\n' "$head" "$dev" "$tree" "$commit" > "$out/identities.txt"
+          cat "$out/identities.txt" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
-          name: pr742-pinned-integration-sources
-          path: ${{ runner.temp }}/pr742-integration
+          name: pr742-exact-integrated-tree
+          path: ${{ runner.temp }}/pr742-integrated-tree
           retention-days: 7
-          if-no-files-found: error
-      - uses: ./.github/actions/setup-dotnet
-      - name: Restore reviewed dependencies
-        run: dotnet restore Sharplink.slnx
-      - name: Export public packages and selected SDK only
-        shell: bash
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/pr742-dependencies"
-          mkdir -p "$out"
-          dotnet_root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
-          paths=(dotnet "sdk/$(dotnet --version)")
-          for family in host/fxr shared/Microsoft.NETCore.App shared/Microsoft.AspNetCore.App packs/Microsoft.NETCore.App.Ref packs/Microsoft.AspNetCore.App.Ref packs/Microsoft.NETCore.App.Host.linux-x64; do
-            for directory in "$dotnet_root/$family"/10.*; do
-              if [[ -d "$directory" ]]; then paths+=("${directory#"$dotnet_root/"}"); fi
-            done
-          done
-          tar -C "$dotnet_root" -czf "$out/dotnet.tar.gz" "${paths[@]}"
-          tar -C "$HOME/.nuget" -czf "$out/packages.tar.gz" packages
-          dotnet --info > "$out/dotnet-info.txt"
-          sha256sum "$out"/*.tar.gz > "$out/SHA256SUMS"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: pr742-public-integration-dependencies
-          path: ${{ runner.temp }}/pr742-dependencies
-          retention-days: 1
-          compression-level: 0
           if-no-files-found: error
