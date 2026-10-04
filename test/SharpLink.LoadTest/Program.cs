@@ -369,6 +369,9 @@ public static class Program
                 options.Operation == "oneway" && options.MaxSendQueueBytes.HasValue;
             foreach (var concurrency in options.ConcurrencyConfig)
             {
+                // Prepare the actual measurement buffers before the existing warmup.
+                // Large allocations after warmup can carry a background GC into timing.
+                var measurementRecording = new LoadTestStageRecording(options, concurrency);
                 var warmupDurationSeconds = 0d;
                 if (options.WarmupSeconds > 0)
                 {
@@ -383,6 +386,7 @@ public static class Program
                         concurrency,
                         metrics,
                         retryOneWaySendQueueBackpressure,
+                        new LoadTestStageRecording(options, concurrency, isWarmup: true),
                         isWarmup: true);
                     warmupDurationSeconds = Stopwatch.GetElapsedTime(warmupStarted).TotalSeconds;
                 }
@@ -396,6 +400,7 @@ public static class Program
                     concurrency,
                     metrics,
                     retryOneWaySendQueueBackpressure,
+                    measurementRecording,
                     isWarmup: false);
 
                 Console.WriteLine(
@@ -435,25 +440,18 @@ public static class Program
         int concurrency,
         MetricsRegistry metrics,
         bool retryOneWaySendQueueBackpressure,
+        LoadTestStageRecording recording,
         bool isWarmup)
     {
         var operation = options.Operation;
-        var recordingMode = isWarmup ? LatencyRecordingMode.Off : options.RecordingMode;
-        var formalRecorder = LatencyRecordingPolicy.CreatesFormalRecorder(recordingMode)
-            ? new StageLatencyRecorder(concurrency, options.MaximumRecordedOperations)
-            : null;
-        var diagnosticHistogram = LatencyRecordingPolicy.CreatesDiagnosticRecorder(recordingMode)
-            ? new SharpLink.LoadTestBase.LatencyHistogram()
-            : null;
-        var realtime = LatencyRecordingPolicy.StartsRealtimeReporter(recordingMode)
-            ? new RealtimeLatencyState()
-            : null;
+        var recordingMode = recording.Mode;
+        var formalRecorder = recording.FormalRecorder;
+        var diagnosticHistogram = recording.DiagnosticHistogram;
+        var realtime = recording.Realtime;
         var lifecycle = new MeasurementStageLifecycle(
             concurrency,
             options.TailObserver && !isWarmup ? 1 : 0);
-        var tailObserverRecorder = options.TailObserver && !isWarmup
-            ? new StageLatencyRecorder(1, options.TailObserverMaximumRecordedOperations)
-            : null;
+        var tailObserverRecorder = recording.TailObserverRecorder;
         var failures = new FailureRecorder();
         var workers = new Task<WorkerStageOutcome>[concurrency];
         using var reporterStop = new CancellationTokenSource();

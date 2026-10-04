@@ -17,21 +17,58 @@ when either semantic version differs.
 - `validation-dual`: exact and legacy recorders are compared within the stated
   1 microsecond or 0.5% tolerance; it is not formal evidence.
 
+For each unary concurrency stage, measurement recorders (including the opt-in
+tail observer) are allocated before the configured warmup. Warmup remains
+recording-off and does not write these measurement buffers. This lets the
+existing warmup run with the actual retained buffers, rather than allocating
+large buffers immediately before timing. Zero warmup still means zero warmup;
+the runner never forces a GC, waits for a GC to finish, or allocates a dummy
+workload recorder in recording-off mode. Recorder writes and their memory/GC
+effects during measurement remain part of the measured cost. This initialization
+order does not establish that the recorder-interference gate passes.
+
 All sample buffers are allocated before the synchronized start gate. Capacity
 exhaustion or drain timeout fails the run; samples are never clamped or silently
 dropped. Throughput uses only `measurementDuration`, while in-flight operations
 complete during the separately reported bounded `drainDuration`.
 
-The standalone CLI default formal hard bound is 30,000,000 samples for both runners. Each
-worker owns its own preallocated buffer. The merged sort buffer is allocated
+The standalone CLI default formal hard bound is 30,000,000 samples for both runners.
+The `worker-local-shared-capacity-v4` recorder initially divides preallocated
+storage among workers. A worker that fills its current region can borrow another
+worker's unwritten tail after briefly pausing writers. Recorded prefixes retain
+exclusive ownership; the total sample capacity remains unchanged. Each record
+publishes its worker's entry with a local full memory fence. Rebalancing uses a
+slow-path lock and may allocate region metadata, but never allocates additional
+sample buffers. Its CPU and allocation overhead require fresh measurements;
+historical recorder measurements below do not establish the new version's cost.
+Each worker explicitly clears its newly allocated sample array before publication.
+For the unary runner this happens before the existing recording-off warmup;
+other runners also initialize before their synchronized measurement start.
+It moves first-touch work for the real sample buffers into setup, without
+recording zero values or changing counts, capacity, ownership, or fences.
+Setup writes the full configured capacity, not just the eventual sample count,
+and therefore consumes CPU and memory bandwidth and commits resident pages
+earlier. At the full-tier bound this writes about 2.24 GiB per recorder; an
+enabled tail observer adds its own real buffer. This does not guarantee zero
+subsequent faults or GC, and reduced measurement faults alone do not prove
+that the original tail-latency gate passes.
+
+The worker's recording flag, cursor, and count occupy a private 256-byte inline
+primitive block. This separates different workers' frequently written fields
+for cache lines up to 128 bytes without assuming that managed objects are
+cache-line aligned. It adds fixed per-worker metadata storage, not sample slots;
+the necessary local full fence remains. This layout guard alone does not prove
+cache contention caused historical tails or that the interference gate passes.
+The merged sort buffer is allocated
 only after measurement and drain, so it cannot perturb workload timing.
 
 `eng/run-performance-matrix.sh` explicitly sets the bound to 300,000,000 for
 the full tier and 30,000,000 for smoke. Override it with
 `SHARPLINK_MATRIX_MAXIMUM_RECORDED_OPERATIONS` (a positive Int32). This changes
 storage capacity only; measurement duration, concurrency, repetitions, exact
-sample recording, and overflow failure remain unchanged. Capacity is divided
-among workers, so a worker can exhaust its share before the aggregate is full.
+sample recording, and overflow failure remain unchanged. Capacity exhaustion
+now means the aggregate hard bound is full, rather than an individual worker's
+initial share being full.
 The full-tier raw buffers require about 2.24 GiB; sorting additionally requires
 eight bytes per recorded sample, up to another 2.24 GiB. Allow memory for the
 client/server workload as well, and retain the reported maximum capacity with
