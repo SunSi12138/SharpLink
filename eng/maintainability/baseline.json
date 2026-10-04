@@ -67,8 +67,8 @@
     {
       "domain": "source",
       "path": "src/SharpLink.Runtime/Transport/SharedMemoryPipelines.cs",
-      "maxLoc": 1142,
-      "reason": "Existing dev debt captured by issue #350."
+      "maxLoc": 1145,
+      "reason": "Reviewed three-line read-only pending-read projection for the allocation fixture; existing reader/writer decomposition debt remains tracked by issue #350 and is outside this focused measurement-boundary change."
     },
     {
       "domain": "source",

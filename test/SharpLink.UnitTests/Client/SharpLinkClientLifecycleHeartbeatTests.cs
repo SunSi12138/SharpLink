@@ -20,26 +20,29 @@ public sealed class SharpLinkClientLifecycleHeartbeatTests
     {
         var provider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
-        {
-            builder.UseTimeProvider(provider);
-            builder.UseHeartbeat(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(30));
-        });
+        await using var client = ClientBuilderTestHelper.Build(
+            transport,
+            builder =>
+            {
+                builder.UseTimeProvider(provider);
+                builder.UseHeartbeat(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
+                builder.UseReconnectJitterForTesting(new FixedReconnectJitter(TimeSpan.FromSeconds(100)));
+            });
         await client.ConnectAsync();
-        // Freeze elapsed time while observing the connection. A system-clock 30 ms
-        // timeout may evict it before this test is scheduled after ConnectAsync.
         var connection = GetOnlyReadyConnection(client);
-        _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Ping);
-        await YieldUntilAsync(
-            () => provider.EarliestTimerTimestamp == TimeSpan.FromMilliseconds(10).Ticks,
-            "the immediate heartbeat did not arm its provider interval");
 
         connection.Session.LastActive = provider.GetUtcNow().UtcDateTime.AddDays(1);
         Ensure(connection.Session.TimeSinceLastActivity == TimeSpan.Zero,
             "changing wall-clock activity must not advance elapsed heartbeat time");
-        var stopped = GetSessionStoppedTask(connection.Session);
-        provider.Advance(TimeSpan.FromMilliseconds(40));
-        await stopped.WaitAsync(TimeSpan.FromSeconds(5));
+        _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Ping);
+        await YieldUntilAsync(
+            () => provider.EarliestTimerTimestamp == TimeSpan.FromSeconds(5).Ticks,
+            "the heartbeat did not arm its provider interval");
+
+        var sessionStopped = GetSessionStoppedTask(connection.Session);
+        provider.Advance(TimeSpan.FromSeconds(15));
+        await sessionStopped.WaitAsync(TimeSpan.FromSeconds(5));
+
         await WaitUntilAsync(
             () => connection.State == ClientConnectionState.Closed,
             () => $"heartbeat did not close the silent connection; state={connection.State}");

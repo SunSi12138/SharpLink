@@ -11,6 +11,16 @@ internal sealed class SharedMemoryAsyncPulse : IValueTaskSource<bool>
     private int _waiterState;
     private int _completed;
 
+    internal bool HasPendingWait
+    {
+        get
+        {
+            lock (_gate)
+                return Volatile.Read(ref _completed) == 0 && _waiterState != 0 &&
+                    _source.GetStatus(_source.Version) == ValueTaskSourceStatus.Pending;
+        }
+    }
+
     public ValueTask<bool> WaitAsync()
     {
         if (Interlocked.Exchange(ref _signalState, 0) != 0)

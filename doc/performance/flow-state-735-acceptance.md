@@ -6,15 +6,20 @@ reproduce the frozen controller's internal dictionary, lock, or waiter layout.
 
 ## Evidence identity
 
-The latest production-runtime code under test is
-`e62cb674c6b640d29c4a612808df2c6423fc1b1d`.
+The numerical results below are a **historical, pre-integration evidence snapshot**
+for `e62cb674c6b640d29c4a612808df2c6423fc1b1d`, not proof for the later merged
+runtime. Its documentation/test-only successor was
+`26f2857b6af39c1d431b8e6f7bc422308b777463`.
 
-Later review-head commits may change tests, workflow gating, or this document
-without changing runtime behavior. Performance numbers below therefore identify
-their exact workflow run/artifact instead of calling the documentation commit an
-"exact-head" runtime measurement.
+This integration incorporates dev
+`0fe26024b114bb6e78411a9b86276086c045d03d`, including the trimming/NativeAOT
+package wiring and the dispatcher-pool/race test hardening. Those production
+changes require new integrated-head validation. Earlier green results do not
+establish mergeability or correctness of the combined tree. The PR verification
+record must identify the new head, integrated dev, run/attempt, and results for
+PR Fast/Extended, Package Smoke, NativeAOT, allocation and resolved-flow correctness.
 
-Current retained evidence for runtime SHA `e62cb674`:
+Retained **historical** evidence for `e62cb674`:
 
 - correctness: Ready Writer run `36965020947`, build 0 warnings/errors,
   **171/171** ready-writer checks and full UnitTests **1898/1898**;
@@ -25,8 +30,8 @@ Current retained evidence for runtime SHA `e62cb674`:
 - resolved-state evidence: run `36965020943`, artifact `11209877876`,
   SHA256 `ae174ec4792cda308d9e0d0b3f84813fd45d21a6603b430c24c8cbab66d6c5cc`.
 
-The stable JIT/NativeAOT disposable measured tree is
-`d474c43ee68b94edd78060d96eb033dacbab6b01`.
+The historical stable JIT/NativeAOT disposable measured tree was
+`d474c43ee68b94edd78060d96eb033dacbab6b01`. It is not the integrated tree.
 
 ## Review scope
 
@@ -79,6 +84,16 @@ the replacement resolves a different generation and accepts its first frame.
 
 Additional contract controls:
 
+- `PoolReturnShouldClearCodecCallbacksAndCancellationRegistration` installs a
+  real resolved callback and receive lease before checking pool return.
+- `LocalAbortPoolReturnShouldClearResolvedCreditSnapshot` exercises the captured
+  abort callback/lease, clears the normal callback, returns discarded credit
+  through the captured generation and checks the pooled object.
+- `RetentionOracleShouldDetectEachResolvedReferenceIndependently` injects each
+  of the four strong-reference fields into an otherwise clean pooled object.
+  Each field must independently make `HasRetainedReferencesForTests` true;
+  clearing it restores false. This guards the oracle itself against omissions.
+
 - `ConnectionCreditShouldBeSharedInFifoOrder` and
   `FirstAdmissionShouldPreserveFifoAndCancellation` protect connection-credit
   ordering.
@@ -98,10 +113,20 @@ Additional contract controls:
 
 ### Phase A — resolved handle removes lookup
 
-Exact baseline is dev `56c643cd308f294cb03df79d9f1214fb8292affb`.
-Resolved Flow State Performance Evidence run `36965020943` succeeds.
+**Microkernel = candidate-internal keyed versus resolved API attribution.**
+Both modes run inside the same candidate runtime (`e62cb674` in this historical
+snapshot); only `$CANDIDATE_ROOT` runs the microkernel. They do not compare two
+revision binaries. The NativeAOT percentages and instruction counts below isolate
+API/lookup costs within that candidate, not an upgrade from old dev.
 
-NativeAOT microkernel medians:
+**E2E = pinned dev versus candidate revision comparison.** Historical run
+`36965020943` alternated binaries built from dev
+`56c643cd308f294cb03df79d9f1214fb8292affb` and candidate `e62cb674`, using the
+same measurement harness. This pinned dev SHA applies to E2E only. After the
+integration, the E2E workflow pins dev `0fe26024b114bb6e78411a9b86276086c045d03d`
+against the new candidate; the old E2E numbers below remain historical.
+
+Historical NativeAOT candidate-internal microkernel medians:
 
 | Scenario | ns/item improvement |
 |---|---:|
@@ -138,7 +163,7 @@ The production end-to-end 100-item median is deliberately reported separately:
 TCP **+0.57%** throughput and SharedMemory **+2.12%**. Therefore the much larger
 Phase B tiny-item gains are not attributed to lookup removal alone.
 
-### Phase B — stable writer-owned research control
+### Phase B — historical stable writer-owned research control
 
 Accepted comparison is quantum 16 with the same 8 KiB prepared-byte cap on
 A-ready and B3-ready. The stable JIT gate keeps SharedMemory unchanged and uses
@@ -195,7 +220,9 @@ the explicit TCP control, and the ordinary repository validation workflows.
 
 ## Review conclusion
 
-#735's specified correctness and Go/No-Go questions are covered. Remaining ideas
+The checklist records #735's contracts and the historical Go/No-Go evidence.
+Integration acceptance additionally requires current-head tests and mergeability;
+this document is not a claim that the merged head has already passed CI. Remaining ideas
 such as replacing the experimental writer hook with a different product-wide
 scheduler or redesigning generated full-duplex RPC are follow-up integration
 choices, not acceptance criteria invented after the issue was filed. Review

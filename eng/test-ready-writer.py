@@ -38,6 +38,14 @@ class Guards(unittest.TestCase):
         p['plan'].pop()
         with self.assertRaises(ValueError):verify.validate_provenance(p)
     def test_runner_matches_independent_matrix(self):self.assertEqual(json.loads(json.dumps(runner.plan())),verify.expected_plan())
+    def test_preserves_upstream_idle_wait_observation(self):
+        dest=ROOT/'src/SharpLink.Runtime'
+        backup=ROOT/'artifacts/ready-writer-hook'
+        original=((backup/'RpcSession.SendPump.cs') if (dest/'RpcSession.ReadyWriter.cs').exists()
+                  else dest/'RpcSession.SendPump.cs').read_text()
+        transformed=prepare.transform('RpcSession.SendPump.cs',original)
+        self.assertIn('internal bool HasPendingIdleWait => _wakeup.HasPendingIdleWait;',transformed)
+
     def test_layout_slot_and_flush_deadlock_guard(self):
         dest=ROOT/'src/SharpLink.Runtime';backup=ROOT/'artifacts/ready-writer-hook'
         originals={n:((backup/n) if (dest/'RpcSession.ReadyWriter.cs').exists() else dest/n).read_text() for n in prepare.HASHES}

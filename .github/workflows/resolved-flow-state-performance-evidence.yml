@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      BASELINE_SHA: 56c643cd308f294cb03df79d9f1214fb8292affb
+      BASELINE_SHA: 0fe26024b114bb6e78411a9b86276086c045d03d
       CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       ROOT: ${{ github.workspace }}/artifacts/performance/resolved-flow-state
 
@@ -90,7 +90,8 @@ jobs:
           project="$CANDIDATE_ROOT/test/SharpLink.ResolvedFlowStateAotEvidence/SharpLink.ResolvedFlowStateAotEvidence.csproj"
           dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=true -p:StripSymbols=false -o "$ROOT/aot/bin" -v minimal
 
-      - name: Run resolved-state microkernel
+      # Both microkernel modes run inside the candidate; this is not a revision A/B.
+      - name: Run candidate-internal keyed/resolved microkernel
         shell: bash
         run: |
           set -euo pipefail
@@ -117,7 +118,8 @@ jobs:
 
           root = pathlib.Path("artifacts/performance/resolved-flow-state")
           out = {}
-          lines = ["# Resolved flow-state microkernel", ""]
+          lines = ["# Candidate-internal keyed vs resolved microkernel", "",
+                   "Both API modes use the same candidate runtime; these are not dev-to-candidate binary gains.", ""]
 
           for pgo in (1, 0):
               per_case = {}
@@ -210,7 +212,7 @@ jobs:
           print("\n".join(lines))
           PY
 
-      - name: Run NativeAOT resolved-state microkernel
+      - name: Run candidate-internal NativeAOT keyed/resolved microkernel
         shell: bash
         run: |
           set -euo pipefail

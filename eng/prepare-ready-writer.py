@@ -4,7 +4,7 @@ from pathlib import Path
 import argparse, hashlib, json
 ROOT = Path(__file__).resolve().parents[1]
 HASHES = {
-    "RpcSession.SendPump.cs": "7672100a04a32ec96acd46a99895e0d2f3fbed2d6779c6db3698888c0e65d049",
+    "RpcSession.SendPump.cs": "3071b42cc8985078f0eb01d59f52fb6ea2f09d6298630dd3081b7ffd4e7751eb",
     "OwnedFrame.cs": "becf57653e6aa89b00a7e28d3f3a64ec0b0814690d00495457bb1d5fbb1eb3e5",
 }
 
