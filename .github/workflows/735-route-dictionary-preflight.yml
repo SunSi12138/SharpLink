@@ -1,0 +1,128 @@
+name: 735 Lazy Route Dictionary Preflight
+
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: 735-route-storage-preflight
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_PROCESSOR_COUNT: '4'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-dotnet
+      - name: Pin the published packed-flags control
+        run: |
+          mkdir -p artifacts/route-dictionary
+          git rev-parse HEAD > artifacts/route-dictionary/preflight-head.txt
+          git rev-parse 2a649a9880589696448e21ce0bd2e67ffd174147 > artifacts/route-dictionary/control.txt
+          git merge-base --is-ancestor 2a649a9880589696448e21ce0bd2e67ffd174147 HEAD
+          git diff --exit-code 2a649a9880589696448e21ce0bd2e67ffd174147 -- src
+          dotnet --info > artifacts/route-dictionary/dotnet.txt
+          lscpu > artifacts/route-dictionary/cpu.txt
+      - name: Build unchanged control and collect the same route allocation population
+        run: |
+          set -euo pipefail
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/route-dictionary/control-build.log
+          export SHARPLINK_ROUTE_FOOTPRINT_DIRECTORY="$PWD/artifacts/route-dictionary/control"
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerPackedFlagsTests/*' 2>&1 | tee artifacts/route-dictionary/control-checks.log
+      - name: Prove the eager-map regression against the unchanged control
+        run: |
+          set +e
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerLazyRouteDictionaryTests/DefaultOnlyRouteDoesNotAllocateNamedDictionary' > artifacts/route-dictionary/expected-control-failure.log 2>&1
+          code=$?
+          set -e
+          test "$code" -ne 0
+          python3 - <<'PY'
+          import pathlib, re
+          text=pathlib.Path('artifacts/route-dictionary/expected-control-failure.log').read_text()
+          text=re.sub(r'\x1b\[[0-9;]*m','',text)
+          assert re.search(r'total:\s+1\b',text),text
+          assert re.search(r'failed:\s+1\b',text),text
+          assert 'default stream 0 must not allocate the non-default route dictionary' in text,text
+          print('The single intended structural regression fails on the unchanged control.')
+          PY
+      - name: Apply only lazy named-map allocation in the disposable checkout
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-route-dictionary.py 2>&1 | tee artifacts/route-dictionary/transform.log
+          git add src/SharpLink.Runtime/StreamManager.Routing.cs
+          git write-tree > artifacts/route-dictionary/candidate-tree.txt
+          git diff --cached --binary > artifacts/route-dictionary/candidate.patch
+          git hash-object src/SharpLink.Runtime/StreamManager.Routing.cs > artifacts/route-dictionary/candidate-routing-blob.txt
+      - name: Build candidate and validate both route forms
+        run: |
+          set -euo pipefail
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/route-dictionary/candidate-build.log
+          export SHARPLINK_ROUTE_FOOTPRINT_DIRECTORY="$PWD/artifacts/route-dictionary/candidate"
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerPackedFlagsTests/*' 2>&1 | tee artifacts/route-dictionary/candidate-flags.log
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerLazyRouteDictionaryTests/*' 2>&1 | tee artifacts/route-dictionary/candidate-dictionary.log
+      - name: Require default-route savings without named-route allocation regression
+        run: |
+          python3 - <<'PY'
+          import csv, json, pathlib
+          root=pathlib.Path('artifacts/route-dictionary')
+          results=[]
+          for stream in (0,7):
+              groups=[]
+              for mode in ('control','candidate'):
+                  with (root/mode/f'route-{stream}.csv').open() as f: rows=list(csv.DictReader(f))
+                  if len(rows)!=3 or [int(r['repeat']) for r in rows]!=[0,1,2]: raise SystemExit('Incomplete allocation population')
+                  groups.append([float(r['bytes_per_route']) for r in rows])
+              before,after=groups
+              minimum=16 if stream==0 else 0
+              if max(after)>min(before)-minimum: raise SystemExit(f'Allocation requirement failed for stream {stream}: {before} -> {after}')
+              results.append(dict(stream=stream,control=before,candidate=after,minimum_saving=min(before)-max(after)))
+          text=json.dumps(results,indent=2)
+          (root/'allocation-comparison.json').write_text(text)
+          print(text)
+          PY
+      - name: Engineering self-check with original gates
+        run: |
+          set -euo pipefail
+          dotnet format whitespace test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore --verify-no-changes --include src/SharpLink.Runtime/StreamManager.Routing.cs test/SharpLink.UnitTests/Runtime/StreamManagerLazyRouteDictionaryTests.cs 2>&1 | tee artifacts/route-dictionary/format.log
+          python3 eng/check-project-reference-boundaries.py 2>&1 | tee artifacts/route-dictionary/references.log
+          bash eng/check-maintainability.sh 2>&1 | tee artifacts/route-dictionary/maintainability.log
+      - name: Full default correctness without skips or filters
+        run: |
+          set -euo pipefail
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee artifacts/route-dictionary/default-unit.log
+      - name: Actual writer and full experimental runtime correctness
+        run: |
+          set -euo pipefail
+          python3 eng/test-ready-writer.py
+          python3 eng/test-ready-writer-budget.py
+          python3 eng/test-ready-writer-collection.py
+          python3 eng/test-ready-writer-native.py
+          python3 eng/prepare-ready-writer.py --apply
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/route-dictionary/writer-build.log
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test 2>&1 | tee artifacts/route-dictionary/writer-self-test.log
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/route-dictionary/experimental-build.log
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee artifacts/route-dictionary/experimental-unit.log
+      - name: NativeAOT publication and actual writer correctness
+        run: |
+          set -euo pipefail
+          dotnet publish test/SharpLink.ReadyWriterAotEvidence -c Release -r linux-x64 -p:Platform=AnyCPU -o artifacts/route-native 2>&1 | tee artifacts/route-dictionary/native-build.log
+          artifacts/route-native/SharpLink.Benchmarks --ready-writer-self-test 2>&1 | tee artifacts/route-dictionary/native-self-test.log
+      - name: Retain all evidence including the intended original failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: 735-route-dictionary-preflight-${{ github.sha }}
+          path: artifacts/route-dictionary
+          if-no-files-found: error
+          retention-days: 30
