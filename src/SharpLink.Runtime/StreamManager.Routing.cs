@@ -8,7 +8,9 @@ internal sealed partial class StreamManager
     {
         private DispatcherEntry? _defaultDispatcher;
         private readonly Lock _gate = new();
-        private readonly Dictionary<ushort, DispatcherEntry> _byStreamId = [];
+        // Default-only requests use the inline slot; allocate the named map only
+        // when a nonzero stream is actually published under the same registry lock.
+        private Dictionary<ushort, DispatcherEntry>? _byStreamId;
 
         public bool TryRegister(
             long requestId,
@@ -19,7 +21,7 @@ internal sealed partial class StreamManager
         {
             lock (_gate)
             {
-                if (streamId == 0 ? _defaultDispatcher is not null : _byStreamId.ContainsKey(streamId))
+                if (streamId == 0 ? _defaultDispatcher is not null : _byStreamId?.ContainsKey(streamId) == true)
                 {
                     receiveCreditLease = default;
                     return false;
@@ -34,7 +36,7 @@ internal sealed partial class StreamManager
                     if (streamId == 0)
                         Volatile.Write(ref _defaultDispatcher, entry);
                     else
-                        _byStreamId.Add(streamId, entry);
+                        (_byStreamId ??= []).Add(streamId, entry);
                     return true;
                 }
                 catch
@@ -79,7 +81,7 @@ internal sealed partial class StreamManager
             PreAdmissionStreamDispatcher? acquiredPreAdmission;
             lock (_gate)
             {
-                if (!_byStreamId.TryGetValue(streamId, out var entry) ||
+                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) ||
                     entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
                     !entry.TryAcquire())
                 {
@@ -131,7 +133,7 @@ internal sealed partial class StreamManager
             PreAdmissionStreamDispatcher? acquiredPreAdmission;
             lock (_gate)
             {
-                if (!_byStreamId.TryGetValue(streamId, out var entry) ||
+                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) ||
                     entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
                     !entry.TryAcquire())
                 {
@@ -173,7 +175,7 @@ internal sealed partial class StreamManager
             DispatcherEntry? acquiredEntry;
             lock (_gate)
             {
-                if (!_byStreamId.TryGetValue(streamId, out var entry) || !entry.TryAcquire())
+                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) || !entry.TryAcquire())
                     return false;
                 acquiredEntry = entry;
             }
@@ -208,7 +210,7 @@ internal sealed partial class StreamManager
 
             lock (_gate)
             {
-                if (_byStreamId.TryGetValue(streamId, out var found) &&
+                if (_byStreamId is not null && _byStreamId.TryGetValue(streamId, out var found) &&
                     found.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
                     preAdmission.TryCompleteAndRetain(exception))
                 {
@@ -233,7 +235,7 @@ internal sealed partial class StreamManager
             }
             lock (_gate)
             {
-                var found = _byStreamId.TryGetValue(streamId, out var entry)
+                var found = _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var entry)
                     ? entry.Dispatcher as PreAdmissionStreamDispatcher
                     : null;
                 dispatcher = found!;
@@ -254,7 +256,7 @@ internal sealed partial class StreamManager
             }
             lock (_gate)
             {
-                var found = _byStreamId.TryGetValue(streamId, out var entry)
+                var found = _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var entry)
                     ? entry.Dispatcher as DiscardingStreamDispatcher
                     : null;
                 dispatcher = found!;
@@ -268,7 +270,7 @@ internal sealed partial class StreamManager
             {
                 lock (_gate)
                 {
-                    if (_byStreamId.TryGetValue(streamId, out entry!) && entry.TryAcquire())
+                    if (_byStreamId is not null && _byStreamId.TryGetValue(streamId, out entry!) && entry.TryAcquire())
                         return true;
                     entry = null!;
                     return false;
@@ -292,7 +294,7 @@ internal sealed partial class StreamManager
             {
                 var found = streamId == 0
                     ? _defaultDispatcher
-                    : _byStreamId.TryGetValue(streamId, out var candidate) ? candidate : null;
+                    : _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var candidate) ? candidate : null;
                 if (found is null || !found.TryClaimRetirement())
                 {
                     entry = null!;
@@ -317,7 +319,7 @@ internal sealed partial class StreamManager
                     return true;
                 }
 
-                if (!_byStreamId.TryGetValue(streamId, out var found) ||
+                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var found) ||
                     !ReferenceEquals(found, entry))
                 {
                     return false;
@@ -339,12 +341,15 @@ internal sealed partial class StreamManager
                     entries.Add(new RequestDrainEntry(0, defaultDispatcher));
                 }
 
-                foreach (var pair in _byStreamId)
+                if (_byStreamId is { } namedDispatchers)
                 {
-                    if (!pair.Value.TryClaimRetirement())
-                        continue;
-                    pair.Value.Close();
-                    entries.Add(new RequestDrainEntry(pair.Key, pair.Value));
+                    foreach (var pair in namedDispatchers)
+                    {
+                        if (!pair.Value.TryClaimRetirement())
+                            continue;
+                        pair.Value.Close();
+                        entries.Add(new RequestDrainEntry(pair.Key, pair.Value));
+                    }
                 }
 
                 return [.. entries];
@@ -366,14 +371,17 @@ internal sealed partial class StreamManager
                     }
                 }
 
-                foreach (var entry in _byStreamId.Values)
+                if (_byStreamId is { } namedDispatchers)
                 {
-                    if (!entry.TryClaimRetirement())
-                        continue;
-                    entry.Close();
-                    claimed.Add(entry);
+                    foreach (var entry in namedDispatchers.Values)
+                    {
+                        if (!entry.TryClaimRetirement())
+                            continue;
+                        entry.Close();
+                        claimed.Add(entry);
+                    }
+                    namedDispatchers.Clear();
                 }
-                _byStreamId.Clear();
             }
 
             for (var index = 0; index < claimed.Count; index++)
@@ -409,7 +417,7 @@ internal sealed partial class StreamManager
             get
             {
                 lock (_gate)
-                    return _defaultDispatcher is null && _byStreamId.Count == 0;
+                    return _defaultDispatcher is null && (_byStreamId is null || _byStreamId.Count == 0);
             }
         }
     }
