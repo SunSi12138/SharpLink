@@ -23,13 +23,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: ./.github/actions/setup-dotnet
-      - name: Record unchanged PR parent and environment
+      - name: Record unchanged PR control and environment
         run: |
           mkdir -p artifacts/route-flags
           git rev-parse HEAD > artifacts/route-flags/preflight-head.txt
-          git rev-parse HEAD^ > artifacts/route-flags/parent.txt
-          test "$(git rev-parse HEAD^)" = 6ca43ee8e434f2796a9e8d65f49d777d36f52fd2
+          git rev-parse 6ca43ee8e434f2796a9e8d65f49d777d36f52fd2 > artifacts/route-flags/parent.txt
+          git merge-base --is-ancestor 6ca43ee8e434f2796a9e8d65f49d777d36f52fd2 HEAD
+          git diff --exit-code 6ca43ee8e434f2796a9e8d65f49d777d36f52fd2 -- src
           dotnet --info > artifacts/route-flags/dotnet.txt
           lscpu > artifacts/route-flags/cpu.txt
       - name: Build and measure unchanged runtime control
