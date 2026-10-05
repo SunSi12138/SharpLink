@@ -419,13 +419,15 @@ internal sealed partial class StreamManager
         private const long ClosedMask = long.MinValue;
         private const long DetachedMask = 1L << 32;
         private const long ReceiveRetirementPendingMask = 1L << 33;
+        private const long ReceiveTerminalPublishedMask = 1L << 34;
+        private const long PeerTerminalReceivedMask = 1L << 35;
+        private const long RetirementClaimedMask = 1L << 36;
         private const long CountMask = int.MaxValue;
         // One atomic word orders the last release against detach. Separate count and
         // detached reads can both claim the same pooled-dispatcher drain notification.
         private long _state;
-        private int _receiveTerminalPublished;
-        private int _peerTerminalReceived;
-        private int _retirementClaimed;
+        // Cold lifecycle flags share the atomic word; acquisition count and
+        // detach/cleanup ownership retain their existing, disjoint bits.
         // Lazily shares the distinct drain/detach completions without growing common entries.
         private DispatcherEntryCompletions? _completions;
 
@@ -449,16 +451,16 @@ internal sealed partial class StreamManager
 
         public bool IsDetached => (Volatile.Read(ref _state) & DetachedMask) != 0;
 
-        internal bool PeerTerminalReceived => Volatile.Read(ref _peerTerminalReceived) != 0;
+        internal bool PeerTerminalReceived => (Volatile.Read(ref _state) & PeerTerminalReceivedMask) != 0;
 
         internal void MarkPeerTerminalReceived()
-            => Volatile.Write(ref _peerTerminalReceived, 1);
+            => _ = Interlocked.Or(ref _state, PeerTerminalReceivedMask);
 
         internal bool TryPublishReceiveTerminal()
-            => Interlocked.CompareExchange(ref _receiveTerminalPublished, 1, 0) == 0;
+            => (Interlocked.Or(ref _state, ReceiveTerminalPublishedMask) & ReceiveTerminalPublishedMask) == 0;
 
         internal bool TryClaimRetirement()
-            => Interlocked.CompareExchange(ref _retirementClaimed, 1, 0) == 0;
+            => (Interlocked.Or(ref _state, RetirementClaimedMask) & RetirementClaimedMask) == 0;
 
         internal bool TryAcquire()
         {
