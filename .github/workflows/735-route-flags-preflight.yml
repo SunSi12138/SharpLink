@@ -1,0 +1,112 @@
+name: 735 Route Flags Preflight
+
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: 735-route-flags-preflight
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_PROCESSOR_COUNT: '4'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record unchanged PR parent and environment
+        run: |
+          mkdir -p artifacts/route-flags
+          git rev-parse HEAD > artifacts/route-flags/preflight-head.txt
+          git rev-parse HEAD^ > artifacts/route-flags/parent.txt
+          test "$(git rev-parse HEAD^)" = 6ca43ee8e434f2796a9e8d65f49d777d36f52fd2
+          dotnet --info > artifacts/route-flags/dotnet.txt
+          lscpu > artifacts/route-flags/cpu.txt
+      - name: Build and measure unchanged runtime control
+        run: |
+          set -euo pipefail
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/route-flags/baseline-build.log
+          export SHARPLINK_ROUTE_FOOTPRINT_DIRECTORY="$PWD/artifacts/route-flags/baseline"
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerPackedFlagsTests/*' 2>&1 | tee artifacts/route-flags/baseline-checks.log
+      - name: Apply bounded candidate in this disposable checkout only
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-route-flags.py 2>&1 | tee artifacts/route-flags/transform.log
+          git add src/SharpLink.Runtime/StreamManager.Routing.cs
+          git write-tree > artifacts/route-flags/candidate-tree.txt
+          git diff --cached --binary > artifacts/route-flags/candidate.patch
+          git hash-object src/SharpLink.Runtime/StreamManager.Routing.cs > artifacts/route-flags/candidate-routing-blob.txt
+      - name: Build candidate and repeat the same focused checks
+        run: |
+          set -euo pipefail
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/route-flags/candidate-build.log
+          export SHARPLINK_ROUTE_FOOTPRINT_DIRECTORY="$PWD/artifacts/route-flags/candidate"
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerPackedFlagsTests/*' 2>&1 | tee artifacts/route-flags/candidate-checks.log
+      - name: Require a real per-route allocation reduction in every repeat
+        run: |
+          python3 - <<'PY'
+          import csv, json, pathlib
+          root = pathlib.Path('artifacts/route-flags')
+          results = []
+          for stream in (0, 7):
+              groups = []
+              for mode in ('baseline', 'candidate'):
+                  with (root / mode / f'route-{stream}.csv').open() as f:
+                      rows = list(csv.DictReader(f))
+                  if len(rows) != 3 or [int(r['repeat']) for r in rows] != [0, 1, 2]:
+                      raise SystemExit('Incomplete allocation population')
+                  groups.append([float(r['bytes_per_route']) for r in rows])
+              before, after = groups
+              if max(after) > min(before) - 16:
+                  raise SystemExit(f'Expected at least 16 B/route reduction for stream {stream}: {before} -> {after}')
+              results.append(dict(stream=stream, baseline=before, candidate=after,
+                                  minimum_saving=min(before)-max(after)))
+          text = json.dumps(results, indent=2)
+          (root / 'allocation-comparison.json').write_text(text)
+          print(text)
+          PY
+      - name: First review round - formatting and original engineering guards
+        run: |
+          set -euo pipefail
+          dotnet format whitespace test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore --verify-no-changes --include src/SharpLink.Runtime/StreamManager.Routing.cs test/SharpLink.UnitTests/Runtime/StreamManagerPackedFlagsTests.cs 2>&1 | tee artifacts/route-flags/format.log
+          python3 eng/check-project-reference-boundaries.py 2>&1 | tee artifacts/route-flags/references.log
+          bash eng/check-maintainability.sh 2>&1 | tee artifacts/route-flags/maintainability.log
+      - name: Second review round - full default correctness without skips or filters
+        run: |
+          set -euo pipefail
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee artifacts/route-flags/default-unit.log
+      - name: Actual writer experiment and full runtime correctness
+        run: |
+          set -euo pipefail
+          python3 eng/test-ready-writer.py
+          python3 eng/test-ready-writer-budget.py
+          python3 eng/test-ready-writer-collection.py
+          python3 eng/test-ready-writer-native.py
+          python3 eng/prepare-ready-writer.py --apply
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/route-flags/writer-build.log
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test 2>&1 | tee artifacts/route-flags/writer-self-test.log
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/route-flags/experimental-build.log
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee artifacts/route-flags/experimental-unit.log
+      - name: Publish and execute NativeAOT writer correctness
+        run: |
+          set -euo pipefail
+          dotnet publish test/SharpLink.ReadyWriterAotEvidence -c Release -r linux-x64 -p:Platform=AnyCPU -o artifacts/route-native 2>&1 | tee artifacts/route-flags/native-build.log
+          artifacts/route-native/SharpLink.Benchmarks --ready-writer-self-test 2>&1 | tee artifacts/route-flags/native-self-test.log
+      - name: Retain all logs and measured patches, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: 735-route-flags-preflight-${{ github.sha }}
+          path: artifacts/route-flags
+          if-no-files-found: error
+          retention-days: 30
