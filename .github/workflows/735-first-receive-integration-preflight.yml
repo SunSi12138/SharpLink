@@ -1,4 +1,4 @@
-name: 735 Actual Native First Receive RPC Evidence
+name: 735 Receive Allocation Attribution
 
 on:
   push:
@@ -6,11 +6,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: 735-actual-native-first-receive-rpc
+  group: 735-receive-allocation-attribution
   cancel-in-progress: false
 
 jobs:
-  native-rpc:
+  allocation-types:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-dotnet
-      - name: Reconstruct exactly the runtime already validated in single-await preflight
+      - name: Reconstruct the same already-tested runtime, with no new production optimization
         run: |
           set -euo pipefail
           python3 eng/preflight-735-first-receive-apply.py
@@ -30,53 +30,97 @@ jobs:
           python3 eng/preflight-735-first-await-apply.py
           test "$(git hash-object src/SharpLink.Runtime/StreamManager.FirstReceive.cs)" = 5275251ea976ce2bf57575930e13ff4e7212af95
           test "$(git hash-object src/SharpLink.Runtime/StreamManager.cs)" = c60defe06f14079d862a9efb73b0fb39daa4ae8f
-          git worktree add --detach "$RUNNER_TEMP/native-first-receive-control" "$CONTROL_SHA"
-          echo "CONTROL_ROOT=$RUNNER_TEMP/native-first-receive-control" >> "$GITHUB_ENV"
-          dotnet --info > artifacts/first-receive-integration/dotnet.txt
-          lscpu > artifacts/first-receive-integration/cpu.txt
-          python3 -m py_compile eng/preflight-735-prepare-native-rpc.py eng/preflight-735-native-rpc.py
-      - name: Preserve service, contracts, transport and timed loop on both revisions
+          git worktree add --detach "$RUNNER_TEMP/allocation-control" "$CONTROL_SHA"
+          echo "CONTROL_ROOT=$RUNNER_TEMP/allocation-control" >> "$GITHUB_ENV"
+          mkdir -p artifacts/allocation-attribution
+          cp artifacts/first-receive-integration/provenance.json artifacts/allocation-attribution/runtime-provenance.json
+          cp artifacts/first-receive-integration/candidate.patch artifacts/allocation-attribution/runtime-candidate.patch
+          dotnet --info > artifacts/allocation-attribution/dotnet.txt
+          lscpu > artifacts/allocation-attribution/cpu.txt
+          python3 -m py_compile eng/preflight-735-allocation-profile.py
+      - name: Build the pinned standalone trace reader and install the pinned trace collector
         run: |
           set -euo pipefail
-          python3 eng/preflight-735-prepare-native-rpc.py "$CONTROL_ROOT" "$PWD" artifacts/first-receive-integration
-      - name: Compile both minimal hosts before native publication
+          out="$PWD/artifacts/allocation-attribution"
+          tools="$RUNNER_TEMP/allocation-tools"
+          mkdir -p "$tools/parser"
+          cp eng/preflight-735-allocation-parser.cs "$tools/parser/Program.cs"
+          cat > "$tools/parser/AllocationParser.csproj" <<'XML'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>
+            <ItemGroup><PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.8" /></ItemGroup>
+          </Project>
+          XML
+          dotnet build "$tools/parser" -c Release > "$out/parser-build.log" 2>&1 || { cat "$out/parser-build.log"; exit 1; }
+          cat "$out/parser-build.log"
+          dotnet tool install dotnet-trace --version 10.0.745401 --tool-path "$tools/bin" > "$out/trace-install.log" 2>&1 || { cat "$out/trace-install.log"; exit 1; }
+          "$tools/bin/dotnet-trace" --version | tee "$out/trace-version.txt"
+          echo "TRACE=$tools/bin/dotnet-trace" >> "$GITHUB_ENV"
+          echo "PARSER=$tools/parser/bin/Release/net10.0/AllocationParser.dll" >> "$GITHUB_ENV"
+          cp "$tools/parser/AllocationParser.csproj" "$out/AllocationParser.csproj"
+          cp eng/preflight-735-allocation-parser.cs "$out/parser.cs"
+      - name: Prove trace reader excludes allocations outside the marked interval
         run: |
           set -euo pipefail
-          out=artifacts/first-receive-integration
-          dotnet build "$CONTROL_ROOT/test/SharpLink.FirstReceiveRpcEvidence" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > "$out/native-control-managed-build.log" 2>&1 || { cat "$out/native-control-managed-build.log"; exit 1; }
-          dotnet build test/SharpLink.FirstReceiveRpcEvidence -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > "$out/native-candidate-managed-build.log" 2>&1 || { cat "$out/native-candidate-managed-build.log"; exit 1; }
-          tail -n 6 "$out/native-control-managed-build.log"
-          tail -n 6 "$out/native-candidate-managed-build.log"
-      - name: Publish both actual NativeAOT binaries with original package and warning policies
+          fixture="$RUNNER_TEMP/allocation-calibration"
+          out="$PWD/artifacts/allocation-attribution/calibration"
+          mkdir -p "$fixture" "$out"
+          cp eng/preflight-735-allocation-window.cs "$fixture/Window.cs"
+          cat > "$fixture/Calibration.csproj" <<'XML'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup></Project>
+          XML
+          cat > "$fixture/Program.cs" <<'CS'
+          using SharpLink.Benchmarks;
+          for (var i = 0; i < 64; i++) GC.KeepAlive(new OutsideWindow[32768]);
+          AllocationWindow735.Log.WindowBegin();
+          var before = GC.GetTotalAllocatedBytes(true);
+          for (var i = 0; i < 256; i++) GC.KeepAlive(new InsideWindow[32768]);
+          var allocated = GC.GetTotalAllocatedBytes(true) - before;
+          AllocationWindow735.Log.WindowEnd(256, 256, allocated);
+          for (var i = 0; i < 64; i++) GC.KeepAlive(new OutsideWindow[32768]);
+          File.WriteAllText(args[0], "{\"operations\":256,\"itemCount\":1,\"validationFailures\":0,\"commit\":\"calibration\",\"transport\":\"none\",\"scenario\":\"window-exclusion\"}");
+          internal sealed class InsideWindow { }
+          internal sealed class OutsideWindow { }
+          CS
+          dotnet build "$fixture" -c Release > "$out/build.log" 2>&1 || { cat "$out/build.log"; exit 1; }
+          "$TRACE" collect --profile gc-verbose --providers SharpLink-735-AllocationWindow:0xffff:4 --output "$out/calibration.nettrace" -- dotnet "$fixture/bin/Release/net10.0/Calibration.dll" "$out/rpc.json" > "$out/collect.log" 2>&1 || { cat "$out/collect.log"; exit 1; }
+          dotnet "$PARSER" "$out/calibration.nettrace" "$out/rpc.json" "$out/types.json" | tee "$out/parse.log"
+          python3 - <<'PY'
+          import json,pathlib
+          row=json.loads(pathlib.Path('artifacts/allocation-attribution/calibration/types.json').read_text())
+          assert row['eventsLost']==0 and row['allocationTickSamples']>=100,row
+          assert any('InsideWindow' in t['type'] for t in row['types']),row
+          assert not any('OutsideWindow' in t['type'] for t in row['types']),row
+          print('PASS: only inside-window allocation type survives marker filtering.')
+          PY
+      - name: Add identical boundary markers to both original RPC harnesses
         run: |
           set -euo pipefail
-          out=artifacts/first-receive-integration
-          dotnet publish "$CONTROL_ROOT/test/SharpLink.FirstReceiveRpcEvidence" -c Release -r linux-x64 -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -o "$PWD/artifacts/native-rpc/control" > "$out/native-control-publish.log" 2>&1 || { cat "$out/native-control-publish.log"; exit 1; }
-          dotnet publish test/SharpLink.FirstReceiveRpcEvidence -c Release -r linux-x64 -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -o "$PWD/artifacts/native-rpc/candidate" > "$out/native-candidate-publish.log" 2>&1 || { cat "$out/native-candidate-publish.log"; exit 1; }
-          tail -n 8 "$out/native-control-publish.log"
-          tail -n 8 "$out/native-candidate-publish.log"
-          file artifacts/native-rpc/control/SharpLink.Benchmarks artifacts/native-rpc/candidate/SharpLink.Benchmarks | tee "$out/native-binary-formats.txt"
-          sha256sum artifacts/native-rpc/control/SharpLink.Benchmarks artifacts/native-rpc/candidate/SharpLink.Benchmarks > "$out/native-binary-sha256.txt"
-      - name: Verify runtime source identity after publication
+          python3 eng/preflight-735-allocation-profile.py prepare "$CONTROL_ROOT" "$PWD" artifacts/allocation-attribution
+          dotnet build "$CONTROL_ROOT/test/SharpLink.Benchmarks" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > artifacts/allocation-attribution/control-build.log 2>&1 || { cat artifacts/allocation-attribution/control-build.log; exit 1; }
+          dotnet build test/SharpLink.Benchmarks -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > artifacts/allocation-attribution/candidate-build.log 2>&1 || { cat artifacts/allocation-attribution/candidate-build.log; exit 1; }
+          tail -n 7 artifacts/allocation-attribution/control-build.log
+          tail -n 7 artifacts/allocation-attribution/candidate-build.log
+      - name: Collect fixed allocation-type diagnostics, not performance acceptance samples
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-allocation-profile.py measure "$CONTROL_ROOT" "$PWD" artifacts/allocation-attribution "$TRACE" "$PARSER" 2>&1 | tee artifacts/allocation-attribution/profile-driver.log
+      - name: Verify production-runtime sources were not altered by profiling
+        if: always()
         run: |
           python3 - <<'PY'
           import json,pathlib,subprocess
-          root=pathlib.Path('artifacts/first-receive-integration')
-          p=json.loads((root/'provenance.json').read_text())
-          for name,sha in p['source_blobs'].items():
+          p=json.loads(pathlib.Path('artifacts/allocation-attribution/runtime-provenance.json').read_text())
+          for name,expected in p['source_blobs'].items():
               actual=subprocess.check_output(['git','hash-object',name],text=True).strip()
-              assert actual==sha,(name,actual,sha)
-          print('All eight previously validated source/test blobs remain unchanged.')
+              assert actual==expected,(name,actual,expected)
+          print('All previously validated runtime/test blobs remain unchanged.')
           PY
-      - name: Measure real short and long generated RPC on both native revisions exactly once
-        run: |
-          set -euo pipefail
-          python3 eng/preflight-735-native-rpc.py artifacts/native-rpc/control/SharpLink.Benchmarks artifacts/native-rpc/candidate/SharpLink.Benchmarks "$(cat artifacts/first-receive-integration/candidate-tree.txt)" artifacts/first-receive-integration/native-e2e 2>&1 | tee artifacts/first-receive-integration/native-rpc-driver.log
-      - name: Retain source provenance, publication logs and all native timing outcomes
+      - name: Retain raw traces, window calibration and every diagnostic outcome
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: 735-first-receive-actual-native-rpc-${{ github.sha }}
-          path: artifacts/first-receive-integration
+          name: 735-receive-allocation-attribution-${{ github.sha }}
+          path: artifacts/allocation-attribution
           if-no-files-found: error
           retention-days: 30
