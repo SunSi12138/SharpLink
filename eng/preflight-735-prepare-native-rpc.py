@@ -11,7 +11,8 @@ if len(sys.argv) != 4:
 control, candidate, evidence = map(lambda x:pathlib.Path(x).resolve(),sys.argv[1:])
 CONTROL = 'e834d3c28c87ad496989af925515cf21babd308d'
 FILES = ('AllocationReadProbe.cs','BenchmarkContracts.cs','BenchmarkEnvironment.cs',
-         'BenchmarkService.cs','GeneratedAbiStreamingEvidenceRunner.cs')
+         'BenchmarkService.cs','GeneratedAbiStreamingEvidenceRunner.cs',
+         'ServerLifecycleTestExtensions.cs')
 
 project = '''<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -109,7 +110,7 @@ for root in (control,candidate):
 provenance=dict(control=CONTROL,original_harness_sha256=original,
     common_host_sha256={name:hashlib.sha256(text.encode()).hexdigest() for name,text in source.items()},
     measured_loop_sha256=timed_hash,
-    adaptation='only out-of-measurement JSON uses generated metadata; service, contracts, transport environment and measured loop retained',
+    adaptation='only out-of-measurement JSON uses generated metadata; service, contracts, transport environment, lifecycle helper and measured loop retained',
     comparison='two actual NativeAOT runtime revisions with one identical minimal generated RPC host')
 evidence.mkdir(parents=True,exist_ok=True)
 (evidence/'native-host-provenance.json').write_text(json.dumps(provenance,indent=2)+'\n')
