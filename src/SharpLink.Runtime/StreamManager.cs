@@ -288,12 +288,12 @@ internal sealed partial class StreamManager
                 var dispatcher = entry.Dispatcher;
                 var encodedByteCount = Math.Max(1, checked((int)payload.Length));
                 if ((_acceptBytes is not null ||
-                        _acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved) &&
+                        _acceptResolvedBytes is not null && entry.HasReceiveCreditLease) &&
                     dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
                 {
-                    if (_acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved)
+                    if (_acceptResolvedBytes is not null && entry.HasReceiveCreditLease)
                     {
-                        var receiveCreditLease = entry.ReceiveCreditLease;
+                        var receiveCreditLease = entry.GetReceiveCreditLease(requestId, streamId);
                         _acceptResolvedBytes(in receiveCreditLease, encodedByteCount);
                     }
                     else
@@ -834,9 +834,9 @@ internal sealed partial class StreamManager
             ThrowIfPeerTerminal(entry);
             if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
             {
-                if (_acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved)
+                if (_acceptResolvedBytes is not null && entry.HasReceiveCreditLease)
                 {
-                    var receiveCreditLease = entry.ReceiveCreditLease;
+                    var receiveCreditLease = entry.GetReceiveCreditLease(requestId, streamId);
                     _acceptResolvedBytes(in receiveCreditLease, originalByteCount);
                 }
                 else
@@ -845,9 +845,9 @@ internal sealed partial class StreamManager
             }
             else if (entry.Dispatcher is DiscardingStreamDispatcher discarding)
             {
-                if (_acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved)
+                if (_acceptResolvedBytes is not null && entry.HasReceiveCreditLease)
                 {
-                    var receiveCreditLease = entry.ReceiveCreditLease;
+                    var receiveCreditLease = entry.GetReceiveCreditLease(requestId, streamId);
                     _acceptResolvedBytes(in receiveCreditLease, originalByteCount);
                 }
                 else
@@ -902,8 +902,8 @@ internal sealed partial class StreamManager
             return;
 
         StreamManagerTestHooks.BeforeReceiveTerminalPublish?.Invoke(requestId, streamId);
-        if (_resolvedStreamCompleted is not null && entry.ReceiveCreditLease.IsResolved)
-            _resolvedStreamCompleted(entry.ReceiveCreditLease);
+        if (_resolvedStreamCompleted is not null && entry.HasReceiveCreditLease)
+            _resolvedStreamCompleted(entry.GetReceiveCreditLease(requestId, streamId));
         else
             _streamCompleted?.Invoke(requestId, streamId);
     }

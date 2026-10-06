@@ -32,7 +32,7 @@ internal sealed partial class StreamManager
                 try
                 {
                     receiveCreditLease = resolveReceiveCreditLease?.Invoke(requestId, streamId) ?? default;
-                    entry.ReceiveCreditLease = receiveCreditLease;
+                    entry.SetReceiveCreditLease(in receiveCreditLease);
                     if (streamId == 0)
                         Volatile.Write(ref _defaultDispatcher, entry);
                     else
@@ -43,7 +43,7 @@ internal sealed partial class StreamManager
                 {
                     // If insertion failed after resolution, retire only the generation this
                     // unpublished entry captured. Never re-resolve a route key during rollback.
-                    var lease = entry.ReceiveCreditLease;
+                    var lease = entry.GetReceiveCreditLease(requestId, streamId);
                     _ = lease.Owner?.FlushConsumed(in lease);
                     throw;
                 }
@@ -444,13 +444,33 @@ internal sealed partial class StreamManager
             StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease)
         {
             Dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-            ReceiveCreditLease = receiveCreditLease;
+            SetReceiveCreditLease(in receiveCreditLease);
             if (dispatcher is IStreamDispatchLease lease)
                 lease.BindDispatchState(this);
         }
 
         internal IStreamDispatcher Dispatcher { get; }
-        internal StreamFlowController.ResolvedReceiveCreditLease ReceiveCreditLease { get; set; }
+        // Capture ownership independently of the dispatcher, but do not duplicate
+        // keys already supplied by the acquired route or its retained retirement record.
+        // Never reconstruct identity from mutable pooled ReceiveState fields.
+        private StreamFlowController? _receiveCreditOwner;
+        private object? _receiveCreditState;
+        private long _receiveCreditGeneration;
+
+        internal bool HasReceiveCreditLease => _receiveCreditOwner is not null;
+
+        internal void SetReceiveCreditLease(in StreamFlowController.ResolvedReceiveCreditLease lease)
+        {
+            _receiveCreditOwner = lease.Owner;
+            _receiveCreditState = lease.State;
+            _receiveCreditGeneration = lease.Generation;
+        }
+
+        internal StreamFlowController.ResolvedReceiveCreditLease GetReceiveCreditLease(
+            long requestId, ushort streamId)
+            => _receiveCreditOwner is { } owner
+                ? new(owner, requestId, streamId, _receiveCreditState!, _receiveCreditGeneration)
+                : default;
 
         // A detached pooled dispatcher is still pinned while final receive cleanup is
         // running, even after the final DATA acquisition has decremented the count.
