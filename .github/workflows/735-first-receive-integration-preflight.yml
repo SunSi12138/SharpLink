@@ -1,4 +1,4 @@
-name: 735 First Receive Single Await Preflight
+name: 735 Actual Native First Receive RPC Evidence
 
 on:
   push:
@@ -6,171 +6,13 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: 735-first-receive-single-await
+  group: 735-actual-native-first-receive-rpc
   cancel-in-progress: false
 
 jobs:
-  correctness:
+  native-rpc:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    env:
-      DOTNET_PROCESSOR_COUNT: '4'
-      TUNIT_MAX_PARALLEL_TESTS: '8'
-      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: ./.github/actions/setup-dotnet
-      - name: Reconstruct the exact previous integration and install one unchanged allocation control
-        run: |
-          set -euo pipefail
-          python3 eng/preflight-735-first-receive-apply.py
-          test "$(git hash-object eng/preflight-735-first-await-tests.cs)" = fc155ce22409237a4f2077fccb0127be40c87d76
-          cp eng/preflight-735-first-await-tests.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveAwaitAllocationTests.cs
-          out=artifacts/first-receive-integration
-          dotnet --info > "$out/dotnet.txt"
-          lscpu > "$out/cpu.txt"
-          python3 -m py_compile eng/preflight-735-first-await-apply.py
-          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/prior-build.log"
-      - name: Require both old first-delivery paths to expose redundant state-machine allocation
-        run: |
-          out=artifacts/first-receive-integration
-          export SHARPLINK_FIRST_AWAIT_ALLOCATION_DIRECTORY="$PWD/$out/prior-allocation"
-          set +e
-          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerFirstReceiveAwaitAllocationTests/*' > "$out/prior-expected-failure.log" 2>&1
-          code=$?
-          set -e
-          test "$code" -ne 0
-          python3 - <<'PY'
-          import pathlib,re
-          text=pathlib.Path('artifacts/first-receive-integration/prior-expected-failure.log').read_text()
-          text=re.sub(r'\x1b\[[0-9;]*m','',text)
-          print(text)
-          assert re.search(r'total:\s+2\b',text),text
-          assert re.search(r'failed:\s+2\b',text),text
-          assert 'pending first DATA adds a redundant completion state machine' in text,text
-          PY
-      - name: Apply only first-publication and acquisition-release fusion
-        run: |
-          set -euo pipefail
-          python3 eng/preflight-735-first-await-apply.py
-          touch artifacts/first-receive-integration/single-await-applied
-      - name: Compile candidate and preserve first-frame contracts
-        run: |
-          set -euo pipefail
-          out=artifacts/first-receive-integration
-          export SHARPLINK_FIRST_AWAIT_ALLOCATION_DIRECTORY="$PWD/$out/candidate-allocation"
-          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/default-build.log"
-          for suite in StreamManagerFirstReceiveAwaitAllocationTests StreamManagerFirstReceiveIntegrationTests; do
-            dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter "/*/*/$suite/*" 2>&1 | tee "$out/$suite.log"
-          done
-      - name: Verify measured savings and exact ownership totals
-        run: |
-          python3 - <<'PY'
-          import csv,json,pathlib
-          root=pathlib.Path('artifacts/first-receive-integration')
-          result=[]
-          for stream in (0,7):
-              groups={}
-              for label in ('prior','candidate'):
-                  with (root/f'{label}-allocation'/f'stream-{stream}.csv').open() as f: rows=list(csv.DictReader(f))
-                  assert len(rows)==1,rows
-                  groups[label]={k:int(v) for k,v in rows[0].items()}
-                  assert groups[label]['count']==64,groups
-              old,new=groups['prior'],groups['candidate']
-              assert old['first_bytes']>old['following_bytes'],groups
-              assert new['first_bytes']<=new['following_bytes'],groups
-              assert new['following_bytes']==old['following_bytes'],groups
-              assert new['first_bytes']<old['first_bytes'],groups
-              result.append(dict(stream=stream,prior=old,candidate=new,
-                  saved_bytes_per_pending_first=(old['first_bytes']-new['first_bytes'])/64))
-          text=json.dumps(result,indent=2)
-          (root/'await-allocation-comparison.json').write_text(text+'\n')
-          print(text)
-          PY
-      - name: Original engineering gates
-        run: |
-          set -euo pipefail
-          out=artifacts/first-receive-integration
-          dotnet format whitespace test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore --verify-no-changes --include src/SharpLink.Runtime/StreamManager.cs src/SharpLink.Runtime/StreamManager.FirstReceive.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveAwaitAllocationTests.cs 2>&1 | tee "$out/format.log"
-          python3 eng/check-project-reference-boundaries.py 2>&1 | tee "$out/references.log"
-          bash eng/check-maintainability.sh 2>&1 | tee "$out/maintainability.log"
-      - name: Complete default runtime tests without filters or retries
-        run: |
-          set -euo pipefail
-          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee artifacts/first-receive-integration/default-unit.log
-      - name: Independently retain complete experimental validation
-        if: always()
-        run: |
-          set -euo pipefail
-          out=artifacts/first-receive-integration
-          test -f "$out/single-await-applied"
-          python3 eng/test-ready-writer.py
-          python3 eng/test-ready-writer-budget.py
-          python3 eng/test-ready-writer-collection.py
-          python3 eng/test-ready-writer-native.py
-          python3 eng/prepare-ready-writer.py --apply
-          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/writer-build.log"
-          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test 2>&1 | tee "$out/writer-self-test.log"
-          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/experimental-build.log"
-          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee "$out/experimental-unit.log"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: 735-first-await-correctness-${{ github.sha }}
-          path: artifacts/first-receive-integration
-          if-no-files-found: error
-          retention-days: 30
-
-  native-generated-rpc:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      DOTNET_PROCESSOR_COUNT: '4'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: ./.github/actions/setup-dotnet
-      - name: Apply the same source-pinned candidate without writer research hooks
-        run: |
-          set -euo pipefail
-          python3 eng/preflight-735-first-receive-apply.py
-          cp eng/preflight-735-first-await-tests.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveAwaitAllocationTests.cs
-          python3 eng/preflight-735-first-await-apply.py
-      - name: Publish actual generated NativeAOT RPC smoke host
-        run: |
-          set -euo pipefail
-          dotnet publish test/SharpLink.AotSmoke -c Release -r linux-x64 -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -o artifacts/first-receive-native 2>&1 | tee artifacts/first-receive-integration/native-build.log
-      - name: Execute both production transports once
-        run: |
-          set -uo pipefail
-          out=artifacts/first-receive-integration
-          artifacts/first-receive-native/SharpLink.AotSmoke > "$out/native-tcp.log" 2>&1
-          tcp=$?
-          artifacts/first-receive-native/SharpLink.AotSmoke sharedmemory --shm-name "first-await-${GITHUB_RUN_ID}" > "$out/native-sharedmemory.log" 2>&1
-          shm=$?
-          printf 'tcp,%s\nsharedmemory,%s\n' "$tcp" "$shm" > "$out/native-exits.csv"
-          cat "$out/native-tcp.log" "$out/native-sharedmemory.log"
-          test "$tcp" = 0 && test "$shm" = 0 && grep -q 'AOT_SMOKE_PASS transport=tcp' "$out/native-tcp.log" && grep -q 'AOT_SMOKE_PASS transport=sharedmemory' "$out/native-sharedmemory.log"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: 735-first-await-native-${{ github.sha }}
-          path: artifacts/first-receive-integration
-          if-no-files-found: error
-          retention-days: 30
-
-  rpc-screen:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        pgo: [0, 1]
     env:
       DOTNET_PROCESSOR_COUNT: '4'
       CONTROL_SHA: e834d3c28c87ad496989af925515cf21babd308d
@@ -180,31 +22,61 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-dotnet
-      - name: Apply candidate and create exact unchanged production control
+      - name: Reconstruct exactly the runtime already validated in single-await preflight
         run: |
           set -euo pipefail
           python3 eng/preflight-735-first-receive-apply.py
           cp eng/preflight-735-first-await-tests.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveAwaitAllocationTests.cs
           python3 eng/preflight-735-first-await-apply.py
-          git worktree add --detach "$RUNNER_TEMP/first-receive-control" "$CONTROL_SHA"
-          echo "CONTROL_ROOT=$RUNNER_TEMP/first-receive-control" >> "$GITHUB_ENV"
+          test "$(git hash-object src/SharpLink.Runtime/StreamManager.FirstReceive.cs)" = 5275251ea976ce2bf57575930e13ff4e7212af95
+          test "$(git hash-object src/SharpLink.Runtime/StreamManager.cs)" = c60defe06f14079d862a9efb73b0fb39daa4ae8f
+          git worktree add --detach "$RUNNER_TEMP/native-first-receive-control" "$CONTROL_SHA"
+          echo "CONTROL_ROOT=$RUNNER_TEMP/native-first-receive-control" >> "$GITHUB_ENV"
           dotnet --info > artifacts/first-receive-integration/dotnet.txt
           lscpu > artifacts/first-receive-integration/cpu.txt
-      - name: Build identical generated-RPC measurement hosts
+          python3 -m py_compile eng/preflight-735-prepare-native-rpc.py eng/preflight-735-native-rpc.py
+      - name: Preserve service, contracts, transport and timed loop on both revisions
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-prepare-native-rpc.py "$CONTROL_ROOT" "$PWD" artifacts/first-receive-integration
+      - name: Compile both minimal hosts before native publication
         run: |
           set -euo pipefail
           out=artifacts/first-receive-integration
-          cmp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$CONTROL_ROOT/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
-          dotnet build "$CONTROL_ROOT/test/SharpLink.Benchmarks" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/control-build.log"
-          dotnet build test/SharpLink.Benchmarks -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/candidate-build.log"
-      - name: Unchanged fixed short and long RPC population
+          dotnet build "$CONTROL_ROOT/test/SharpLink.FirstReceiveRpcEvidence" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > "$out/native-control-managed-build.log" 2>&1 || { cat "$out/native-control-managed-build.log"; exit 1; }
+          dotnet build test/SharpLink.FirstReceiveRpcEvidence -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > "$out/native-candidate-managed-build.log" 2>&1 || { cat "$out/native-candidate-managed-build.log"; exit 1; }
+          tail -n 6 "$out/native-control-managed-build.log"
+          tail -n 6 "$out/native-candidate-managed-build.log"
+      - name: Publish both actual NativeAOT binaries with original package and warning policies
         run: |
           set -euo pipefail
-          python3 eng/preflight-735-first-receive-rpc.py "$CONTROL_ROOT" "$PWD" artifacts/first-receive-integration/e2e --pgo '${{ matrix.pgo }}' 2>&1 | tee artifacts/first-receive-integration/rpc-driver.log
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          out=artifacts/first-receive-integration
+          dotnet publish "$CONTROL_ROOT/test/SharpLink.FirstReceiveRpcEvidence" -c Release -r linux-x64 -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -o "$PWD/artifacts/native-rpc/control" > "$out/native-control-publish.log" 2>&1 || { cat "$out/native-control-publish.log"; exit 1; }
+          dotnet publish test/SharpLink.FirstReceiveRpcEvidence -c Release -r linux-x64 -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -o "$PWD/artifacts/native-rpc/candidate" > "$out/native-candidate-publish.log" 2>&1 || { cat "$out/native-candidate-publish.log"; exit 1; }
+          tail -n 8 "$out/native-control-publish.log"
+          tail -n 8 "$out/native-candidate-publish.log"
+          file artifacts/native-rpc/control/SharpLink.Benchmarks artifacts/native-rpc/candidate/SharpLink.Benchmarks | tee "$out/native-binary-formats.txt"
+          sha256sum artifacts/native-rpc/control/SharpLink.Benchmarks artifacts/native-rpc/candidate/SharpLink.Benchmarks > "$out/native-binary-sha256.txt"
+      - name: Verify runtime source identity after publication
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,subprocess
+          root=pathlib.Path('artifacts/first-receive-integration')
+          p=json.loads((root/'provenance.json').read_text())
+          for name,sha in p['source_blobs'].items():
+              actual=subprocess.check_output(['git','hash-object',name],text=True).strip()
+              assert actual==sha,(name,actual,sha)
+          print('All eight previously validated source/test blobs remain unchanged.')
+          PY
+      - name: Measure real short and long generated RPC on both native revisions exactly once
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-native-rpc.py artifacts/native-rpc/control/SharpLink.Benchmarks artifacts/native-rpc/candidate/SharpLink.Benchmarks "$(cat artifacts/first-receive-integration/candidate-tree.txt)" artifacts/first-receive-integration/native-e2e 2>&1 | tee artifacts/first-receive-integration/native-rpc-driver.log
+      - name: Retain source provenance, publication logs and all native timing outcomes
         if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: 735-first-await-rpc-pgo${{ matrix.pgo }}-${{ github.sha }}
+          name: 735-first-receive-actual-native-rpc-${{ github.sha }}
           path: artifacts/first-receive-integration
           if-no-files-found: error
           retention-days: 30
