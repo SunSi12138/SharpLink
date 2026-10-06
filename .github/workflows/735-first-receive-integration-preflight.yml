@@ -1,0 +1,151 @@
+name: 735 First Receive Production Integration Preflight
+
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: 735-first-receive-production-preflight
+  cancel-in-progress: false
+
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Reconstruct and verify the exact locally reviewed source patch
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-first-receive-apply.py
+          dotnet --info > artifacts/first-receive-integration/dotnet.txt
+          lscpu > artifacts/first-receive-integration/cpu.txt
+      - name: Build and check actual first-frame route integration
+        run: |
+          set -euo pipefail
+          out=artifacts/first-receive-integration
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/default-build.log"
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerFirstReceiveIntegrationTests/*' 2>&1 | tee "$out/new-contracts.log"
+      - name: Original engineering gates
+        run: |
+          set -euo pipefail
+          out=artifacts/first-receive-integration
+          dotnet format whitespace test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore --verify-no-changes --include src/SharpLink.Runtime/RpcSession.cs src/SharpLink.Runtime/RpcSession.FirstReceive.cs src/SharpLink.Runtime/StreamManager.cs src/SharpLink.Runtime/StreamManager.Routing.cs src/SharpLink.Runtime/StreamManager.FirstReceive.cs src/SharpLink.Runtime/StreamFlowController.ReceiveAdmission.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveIntegrationTests.cs 2>&1 | tee "$out/format.log"
+          python3 eng/check-project-reference-boundaries.py 2>&1 | tee "$out/references.log"
+          bash eng/check-maintainability.sh 2>&1 | tee "$out/maintainability.log"
+      - name: Complete default runtime tests without filters or retries
+        run: |
+          set -euo pipefail
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee artifacts/first-receive-integration/default-unit.log
+      - name: Retain independent experimental validation even after a default-test failure
+        if: always()
+        run: |
+          set -euo pipefail
+          test -s artifacts/first-receive-integration/provenance.json
+          out=artifacts/first-receive-integration
+          python3 eng/test-ready-writer.py
+          python3 eng/test-ready-writer-budget.py
+          python3 eng/test-ready-writer-collection.py
+          python3 eng/test-ready-writer-native.py
+          python3 eng/prepare-ready-writer.py --apply
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/writer-build.log"
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test 2>&1 | tee "$out/writer-self-test.log"
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/experimental-build.log"
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee "$out/experimental-unit.log"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 735-first-receive-integration-correctness-${{ github.sha }}
+          path: artifacts/first-receive-integration
+          if-no-files-found: error
+          retention-days: 30
+
+  native-generated-rpc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Apply the identical production integration, without writer research hooks
+        run: python3 eng/preflight-735-first-receive-apply.py
+      - name: Publish actual generated NativeAOT RPC smoke host
+        run: |
+          set -euo pipefail
+          dotnet publish test/SharpLink.AotSmoke -c Release -r linux-x64 -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -o artifacts/first-receive-native 2>&1 | tee artifacts/first-receive-integration/native-build.log
+      - name: Run both production transports once and retain all outcomes
+        run: |
+          set -uo pipefail
+          out=artifacts/first-receive-integration
+          artifacts/first-receive-native/SharpLink.AotSmoke > "$out/native-tcp.log" 2>&1
+          tcp=$?
+          artifacts/first-receive-native/SharpLink.AotSmoke sharedmemory --shm-name "first-receive-${GITHUB_RUN_ID}" > "$out/native-sharedmemory.log" 2>&1
+          shm=$?
+          printf 'tcp,%s\nsharedmemory,%s\n' "$tcp" "$shm" > "$out/native-exits.csv"
+          cat "$out/native-tcp.log" "$out/native-sharedmemory.log"
+          test "$tcp" = 0 && test "$shm" = 0 && grep -q 'AOT_SMOKE_PASS transport=tcp' "$out/native-tcp.log" && grep -q 'AOT_SMOKE_PASS transport=sharedmemory' "$out/native-sharedmemory.log"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 735-first-receive-integration-native-${{ github.sha }}
+          path: artifacts/first-receive-integration
+          if-no-files-found: error
+          retention-days: 30
+
+  rpc-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        pgo: [0, 1]
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      CONTROL_SHA: e834d3c28c87ad496989af925515cf21babd308d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Apply source-pinned candidate and create exact unchanged control
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-first-receive-apply.py
+          git worktree add --detach "$RUNNER_TEMP/first-receive-control" "$CONTROL_SHA"
+          echo "CONTROL_ROOT=$RUNNER_TEMP/first-receive-control" >> "$GITHUB_ENV"
+          dotnet --info > artifacts/first-receive-integration/dotnet.txt
+          lscpu > artifacts/first-receive-integration/cpu.txt
+      - name: Build identical generated-RPC measurement hosts
+        run: |
+          set -euo pipefail
+          out=artifacts/first-receive-integration
+          cmp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$CONTROL_ROOT/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
+          dotnet build "$CONTROL_ROOT/test/SharpLink.Benchmarks" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/control-build.log"
+          dotnet build test/SharpLink.Benchmarks -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true 2>&1 | tee "$out/candidate-build.log"
+      - name: Fixed short and long RPC population; no retry or socket override
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-first-receive-rpc.py "$CONTROL_ROOT" "$PWD" artifacts/first-receive-integration/e2e --pgo '${{ matrix.pgo }}' 2>&1 | tee artifacts/first-receive-integration/rpc-driver.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 735-first-receive-integration-rpc-pgo${{ matrix.pgo }}-${{ github.sha }}
+          path: artifacts/first-receive-integration
+          if-no-files-found: error
+          retention-days: 30
