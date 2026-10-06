@@ -1,4 +1,4 @@
-name: 735 Compact Receive Route Preflight
+name: 735 Inline Compact Route Preflight
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: 735-compact-route-preflight
+  group: 735-inline-compact-route-preflight
   cancel-in-progress: false
 
 jobs:
@@ -20,34 +20,39 @@ jobs:
       DOTNET_PROCESSOR_COUNT: '4'
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       CONTROL_SHA: e834d3c28c87ad496989af925515cf21babd308d
+      UNHINTED_SHA: d567124b749cbf6a7ef070a7987a3815610b5b2b
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
       - uses: ./.github/actions/setup-dotnet
-      - name: Pin unchanged production control and experimental inventory
+      - name: Pin unchanged production control and rejected compact comparison
         run: |
           set -euo pipefail
           mkdir -p artifacts/compact-route
           git rev-parse HEAD > artifacts/compact-route/preflight-head.txt
           git merge-base --is-ancestor "$CONTROL_SHA" HEAD
+          git merge-base --is-ancestor "$UNHINTED_SHA" HEAD
           git diff --exit-code "$CONTROL_SHA" -- src
           printf '%s\n' "$CONTROL_SHA" > artifacts/compact-route/control.txt
+          printf '%s\n' "$UNHINTED_SHA" > artifacts/compact-route/unhinted-control.txt
           dotnet --info > artifacts/compact-route/dotnet.txt
           lscpu > artifacts/compact-route/cpu.txt
-          python3 -m py_compile eng/preflight-735-compact-route.py
+          python3 -m py_compile eng/preflight-735-compact-route.py eng/preflight-735-inline-compact-route.py
           test "$(git hash-object test/SharpLink.UnitTests/Runtime/StreamManagerCompactReceiveHandleTests.cs)" = dbaa0973d6521906208810efec26e266d45a0d5b
           git worktree add --detach "$RUNNER_TEMP/compact-route-control" "$CONTROL_SHA"
+          git worktree add --detach "$RUNNER_TEMP/unhinted-route-control" "$UNHINTED_SHA"
           echo "CONTROL_ROOT=$RUNNER_TEMP/compact-route-control" >> "$GITHUB_ENV"
-      - name: Compile unchanged control and preserve existing route regressions
+          echo "UNHINTED_ROOT=$RUNNER_TEMP/unhinted-route-control" >> "$GITHUB_ENV"
+      - name: Compile unchanged control and preserve route regressions
         run: |
           set -euo pipefail
           dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/compact-route/control-build.log
           export SHARPLINK_ROUTE_FOOTPRINT_DIRECTORY="$PWD/artifacts/compact-route/control"
           dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerPackedFlagsTests/*' 2>&1 | tee artifacts/compact-route/control-flags.log
           dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/StreamManagerLazyRouteDictionaryTests/*' 2>&1 | tee artifacts/compact-route/control-dictionary.log
-      - name: Require the intended storage regression and all unchanged identity controls
+      - name: Require the intended storage regression and unchanged identity controls
         run: |
           export SHARPLINK_ROUTE_FOOTPRINT_DIRECTORY="$PWD/artifacts/compact-route/control"
           set +e
@@ -65,14 +70,14 @@ jobs:
           assert re.search(r'succeeded:\s+8\b',text),text
           assert 'route entry must not store duplicate full receive-lease key metadata' in text,text
           PY
-      - name: Apply only compact route identity to disposable checkout
+      - name: Apply compact identity with inline reconstruction in disposable checkout
         run: |
           set -euo pipefail
-          python3 eng/preflight-735-compact-route.py | tee artifacts/compact-route/transform.log
+          python3 eng/preflight-735-inline-compact-route.py | tee artifacts/compact-route/transform.log
           git add src/SharpLink.Runtime/StreamManager.cs src/SharpLink.Runtime/StreamManager.Routing.cs
-          git write-tree > artifacts/compact-route/candidate-tree.txt
+          git write-tree | tee artifacts/compact-route/candidate-tree.txt
           git diff --cached --binary > artifacts/compact-route/candidate.patch
-      - name: Compile candidate and check both storage and lifecycle contracts
+      - name: Compile candidate and check storage and lifecycle contracts
         run: |
           set -euo pipefail
           dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/compact-route/candidate-build.log
@@ -80,7 +85,7 @@ jobs:
           for suite in StreamManagerPackedFlagsTests StreamManagerLazyRouteDictionaryTests StreamManagerCompactReceiveHandleTests; do
             dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter "/*/*/$suite/*" 2>&1 | tee "artifacts/compact-route/candidate-$suite.log"
           done
-      - name: Require real allocation savings with and without receive callbacks
+      - name: Require allocation savings with and without receive callbacks
         run: |
           python3 - <<'PY'
           import csv,json,pathlib
@@ -106,17 +111,41 @@ jobs:
           dotnet format whitespace test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore --verify-no-changes --include src/SharpLink.Runtime/StreamManager.cs src/SharpLink.Runtime/StreamManager.Routing.cs test/SharpLink.UnitTests/Runtime/StreamManagerCompactReceiveHandleTests.cs 2>&1 | tee artifacts/compact-route/format.log
           python3 eng/check-project-reference-boundaries.py 2>&1 | tee artifacts/compact-route/references.log
           bash eng/check-maintainability.sh 2>&1 | tee artifacts/compact-route/maintainability.log
-      - name: Complete default runtime tests without skips or filters
+      - name: Complete default runtime tests without filters or skips
         run: |
           set -euo pipefail
           dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee artifacts/compact-route/default-unit.log
-      - name: Build identical real-RPC measurement hosts
+      - name: Build identical real-RPC measurement and code-generation controls
         run: |
           set -euo pipefail
           cmp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$CONTROL_ROOT/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
+          cmp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$UNHINTED_ROOT/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
           dotnet build "$CONTROL_ROOT/test/SharpLink.Benchmarks" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/compact-route/control-benchmark-build.log
+          dotnet build "$UNHINTED_ROOT/test/SharpLink.Benchmarks" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/compact-route/unhinted-benchmark-build.log
           dotnet build test/SharpLink.Benchmarks -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true 2>&1 | tee artifacts/compact-route/candidate-benchmark-build.log
-      - name: Predeclared short and long real-RPC controls without retries
+      - name: Separate diagnostic processes capture actual optimized dispatch code
+        run: |
+          set -euo pipefail
+          root="$PWD/artifacts/compact-route/codegen"
+          mkdir -p "$root"
+          for variant in control unhinted candidate; do
+            source="$CONTROL_ROOT"; identity="$CONTROL_SHA"
+            if [[ "$variant" == unhinted ]]; then source="$UNHINTED_ROOT"; identity="$UNHINTED_SHA"; fi
+            if [[ "$variant" == candidate ]]; then source="$PWD"; identity="$(cat artifacts/compact-route/candidate-tree.txt)"; fi
+            env SHARPLINK_BENCHMARK_SHA="$identity" DOTNET_ReadyToRun=0 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 DOTNET_TC_QuickJitForLoops=1 DOTNET_JitDisasm='DispatchChunkAsync GetReceiveCreditLease' DOTNET_JitDisasmOnlyOptimized=1 DOTNET_JitDisasmDiffable=1 DOTNET_JitStdOutFile="$root/$variant.asm" taskset -c 0-3 dotnet "$source/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll" --generated-abi-streaming-evidence Server100x16 30 5 200000 "$root/$variant-diagnostic-only.json" sharedmemory > "$root/$variant.log" 2>&1
+          done
+          python3 - <<'PY'
+          import pathlib
+          for variant in ('control','unhinted','candidate'):
+              path=pathlib.Path('artifacts/compact-route/codegen')/f'{variant}.asm'
+              text=path.read_text()
+              assert 'Assembly listing' in text,(variant,'missing code generation output')
+              print('CODEGEN',variant)
+              for line in text.splitlines():
+                  if any(token in line for token in ('Assembly listing','Total bytes','GetReceiveCreditLease','optimized using','inlinees')):
+                      print(line)
+          PY
+      - name: Uninstrumented fixed 24-process RPC comparison without retries
         run: |
           set -euo pipefail
           root="$PWD/artifacts/compact-route/e2e"
@@ -129,12 +158,8 @@ jobs:
             for transport in tcp sharedmemory; do
               for scenario in Server1x16 Server100x16; do
                 for label in $order; do
-                  source="$CONTROL_ROOT"
-                  identity="$CONTROL_SHA"
-                  if [[ "$label" == candidate ]]; then
-                    source="$PWD"
-                    identity="$(cat artifacts/compact-route/candidate-tree.txt)"
-                  fi
+                  source="$CONTROL_ROOT"; identity="$CONTROL_SHA"
+                  if [[ "$label" == candidate ]]; then source="$PWD"; identity="$(cat artifacts/compact-route/candidate-tree.txt)"; fi
                   name="$label-$transport-$scenario-r$repeat"
                   set +e
                   env SHARPLINK_BENCHMARK_SHA="$identity" DOTNET_ReadyToRun=0 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 DOTNET_TC_QuickJitForLoops=1 taskset -c 0-3 dotnet "$source/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll" --generated-abi-streaming-evidence "$scenario" 30 5 200000 "$root/$name.json" "$transport" > "$root/$name.log" 2>&1
@@ -147,7 +172,7 @@ jobs:
             done
           done
           test "$failures" = 0
-      - name: Verify all RPC controls and retain negative results
+      - name: Verify complete RPC controls with per-launch timing and allocation
         if: always()
         run: |
           python3 - <<'PY'
@@ -166,9 +191,12 @@ jobs:
                   med=lambda label,key:statistics.median(x[key] for x in groups[label])
                   results.append(dict(transport=transport,scenario=scenario,
                       throughput_pct=(med('candidate','throughputItemsPerSecond')/med('control','throughputItemsPerSecond')-1)*100,
+                      cpu_time_pct=(med('candidate','cpuUsPerOperation')/med('control','cpuUsPerOperation')-1)*100,
                       alloc_delta=med('candidate','allocatedBytesPerItem')-med('control','allocatedBytesPerItem'),
                       allocation_control=[x['allocatedBytesPerItem'] for x in groups['control']],
-                      allocation_candidate=[x['allocatedBytesPerItem'] for x in groups['candidate']]))
+                      allocation_candidate=[x['allocatedBytesPerItem'] for x in groups['candidate']],
+                      throughput_control=[x['throughputItemsPerSecond'] for x in groups['control']],
+                      throughput_candidate=[x['throughputItemsPerSecond'] for x in groups['candidate']]))
           text=json.dumps(results,indent=2)
           (root/'comparison.json').write_text(text+'\n')
           print(text)
@@ -190,11 +218,11 @@ jobs:
           set -euo pipefail
           dotnet publish test/SharpLink.ReadyWriterAotEvidence -c Release -r linux-x64 -p:Platform=AnyCPU -o artifacts/compact-native 2>&1 | tee artifacts/compact-route/native-build.log
           artifacts/compact-native/SharpLink.Benchmarks --ready-writer-self-test 2>&1 | tee artifacts/compact-route/native-self-test.log
-      - name: Retain control, source patch, all outcomes and raw evidence
+      - name: Retain all outcomes including the rejected comparison and code generation
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: 735-compact-route-preflight-${{ github.sha }}
+          name: 735-inline-compact-route-preflight-${{ github.sha }}
           path: artifacts/compact-route
           if-no-files-found: error
           retention-days: 30
