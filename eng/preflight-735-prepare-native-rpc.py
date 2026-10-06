@@ -23,6 +23,7 @@ project = '''<Project Sdk="Microsoft.NET.Sdk">
     <PublishAot>true</PublishAot>
     <IsPackable>false</IsPackable>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <DefineConstants Condition="'$(Configuration)' == 'Release'">$(DefineConstants);SHARPLINK_RELEASE_BUILD</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
@@ -65,6 +66,10 @@ internal static class NativeRpcProgram
     }
 }
 '''
+global_imports = '''global using System;
+global using System.Threading;
+global using System.Threading.Tasks;
+'''
 
 def replace(text,old,new,count):
     if text.count(old)!=count:
@@ -99,7 +104,8 @@ for name in FILES:
         timed_hash=hashlib.sha256(timed.encode()).hexdigest()
     source[name]=text
 source.update({'SharpLink.FirstReceiveRpcEvidence.csproj':project,
-               'NativeRpcJsonContext.cs':context,'Program.cs':program})
+               'NativeRpcJsonContext.cs':context,'Program.cs':program,
+               'NativeRpcGlobalUsings.cs':global_imports})
 for root in (control,candidate):
     output=root/'test/SharpLink.FirstReceiveRpcEvidence'
     output.mkdir(parents=True,exist_ok=True)
@@ -110,7 +116,7 @@ for root in (control,candidate):
 provenance=dict(control=CONTROL,original_harness_sha256=original,
     common_host_sha256={name:hashlib.sha256(text.encode()).hexdigest() for name,text in source.items()},
     measured_loop_sha256=timed_hash,
-    adaptation='only out-of-measurement JSON uses generated metadata; service, contracts, transport environment, lifecycle helper and measured loop retained',
+    adaptation='only out-of-measurement JSON uses generated metadata; service, contracts, transport environment, lifecycle helper and measured loop retained; explicit compile-time global imports',
     comparison='two actual NativeAOT runtime revisions with one identical minimal generated RPC host')
 evidence.mkdir(parents=True,exist_ok=True)
 (evidence/'native-host-provenance.json').write_text(json.dumps(provenance,indent=2)+'\n')
