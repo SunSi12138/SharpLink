@@ -1,9 +1,9 @@
 diff --git a/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs b/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs
 new file mode 100644
-index 00000000..6d396a27
+index 00000000..2f77a64f
 --- /dev/null
 +++ b/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs
-@@ -0,0 +1,528 @@
+@@ -0,0 +1,529 @@
 +using System.IO.Pipelines;
 +using System.Reflection;
 +using System.Runtime.CompilerServices;
@@ -162,7 +162,8 @@ index 00000000..6d396a27
 +            {
 +                fixture.Time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
 +                cancellation.Cancel();
-+            } : null,
++            }
++            : null,
 +            BeforeSend = cancel ? null : () =>
 +            {
 +                fixture.Time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));

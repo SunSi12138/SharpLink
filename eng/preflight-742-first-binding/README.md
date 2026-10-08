@@ -12,8 +12,8 @@ All original helpers, measurement sources, budgets and validators stay unchanged
 
 - G2 production: `398d484fb5b8ab8adb75a74db7d577d929d2dc77`
 - A production: `4cb4ce7a13b06c3a6f3213e30215b6769ed49f90`
-- G2 with identical tests: `003b74dd145b2263bd505c814a67f3c203b028d2`
-- A with identical tests: `19f7089b4984d7c14fbf3bf2a84bb973cd96cb88`
+- G2 with identical tests: `1edc4423f5157a8fb92cb7074349a25badc38030`
+- A with identical tests: `a7cb5c6ef89222a82ca3b1e7a356345ee7b42902`
 
 Production changes only the first-binding await in `ClientConnection` and the
 generated server pump. Direct completed success consumes the result directly;
@@ -47,6 +47,13 @@ bounded return-to-baseline wait; full timer drainage is required after disposal.
 All 58 cases, production bytes, suite populations, and safety/codegen gates remain
 unchanged. The retry must pass both complete arms; this correction is not a pass
 or exclusion of the failed run.
+
+The second run, `37842691039`, passed G2's full 2186-case suite, all 58 focused
+cases and all four allocation checks. A built with zero warnings or errors, then
+stopped on one test-file whitespace diagnostic before its tests and later gates.
+The next input changes only that space to a newline plus indentation; test logic,
+populations, production and every gate stay unchanged. Both prior runs remain
+historical evidence; the retry must still complete all required gates.
 
 ## Matched actual JIT roots
 

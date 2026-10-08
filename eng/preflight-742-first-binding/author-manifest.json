@@ -2,8 +2,8 @@
   "recipe_commit": "06b737df0d9aab66caed9c446a572b3a8ce4efae",
   "base_tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
   "production_tree": "4cb4ce7a13b06c3a6f3213e30215b6769ed49f90",
-  "candidate_tree": "19f7089b4984d7c14fbf3bf2a84bb973cd96cb88",
-  "baseline_tests_tree": "003b74dd145b2263bd505c814a67f3c203b028d2",
+  "candidate_tree": "a7cb5c6ef89222a82ca3b1e7a356345ee7b42902",
+  "baseline_tests_tree": "1edc4423f5157a8fb92cb7074349a25badc38030",
   "new_test_cases": 58,
   "original_suite_cases": 2128,
   "expected_overlay_suite_cases": 2186,
@@ -13,8 +13,8 @@
       "bytes": 3720
     },
     "tests.patch": {
-      "sha256": "94a71e0362de702adc85d484140639209107a80ba3323e49e3f31dfa8dacbb7f",
-      "bytes": 29572
+      "sha256": "c7157592ec074b2bf90f7630a7b4d4495989e153a95e34bfa7d13d2911fdaaad",
+      "bytes": 29585
     }
   },
   "focused_tests": [
@@ -57,6 +57,22 @@
     "test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs"
   ],
   "local_dotnet_execution": false,
+  "revision": {
+    "kind": "formatting-only",
+    "previous_candidate_tree": "19f7089b4984d7c14fbf3bf2a84bb973cd96cb88",
+    "previous_baseline_tests_tree": "003b74dd145b2263bd505c814a67f3c203b028d2",
+    "change": "Replace the one space after the multiline lambda closing brace with a newline and 12 spaces",
+    "non_whitespace_text_unchanged": true
+  },
+  "prior_remote_evidence": {
+    "run_id": 37842691039,
+    "baseline_tests_tree": "003b74dd145b2263bd505c814a67f3c203b028d2",
+    "baseline_full_suite": "2186/2186 passed, zero skipped",
+    "baseline_focused_cases": "58/58 passed",
+    "baseline_allocation_gate": "PASS",
+    "candidate_build": "zero warnings and errors",
+    "stop": "Candidate test-file formatting diagnostic at line 159 before candidate test execution and later gates"
+  },
   "local_checks": {
     "reconstruction_and_patch_trees": "passed",
     "git_diff_check": "passed",
