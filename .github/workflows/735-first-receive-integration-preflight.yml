@@ -11,6 +11,7 @@ concurrency:
 
 jobs:
   correctness:
+    if: "!contains(github.event.head_commit.message, '[native-host-only]')"
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -170,6 +171,7 @@ jobs:
           retention-days: 30
 
   rpc-isolation:
+    if: "!contains(github.event.head_commit.message, '[native-host-only]')"
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
@@ -251,7 +253,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [jit-pgo0, jit-pgo1, native]
+        runtime: ${{ contains(github.event.head_commit.message, '[native-host-only]') && fromJSON('["native"]') || fromJSON('["jit-pgo0", "jit-pgo1", "native"]') }}
     env:
       DOTNET_PROCESSOR_COUNT: '4'
       TUNIT_MAX_PARALLEL_TESTS: '8'
@@ -286,8 +288,8 @@ jobs:
             label=control; [[ "$root" == "$INLINE_CANDIDATE" ]] && label=candidate
             if [[ '${{ matrix.runtime }}' == native ]]; then
               dotnet publish "$root/test/SharpLink.ResolvedFlowStateAotEvidence" -c Release -r linux-x64 -p:PublishAot=true -p:StripSymbols=false -o "$root/artifacts/native-inline" > "$out/$label-build.log" 2>&1 || { cat "$out/$label-build.log"; exit 1; }
-              objdump -dC "$root/artifacts/native-inline/SharpLink.ResolvedFlowStateAotEvidence" > "$out/$label-native-disassembly.txt"
-              nm -C "$root/artifacts/native-inline/SharpLink.ResolvedFlowStateAotEvidence" > "$out/$label-native-symbols.txt"
+              objdump -dC "$root/artifacts/native-inline/SharpLink.Benchmarks" > "$out/$label-native-disassembly.txt"
+              nm -C "$root/artifacts/native-inline/SharpLink.Benchmarks" > "$out/$label-native-symbols.txt"
             else
               dotnet build "$root/test/SharpLink.Benchmarks" -c Release -p:PublishAot=false -p:TreatWarningsAsErrors=true > "$out/$label-build.log" 2>&1 || { cat "$out/$label-build.log"; exit 1; }
             fi

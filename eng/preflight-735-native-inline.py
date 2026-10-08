@@ -17,7 +17,7 @@ p.add_argument('--runtime',choices=('jit-pgo0','jit-pgo1','native'),required=Tru
 a=p.parse_args()
 roots={k:getattr(a,k).resolve() for k in ('control','candidate')}
 out=a.output.resolve();out.mkdir(parents=True,exist_ok=True)
-relative='artifacts/native-inline/SharpLink.ResolvedFlowStateAotEvidence' if a.runtime=='native' else 'test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll'
+relative='artifacts/native-inline/SharpLink.Benchmarks' if a.runtime=='native' else 'test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll'
 binaries={k:root/relative for k,root in roots.items()}
 plan=[(r,k) for r in range(3) for k in (('control','candidate') if r%2==0 else ('candidate','control'))]
 (out/'provenance.json').write_text(json.dumps(dict(runtime=a.runtime,plan=plan,
