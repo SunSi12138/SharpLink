@@ -1,0 +1,44 @@
+name: 742 Existing Perf Capability Only
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-perf-capability.yml'
+      - 'eng/profile-742-oncpu/common.py'
+      - 'eng/profile-742-oncpu/parse.py'
+      - 'eng/profile-742-oncpu/probe.py'
+      - 'eng/profile-742-oncpu/calibration.c'
+      - 'eng/profile-742-oncpu/test_harness.py'
+permissions:
+  contents: read
+concurrency:
+  group: 742-existing-perf-capability
+  cancel-in-progress: false
+jobs:
+  capability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Deterministic parser checks
+        run: python3 eng/profile-742-oncpu/test_harness.py
+      - name: Existing unprivileged perf capability, no install or permission changes
+        id: probe
+        run: |
+          python3 eng/profile-742-oncpu/probe.py artifacts/perf-capability --github-output "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import json, os
+          r=json.load(open('artifacts/perf-capability/capability.json'))
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:
+              f.write('Perf capability: '+r['state']+'\n\n'+r['message']+'\n\n')
+              f.write('No NativeAOT profiling or performance acceptance was run. A green diagnostic job may report blocked capability.\n')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-perf-capability-${{ github.sha }}
+          path: artifacts/perf-capability
+          if-no-files-found: error
+          retention-days: 30
