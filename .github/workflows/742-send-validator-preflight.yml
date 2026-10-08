@@ -1,0 +1,69 @@
+name: 742 Send Validator Safety and Native Codegen
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-send-validator-preflight.yml'
+      - 'eng/preflight-742-send-validator/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 742-send-validator-safety-codegen
+  cancel-in-progress: false
+jobs:
+  safety-and-native-codegen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Reconstruct frozen production roots and identical test-only overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/send-validator/env
+          python3 eng/preflight-742-quiescent/self-tests.py
+          python3 eng/preflight-742-send-validator/prepare.py "$RUNNER_TEMP/send-validator" artifacts/send-validator/source
+          dotnet --info > artifacts/send-validator/env/dotnet.txt
+          uname -a > artifacts/send-validator/env/uname.txt
+          lscpu > artifacts/send-validator/env/cpu.txt
+      - name: Full G2 and V default suites plus unchanged allocation and lifecycle gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-send-validator/safety.py default "$RUNNER_TEMP/send-validator" artifacts/send-validator/default
+      - name: Original 171 writer checks and full V experimental unit suite in separate root
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-send-validator/safety.py experimental "$RUNNER_TEMP/send-validator" artifacts/send-validator/experimental
+      - name: Archive matched actual NativeAOT RPC code for independent review
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-send-validator/native-codegen.py "$RUNNER_TEMP/send-validator" artifacts/send-validator/native
+      - name: Record review boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'Safety suites completed. NativeAOT codegen proof remains pending independent inspection. No timing, performance acceptance, readiness, or promotion is asserted.' > artifacts/send-validator/REVIEW-REQUIRED.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-send-validator-safety-codegen-${{ github.sha }}
+          path: |
+            artifacts/send-validator
+            !artifacts/send-validator/default/**/bin-*/**
+            !artifacts/send-validator/default/**/project-*/**
+            !artifacts/send-validator/default/lifecycle-bin-*/**
+            !artifacts/send-validator/default/lifecycle-project-*/**
+          if-no-files-found: error
+          retention-days: 30

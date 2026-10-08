@@ -1,0 +1,38 @@
+diff --git a/src/SharpLink.Runtime/StreamFlowController.cs b/src/SharpLink.Runtime/StreamFlowController.cs
+index 068fd8e8..17377729 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.cs
+@@ -404,7 +404,7 @@ internal sealed partial class StreamFlowController
+         {
+             if (_terminalException is not null)
+                 return;
+-            if (!TryValidateSendLease(lease, out var state) || state.AbortException is not null)
++            if (GetValidSendState(lease) is not { } state || state.AbortException is not null)
+                 return;
+ 
+             var updatedStreamCredit = checked(state.Credit + credit);
+@@ -1073,20 +1073,18 @@ internal sealed partial class StreamFlowController
+ 
+     private SendState ValidateSendLease(in ResolvedSendCreditLease lease)
+     {
+-        if (!TryValidateSendLease(lease, out var state))
++        if (GetValidSendState(lease) is not { } state)
+             throw CreateStreamClosedException();
+         return state;
+     }
+ 
+-    private bool TryValidateSendLease(
+-        in ResolvedSendCreditLease lease,
+-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SendState? state)
++    private SendState? GetValidSendState(in ResolvedSendCreditLease lease)
+     {
+-        state = lease.State as SendState;
++        var state = lease.State as SendState;
+         return ReferenceEquals(lease.Owner, this) &&
+             state is not null &&
+             state.Attached &&
+-            state.Lease == lease.Generation;
++            state.Lease == lease.Generation ? state : null;
+     }
+ 
+     private ReceiveState ValidateReceiveLease(in ResolvedReceiveCreditLease lease)

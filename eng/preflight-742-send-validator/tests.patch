@@ -1,0 +1,164 @@
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.InvalidSendLease.cs b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.InvalidSendLease.cs
+new file mode 100644
+index 00000000..ef336051
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.InvalidSendLease.cs
+@@ -0,0 +1,158 @@
++using System.Threading;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public partial class StreamFlowControllerTests
++{
++    [Test]
++    public async Task InvalidResolvedSendLeasesShouldNotMutateLiveCredit()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        var current = await controller.AcquireSendCreditLeaseAsync(730, 1, 1, CancellationToken.None);
++        var detached = await controller.AcquireSendCreditLeaseAsync(731, 1, 1, CancellationToken.None);
++        controller.ReturnUnsentCredit(in detached, 1);
++        controller.CompleteSendStream(731, 1);
++
++        StreamFlowController.ResolvedSendCreditLease[] invalidLeases =
++        [
++            default,
++            new(new StreamFlowController(2, 4, 1024), 730, 1, current.State!, current.Generation),
++            new(controller, 730, 1, null!, current.Generation),
++            new(controller, 730, 1, new object(), current.Generation),
++            new(controller, 730, 1, current.State!, current.Generation - 1),
++            detached,
++        ];
++        foreach (var invalid in invalidLeases)
++            AssertInvalidSendLeaseCannotChangeCredit(controller, invalid);
++
++        Ensure(controller.TryAcquireSendCredit(in current, 1),
++            "invalid leases must leave the live stream's remaining byte available");
++        Ensure(!controller.TryAcquireSendCredit(in current, 1),
++            "invalid refunds must not create extra stream credit");
++        controller.ReturnUnsentCredit(in current, 2);
++        Ensure(controller.SendConnectionCredit == 4,
++            "the live lease must retain exactly its own two-byte debit");
++    }
++
++    [Test]
++    [Arguments(true)]
++    [Arguments(false)]
++    public async Task StaleResolvedSendLeaseShouldNotMutatePooledReplacement(bool sameKey)
++    {
++        var controller = new StreamFlowController(2, 4, 1024, maxConcurrentStreams: 1);
++        var stale = await controller.AcquireSendCreditLeaseAsync(732, 1, 1, CancellationToken.None);
++        controller.ReturnUnsentCredit(in stale, 1);
++        controller.CompleteSendStream(732, 1);
++
++        var requestId = sameKey ? 732L : 733L;
++        var current = await controller.AcquireSendCreditLeaseAsync(requestId, 1, 1, CancellationToken.None);
++        Ensure(ReferenceEquals(stale.State, current.State),
++            "the replacement must reuse the original pooled send state");
++        Ensure(stale.Generation != current.Generation,
++            "the replacement must advance the pooled generation");
++
++        AssertInvalidSendLeaseCannotChangeCredit(controller, stale);
++        Ensure(controller.TryAcquireSendCredit(in current, 1),
++            "the pooled replacement must retain its remaining stream byte");
++        Ensure(!controller.TryAcquireSendCredit(in current, 1),
++            "the stale refund must not increase the replacement's stream credit");
++        controller.ReturnUnsentCredit(in current, 2);
++        Ensure(controller.SendConnectionCredit == 4,
++            "only the replacement may return its two-byte debit");
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task InvalidResolvedSendLeaseShouldPreserveErrorPrecedence(bool terminated)
++    {
++        var controller = new StreamFlowController(2, 4, 16);
++        _ = await controller.AcquireSendCreditLeaseAsync(734, 1, 1, CancellationToken.None);
++        var invalid = default(StreamFlowController.ResolvedSendCreditLease);
++        var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test terminal");
++        if (terminated)
++            controller.Complete(terminal);
++        var credit = controller.SendConnectionCredit;
++        var canceled = new CancellationToken(canceled: true);
++
++        foreach (var encodedBytes in new[] { 0, -1 })
++        {
++            var synchronous = CaptureSendLeaseException<ArgumentOutOfRangeException>(
++                () => { _ = controller.TryAcquireSendCredit(in invalid, encodedBytes); });
++            var asynchronous = CaptureSendLeaseException<ArgumentOutOfRangeException>(
++                () => { _ = controller.AcquireSendCreditAsync(in invalid, encodedBytes, canceled); });
++            Ensure(synchronous.ParamName == "encodedBytes" && asynchronous.ParamName == "encodedBytes",
++                "invalid sizes must precede cancellation, terminal, and lease validation");
++            var refund = CaptureSendLeaseException<ArgumentOutOfRangeException>(
++                () => controller.ReturnUnsentCredit(in invalid, encodedBytes));
++            Ensure(refund.ParamName == "credit",
++                "invalid refund sizes must precede terminal and lease validation");
++        }
++
++        var oversizedSynchronous = CaptureSendLeaseException<SharpLinkException>(
++            () => { _ = controller.TryAcquireSendCredit(in invalid, 15); });
++        var oversizedAsynchronous = CaptureSendLeaseException<SharpLinkException>(
++            () => { _ = controller.AcquireSendCreditAsync(in invalid, 15, canceled); });
++        Ensure(oversizedSynchronous.Code == SharpLinkErrorCode.ResourceExhausted &&
++            oversizedAsynchronous.Code == SharpLinkErrorCode.ResourceExhausted,
++            "the frame limit must precede cancellation, terminal, and lease validation");
++
++        var cancellation = CaptureSendLeaseException<OperationCanceledException>(
++            () => { _ = controller.AcquireSendCreditAsync(in invalid, 1, canceled); });
++        Ensure(cancellation.CancellationToken == canceled,
++            "cancellation must precede terminal and lease validation and preserve its token");
++
++        var synchronousClosed = CaptureSendLeaseException<SharpLinkException>(
++            () => { _ = controller.TryAcquireSendCredit(in invalid, 1); });
++        var asynchronousClosed = CaptureSendLeaseException<SharpLinkException>(
++            () => { _ = controller.AcquireSendCreditAsync(in invalid, 1, CancellationToken.None); });
++        Ensure(synchronousClosed.Code == SharpLinkErrorCode.ConnectionClosed &&
++            asynchronousClosed.Code == SharpLinkErrorCode.ConnectionClosed,
++            "uncanceled invalid leases must preserve the stream-closed error");
++        Ensure(ReferenceEquals(synchronousClosed, terminal) == terminated &&
++            ReferenceEquals(asynchronousClosed, terminal) == terminated,
++            "an existing session terminal must take precedence over the invalid lease");
++
++        controller.ReturnUnsentCredit(in invalid, 1);
++        Ensure(controller.SendConnectionCredit == credit,
++            "rejected admissions and invalid refunds must leave connection credit unchanged");
++    }
++
++    private static void AssertInvalidSendLeaseCannotChangeCredit(
++        StreamFlowController controller,
++        StreamFlowController.ResolvedSendCreditLease invalid)
++    {
++        var credit = controller.SendConnectionCredit;
++        var synchronous = CaptureSendLeaseException<SharpLinkException>(
++            () => { _ = controller.TryAcquireSendCredit(in invalid, 1); });
++        Ensure(synchronous.Code == SharpLinkErrorCode.ConnectionClosed,
++            "invalid synchronous send admission must preserve the stream-closed error");
++        Ensure(controller.SendConnectionCredit == credit,
++            "invalid synchronous admission must not debit live credit");
++
++        var asynchronous = CaptureSendLeaseException<SharpLinkException>(
++            () => { _ = controller.AcquireSendCreditAsync(in invalid, 1, CancellationToken.None); });
++        Ensure(asynchronous.Code == SharpLinkErrorCode.ConnectionClosed,
++            "invalid asynchronous send admission must reject before publishing a waiter");
++        Ensure(controller.SendConnectionCredit == credit,
++            "invalid asynchronous admission must not debit live credit");
++
++        controller.ReturnUnsentCredit(in invalid, 1);
++        Ensure(controller.SendConnectionCredit == credit,
++            "invalid send leases must not refund live credit");
++    }
++
++    private static TException CaptureSendLeaseException<TException>(Action action)
++        where TException : Exception
++    {
++        try
++        {
++            action();
++        }
++        catch (TException exception)
++        {
++            return exception;
++        }
++        throw new Exception($"expected {typeof(TException).Name}");
++    }
++}

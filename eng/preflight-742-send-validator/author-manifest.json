@@ -1,0 +1,54 @@
+{
+  "base_tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+  "production_tree": "379e7ca76cc3431d464e8b3ffc56e245534b151c",
+  "candidate_tree": "aaf1267b16b162bbd1c24c40fbb921856813d625",
+  "repository": "/workspace/scratch/9e5903e2fbfb/g2-send-validator-candidate",
+  "publication": "none; local index trees and patches only",
+  "patches": {
+    "production.patch": {
+      "sha256": "6d66720e20ba0aa47a8376fb36c938127a992678193b09d0b1743ac2e4da0584",
+      "bytes": 1704
+    },
+    "tests.patch": {
+      "sha256": "b9836bafa764f62686e935a1679b2de8d0d8f38a916a3c1ed252fc2567528f82",
+      "bytes": 8713
+    }
+  },
+  "files": {
+    "src/SharpLink.Runtime/StreamFlowController.cs": {
+      "git_blob": "17377729904a6b971b82544a0df02da47cf42301",
+      "sha256": "0a4cf35b5754caaab94ef7635b6e9b146706821297ed229e5820768f3f87fd3e"
+    },
+    "test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.InvalidSendLease.cs": {
+      "git_blob": "ef33605170b7064ec19e010c4633964975094ac9",
+      "sha256": "4c9fa50686bedbec11f76866500c617e434717690a252eaf3cc95a9fd7494fd8"
+    }
+  },
+  "verified": [
+    "exact G2 input tree",
+    "exact bounded production transformation",
+    "unchanged production outside validator and two consumers",
+    "two changed files only",
+    "separate production/test patch reconstruction of exact output trees",
+    "git diff --check",
+    "Python maintainability verifier regression tests",
+    "lexical delimiter sanity for changed C# files (not compilation)",
+    "independent static production and test review: no defects found"
+  ],
+  "not_run": [
+    "C# compilation and unit tests: dotnet unavailable",
+    "dotnet format and Roslyn syntax validation: dotnet unavailable",
+    "project-reference guard: blocked by dotnet unavailable",
+    "maintainability project analysis: dotnet unavailable",
+    "NativeAOT/JIT compiled-shape proof and matched performance: GitHub-only pending"
+  ],
+  "new_test_cases": 5,
+  "reused_tests": [
+    "ResolvedUnsentCreditShouldBeReturnedExactlyOnce",
+    "MultipleResolvedSendHandlesShouldNotDoubleReturnCredit",
+    "ResolvedSendWaiterCancellationShouldPreserveCurrentLease",
+    "AbortSendStreamsShouldPoisonResolvedLeaseWithoutDoubleReturn",
+    "TerminalShouldInvalidateResolvedHandlesWithoutCreditingAReplacement"
+  ],
+  "performance_claim": "No speedup or explanation of the full G2 regression is asserted."
+}
