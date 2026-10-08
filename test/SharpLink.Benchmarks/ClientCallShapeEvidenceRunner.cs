@@ -41,12 +41,15 @@ internal static class ClientCallShapeEvidenceRunner
         var firstResult = await benchmark.InvokeAsync().ConfigureAwait(false);
         var firstCallUs = Stopwatch.GetElapsedTime(firstStarted).TotalMicroseconds;
         Validate(firstResult, benchmark.ExpectedResult, scenario, "first call");
+        await benchmark.PaceAsync(force: true).ConfigureAwait(false);
 
         for (var operation = 0; operation < warmupOperations; operation++)
         {
             var result = await benchmark.InvokeAsync().ConfigureAwait(false);
             Validate(result, benchmark.ExpectedResult, scenario, "warmup");
+            await benchmark.PaceAsync(force: false).ConfigureAwait(false);
         }
+        await benchmark.PaceAsync(force: true).ConfigureAwait(false);
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -75,7 +78,9 @@ internal static class ClientCallShapeEvidenceRunner
             Validate(result, benchmark.ExpectedResult, scenario, "measurement");
             latencies[completed++] = elapsedTicks;
             latencyTicks += elapsedTicks;
+            await benchmark.PaceAsync(force: false).ConfigureAwait(false);
         }
+        await benchmark.PaceAsync(force: true).ConfigureAwait(false);
 
         var measurementElapsed = Stopwatch.GetElapsedTime(measurementStarted);
         process.Refresh();
@@ -187,6 +192,8 @@ internal enum ClientCallShapeScenario
 
 internal sealed class ClientCallShapeCase : IAsyncDisposable
 {
+    private const int OneWayStreamPacingInterval = 64;
+    private static readonly TimeSpan OneWayDrainTimeout = TimeSpan.FromSeconds(5);
     private static readonly int[] SNumbers = [1, 2, 3];
     private static readonly string[] SStrings = ["a", "bb", "ccc"];
 
@@ -200,7 +207,8 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
         string factSummary,
         string payloadClass,
         long expectedResult,
-        Func<ValueTask<long>> invokeAsync)
+        Func<ValueTask<long>> invokeAsync,
+        Func<bool, ValueTask> paceAsync)
     {
         _environment = environment;
         _cancellation = cancellation;
@@ -209,6 +217,7 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
         PayloadClass = payloadClass;
         ExpectedResult = expectedResult;
         InvokeAsync = invokeAsync;
+        PaceAsync = paceAsync;
     }
 
     public string Shape { get; }
@@ -216,6 +225,7 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
     public string PayloadClass { get; }
     public long ExpectedResult { get; }
     public Func<ValueTask<long>> InvokeAsync { get; }
+    public Func<bool, ValueTask> PaceAsync { get; }
 
     public static async Task<ClientCallShapeCase> CreateAsync(
         ClientCallShapeScenario scenario)
@@ -322,12 +332,16 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
                     "tiny",
                     () => rpc.PublishCancellableEventAsync(7, token)),
 
-                ClientCallShapeScenario.OneWayOneClientStream => OneWay(
+                ClientCallShapeScenario.OneWayOneClientStream => OneWayStreaming(
+                    environment,
+                    rpc,
                     "request=empty,response=none,timeout=no,cancel=no,streams=1",
                     "tiny",
                     () => rpc.PublishNumbersAsync(numbers)),
 
-                ClientCallShapeScenario.OneWayTwoClientStreamsTimed => OneWay(
+                ClientCallShapeScenario.OneWayTwoClientStreamsTimed => OneWayStreaming(
+                    environment,
+                    rpc,
                     "request=empty,response=none,timeout=yes,cancel=no,streams=2",
                     "tiny",
                     () => rpc.PublishTwoStreamsAsync(leftNumbers, rightNumbers)),
@@ -414,7 +428,8 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
                 descriptor.FactSummary,
                 descriptor.PayloadClass,
                 descriptor.Expected,
-                descriptor.InvokeAsync);
+                descriptor.InvokeAsync,
+                descriptor.PaceAsync ?? NoPacingAsync);
         }
         catch
         {
@@ -445,6 +460,64 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
                 return 1;
             });
 
+    private static CaseDescriptor OneWayStreaming(
+        BenchmarkEnvironment environment,
+        IBenchmarkRpc rpc,
+        string facts,
+        string payloadClass,
+        Func<ValueTask> invoke)
+    {
+        var initialPublished = environment.LocalService.PublishedCount;
+        long issued = 0;
+        long paced = 0;
+
+        return new CaseDescriptor(
+            "OneWay",
+            facts,
+            payloadClass,
+            1,
+            async () =>
+            {
+                await invoke().ConfigureAwait(false);
+                issued++;
+                return 1;
+            },
+            async force =>
+            {
+                if (issued == paced ||
+                    (!force && issued - paced < OneWayStreamPacingInterval))
+                {
+                    return;
+                }
+
+                WaitForPublished(environment.LocalService, initialPublished + issued);
+                _ = await rpc.PingAsync().ConfigureAwait(false);
+                paced = issued;
+            });
+    }
+
+    private static void WaitForPublished(BenchmarkRpcService service, long expected)
+    {
+        var started = Stopwatch.GetTimestamp();
+        var spinner = new SpinWait();
+        while (service.PublishedCount < expected)
+        {
+            if (Stopwatch.GetElapsedTime(started) >= OneWayDrainTimeout)
+            {
+                throw new TimeoutException(
+                    $"OneWay evidence did not reach server publication {expected} " +
+                    $"within {OneWayDrainTimeout}.");
+            }
+            spinner.SpinOnce();
+        }
+    }
+
+    private static ValueTask NoPacingAsync(bool force)
+    {
+        _ = force;
+        return ValueTask.CompletedTask;
+    }
+
     private static async ValueTask<long> SumAsync(IAsyncEnumerable<int> values)
     {
         long sum = 0;
@@ -474,7 +547,8 @@ internal sealed class ClientCallShapeCase : IAsyncDisposable
         string FactSummary,
         string PayloadClass,
         long Expected,
-        Func<ValueTask<long>> InvokeAsync);
+        Func<ValueTask<long>> InvokeAsync,
+        Func<bool, ValueTask>? PaceAsync = null);
 }
 
 internal sealed class ReusableAsyncEnumerable<T>(IReadOnlyList<T> values)
