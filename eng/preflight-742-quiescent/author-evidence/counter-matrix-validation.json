@@ -1,0 +1,70 @@
+{
+  "F": {
+    "default-buffered": {
+      "entry_rmw": 15,
+      "request_monitors": 2
+    },
+    "default-waiting-terminal": {
+      "entry_rmw": 15,
+      "request_monitors": 2
+    },
+    "named-buffered": {
+      "entry_rmw": 15,
+      "request_monitors": 3
+    },
+    "named100-buffered": {
+      "entry_rmw": 15,
+      "request_monitors": 3
+    },
+    "default-busy": {
+      "entry_rmw": 6,
+      "request_monitors": 1
+    },
+    "named-busy": {
+      "entry_rmw": 6,
+      "request_monitors": 2
+    },
+    "default-mailbox-retained": {
+      "entry_rmw": 2,
+      "request_monitors": 0
+    },
+    "named-mailbox-retained": {
+      "entry_rmw": 2,
+      "request_monitors": 1
+    }
+  },
+  "G2": {
+    "default-buffered": {
+      "entry_rmw": 7,
+      "request_monitors": 2
+    },
+    "default-waiting-terminal": {
+      "entry_rmw": 7,
+      "request_monitors": 2
+    },
+    "named-buffered": {
+      "entry_rmw": 15,
+      "request_monitors": 3
+    },
+    "named100-buffered": {
+      "entry_rmw": 15,
+      "request_monitors": 3
+    },
+    "default-busy": {
+      "entry_rmw": 6,
+      "request_monitors": 1
+    },
+    "named-busy": {
+      "entry_rmw": 6,
+      "request_monitors": 2
+    },
+    "default-mailbox-retained": {
+      "entry_rmw": 2,
+      "request_monitors": 0
+    },
+    "named-mailbox-retained": {
+      "entry_rmw": 2,
+      "request_monitors": 1
+    }
+  }
+}

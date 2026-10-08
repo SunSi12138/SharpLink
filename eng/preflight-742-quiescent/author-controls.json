@@ -1,0 +1,41 @@
+{
+  "status": "final",
+  "controls": [
+    {
+      "name": "first-receive-controller-gates",
+      "patch": "controller-negative.patch",
+      "patch_sha256": "12e25f5ce5a67021ca67b923c42ec0f9c1d107fa0dbbbc9d5a69b8dd1f3405d6",
+      "created_test_paths": [
+        "test/SharpLink.UnitTests/Runtime/StreamFlowFirstReceiveGateCountTests.cs"
+      ],
+      "filter": "/*/SharpLink.UnitTests.Runtime/StreamFlowFirstReceiveGateCountTests/*",
+      "total": 1,
+      "failed": 1,
+      "failure_message": "first receive uses 2 controller gates; expected exactly one"
+    },
+    {
+      "name": "StreamManagerFirstReceiveControlTests",
+      "patch": "StreamManagerFirstReceiveControlTests-negative.patch",
+      "patch_sha256": "3168d8233ffdd03689d4bf27b168e956116758b2fa4756cf7a0aafb5cae587a5",
+      "created_test_paths": [
+        "test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveControlTests.cs"
+      ],
+      "filter": "/*/SharpLink.UnitTests.Runtime/StreamManagerFirstReceiveControlTests/EmptyDirectRouteMustNotAttachReceiveCreditBeforeItsFirstData*",
+      "total": 2,
+      "failed": 2,
+      "failure_message": "Empty direct registration eagerly attached receive credit."
+    },
+    {
+      "name": "StreamManagerRetirementTransactionTests",
+      "patch": "StreamManagerRetirementTransactionTests-negative.patch",
+      "patch_sha256": "f6ba24bb9c54345ab1219d9209e5c9abee00985e656091b5e0ada66389b3b91e",
+      "created_test_paths": [
+        "test/SharpLink.UnitTests/Runtime/StreamManagerRetirementTransactionTests.cs"
+      ],
+      "filter": "/*/SharpLink.UnitTests.Runtime/StreamManagerRetirementTransactionTests/FinalRouteRemovalMustSealWithinOneMonitorTransaction*",
+      "total": 2,
+      "failed": 2,
+      "failure_message": "final route removal and sealing use 2 monitor transactions; expected one"
+    }
+  ]
+}

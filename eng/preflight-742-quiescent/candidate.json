@@ -1,0 +1,25 @@
+{
+  "label": "G",
+  "parent_tree": "0390a381d0aa692ecc1ddc7625dcfc3c9ce842d7",
+  "candidate_tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+  "patches": [
+    {
+      "file": "candidate.patch",
+      "sha256": "a0467bf6f8594b8e4e9fe06170aac9cb1fbfa726aca9ac572f07260082242057"
+    }
+  ],
+  "audit_approved": true,
+  "status": "final independently audited default-only G2, screen label G; source/allocation/counter proof attached; hosted correctness/screen pending",
+  "author_allocation_evidence": {
+    "author-evidence/allocation-comparison.json": "c0fcb5221c7184553706a8f2458aa50f195165fdf8a54386a8a3d09b8ec182ff",
+    "author-evidence/lifecycle-G2-legacy.csv": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+    "author-evidence/lifecycle-G2-production.csv": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+    "author-evidence/setup-G2.csv": "f17d92e37997b419cc34ad342a717e500c7e10be19c570445ffdf1faafa4e551",
+    "author-evidence/final-hashes.txt": "d275788ff579d0db71342d33bfe6c406396114b64ece58db38211ed7c40c6cf1",
+    "author-evidence/lifecycle-f-fenced-legacy.csv": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+    "author-evidence/lifecycle-f-fenced-production.csv": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+    "author-evidence/setup-f-fenced.csv": "f17d92e37997b419cc34ad342a717e500c7e10be19c570445ffdf1faafa4e551",
+    "author-evidence/counter-matrix-validation.json": "b1c9b6953e850003e2dc1859fff75f253f06ef622b238fe4cdaeb8b3296d3009"
+  },
+  "author_runtime_sha256": "aa4dff85e13753a02cf8f802a0bb02d11e966473f73506e4db9d5b405ef457ab"
+}

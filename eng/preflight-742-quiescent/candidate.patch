@@ -1,0 +1,575 @@
+diff --git a/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs b/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs
+new file mode 100644
+index 00000000..d4a6c281
+--- /dev/null
++++ b/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs
+@@ -0,0 +1,114 @@
++namespace SharpLink.Runtime;
++
++internal sealed partial class StreamManager
++{
++    private void CompleteQuiescentDirectStream(DispatcherEntry entry, Exception? exception)
++    {
++        SharpLinkTelemetry.AddActiveStreams(-1);
++        Interlocked.Decrement(ref _activeStreamCount);
++        try { CompleteDispatcher(entry, exception); }
++        finally { RetireQuiescentDirectStream(entry); }
++    }
++
++    private void CompleteCapturedDirectStream(RequestDispatchers request, ushort streamId,
++        DispatcherEntry expected, Exception? exception)
++    {
++        // Once the optimistic path selected an identity, never restart by key. A DATA
++        // race uses the original deferred owner; a replaced route is a handled no-op.
++        if (!request.TryBeginRetirement(streamId, expected, out var entry)) return;
++        SharpLinkTelemetry.AddActiveStreams(-1);
++        Interlocked.Decrement(ref _activeStreamCount);
++        try { CompleteDispatcher(entry, exception); }
++        finally { RetireStreamAfterDispatches(entry, clearCallback: false); }
++    }
++
++    // The request transaction already owns the same runner pin used by deferred
++    // retirement. No acquisition or delayed peer publisher can enter a Closed entry.
++    private void RetireQuiescentDirectStream(DispatcherEntry entry)
++    {
++        ref readonly var lease = ref entry.ReceiveCreditLease;
++        try
++        {
++            try { PublishReceiveTerminal(lease.RequestId, lease.StreamId, entry); }
++            finally
++            {
++                try
++                {
++                    var map = Volatile.Read(ref _dispatchersByRequestId);
++                    if (map is not null && map.TryGetValue(lease.RequestId, out var request) &&
++                        request.FinishRetirementAndSeal(lease.StreamId, entry))
++                        map.TryRemove(lease.RequestId, request);
++                }
++                catch (Exception error)
++                {
++                    entry.RecordReceiveRetirementFailure(error);
++                    throw;
++                }
++                finally { entry.MarkReceiveReadyAndDetach(); }
++            }
++        }
++        catch (Exception error)
++        {
++            // Joiners observe the result only after the runner and notification finish.
++            entry.RecordReceiveRetirementFailure(error);
++            throw;
++        }
++        finally { entry.ExitDrainedRequestRetirement(); }
++    }
++
++    private sealed partial class RequestDispatchers
++    {
++        public bool TryBeginQuiescentDirectCompletion(ushort streamId, out DispatcherEntry entry)
++        {
++            entry = null!;
++            if (streamId != 0) return false;
++            var candidate = Volatile.Read(ref _defaultDispatcher);
++            if (candidate is null || candidate.Dispatcher is PreAdmissionStreamDispatcher ||
++                !candidate.CanClaimQuiescentDirectCompletion)
++                return false;
++
++            // False after selection must keep this identity for the caller's fallback.
++            entry = candidate;
++            return TryClaimQuiescentDefaultCompletion(candidate);
++        }
++
++        private bool TryClaimQuiescentDefaultCompletion(DispatcherEntry expected)
++        {
++            lock (this)
++                return ReferenceEquals(_defaultDispatcher, expected) && expected.TryClaimQuiescentDirectCompletion();
++        }
++    }
++
++    internal sealed partial class DispatcherEntry
++    {
++        private const long QuiescentCompletionExcludedMask = ClosedMask | InitializingMask |
++            RetirementClaimedMask | CountMask | CleanupMask;
++
++        internal bool CanClaimQuiescentDirectCompletion
++            => (Volatile.Read(ref _state) & QuiescentCompletionExcludedMask) == 0;
++
++        internal bool TryClaimQuiescentDirectCompletion()
++        {
++            while (true)
++            {
++                var state = Volatile.Read(ref _state);
++                // CompleteStream, unlike Unregister, cannot acquire a Closed/initializing
++                // route. A failed probe changes nothing and uses the existing slow path.
++                if ((state & QuiescentCompletionExcludedMask) != 0)
++                    return false;
++                var claimed = state | RetirementClaimedMask | ClosedMask | DrainWorkRunningMask;
++                if (Interlocked.CompareExchange(ref _state, claimed, state) == state)
++                    return true;
++            }
++        }
++
++        internal void MarkReceiveReadyAndDetach()
++        {
++            // The exclusive runner remains set through both publications. Logical detach
++            // may wake its waiter now; actual retirement still joins OnDispatchesDrained.
++            var previous = Interlocked.Or(ref _state, ReceiveRetirementReadyMask | ClosedMask | DetachedMask);
++            if ((previous & DetachedMask) == 0)
++                Volatile.Read(ref _completions)?.SignalDetached();
++        }
++    }
++}
+diff --git a/src/SharpLink.Runtime/StreamManager.Routing.cs b/src/SharpLink.Runtime/StreamManager.Routing.cs
+index fe54e4de..32e52535 100644
+--- a/src/SharpLink.Runtime/StreamManager.Routing.cs
++++ b/src/SharpLink.Runtime/StreamManager.Routing.cs
+@@ -4,7 +4,7 @@ internal sealed partial class StreamManager
+ {
+     private readonly record struct RequestDrainEntry(ushort StreamId, DispatcherEntry Entry);
+ 
+-    private sealed class RequestDispatchers
++    private sealed partial class RequestDispatchers
+     {
+         private DispatcherEntry? _defaultDispatcher;
+         // Default-only requests use the inline slot; allocate the named map only
+diff --git a/src/SharpLink.Runtime/StreamManager.cs b/src/SharpLink.Runtime/StreamManager.cs
+index 3d1734d2..925af4b4 100644
+--- a/src/SharpLink.Runtime/StreamManager.cs
++++ b/src/SharpLink.Runtime/StreamManager.cs
+@@ -232,6 +232,17 @@ internal sealed partial class StreamManager
+             return;
+         }
+ 
++        if (requestDispatchers.TryBeginQuiescentDirectCompletion(streamId, out var quiescentEntry))
++        {
++            CompleteQuiescentDirectStream(quiescentEntry, exception);
++            return;
++        }
++        if (quiescentEntry is not null)
++        {
++            CompleteCapturedDirectStream(requestDispatchers, streamId, quiescentEntry, exception);
++            return;
++        }
++
+         if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var capturedEntry) ||
+             capturedEntry is null)
+             return;
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerQuiescentCompletionTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerQuiescentCompletionTests.cs
+new file mode 100644
+index 00000000..78e1d720
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerQuiescentCompletionTests.cs
+@@ -0,0 +1,274 @@
++namespace SharpLink.UnitTests.Runtime;
++
++[NotInParallel("dispatcher-pool")]
++public sealed class StreamManagerQuiescentCompletionTests
++{
++    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(10);
++
++    [Test]
++    [Arguments((ushort)0)]
++    [Arguments((ushort)7)]
++    public async Task QuiescentCompletionKeepsTerminalAndNotificationAsDistinctBarriers(ushort streamId)
++    {
++        using var fixture = new Fixture();
++        using var terminalEntered = new ManualResetEventSlim();
++        using var terminalResume = new ManualResetEventSlim();
++        using var drainEntered = new ManualResetEventSlim();
++        using var drainResume = new ManualResetEventSlim();
++        fixture.BeforeTerminal = () => Pause(terminalEntered, terminalResume);
++        var sink = new Sink { BeforeDrain = () => Pause(drainEntered, drainResume) };
++        fixture.Manager.Register(9840, streamId, sink);
++        await fixture.Manager.DispatchChunkAsync(9840, streamId, Payload);
++        var entry = sink.Entry!;
++        var owner = Task.Run(() => fixture.Manager.CompleteStream(9840, streamId, null));
++        Task? joined = null;
++        try
++        {
++            Require(terminalEntered.Wait(Bound), "terminal callback must be paused");
++            Require(entry.HasActiveDispatches && !entry.TryAcquire(), "the quiescent runner must pin a closed entry");
++            var detached = entry.WaitForDetachedAsync(CancellationToken.None).AsTask();
++            Require(!detached.IsCompleted, "logical detach must remain behind final credit publication");
++            joined = fixture.Manager.CompleteStreamAfterDispatchesAsync(9840, streamId, null).AsTask();
++            Require(!joined.IsCompleted, "an async caller must join the captured retiring entry");
++            Require(Reject(() => fixture.Manager.Register(9840, streamId, new Sink())) is InvalidOperationException,
++                "the old generation's key is held while terminal publication runs");
++            terminalResume.Set();
++            Require(drainEntered.Wait(Bound), "drain notification must be independently paused");
++            await detached.WaitAsync(Bound);
++            Require(!joined.IsCompleted && !entry.IsReceiveRetired,
++                "logical detach cannot publish receive-retirement success before drain notification finishes");
++            fixture.Manager.Register(9840, streamId, new Sink());
++            drainResume.Set();
++            await owner.WaitAsync(Bound);
++            await joined.WaitAsync(Bound);
++            Require(entry.IsReceiveRetired && sink.Drained == 1 && fixture.Returned == 1,
++                "one old generation must publish exact credit and one drain result");
++            fixture.Manager.Unregister(9840, streamId);
++        }
++        finally
++        {
++            terminalResume.Set(); drainResume.Set();
++            try { await owner.WaitAsync(Bound); } catch (Exception) { }
++            if (joined is not null) try { await joined.WaitAsync(Bound); } catch (Exception) { }
++        }
++    }
++
++    [Test]
++    [Arguments("complete")]
++    [Arguments("terminal")]
++    [Arguments("drain")]
++    public async Task QuiescentOwnerAndJoinerObserveTheSameExactFailure(string phase)
++    {
++        using var fixture = new Fixture();
++        using var entered = new ManualResetEventSlim();
++        using var resume = new ManualResetEventSlim();
++        var failure = new InvalidOperationException("quiescent " + phase);
++        void Fail() { Pause(entered, resume); throw failure; }
++        var sink = new Sink();
++        if (phase == "complete") sink.BeforeComplete = Fail;
++        else if (phase == "terminal") fixture.BeforeTerminal = Fail;
++        else sink.BeforeDrain = Fail;
++        fixture.Manager.Register(9841, sink);
++        await fixture.Manager.DispatchChunkAsync(9841, Payload);
++        var entry = sink.Entry!;
++        var owner = Task.Run(() => fixture.Manager.CompleteStream(9841, null));
++        Task? join = null;
++        try
++        {
++            Require(entered.Wait(Bound), "the selected failure boundary must be reached");
++            // Drain notification runs after map removal; retain the exact old entry's barrier.
++            join = phase == "drain" ? entry.WaitForReceiveRetirementAsync(CancellationToken.None).AsTask() :
++                fixture.Manager.CompleteStreamAfterDispatchesAsync(9841, 0, null).AsTask();
++            Require(!join.IsCompleted, "retirement cannot succeed while the owning callback is still running");
++            resume.Set();
++            Require(ReferenceEquals(await RejectAsync(owner), failure) && ReferenceEquals(await RejectAsync(join), failure),
++                "owner and retirement joiner must receive the same exact callback error");
++            Require(entry.IsReceiveRetired && entry.IsDetached && sink.Drained == 1 && fixture.Manager.ActiveStreamCount == 0,
++                "failure still releases every ownership boundary once");
++        }
++        finally
++        {
++            resume.Set();
++            try { await owner.WaitAsync(Bound); } catch (Exception) { }
++            if (join is not null) try { await join.WaitAsync(Bound); } catch (Exception) { }
++        }
++    }
++
++    [Test]
++    public async Task BusyDirectCompletionRetainsTheExistingImmediateDetachAndDeferredCreditOrder()
++    {
++        using var fixture = new Fixture();
++        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
++        var sink = new Sink { BeforeConsume = () => new ValueTask(resume.Task) };
++        fixture.Manager.Register(9842, sink);
++        var dispatch = fixture.Manager.DispatchChunkAsync(9842, Payload).AsTask();
++        var entry = sink.Entry!;
++        fixture.Manager.CompleteStream(9842, null);
++        Require(entry.IsDetached && !entry.IsReceiveRetired && fixture.Terminals == 0 && sink.Drained == 0,
++            "busy fallback keeps immediate logical detach but defers credit and pool notification");
++        resume.SetResult();
++        await dispatch.WaitAsync(Bound);
++        Require(entry.IsReceiveRetired && fixture.Returned == 1 && fixture.Terminals == 1 && sink.Drained == 1,
++            "the preexisting DATA acquisition owns the final release");
++    }
++
++    [Test]
++    public async Task ActiveDirectPeerPublicationMustUseTheExistingDeferredOwner()
++    {
++        using var fixture = new Fixture();
++        using var entered = new ManualResetEventSlim();
++        using var resume = new ManualResetEventSlim();
++        fixture.BeforeTerminal = () => Pause(entered, resume);
++        var sink = new Sink();
++        fixture.Manager.Register(9843, sink);
++        await fixture.Manager.DispatchChunkAsync(9843, Payload);
++        var entry = sink.Entry!;
++        entry.MarkPeerTerminalReceived();
++        var peer = Task.Run(entry.RequestPeerReceiveTerminal);
++        try
++        {
++            Require(entered.Wait(Bound), "peer publication must own the runner first");
++            fixture.Manager.CompleteStream(9843, null);
++            Require(entry.IsDetached && !entry.IsReceiveRetired && sink.Drained == 0,
++                "local completion must join, not bypass, the existing peer runner");
++            Require(Reject(() => fixture.Manager.Register(9843, new Sink())) is InvalidOperationException,
++                "pending peer credit must still hold the old key");
++            resume.Set();
++            await peer.WaitAsync(Bound);
++            Require(entry.IsReceiveRetired && fixture.Terminals == 1 && fixture.Returned == 1 && sink.Drained == 1,
++                "both terminal contenders share one publication and one retirement");
++        }
++        finally { resume.Set(); try { await peer.WaitAsync(Bound); } catch (Exception) { } }
++    }
++
++    [Test]
++    public void AlreadyClosedDirectRouteStillRequiresExplicitUnregister()
++    {
++        using var fixture = new Fixture();
++        var sink = new Sink();
++        fixture.Manager.Register(9844, sink);
++        sink.Entry!.Close();
++        fixture.Manager.CompleteStream(9844, null);
++        Require(fixture.Manager.ActiveStreamCount == 1 && sink.Completes == 0 && !sink.Entry.IsDetached,
++            "CompleteStream must retain its existing reject-closed behavior");
++        fixture.Manager.Unregister(9844);
++        Require(fixture.Manager.ActiveStreamCount == 0 && sink.Entry.IsReceiveRetired,
++            "Unregister still owns the intentionally distinct closed-route detach contract");
++    }
++
++    [Test]
++    public async Task InitializingDirectRouteCannotBeClaimedByCompletion()
++    {
++        using var fixture = new Fixture();
++        using var entered = new ManualResetEventSlim();
++        using var resume = new ManualResetEventSlim();
++        var sink = new Sink { BeforeBinding = () => Pause(entered, resume) };
++        var registration = Task.Run(() => fixture.Manager.Register(9845, sink));
++        try
++        {
++            Require(entered.Wait(Bound), "binding must hold registration's acquisition");
++            fixture.Manager.CompleteStream(9845, null);
++            Require(fixture.Manager.ActiveStreamCount == 1 && sink.Completes == 0,
++                "neither the fast nor fallback completion path can claim initializing registration");
++            resume.Set();
++            await registration.WaitAsync(Bound);
++            fixture.Manager.CompleteStream(9845, null);
++            Require(sink.Completes == 1 && sink.Drained == 1 && fixture.Manager.ActiveStreamCount == 0,
++                "activated registration remains normally completable");
++        }
++        finally { resume.Set(); try { await registration.WaitAsync(Bound); } catch (Exception) { } }
++    }
++
++    [Test]
++    public async Task DisposedPooledConsumerCannotReturnWhileQuiescentTerminalOwnsTheRunner()
++    {
++        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
++        using var fixture = new Fixture();
++        using var entered = new ManualResetEventSlim();
++        using var resume = new ManualResetEventSlim();
++        fixture.BeforeTerminal = () => Pause(entered, resume);
++        var dispatcher = PooledAsyncStreamDispatcher<string>.Rent(default, TextCodec.Instance);
++        fixture.Manager.Register(9846, dispatcher);
++        await fixture.Manager.DispatchChunkAsync(9846, Payload);
++        var consumer = dispatcher.GetAsyncEnumerator();
++        Require(await consumer.MoveNextAsync(), "fixture must consume its real pooled item before completion");
++        var owner = Task.Run(() => fixture.Manager.CompleteStream(9846, null));
++        PooledAsyncStreamDispatcher<string>? other = null;
++        try
++        {
++            Require(entered.Wait(Bound), "quiescent terminal publication must be paused");
++            await consumer.DisposeAsync().AsTask().WaitAsync(Bound);
++            Require(PooledAsyncStreamDispatcher<string>.RetainedCountForTests == 0,
++                "disposed and empty is insufficient while the receive runner owns the dispatcher");
++            other = PooledAsyncStreamDispatcher<string>.Rent(default, TextCodec.Instance);
++            Require(!ReferenceEquals(other, dispatcher), "a new rental must not reuse the pinned dispatcher");
++            resume.Set();
++            await owner.WaitAsync(Bound);
++            Require(PooledAsyncStreamDispatcher<string>.RetainedCountForTests == 1 &&
++                    !dispatcher.HasRetainedReferencesForTests && fixture.Returned == 1,
++                "final publication releases the real pool pin and old credit exactly once");
++        }
++        finally
++        {
++            resume.Set();
++            try { await owner.WaitAsync(Bound); } catch (Exception) { }
++            await consumer.DisposeAsync();
++            if (other is not null) { other.Complete(null); await other.DisposeAsync(); }
++            PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
++        }
++    }
++
++    private static ReadOnlySequence<byte> Payload => new(new byte[] { 1 });
++    private static void Pause(ManualResetEventSlim entered, ManualResetEventSlim resume)
++    { entered.Set(); Require(resume.Wait(Bound), "missing controlled callback release"); }
++    private static Exception Reject(Action action)
++    { try { action(); } catch (Exception error) { return error; } throw new InvalidOperationException("expected rejection"); }
++    private static async Task<Exception> RejectAsync(Task task)
++    { try { await task.WaitAsync(Bound); } catch (Exception error) { return error; } throw new InvalidOperationException("expected rejection"); }
++    private static void Require(bool condition, string message)
++    { if (!condition) throw new InvalidOperationException(message); }
++
++    private sealed class TextCodec : IRpcCodec<string>
++    {
++        internal static readonly TextCodec Instance = new();
++        public string Deserialize(in ReadOnlySequence<byte> payload) => "item";
++        public void Serialize(in string value, IBufferWriter<byte> writer)
++        { writer.GetSpan(1)[0] = 1; writer.Advance(1); }
++    }
++
++    private sealed class Fixture : IDisposable
++    {
++        internal readonly StreamFlowController Flow = new(8, 8, 1024, 2);
++        internal readonly StreamManager Manager;
++        internal Action? BeforeTerminal;
++        internal int Returned, Terminals;
++        internal Fixture()
++        {
++            Manager = new StreamManager(new RuntimeConcurrencyOptions(), null, null, null, 2, null,
++                Flow.ResolveReceiveCreditLease, Accept, Consume, Terminal);
++        }
++        private void Accept(in StreamFlowController.ResolvedReceiveCreditLease lease, int bytes) => Flow.AcceptReceived(in lease, bytes);
++        private void Consume(in StreamFlowController.ResolvedReceiveCreditLease lease, int bytes) => Returned += Flow.RecordConsumed(in lease, bytes);
++        private void Terminal(StreamFlowController.ResolvedReceiveCreditLease lease)
++        { Terminals++; BeforeTerminal?.Invoke(); Returned += Flow.FlushConsumed(in lease); }
++        public void Dispose()
++        { Manager.CompleteAll(null); Flow.Complete(new OperationCanceledException("fixture cleanup")); }
++    }
++
++    private sealed class Sink : IStreamReceiveCreditBoundDispatcher, IStreamDispatchLease
++    {
++        internal StreamManager.DispatcherEntry? Entry;
++        internal Action? BeforeBinding, BeforeComplete, BeforeDrain;
++        internal Func<ValueTask>? BeforeConsume;
++        internal int Completes, Drained;
++        public void BindDispatchState(IStreamDispatchState state) => Entry = (StreamManager.DispatcherEntry)state;
++        public void SetReceiveCreditBinding(StreamManager.DispatcherEntry? binding) { Entry = binding; BeforeBinding?.Invoke(); }
++        public void OnDispatchesDrained() { Drained++; BeforeDrain?.Invoke(); }
++        public ValueTask DispatchAcquiredAsync(ReadOnlySequence<byte> payload, int count) => DispatchAsync(payload, count);
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => DispatchAsync(payload, 1);
++        public async ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int count)
++        { if (BeforeConsume is { } before) await before(); Entry!.RecordConsumed(count); }
++        public void Complete(bool isError, string? errorMessage) => Complete(null);
++        public void Complete(Exception? exception) { Completes++; BeforeComplete?.Invoke(); }
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerQuiescentIdentityTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerQuiescentIdentityTests.cs
+new file mode 100644
+index 00000000..abf7c637
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerQuiescentIdentityTests.cs
+@@ -0,0 +1,134 @@
++using System.Reflection;
++
++namespace SharpLink.UnitTests.Runtime;
++
++[NotInParallel("dispatcher-pool")]
++public sealed class StreamManagerQuiescentIdentityTests
++{
++    [Test]
++    public async Task SelectedDefaultIdentityCannotCompleteAReplacementAfterLockedClaimFails()
++    {
++        var manager = new StreamManager();
++        var old = new Sink(); var replacement = new Sink();
++        manager.Register(9850, old);
++        manager.Register(9850, 7, new Sink()); // Keep the same request container live.
++        var request = GetRequest(manager, 9850);
++        var expected = old.Entry!;
++        Require(expected.CanClaimQuiescentDirectCompletion, "the optimistic snapshot must have selected a live quiescent route");
++        manager.Unregister(9850);
++        manager.Register(9850, replacement);
++        Require(!TryClaim(request, expected), "the locked phase must reject the replaced default identity");
++        CompleteCaptured(manager, request, expected);
++        await manager.DispatchChunkAsync(9850, new ReadOnlySequence<byte>(new byte[] { 1 }));
++        Require(replacement.Completes == 0 && replacement.Dispatches == 1 && manager.ActiveStreamCount == 2,
++            "failed optimistic claim must not restart by key and retire the replacement");
++        manager.CompleteAll(null);
++    }
++
++    [Test]
++    public void DataAcquisitionAfterSelectionUsesTheCapturedDeferredRetirementOwner()
++    {
++        var manager = new StreamManager(); var sink = new Sink();
++        manager.Register(9851, sink);
++        var request = GetRequest(manager, 9851); var expected = sink.Entry!;
++        Require(expected.CanClaimQuiescentDirectCompletion, "the initial snapshot must be eligible");
++        Require(expected.TryAcquire(), "an already-existing acquisition must race in before the locked recheck");
++        var acquired = true;
++        try
++        {
++            Require(!TryClaim(request, expected), "the locked phase cannot steal a busy entry");
++            CompleteCaptured(manager, request, expected);
++            Require(sink.Completes == 1 && expected.IsDetached && !expected.IsReceiveRetired,
++                "captured fallback keeps the existing immediate-detach/deferred-retirement contract");
++            acquired = false; expected.Release();
++            Require(expected.IsReceiveRetired && manager.ActiveStreamCount == 0,
++                "the original acquisition releases the same generation's deferred retirement");
++        }
++        finally { if (acquired) expected.Release(); manager.CompleteAll(null); }
++    }
++
++    [Test]
++    public void CloseAfterOpenSelectionMayRetireOnlyThatCapturedEntry()
++    {
++        var manager = new StreamManager(); var sink = new Sink();
++        manager.Register(9852, sink);
++        var request = GetRequest(manager, 9852); var expected = sink.Entry!;
++        Require(expected.CanClaimQuiescentDirectCompletion, "selection must precede Close");
++        expected.Close();
++        Require(!TryClaim(request, expected), "a late Close prevents the quiescent claim");
++        CompleteCaptured(manager, request, expected);
++        Require(sink.Completes == 1 && expected.IsReceiveRetired && manager.ActiveStreamCount == 0,
++            "an open selection preserves F's later expected-entry retirement after a concurrent Close");
++    }
++
++    [Test]
++    public async Task SelectedEntryCannotRetireAReplacementUsingTheSamePooledDispatcher()
++    {
++        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
++        var manager = new StreamManager();
++        var dispatcher = PooledAsyncStreamDispatcher<string>.Rent(default, TextCodec.Instance);
++        manager.Register(9853, dispatcher);
++        manager.Register(9853, 7, new Sink());
++        var request = GetRequest(manager, 9853);
++        var field = typeof(PooledAsyncStreamDispatcher<string>).GetField("_receiveCreditBinding", Flags)!;
++        var expected = (StreamManager.DispatcherEntry)field.GetValue(dispatcher)!;
++        Require(expected.CanClaimQuiescentDirectCompletion, "old route must be selected while open");
++        manager.CompleteStream(9853, null);
++        await dispatcher.DisposeAsync();
++        var replacement = PooledAsyncStreamDispatcher<string>.Rent(default, TextCodec.Instance);
++        try
++        {
++            Require(ReferenceEquals(dispatcher, replacement), "the fixture must reuse the exact pooled object");
++            manager.Register(9853, replacement);
++            var current = (StreamManager.DispatcherEntry)field.GetValue(replacement)!;
++            Require(!ReferenceEquals(expected, current) && !TryClaim(request, expected),
++                "the locked claim must compare entry identity, never pooled dispatcher identity");
++            CompleteCaptured(manager, request, expected);
++            await manager.DispatchChunkAsync(9853, new ReadOnlySequence<byte>(new byte[] { 1 }));
++            var consumer = replacement.GetAsyncEnumerator();
++            Require(await consumer.MoveNextAsync() && manager.ActiveStreamCount == 2 && !current.IsDetached,
++                "the replacement generation remains active and dispatchable after old selection resumes");
++            manager.CompleteStream(9853, null);
++            await consumer.DisposeAsync();
++        }
++        finally
++        {
++            manager.CompleteAll(null);
++            replacement.Complete(null); await replacement.DisposeAsync();
++            PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
++        }
++    }
++
++    private static object GetRequest(StreamManager manager, long requestId)
++    {
++        var map = typeof(StreamManager).GetField("_dispatchersByRequestId", Flags)!.GetValue(manager)!;
++        object?[] args = [requestId, null];
++        Require((bool)map.GetType().GetMethod("TryGetValue", Flags)!.Invoke(map, args)!, "request must be mapped");
++        return args[1]!;
++    }
++    private static bool TryClaim(object request, StreamManager.DispatcherEntry expected)
++        => (bool)request.GetType().GetMethod("TryClaimQuiescentDefaultCompletion", Flags)!.Invoke(request, [expected])!;
++    private static void CompleteCaptured(StreamManager manager, object request, StreamManager.DispatcherEntry expected)
++        => typeof(StreamManager).GetMethod("CompleteCapturedDirectStream", Flags)!.Invoke(manager, [request, (ushort)0, expected, null]);
++    private const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
++    private static void Require(bool condition, string message)
++    { if (!condition) throw new InvalidOperationException(message); }
++    private sealed class TextCodec : IRpcCodec<string>
++    {
++        internal static readonly TextCodec Instance = new();
++        public string Deserialize(in ReadOnlySequence<byte> payload) => "item";
++        public void Serialize(in string value, IBufferWriter<byte> writer)
++        { writer.GetSpan(1)[0] = 1; writer.Advance(1); }
++    }
++    private sealed class Sink : IStreamDispatcher, IStreamDispatchLease
++    {
++        internal StreamManager.DispatcherEntry? Entry;
++        internal int Dispatches, Completes;
++        public void BindDispatchState(IStreamDispatchState state) => Entry = (StreamManager.DispatcherEntry)state;
++        public void OnDispatchesDrained() { }
++        public ValueTask DispatchAcquiredAsync(ReadOnlySequence<byte> payload, int count) => DispatchAsync(payload);
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) { Dispatches++; return ValueTask.CompletedTask; }
++        public void Complete(bool isError, string? errorMessage) => Complete(null);
++        public void Complete(Exception? exception) => Completes++;
++    }
++}

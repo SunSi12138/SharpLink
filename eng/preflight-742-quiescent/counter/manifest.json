@@ -1,0 +1,15 @@
+{
+  "source": "Author pinned F/G2 counter-only patches and both real RpcSession probes; normalized source/atomic-call equivalence verified separately",
+  "files": {
+    "check_count.py": "074e115b777fd3c89788bf3e3ff93fb982e16ba5f90a72172d73b840f62286a9",
+    "G-counter.patch": "decdc0dcb6ffea5b4569476d08d688ece048c4e8102dd51ccb460d2e050a3dbf",
+    "Program-ineligible.cs": "3799e2f588d08995ecce30d54de9f8a60427afee39f8423f6b172bffdd83ab97",
+    "Counter.csproj": "170372c1fb028864edb78379c983eca60998f8c7120e1a14063abfee92da1afd",
+    "Program.cs": "bac7d6cad0d5ef10b13ee13e5ce23bfa05db36ed46018c1b7667efc8ee80cc7a",
+    "expected-matrix.json": "e5fce2fe2e1a7073915aec0c664fc95a7efe04fb8f8c79f23739bd163034c4c6",
+    "F-counter.patch": "ed41d1eff8ba5441f402e399dcb6b85dee2889c67d9d22cf84c63f4fa0a18c67",
+    "instrument.py": "f55624d4c21aff4300cd2fd15ccaa867bf0eddd813d2751d8e92359a0d3874bb",
+    "validate.py": "9c0b9f4ce74de9873895221f7060388be49bc6cd06b2f7d37e7639703a899e7f",
+    "verify.py": "18011b804683a29c14d931f87fda9544bc8e07368471aa6eb472e97c734cf83f"
+  }
+}

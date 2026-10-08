@@ -1,0 +1,3 @@
+a0467bf6f8594b8e4e9fe06170aac9cb1fbfa726aca9ac572f07260082242057  /workspace/shared/sharplink-dev/quiescent-default-evidence/G2-final.incremental.patch
+aa4dff85e13753a02cf8f802a0bb02d11e966473f73506e4db9d5b405ef457ab  src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll
+e34df154e332c820a658b34b44ad37b31fca5f90075a9940b18928c71fd62516  src/SharpLink.Client/bin/Release/net10.0/SharpLink.Client.dll

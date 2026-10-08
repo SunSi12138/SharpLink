@@ -1,0 +1,28 @@
+{
+  "legacy": {
+    "N": {
+      "rows": 120,
+      "all_equal": true,
+      "max_delta": 0.0
+    },
+    "F": {
+      "rows": 120,
+      "all_equal": true,
+      "max_delta": 0.0
+    },
+    "runtime_sha256": "aa4dff85e13753a02cf8f802a0bb02d11e966473f73506e4db9d5b405ef457ab"
+  },
+  "production": {
+    "N": {
+      "rows": 120,
+      "all_equal": true,
+      "max_delta": 0.0
+    },
+    "F": {
+      "rows": 120,
+      "all_equal": true,
+      "max_delta": 0.0
+    },
+    "runtime_sha256": "aa4dff85e13753a02cf8f802a0bb02d11e966473f73506e4db9d5b405ef457ab"
+  }
+}

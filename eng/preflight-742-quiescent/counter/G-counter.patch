@@ -1,0 +1,1312 @@
+diff --git a/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs b/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs
+index 32075c06..2101d448 100644
+--- a/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs
++++ b/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs
+@@ -162,7 +162,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         if (!Pool.TryPop(out var dispatcher))
+             dispatcher = new PooledAsyncStreamDispatcher<T>();
+         else
+-            Interlocked.Decrement(ref s_retainedCount);
++            LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:165", Interlocked.Decrement(ref s_retainedCount));
+ 
+         dispatcher.Reset(enumerationToken, codec, payloadNullable);
+         dispatcher.ActivateLease();
+@@ -177,7 +177,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             if (GetLeaseStatus(state) != LeaseInactive)
+                 throw new InvalidOperationException("The stream dispatcher already has an active lease.");
+             var activeState = unchecked(state + LeaseActive);
+-            if (Interlocked.CompareExchange(ref _leaseState, activeState, state) == state)
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:180", Interlocked.CompareExchange(ref _leaseState, activeState, state), state) == state)
+                 return;
+         }
+     }
+@@ -298,9 +298,9 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             return ValueTask.CompletedTask;
+         }
+ 
+-        if (Interlocked.Increment(ref _bufferedCount) > MaxBufferedElements)
++        if (LifecycleDiagnosticCounters.Observe("pooled|Increment|PooledAsyncStreamDispatcher.cs:301", Interlocked.Increment(ref _bufferedCount)) > MaxBufferedElements)
+         {
+-            Interlocked.Decrement(ref _bufferedCount);
++            LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:303", Interlocked.Decrement(ref _bufferedCount));
+             Complete(new SharpLinkException(
+                 SharpLinkErrorCode.ResourceExhausted,
+                 $"Stream receive buffer exceeded {MaxBufferedElements} elements."));
+@@ -320,14 +320,15 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         ArgumentNullException.ThrowIfNull(state);
+         lock (_dispatchStateGate)
+         {
+-            if (Interlocked.CompareExchange(ref _dispatchState, state, null) is not null)
++            LifecycleDiagnosticCounters.Hit("pooled|lock|PooledAsyncStreamDispatcher.cs:321");
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:323", Interlocked.CompareExchange(ref _dispatchState, state, null), null) is not null)
+                 throw new InvalidOperationException("Stream dispatcher is already registered.");
+             if (Volatile.Read(ref _completed) || Volatile.Read(ref _disposed))
+                 CloseFirstTerminalDispatchState(state);
+         }
+     }
+ 
+-    void IStreamDispatchLease.OnDispatchesDrained() => TryReturnToPool();
++    void IStreamDispatchLease.OnDispatchesDrained() { LifecycleDiagnosticCounters.Hit("pooled|callback|OnDispatchesDrained"); TryReturnToPool(); }
+ 
+     private bool TryAcquireDispatch(out long leaseState)
+     {
+@@ -336,7 +337,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             return false;
+ 
+         Volatile.Read(ref _beforeProducerOperationAcquireForTests)?.Invoke();
+-        Interlocked.Increment(ref _producerOperations);
++        LifecycleDiagnosticCounters.Observe("pooled|Increment|PooledAsyncStreamDispatcher.cs:339", Interlocked.Increment(ref _producerOperations));
+         var currentLeaseState = Volatile.Read(ref _leaseState);
+         if (IsSameLeaseGeneration(currentLeaseState, leaseState) &&
+             GetLeaseStatus(currentLeaseState) is LeaseActive or LeaseDisposing)
+@@ -344,7 +345,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             return true;
+         }
+ 
+-        if (Interlocked.Decrement(ref _producerOperations) < 0)
++        if (LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:347", Interlocked.Decrement(ref _producerOperations)) < 0)
+             throw new InvalidOperationException("Stream dispatcher producer lease underflowed.");
+         TryReturnToPool();
+         return false;
+@@ -355,7 +356,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         var currentLeaseState = Volatile.Read(ref _leaseState);
+         if (IsSameLeaseGeneration(currentLeaseState, leaseState))
+         {
+-            if (Interlocked.Decrement(ref _producerOperations) < 0)
++            if (LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:358", Interlocked.Decrement(ref _producerOperations)) < 0)
+                 throw new InvalidOperationException("Stream dispatcher producer lease underflowed.");
+         }
+         else
+@@ -377,10 +378,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             var operations = Volatile.Read(ref _producerOperations);
+             if (operations == 0)
+                 return false;
+-            if (Interlocked.CompareExchange(
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:380", Interlocked.CompareExchange(
+                     ref _producerOperations,
+                     operations - 1,
+-                    operations) == operations)
++                    operations), operations) == operations)
+             {
+                 return true;
+             }
+@@ -474,6 +475,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ 
+         lock (_dispatchStateGate)
+         {
++            LifecycleDiagnosticCounters.Hit("pooled|lock|PooledAsyncStreamDispatcher.cs:475");
+             if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
+                 CloseFirstTerminalDispatchState(boundDispatchState);
+             Signal();
+@@ -489,7 +491,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     private void DrainLocalAbortBuffer()
+     {
+         if (Volatile.Read(ref _consumerTerminal) != ConsumerTerminalLocalAbort ||
+-            Interlocked.Exchange(ref _localAbortBufferRetired, 1) != 0)
++            LifecycleDiagnosticCounters.Observe("pooled|Exchange|PooledAsyncStreamDispatcher.cs:492", Interlocked.Exchange(ref _localAbortBufferRetired, 1)) != 0)
+         {
+             return;
+         }
+@@ -509,7 +511,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ 
+     private void ReleaseLocalAbortRetention()
+     {
+-        var retentionLeaseState = Interlocked.Exchange(ref _localAbortRetentionLeaseState, 0);
++        var retentionLeaseState = LifecycleDiagnosticCounters.Observe("pooled|Exchange|PooledAsyncStreamDispatcher.cs:512", Interlocked.Exchange(ref _localAbortRetentionLeaseState, 0));
+         if (retentionLeaseState != 0)
+             ReleaseDispatch(retentionLeaseState);
+     }
+@@ -530,19 +532,19 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+                 spinner.SpinOnce();
+                 continue;
+             }
+-            if (Interlocked.CompareExchange(
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:533", Interlocked.CompareExchange(
+                     ref _localAbortDeliveryState,
+                     LocalAbortClaimed,
+-                    0) == 0)
++                    0), 0) == 0)
+             {
+                 break;
+             }
+         }
+ 
+-        if (Interlocked.CompareExchange(
++        if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:542", Interlocked.CompareExchange(
+                 ref _consumerTerminal,
+                 ConsumerTerminalLocalAbort,
+-                0) == 0)
++                0), 0) == 0)
+         {
+             _error = exception;
+             Volatile.Write(ref _completed, true);
+@@ -560,10 +562,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             var state = Volatile.Read(ref _localAbortDeliveryState);
+             if ((state & LocalAbortClaimed) == 0)
+                 return;
+-            if (Interlocked.CompareExchange(
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:563", Interlocked.CompareExchange(
+                     ref _localAbortDeliveryState,
+                     state & ~LocalAbortClaimed,
+-                    state) == state)
++                    state), state) == state)
+             {
+                 return;
+             }
+@@ -611,10 +613,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             }
+             if ((state & LocalAbortDelivery) != 0)
+                 throw new InvalidOperationException("Only one stream delivery can be published at a time.");
+-            if (Interlocked.CompareExchange(
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:614", Interlocked.CompareExchange(
+                     ref _localAbortDeliveryState,
+                     LocalAbortDelivery,
+-                    0) == 0)
++                    0), 0) == 0)
+             {
+                 return true;
+             }
+@@ -628,10 +630,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             var state = Volatile.Read(ref _localAbortDeliveryState);
+             if ((state & LocalAbortDelivery) == 0)
+                 return;
+-            if (Interlocked.CompareExchange(
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:631", Interlocked.CompareExchange(
+                     ref _localAbortDeliveryState,
+                     state & ~LocalAbortDelivery,
+-                    state) == state)
++                    state), state) == state)
+             {
+                 return;
+             }
+@@ -669,7 +671,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     /// <inheritdoc />
+     public void Complete(Exception? exception)
+     {
+-        if (Interlocked.CompareExchange(ref _consumerTerminal, 1, 0) != 0)
++        if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:672", Interlocked.CompareExchange(ref _consumerTerminal, 1, 0), 0) != 0)
+             return;
+ 
+         // The no-state path is the regular server-stream lifecycle. Keep it free of locks and
+@@ -689,6 +691,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ 
+             lock (_dispatchStateGate)
+             {
++                LifecycleDiagnosticCounters.Hit("pooled|lock|PooledAsyncStreamDispatcher.cs:690");
+                 if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
+                     CloseFirstTerminalDispatchState(boundDispatchState);
+                 Signal();
+@@ -710,7 +713,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             // NotInParallel constraint key in the test engine. Interlocked.CompareExchange
+             // with equal operands is a full-fence read that returns the latest value and
+             // writes nothing, so it cannot observe the field before the state store commits.
+-            Interlocked.CompareExchange(ref _remoteTerminalPublication, null, null)?.TrySetResult();
++            LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:713", Interlocked.CompareExchange(ref _remoteTerminalPublication, null, null), null)?.TrySetResult();
+         }
+     }
+ 
+@@ -718,7 +721,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+     {
+         // 审核 #4：原子防御，避免极端并发双进入
+-        if (Interlocked.CompareExchange(ref _enumeratorTaken, 1, 0) != 0)
++        if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:721", Interlocked.CompareExchange(ref _enumeratorTaken, 1, 0), 0) != 0)
+             throw new InvalidOperationException("Only single consumer is supported.");
+ 
+         if (cancellationToken.CanBeCanceled)
+@@ -848,12 +851,12 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+                 if (!ownsConsumerOperation)
+                 {
+                     Volatile.Read(ref _beforeConsumerWaitOwnerAcquireForTests)?.Invoke();
+-                    Interlocked.Increment(ref _consumerOperations);
++                    LifecycleDiagnosticCounters.Observe("pooled|Increment|PooledAsyncStreamDispatcher.cs:851", Interlocked.Increment(ref _consumerOperations));
+                     var currentLeaseState = Volatile.Read(ref _leaseState);
+                     if (!IsSameLeaseGeneration(currentLeaseState, consumerLeaseState) ||
+                         GetLeaseStatus(currentLeaseState) is not LeaseActive and not LeaseDisposing)
+                     {
+-                        if (Interlocked.Decrement(ref _consumerOperations) < 0)
++                        if (LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:856", Interlocked.Decrement(ref _consumerOperations)) < 0)
+                             throw new InvalidOperationException("Stream dispatcher consumer lease underflowed.");
+                         TryReturnToPool();
+                         throw new ObjectDisposedException(
+@@ -870,7 +873,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         {
+             if (ownsConsumerOperation)
+             {
+-                if (Interlocked.Decrement(ref _consumerOperations) < 0)
++                if (LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:873", Interlocked.Decrement(ref _consumerOperations)) < 0)
+                     throw new InvalidOperationException("Stream dispatcher consumer lease underflowed.");
+                 TryReturnToPool();
+             }
+@@ -892,10 +895,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             return ValueTask.CompletedTask;
+ 
+         var disposingLeaseState = unchecked(activeLeaseState + 1);
+-        var observedLeaseState = Interlocked.CompareExchange(
++        var observedLeaseState = LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:895", Interlocked.CompareExchange(
+             ref _leaseState,
+             disposingLeaseState,
+-            activeLeaseState);
++            activeLeaseState), activeLeaseState);
+         if (observedLeaseState != activeLeaseState)
+         {
+             // A contender from an old lease must never retry against a newly rented generation.
+@@ -906,7 +909,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         }
+ 
+         var terminal = Volatile.Read(ref _consumerTerminal);
+-        if (terminal == 0 && Interlocked.CompareExchange(ref _consumerTerminal, 2, 0) == 0)
++        if (terminal == 0 && LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:909", Interlocked.CompareExchange(ref _consumerTerminal, 2, 0), 0) == 0)
+         {
+             _error ??= new OperationCanceledException(
+                 "The response stream consumer stopped before remote completion.");
+@@ -951,7 +954,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+                     // A delayed old-generation contender can lose the return race and install
+                     // after this instance has already been rented again. Remove only the stale
+                     // holder it observed, then let the current generation establish its own.
+-                    Interlocked.CompareExchange(ref _disposeCompletion, null, existing);
++                    LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:954", Interlocked.CompareExchange(ref _disposeCompletion, null, existing), existing);
+                     continue;
+                 }
+ 
+@@ -966,14 +969,14 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ 
+             var created = new DisposeCompletion(disposingLeaseState);
+             Volatile.Read(ref _beforeConcurrentDisposeCompletionInstallForTests)?.Invoke();
+-            if (Interlocked.CompareExchange(ref _disposeCompletion, created, null) is not null)
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:969", Interlocked.CompareExchange(ref _disposeCompletion, created, null), null) is not null)
+                 continue;
+ 
+             if (Volatile.Read(ref _disposeFinalizedLeaseState) == disposingLeaseState ||
+                 Volatile.Read(ref _leaseState) != disposingLeaseState)
+             {
+                 created.Completion.TrySetResult();
+-                Interlocked.CompareExchange(ref _disposeCompletion, null, created);
++                LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:976", Interlocked.CompareExchange(ref _disposeCompletion, null, created), created);
+             }
+ 
+             return new ValueTask(created.Completion.Task);
+@@ -1000,7 +1003,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         if (completion is null)
+         {
+             var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+-            completion = Interlocked.CompareExchange(ref _remoteTerminalPublication, created, null) ?? created;
++            completion = LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1003", Interlocked.CompareExchange(ref _remoteTerminalPublication, created, null), null) ?? created;
+         }
+ 
+         Volatile.Read(ref _afterRemoteTerminalPublicationCompletionInstallForTests)?.Invoke();
+@@ -1008,7 +1011,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         // Fenced re-read (issue #206): mirrors the publisher-side fence in Complete. The
+         // install CAS above is already a full barrier, but a fenced read keeps the two sides
+         // symmetric so neither half of the double-check can observe a stale publication state.
+-        if (Interlocked.CompareExchange(ref _remoteTerminalPublicationState, 0, 0) == 2)
++        if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1011", Interlocked.CompareExchange(ref _remoteTerminalPublicationState, 0, 0), 0) == 2)
+             completion.TrySetResult();
+ 
+         return new ValueTask(completion.Task);
+@@ -1031,6 +1034,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         {
+             lock (_dispatchStateGate)
+             {
++                LifecycleDiagnosticCounters.Hit("pooled|lock|PooledAsyncStreamDispatcher.cs:1032");
+                 if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
+                 {
+                     if (remoteTerminalPublished)
+@@ -1066,7 +1070,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     // terminal publication without turning a state-free terminal path into a locked path.
+     private void CloseFirstTerminalDispatchState(IStreamDispatchState dispatchState)
+     {
+-        if (Interlocked.CompareExchange(ref _terminalDispatchStateClosed, 1, 0) == 0)
++        if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1069", Interlocked.CompareExchange(ref _terminalDispatchStateClosed, 1, 0), 0) == 0)
+             dispatchState.Close();
+     }
+ 
+@@ -1164,7 +1168,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         // publication pair — a plain Volatile.Read could observe a null completion before the
+         // finalization store above is globally visible and miss a waiter that installed itself
+         // between the two accesses.
+-        var completion = Interlocked.CompareExchange(ref _disposeCompletion, null, null);
++        var completion = LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1167", Interlocked.CompareExchange(ref _disposeCompletion, null, null), null);
+         if (completion?.LeaseState == disposingLeaseState)
+             completion.Completion.TrySetResult();
+ 
+@@ -1189,7 +1193,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     private bool ConsumeWaitResult(short token)
+     {
+         var result = _waitSource.GetResult(token);
+-        if (Interlocked.CompareExchange(ref _waiterState, 0, 2) == 2)
++        if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1192", Interlocked.CompareExchange(ref _waiterState, 0, 2), 2) == 2)
+         {
+             // A real MoveNext continuation keeps its operation count until it has consumed
+             // terminal/error/buffer state. Direct IValueTaskSource consumers have no such
+@@ -1295,7 +1299,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+                     segment.Items[index] = default!;
+                 segment.EncodedByteCounts[index] = 0;
+                 _consumerIndex = index + 1;
+-                Interlocked.Decrement(ref _bufferedCount);
++                LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:1298", Interlocked.Decrement(ref _bufferedCount));
+                 return true;
+             }
+ 
+@@ -1326,21 +1330,22 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     private ValueTask<bool> WaitForDataAsync()
+     {
+         // 快路径：已有 signal
+-        if (Interlocked.Exchange(ref _signalState, 0) == 1)
++        if (LifecycleDiagnosticCounters.Observe("pooled|Exchange|PooledAsyncStreamDispatcher.cs:1329", Interlocked.Exchange(ref _signalState, 0)) == 1)
+             return ValueTask.FromResult(true);
+ 
+         lock (_waitGate)
+         {
+-            if (Interlocked.Exchange(ref _signalState, 0) == 1)
++            LifecycleDiagnosticCounters.Hit("pooled|lock|PooledAsyncStreamDispatcher.cs:1332");
++            if (LifecycleDiagnosticCounters.Observe("pooled|Exchange|PooledAsyncStreamDispatcher.cs:1334", Interlocked.Exchange(ref _signalState, 0)) == 1)
+                 return ValueTask.FromResult(true);
+ 
+             // 单消费者下理论上不会重入，但保留防御
+-            if (Interlocked.CompareExchange(ref _waiterState, 1, 0) != 0)
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1338", Interlocked.CompareExchange(ref _waiterState, 1, 0), 0) != 0)
+                 throw new InvalidOperationException("Only one waiter is supported.");
+ 
+-            if (Interlocked.Exchange(ref _signalState, 0) == 1)
++            if (LifecycleDiagnosticCounters.Observe("pooled|Exchange|PooledAsyncStreamDispatcher.cs:1341", Interlocked.Exchange(ref _signalState, 0)) == 1)
+             {
+-                Interlocked.Exchange(ref _waiterState, 0);
++                LifecycleDiagnosticCounters.Observe("pooled|Exchange|PooledAsyncStreamDispatcher.cs:1343", Interlocked.Exchange(ref _waiterState, 0));
+                 return ValueTask.FromResult(true);
+             }
+ 
+@@ -1352,7 +1357,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     private void Signal()
+     {
+         // 设置 signal（如果本来就有，则直接返回）
+-        if (Interlocked.Exchange(ref _signalState, 1) == 1)
++        if (LifecycleDiagnosticCounters.Observe("pooled|Exchange|PooledAsyncStreamDispatcher.cs:1355", Interlocked.Exchange(ref _signalState, 1)) == 1)
+             return;
+ 
+         // 无 waiter：留给快路径
+@@ -1361,9 +1366,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ 
+         lock (_waitGate)
+         {
+-            if (Interlocked.CompareExchange(ref _waiterState, 2, 1) == 1)
++            LifecycleDiagnosticCounters.Hit("pooled|lock|PooledAsyncStreamDispatcher.cs:1362");
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1364", Interlocked.CompareExchange(ref _waiterState, 2, 1), 1) == 1)
+             {
+-                Interlocked.Exchange(ref _signalState, 0);
++                LifecycleDiagnosticCounters.Observe("pooled|Exchange|PooledAsyncStreamDispatcher.cs:1366", Interlocked.Exchange(ref _signalState, 0));
+                 _waitSource.SetResult(true);
+             }
+         }
+@@ -1398,10 +1404,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ 
+         var returnedState = unchecked(disposingLeaseState + 2);
+         Volatile.Read(ref _beforeReturnTransitionForTests)?.Invoke();
+-        if (Interlocked.CompareExchange(
++        if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1401", Interlocked.CompareExchange(
+                 ref _leaseState,
+                 returnedState,
+-                disposingLeaseState) != disposingLeaseState)
++                disposingLeaseState), disposingLeaseState) != disposingLeaseState)
+             return;
+         Volatile.Read(ref _afterReturnTransitionForTests)?.Invoke();
+ 
+@@ -1411,10 +1417,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             Volatile.Read(ref _waiterState) != 0 || !IsEmpty() ||
+             dispatchState is { } && (dispatchState.HasActiveDispatches || !dispatchState.IsDetached))
+         {
+-            if (Interlocked.CompareExchange(
++            if (LifecycleDiagnosticCounters.ObserveCas("pooled|CompareExchange|PooledAsyncStreamDispatcher.cs:1414", Interlocked.CompareExchange(
+                     ref _leaseState,
+                     disposingLeaseState,
+-                    returnedState) != returnedState)
++                    returnedState), returnedState) != returnedState)
+                 throw new InvalidOperationException("The stream dispatcher return state changed unexpectedly.");
+             // An owner can release while the state is temporarily Returned and miss its retry.
+             // Re-check after restoring Disposing so the last release cannot strand this lease.
+@@ -1501,13 +1507,13 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+             RunContinuationsAsynchronously = true
+         };
+         // 注意：_completed/_disposed 会在下次 Reset 时统一清
+-        if (Interlocked.Increment(ref s_retainedCount) <= MaxRetainedDispatchers)
++        if (LifecycleDiagnosticCounters.Observe("pooled|Increment|PooledAsyncStreamDispatcher.cs:1504", Interlocked.Increment(ref s_retainedCount)) <= MaxRetainedDispatchers)
+         {
+             Pool.Push(this);
+             return;
+         }
+ 
+-        Interlocked.Decrement(ref s_retainedCount);
++        LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:1510", Interlocked.Decrement(ref s_retainedCount));
+     }
+ 
+     internal static int RetainedCountForTests => Volatile.Read(ref s_retainedCount);
+@@ -1524,7 +1530,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     internal static void ClearPoolForTests()
+     {
+         while (Pool.TryPop(out _))
+-            Interlocked.Decrement(ref s_retainedCount);
++            LifecycleDiagnosticCounters.Observe("pooled|Decrement|PooledAsyncStreamDispatcher.cs:1527", Interlocked.Decrement(ref s_retainedCount));
+     }
+ 
+     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+diff --git a/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs b/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
+index f66b8d48..14aa1cd4 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
+@@ -17,6 +17,7 @@ internal sealed partial class StreamFlowController
+         lease = default;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.FirstAdmission.cs:18");
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out var state))
+             {
+@@ -58,6 +59,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.FirstAdmission.cs:59");
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out var state))
+             {
+@@ -142,6 +144,7 @@ internal sealed partial class StreamFlowController
+         var key = new StreamKey(requestId, streamId);
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.FirstAdmission.cs:143");
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out var state) ||
+                 state.Completed ||
+diff --git a/src/SharpLink.Runtime/StreamFlowController.ReceiveAdmission.cs b/src/SharpLink.Runtime/StreamFlowController.ReceiveAdmission.cs
+index 4749d3a4..06480e27 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.ReceiveAdmission.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.ReceiveAdmission.cs
+@@ -10,6 +10,7 @@ internal sealed partial class StreamFlowController
+         var key = new StreamKey(requestId, streamId);
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.ReceiveAdmission.cs:11");
+             ThrowIfTerminated();
+             if (!_receiveStates.TryGetValue(key, out var state))
+             {
+diff --git a/src/SharpLink.Runtime/StreamFlowController.cs b/src/SharpLink.Runtime/StreamFlowController.cs
+index 068fd8e8..9b43cfed 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.cs
+@@ -128,6 +128,7 @@ internal sealed partial class StreamFlowController
+         SendState? state;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:129");
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out state))
+             {
+@@ -170,6 +171,7 @@ internal sealed partial class StreamFlowController
+         ValidateEncodedBytes(encodedBytes);
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:171");
+             ThrowIfTerminated();
+             var state = ValidateSendLease(lease);
+             if (state.AbortException is { } abortException)
+@@ -194,6 +196,7 @@ internal sealed partial class StreamFlowController
+ 
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:195");
+             ThrowIfTerminated();
+             var state = ValidateSendLease(lease);
+             if (state.AbortException is { } abortException)
+@@ -221,6 +224,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:222");
+             ThrowIfTerminated();
+             var state = ValidateSendLease(lease);
+             if (state.AbortException is { } abortException)
+@@ -258,6 +262,7 @@ internal sealed partial class StreamFlowController
+         long expectedLease;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:259");
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out state))
+             {
+@@ -306,6 +311,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:307");
+             ThrowIfTerminated();
+             SendState? state = null;
+             if (_sendStates.TryGetValue(key, out var existingState))
+@@ -365,6 +371,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready = default;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:366");
+             ThrowIfTerminated();
+             var key = new StreamKey(requestId, streamId);
+             if (!_sendStates.TryGetValue(key, out var state))
+@@ -402,6 +409,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:403");
+             if (_terminalException is not null)
+                 return;
+             if (!TryValidateSendLease(lease, out var state) || state.AbortException is not null)
+@@ -431,6 +439,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:432");
+             if (_terminalException is not null)
+                 return;
+             var key = new StreamKey(requestId, streamId);
+@@ -461,6 +470,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:462");
+             var key = new StreamKey(requestId, streamId);
+             if (_sendStates.TryGetValue(key, out var state))
+             {
+@@ -513,6 +523,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:514");
+             foreach (var pair in _sendStates)
+             {
+                 if (pair.Key.RequestId != requestId)
+@@ -559,6 +570,7 @@ internal sealed partial class StreamFlowController
+         var key = new StreamKey(requestId, streamId);
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:560");
+             ThrowIfTerminated();
+             if (!_receiveStates.TryGetValue(key, out var state))
+             {
+@@ -585,6 +597,7 @@ internal sealed partial class StreamFlowController
+         ValidateEncodedBytes(encodedBytes);
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:586");
+             ThrowIfTerminated();
+             var state = ValidateReceiveLease(lease);
+             if (state.Completed)
+@@ -601,6 +614,7 @@ internal sealed partial class StreamFlowController
+         ValidateEncodedBytes(encodedBytes);
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:602");
+             ThrowIfTerminated();
+             var key = new StreamKey(requestId, streamId);
+             if (!_receiveStates.TryGetValue(key, out var state))
+@@ -625,6 +639,7 @@ internal sealed partial class StreamFlowController
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedBytes);
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:626");
+             if (_terminalException is not null)
+                 return 0;
+             if (GetValidReceiveState(lease) is not { } state)
+@@ -666,6 +681,7 @@ internal sealed partial class StreamFlowController
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedBytes);
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:667");
+             if (_terminalException is not null)
+                 return 0;
+             var key = new StreamKey(requestId, streamId);
+@@ -717,6 +733,7 @@ internal sealed partial class StreamFlowController
+ 
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:718");
+             var updates = _consumedCreditUpdates;
+             if (updates is null || !updates.TryDequeue(out var update))
+             {
+@@ -740,6 +757,7 @@ internal sealed partial class StreamFlowController
+     {
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:741");
+             if (_terminalException is not null || GetValidReceiveState(lease) is not { } state)
+                 return 0;
+             state.Completed = true;
+@@ -754,6 +772,7 @@ internal sealed partial class StreamFlowController
+     {
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:755");
+             var key = new StreamKey(requestId, streamId);
+             if (_terminalException is not null ||
+                 !_receiveStates.TryGetValue(key, out var state))
+@@ -774,6 +793,7 @@ internal sealed partial class StreamFlowController
+         CreditWaiter[] waiters;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:775");
+             if (_terminalException is not null)
+                 return;
+             _terminalException = exception;
+@@ -807,7 +827,7 @@ internal sealed partial class StreamFlowController
+         get
+         {
+             lock (_gate)
+-                return _sendConnectionCredit;
++                { LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:809"); return _sendConnectionCredit; }
+         }
+     }
+ 
+@@ -816,7 +836,7 @@ internal sealed partial class StreamFlowController
+         get
+         {
+             lock (_gate)
+-                return _activeSendStreamCount;
++                { LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:818"); return _activeSendStreamCount; }
+         }
+     }
+ 
+@@ -825,7 +845,7 @@ internal sealed partial class StreamFlowController
+         get
+         {
+             lock (_gate)
+-                return _sendStates.Count;
++                { LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:827"); return _sendStates.Count; }
+         }
+     }
+ 
+@@ -1172,6 +1192,7 @@ internal sealed partial class StreamFlowController
+         ReadyWaiterBatch ready;
+         lock (_gate)
+         {
++            LifecycleDiagnosticCounters.Hit("flow|lock|StreamFlowController.cs:1173");
+             if (waiter.Node is null)
+                 return;
+             RemoveWaiter(waiter);
+diff --git a/src/SharpLink.Runtime/StreamManager.DeferredRetirement.cs b/src/SharpLink.Runtime/StreamManager.DeferredRetirement.cs
+index ad2ac9ac..62282a60 100644
+--- a/src/SharpLink.Runtime/StreamManager.DeferredRetirement.cs
++++ b/src/SharpLink.Runtime/StreamManager.DeferredRetirement.cs
+@@ -123,7 +123,7 @@ internal sealed partial class StreamManager
+ 
+         private void OnDrained()
+         {
+-            if (Interlocked.Decrement(ref _remaining) != 0)
++            if (LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.DeferredRetirement.cs:126", Interlocked.Decrement(ref _remaining)) != 0)
+                 return;
+             List<Exception>? failures = null;
+             _owner.FinalizeRequestDrain(_requestId, _requestDispatchers, _entries, ref failures);
+diff --git a/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs b/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs
+index 1809bbe7..22032d1d 100644
+--- a/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs
++++ b/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs
+@@ -10,11 +10,11 @@ internal sealed partial class StreamManager
+             => GetOrCreateCompletions().RecordReceiveRetirementFailure(exception);
+ 
+         internal void RouteRetirementFailuresToWaiter()
+-            => Interlocked.Or(ref _state, AsyncRetirementMask);
++            => LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.EntryRetirement.cs:13", Interlocked.Or(ref _state, AsyncRetirementMask));
+ 
+         internal void MarkReceiveRetired()
+         {
+-            Interlocked.Or(ref _state, ReceiveRetirementReadyMask);
++            LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.EntryRetirement.cs:17", Interlocked.Or(ref _state, ReceiveRetirementReadyMask));
+             TryCompleteReceiveRetirement();
+         }
+ 
+@@ -25,7 +25,7 @@ internal sealed partial class StreamManager
+                     (ReceiveRetirementReadyMask | DetachedMask | DrainNotificationFinishedMask) ||
+                 (state & (CountMask | CleanupMask)) != 0)
+                 return;
+-            Interlocked.Or(ref _state, ReceiveRetiredMask);
++            LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.EntryRetirement.cs:28", Interlocked.Or(ref _state, ReceiveRetiredMask));
+             Volatile.Read(ref _completions)?.SignalReceiveRetired();
+         }
+ 
+@@ -44,7 +44,7 @@ internal sealed partial class StreamManager
+ 
+         internal void Release()
+         {
+-            var state = Interlocked.Decrement(ref _state);
++            var state = LifecycleDiagnosticCounters.Observe("entry|Decrement|StreamManager.EntryRetirement.cs:47", Interlocked.Decrement(ref _state));
+             if ((state & CountMask) == CountMask)
+                 throw new InvalidOperationException("Stream dispatcher lease underflowed.");
+             if ((state & (ClosedMask | PeerTerminalReceivedMask)) != 0 && (state & CountMask) == 0)
+@@ -68,7 +68,7 @@ internal sealed partial class StreamManager
+                 // CAS and cannot start a competing publisher beside the drained fast path.
+                 if ((state & (ClosedMask | PeerTerminalPendingMask | ReceiveTerminalPublishedMask)) != 0)
+                     return;
+-                if (Interlocked.CompareExchange(ref _state, state | PeerTerminalPendingMask, state) == state)
++                if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.EntryRetirement.cs:71", Interlocked.CompareExchange(ref _state, state | PeerTerminalPendingMask, state), state) == state)
+                     break;
+             }
+             RunAfterDispatchesDrained();
+@@ -83,14 +83,14 @@ internal sealed partial class StreamManager
+                 // The same runner bit excludes a publisher already in flight.
+                 if ((state & ClosedMask) == 0 || (state & (CountMask | CleanupMask)) != 0)
+                     return false;
+-                if (Interlocked.CompareExchange(ref _state, state | DrainWorkRunningMask, state) == state)
++                if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.EntryRetirement.cs:86", Interlocked.CompareExchange(ref _state, state | DrainWorkRunningMask, state), state) == state)
+                     return true;
+             }
+         }
+ 
+         internal void ExitDrainedRequestRetirement()
+         {
+-            Interlocked.And(ref _state, ~DrainWorkRunningMask);
++            LifecycleDiagnosticCounters.Observe("entry|And|StreamManager.EntryRetirement.cs:93", Interlocked.And(ref _state, ~DrainWorkRunningMask));
+             TryNotifyDispatcherDrained();
+         }
+ 
+@@ -98,7 +98,7 @@ internal sealed partial class StreamManager
+         {
+             var flags = ReceiveRetirementPendingMask | StreamRetirementWorkMask;
+             if (clearCallback) flags |= ClearReceiveCallbackMask;
+-            if ((Interlocked.Or(ref _state, flags) & ReceiveRetirementPendingMask) != 0)
++            if ((LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.EntryRetirement.cs:101", Interlocked.Or(ref _state, flags)) & ReceiveRetirementPendingMask) != 0)
+                 throw new InvalidOperationException("Receive retirement already has a drain owner.");
+             RunAfterDispatchesDrained();
+         }
+@@ -111,7 +111,7 @@ internal sealed partial class StreamManager
+ 
+         private void SetDrainContinuation(Action continuation, bool recordFailureOnEntry)
+         {
+-            if ((Interlocked.Or(ref _state, ReceiveRetirementPendingMask) & ReceiveRetirementPendingMask) != 0)
++            if ((LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.EntryRetirement.cs:114", Interlocked.Or(ref _state, ReceiveRetirementPendingMask)) & ReceiveRetirementPendingMask) != 0)
+                 throw new InvalidOperationException("Receive retirement already has a drain owner.");
+             GetOrCreateCompletions().SetAfterDispatchesDrained(continuation, recordFailureOnEntry);
+             RunAfterDispatchesDrained();
+@@ -130,7 +130,7 @@ internal sealed partial class StreamManager
+                     (state & (PeerTerminalPendingMask | StreamRetirementWorkMask)) == 0 &&
+                     completions?.HasAfterDispatchesDrained != true)
+                     break;
+-                if (Interlocked.CompareExchange(ref _state, state | DrainWorkRunningMask, state) != state)
++                if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.EntryRetirement.cs:133", Interlocked.CompareExchange(ref _state, state | DrainWorkRunningMask, state), state) != state)
+                     continue;
+                 try
+                 {
+@@ -146,7 +146,7 @@ internal sealed partial class StreamManager
+                             RecordReceiveRetirementFailure(exception);
+                             failure = exception;
+                         }
+-                        finally { Interlocked.And(ref _state, ~PeerTerminalPendingMask); }
++                        finally { LifecycleDiagnosticCounters.Observe("entry|And|StreamManager.EntryRetirement.cs:149", Interlocked.And(ref _state, ~PeerTerminalPendingMask)); }
+                     }
+                     // A retained peer-ended route could acquire control/attachment work
+                     // while its publication callback ran. Actual retirement must recheck the
+@@ -178,13 +178,13 @@ internal sealed partial class StreamManager
+                             }
+                             finally
+                             {
+-                                Interlocked.And(ref _state,
+-                                    ~(ReceiveRetirementPendingMask | StreamRetirementWorkMask | ClearReceiveCallbackMask));
++                                LifecycleDiagnosticCounters.Observe("entry|And|StreamManager.EntryRetirement.cs:181", Interlocked.And(ref _state,
++                                    ~(ReceiveRetirementPendingMask | StreamRetirementWorkMask | ClearReceiveCallbackMask)));
+                             }
+                         }
+                     }
+                 }
+-                finally { Interlocked.And(ref _state, ~DrainWorkRunningMask); }
++                finally { LifecycleDiagnosticCounters.Observe("entry|And|StreamManager.EntryRetirement.cs:187", Interlocked.And(ref _state, ~DrainWorkRunningMask)); }
+                 // A concurrent scheduler that found the runner active has already installed
+                 // its work. Recheck after releasing the runner to avoid a lost notification.
+             }
+@@ -201,7 +201,7 @@ internal sealed partial class StreamManager
+                 if ((state & DetachedMask) == 0 ||
+                     (state & (CountMask | CleanupMask | DrainNotifiedMask)) != 0)
+                     return;
+-                if (Interlocked.CompareExchange(ref _state, state | DrainNotifiedMask, state) != state)
++                if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.EntryRetirement.cs:204", Interlocked.CompareExchange(ref _state, state | DrainNotifiedMask, state), state) != state)
+                     continue;
+                 try
+                 {
+@@ -216,7 +216,7 @@ internal sealed partial class StreamManager
+                 }
+                 finally
+                 {
+-                    Interlocked.Or(ref _state, DrainNotificationFinishedMask);
++                    LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.EntryRetirement.cs:219", Interlocked.Or(ref _state, DrainNotificationFinishedMask));
+                     TryCompleteReceiveRetirement();
+                 }
+                 return;
+diff --git a/src/SharpLink.Runtime/StreamManager.FirstReceive.cs b/src/SharpLink.Runtime/StreamManager.FirstReceive.cs
+index 577e4b53..881eda4a 100644
+--- a/src/SharpLink.Runtime/StreamManager.FirstReceive.cs
++++ b/src/SharpLink.Runtime/StreamManager.FirstReceive.cs
+@@ -105,11 +105,11 @@ internal sealed partial class StreamManager
+         private const long FirstReceiveStartedMask = 1L << 49;
+         private const long FirstReceivePublishedMask = 1L << 50;
+ 
+-        internal void DeferFirstReceive() => Interlocked.Or(ref _state, ReceiveDeferredMask);
++        internal void DeferFirstReceive() => LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.FirstReceive.cs:108", Interlocked.Or(ref _state, ReceiveDeferredMask));
+ 
+         internal void PublishFirstReceive()
+         {
+-            Interlocked.Or(ref _state, FirstReceivePublishedMask);
++            LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.FirstReceive.cs:112", Interlocked.Or(ref _state, FirstReceivePublishedMask));
+             Volatile.Read(ref _completions)?.SignalFirstReceive(null);
+         }
+ 
+@@ -135,7 +135,7 @@ internal sealed partial class StreamManager
+                 if (error is not null) _firstReceiveError = error;
+                 // Fence the signal store before loading a concurrently installed TCS.
+                 // A release store alone permits both sides to miss the other's write.
+-                Interlocked.Exchange(ref _firstReceiveSignaled, 1);
++                LifecycleDiagnosticCounters.Observe("entry|Exchange|StreamManager.FirstReceive.cs:138", Interlocked.Exchange(ref _firstReceiveSignaled, 1));
+                 CompleteFirstReceive(Volatile.Read(ref _firstReceiveCompletion));
+             }
+ 
+diff --git a/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs b/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs
+index d4a6c281..27ddd73d 100644
+--- a/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs
++++ b/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs
+@@ -5,7 +5,7 @@ internal sealed partial class StreamManager
+     private void CompleteQuiescentDirectStream(DispatcherEntry entry, Exception? exception)
+     {
+         SharpLinkTelemetry.AddActiveStreams(-1);
+-        Interlocked.Decrement(ref _activeStreamCount);
++        LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.QuiescentCompletion.cs:8", Interlocked.Decrement(ref _activeStreamCount));
+         try { CompleteDispatcher(entry, exception); }
+         finally { RetireQuiescentDirectStream(entry); }
+     }
+@@ -17,7 +17,7 @@ internal sealed partial class StreamManager
+         // race uses the original deferred owner; a replaced route is a handled no-op.
+         if (!request.TryBeginRetirement(streamId, expected, out var entry)) return;
+         SharpLinkTelemetry.AddActiveStreams(-1);
+-        Interlocked.Decrement(ref _activeStreamCount);
++        LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.QuiescentCompletion.cs:20", Interlocked.Decrement(ref _activeStreamCount));
+         try { CompleteDispatcher(entry, exception); }
+         finally { RetireStreamAfterDispatches(entry, clearCallback: false); }
+     }
+@@ -75,7 +75,7 @@ internal sealed partial class StreamManager
+         private bool TryClaimQuiescentDefaultCompletion(DispatcherEntry expected)
+         {
+             lock (this)
+-                return ReferenceEquals(_defaultDispatcher, expected) && expected.TryClaimQuiescentDirectCompletion();
++                { LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.QuiescentCompletion.cs:77"); return ReferenceEquals(_defaultDispatcher, expected) && expected.TryClaimQuiescentDirectCompletion(); }
+         }
+     }
+ 
+@@ -97,7 +97,7 @@ internal sealed partial class StreamManager
+                 if ((state & QuiescentCompletionExcludedMask) != 0)
+                     return false;
+                 var claimed = state | RetirementClaimedMask | ClosedMask | DrainWorkRunningMask;
+-                if (Interlocked.CompareExchange(ref _state, claimed, state) == state)
++                if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.QuiescentCompletion.cs:100", Interlocked.CompareExchange(ref _state, claimed, state), state) == state)
+                     return true;
+             }
+         }
+@@ -106,7 +106,7 @@ internal sealed partial class StreamManager
+         {
+             // The exclusive runner remains set through both publications. Logical detach
+             // may wake its waiter now; actual retirement still joins OnDispatchesDrained.
+-            var previous = Interlocked.Or(ref _state, ReceiveRetirementReadyMask | ClosedMask | DetachedMask);
++            var previous = LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.QuiescentCompletion.cs:109", Interlocked.Or(ref _state, ReceiveRetirementReadyMask | ClosedMask | DetachedMask));
+             if ((previous & DetachedMask) == 0)
+                 Volatile.Read(ref _completions)?.SignalDetached();
+         }
+diff --git a/src/SharpLink.Runtime/StreamManager.Registration.cs b/src/SharpLink.Runtime/StreamManager.Registration.cs
+index 8120d052..e654f4fe 100644
+--- a/src/SharpLink.Runtime/StreamManager.Registration.cs
++++ b/src/SharpLink.Runtime/StreamManager.Registration.cs
+@@ -22,9 +22,9 @@ internal sealed partial class StreamManager
+             return;
+         }
+ 
+-        if (Interlocked.Increment(ref _activeStreamCount) > _maxActiveStreams)
++        if (LifecycleDiagnosticCounters.Observe("manager|Increment|StreamManager.Registration.cs:25", Interlocked.Increment(ref _activeStreamCount)) > _maxActiveStreams)
+         {
+-            Interlocked.Decrement(ref _activeStreamCount);
++            LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.Registration.cs:27", Interlocked.Decrement(ref _activeStreamCount));
+             var exception = new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
+                 $"Active inbound stream routes exceeded the per-connection limit of {_maxActiveStreams}.");
+             try { dispatcher.Complete(exception); }
+@@ -70,7 +70,7 @@ internal sealed partial class StreamManager
+             if (reserved && request.TryBeginRetirement(streamId, entry!, out var retiring))
+             {
+                 SharpLinkTelemetry.AddActiveStreams(-1);
+-                Interlocked.Decrement(ref _activeStreamCount);
++                LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.Registration.cs:73", Interlocked.Decrement(ref _activeStreamCount));
+                 RetireStreamAfterDispatches(retiring, clearCallback: true);
+             }
+             throw;
+@@ -87,7 +87,7 @@ internal sealed partial class StreamManager
+                 finally
+                 {
+                     SharpLinkTelemetry.AddActiveStreams(-1);
+-                    Interlocked.Decrement(ref _activeStreamCount);
++                    LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.Registration.cs:90", Interlocked.Decrement(ref _activeStreamCount));
+                     RemoveEmptyRequest(requestId, request);
+                 }
+             }
+diff --git a/src/SharpLink.Runtime/StreamManager.Routing.cs b/src/SharpLink.Runtime/StreamManager.Routing.cs
+index 32e52535..e0602b1c 100644
+--- a/src/SharpLink.Runtime/StreamManager.Routing.cs
++++ b/src/SharpLink.Runtime/StreamManager.Routing.cs
+@@ -17,6 +17,7 @@ internal sealed partial class StreamManager
+         {
+             lock (this)
+             {
++                LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:18");
+                 sealedRequest = _sealed;
+                 if (_sealed || (streamId == 0 ? _defaultDispatcher is not null :
+                         _byStreamId?.ContainsKey(streamId) == true))
+@@ -32,7 +33,7 @@ internal sealed partial class StreamManager
+         public bool TrySealIfEmpty()
+         {
+             lock (this)
+-                return TrySealIfEmptyLocked();
++                { LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:34"); return TrySealIfEmptyLocked(); }
+         }
+ 
+         private bool TrySealIfEmptyLocked()
+@@ -117,6 +118,7 @@ internal sealed partial class StreamManager
+             }
+             lock (this)
+             {
++                LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:118");
+                 var found = _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var entry)
+                     ? entry.Dispatcher as PreAdmissionStreamDispatcher
+                     : null;
+@@ -138,6 +140,7 @@ internal sealed partial class StreamManager
+             }
+             lock (this)
+             {
++                LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:139");
+                 var found = _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var entry)
+                     ? entry.Dispatcher as DiscardingStreamDispatcher
+                     : null;
+@@ -161,6 +164,7 @@ internal sealed partial class StreamManager
+             {
+                 lock (this)
+                 {
++                    LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:162");
+                     if (_byStreamId is not null && _byStreamId.TryGetValue(streamId, out entry!) &&
+                         (forData ? entry.TryAcquireData(out receiveMode, compressedOnly) : entry.TryAcquire()))
+                         return true;
+@@ -187,6 +191,7 @@ internal sealed partial class StreamManager
+         {
+             lock (this)
+             {
++                LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:188");
+                 var found = streamId == 0
+                     ? _defaultDispatcher
+                     : _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var candidate) ? candidate : null;
+@@ -211,6 +216,7 @@ internal sealed partial class StreamManager
+         {
+             lock (this)
+             {
++                LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:212");
+                 RemoveRetiredEntryLocked(streamId, entry);
+                 return TrySealIfEmptyLocked();
+             }
+@@ -220,6 +226,7 @@ internal sealed partial class StreamManager
+         {
+             lock (this)
+             {
++                LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:221");
+                 foreach (var item in entries)
+                     RemoveRetiredEntryLocked(item.StreamId, item.Entry);
+                 return TrySealIfEmptyLocked();
+@@ -244,6 +251,7 @@ internal sealed partial class StreamManager
+         {
+             lock (this)
+             {
++                LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:245");
+                 var entries = new List<RequestDrainEntry>();
+                 List<RequestDrainEntry>? prior = null;
+                 if (_defaultDispatcher is { } defaultDispatcher &&
+@@ -279,6 +287,7 @@ internal sealed partial class StreamManager
+             List<DispatcherEntry> claimed = [];
+             lock (this)
+             {
++                LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:280");
+                 _sealed = true;
+                 if (_defaultDispatcher is { } defaultDispatcher)
+                 {
+@@ -337,7 +346,7 @@ internal sealed partial class StreamManager
+             get
+             {
+                 lock (this)
+-                    return _defaultDispatcher is null && (_byStreamId is null || _byStreamId.Count == 0);
++                    { LifecycleDiagnosticCounters.Hit("request|lock|StreamManager.Routing.cs:339"); return _defaultDispatcher is null && (_byStreamId is null || _byStreamId.Count == 0); }
+             }
+         }
+     }
+@@ -406,10 +415,10 @@ internal sealed partial class StreamManager
+         {
+             if (lease.IsResolved)
+                 _receiveCreditLease = lease;
+-            Interlocked.Or(ref _state, CreditInitializedMask);
++            LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.Routing.cs:409", Interlocked.Or(ref _state, CreditInitializedMask));
+         }
+ 
+-        internal void ActivateRegistration() => Interlocked.And(ref _state, ~InitializingMask);
++        internal void ActivateRegistration() => LifecycleDiagnosticCounters.Observe("entry|And|StreamManager.Routing.cs:412", Interlocked.And(ref _state, ~InitializingMask));
+         internal void FinishRegistration() => Release();
+ 
+         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+@@ -428,13 +437,13 @@ internal sealed partial class StreamManager
+         internal bool PeerTerminalReceived => (Volatile.Read(ref _state) & PeerTerminalReceivedMask) != 0;
+ 
+         internal void MarkPeerTerminalReceived()
+-            => _ = Interlocked.Or(ref _state, PeerTerminalReceivedMask);
++            => _ = LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.Routing.cs:431", Interlocked.Or(ref _state, PeerTerminalReceivedMask));
+ 
+         internal bool TryPublishReceiveTerminal()
+-            => (Interlocked.Or(ref _state, ReceiveTerminalPublishedMask) & ReceiveTerminalPublishedMask) == 0;
++            => (LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.Routing.cs:434", Interlocked.Or(ref _state, ReceiveTerminalPublishedMask)) & ReceiveTerminalPublishedMask) == 0;
+ 
+         internal bool TryClaimRetirement()
+-            => (Interlocked.Or(ref _state, RetirementClaimedMask) & RetirementClaimedMask) == 0;
++            => (LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.Routing.cs:437", Interlocked.Or(ref _state, RetirementClaimedMask)) & RetirementClaimedMask) == 0;
+ 
+         internal bool TryAcquire() => TryAcquireCore(forData: false, claimFirstReceive: false, out _);
+         internal bool TryAcquireData(out ReceiveDispatchMode receiveMode, bool compressedOnly = false)
+@@ -463,7 +472,7 @@ internal sealed partial class StreamManager
+                     receiveMode = ReceiveDispatchMode.Ready;
+                 // Elect the first delivery in the same CAS as its lifetime acquisition.
+                 // A compressed-route probe cannot claim a direct dispatcher's first DATA.
+-                if (Interlocked.CompareExchange(ref _state, next, state) != state)
++                if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.Routing.cs:466", Interlocked.CompareExchange(ref _state, next, state), state) != state)
+                     continue;
+ 
+                 return true;
+@@ -509,7 +518,7 @@ internal sealed partial class StreamManager
+                 var state = Volatile.Read(ref _state);
+                 if ((state & ClosedMask) != 0)
+                     return false;
+-                if (Interlocked.CompareExchange(ref _state, state | ClosedMask, state) == state)
++                if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.Routing.cs:512", Interlocked.CompareExchange(ref _state, state | ClosedMask, state), state) == state)
+                     return true;
+             }
+         }
+@@ -518,7 +527,7 @@ internal sealed partial class StreamManager
+ 
+         internal void Detach()
+         {
+-            var state = Interlocked.Or(ref _state, ClosedMask | DetachedMask);
++            var state = LifecycleDiagnosticCounters.Observe("entry|Or|StreamManager.Routing.cs:521", Interlocked.Or(ref _state, ClosedMask | DetachedMask));
+             if ((state & DetachedMask) != 0)
+                 return;
+             Volatile.Read(ref _completions)?.SignalDetached();
+@@ -532,7 +541,7 @@ internal sealed partial class StreamManager
+                 return completions;
+ 
+             var created = new DispatcherEntryCompletions();
+-            return Interlocked.CompareExchange(ref _completions, created, null) ?? created;
++            return LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.Routing.cs:535", Interlocked.CompareExchange(ref _completions, created, null), null) ?? created;
+         }
+ 
+         private sealed partial class DispatcherEntryCompletions
+@@ -550,27 +559,27 @@ internal sealed partial class StreamManager
+             internal void SetAfterDispatchesDrained(Action continuation, bool recordFailureOnEntry)
+             {
+                 _recordDrainFailureOnEntry = recordFailureOnEntry;
+-                if (Interlocked.CompareExchange(ref _afterDispatchesDrained, continuation, null) is not null)
++                if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.Routing.cs:553", Interlocked.CompareExchange(ref _afterDispatchesDrained, continuation, null), null) is not null)
+                     throw new InvalidOperationException("Receive retirement already has a drain continuation.");
+             }
+ 
+             internal bool HasAfterDispatchesDrained => Volatile.Read(ref _afterDispatchesDrained) is not null;
+             internal Action? TakeAfterDispatchesDrained(out bool recordFailureOnEntry)
+             {
+-                var continuation = Interlocked.Exchange(ref _afterDispatchesDrained, null);
++                var continuation = LifecycleDiagnosticCounters.Observe("entry|Exchange|StreamManager.Routing.cs:560", Interlocked.Exchange(ref _afterDispatchesDrained, null));
+                 recordFailureOnEntry = _recordDrainFailureOnEntry;
+                 return continuation;
+             }
+ 
+             internal void SignalDispatchesDrained()
+             {
+-                if (Interlocked.Exchange(ref _dispatchesDrainedSignaled, 1) == 0)
++                if (LifecycleDiagnosticCounters.Observe("entry|Exchange|StreamManager.Routing.cs:567", Interlocked.Exchange(ref _dispatchesDrainedSignaled, 1)) == 0)
+                     Volatile.Read(ref _dispatchesDrainedCompletion)?.TrySetResult();
+             }
+ 
+             internal void SignalDetached()
+             {
+-                if (Interlocked.Exchange(ref _detachedSignaled, 1) == 0)
++                if (LifecycleDiagnosticCounters.Observe("entry|Exchange|StreamManager.Routing.cs:573", Interlocked.Exchange(ref _detachedSignaled, 1)) == 0)
+                     Volatile.Read(ref _detachedCompletion)?.TrySetResult();
+             }
+ 
+@@ -609,14 +618,14 @@ internal sealed partial class StreamManager
+                     List<Exception>? failures = previous is null ? null : [previous];
+                     AddRetirementFailure(ref failures, exception);
+                     var failure = failures!.Count == 1 ? failures[0] : new AggregateException(failures);
+-                    if (Interlocked.CompareExchange(ref _receiveRetirementFailure, failure, previous) == previous)
++                    if (LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.Routing.cs:612", Interlocked.CompareExchange(ref _receiveRetirementFailure, failure, previous), previous) == previous)
+                         return;
+                 }
+             }
+ 
+             internal void SignalReceiveRetired()
+             {
+-                Interlocked.Exchange(ref _receiveRetirementSignaled, 1);
++                LifecycleDiagnosticCounters.Observe("entry|Exchange|StreamManager.Routing.cs:619", Interlocked.Exchange(ref _receiveRetirementSignaled, 1));
+                 CompleteReceiveRetirement(Volatile.Read(ref _receiveRetirementCompletion));
+             }
+ 
+@@ -647,7 +656,7 @@ internal sealed partial class StreamManager
+ 
+                 var created = new TaskCompletionSource(
+                     TaskCreationOptions.RunContinuationsAsynchronously);
+-                return Interlocked.CompareExchange(ref completion, created, null) ?? created;
++                return LifecycleDiagnosticCounters.ObserveCas("entry|CompareExchange|StreamManager.Routing.cs:650", Interlocked.CompareExchange(ref completion, created, null), null) ?? created;
+             }
+         }
+     }
+diff --git a/src/SharpLink.Runtime/StreamManager.cs b/src/SharpLink.Runtime/StreamManager.cs
+index 925af4b4..14e61a3c 100644
+--- a/src/SharpLink.Runtime/StreamManager.cs
++++ b/src/SharpLink.Runtime/StreamManager.cs
+@@ -114,7 +114,7 @@ internal sealed partial class StreamManager
+         {
+             var dispatcher = entry.Dispatcher;
+             SharpLinkTelemetry.AddActiveStreams(-1);
+-            Interlocked.Decrement(ref _activeStreamCount);
++            LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.cs:117", Interlocked.Decrement(ref _activeStreamCount));
+             RetireStreamAfterDispatches(entry,
+                 clearCallback: dispatcher is not PreAdmissionStreamDispatcher);
+         }
+@@ -172,7 +172,7 @@ internal sealed partial class StreamManager
+             return CompleteReceiveDispatch(entry, dispatch, receiveMode);
+         }
+ 
+-        Interlocked.Increment(ref _droppedStreamFrames);
++        LifecycleDiagnosticCounters.Observe("manager|Increment|StreamManager.cs:175", Interlocked.Increment(ref _droppedStreamFrames));
+         return ValueTask.CompletedTask;
+     }
+ 
+@@ -251,7 +251,7 @@ internal sealed partial class StreamManager
+         {
+             var dispatcher = entry.Dispatcher;
+             SharpLinkTelemetry.AddActiveStreams(-1);
+-            Interlocked.Decrement(ref _activeStreamCount);
++            LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.cs:254", Interlocked.Decrement(ref _activeStreamCount));
+             try
+             {
+                 CompleteDispatcher(entry, exception);
+@@ -290,7 +290,7 @@ internal sealed partial class StreamManager
+         {
+             var dispatcher = entry.Dispatcher;
+             SharpLinkTelemetry.AddActiveStreams(-1);
+-            Interlocked.Decrement(ref _activeStreamCount);
++            LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.cs:293", Interlocked.Decrement(ref _activeStreamCount));
+             try
+             {
+                 CompleteDispatcher(entry, exception);
+@@ -326,7 +326,7 @@ internal sealed partial class StreamManager
+ 
+         entry.RouteRetirementFailuresToWaiter();
+         SharpLinkTelemetry.AddActiveStreams(-1);
+-        Interlocked.Decrement(ref _activeStreamCount);
++        LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.cs:329", Interlocked.Decrement(ref _activeStreamCount));
+         try
+         {
+             CompleteDispatcher(entry, exception);
+@@ -345,7 +345,7 @@ internal sealed partial class StreamManager
+     internal void CompleteAll(Exception? exception)
+     {
+         var termination = new Termination(exception);
+-        if (Interlocked.CompareExchange(ref _termination, termination, null) is not null)
++        if (LifecycleDiagnosticCounters.ObserveCas("manager|CompareExchange|StreamManager.cs:348", Interlocked.CompareExchange(ref _termination, termination, null), null) is not null)
+             return;
+ 
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+@@ -357,7 +357,7 @@ internal sealed partial class StreamManager
+         foreach (var requestDispatchers in dispatchersByRequestId.DrainValues())
+             completed += requestDispatchers.CompleteAll(exception, ref failures);
+         SharpLinkTelemetry.AddActiveStreams(-completed);
+-        Interlocked.Add(ref _activeStreamCount, -completed);
++        LifecycleDiagnosticCounters.Observe("manager|Add|StreamManager.cs:360", Interlocked.Add(ref _activeStreamCount, -completed));
+         ThrowCompletionFailures(failures);
+     }
+ 
+@@ -378,7 +378,7 @@ internal sealed partial class StreamManager
+         }
+ 
+         SharpLinkTelemetry.AddActiveStreams(-entries.Length);
+-        Interlocked.Add(ref _activeStreamCount, -entries.Length);
++        LifecycleDiagnosticCounters.Observe("manager|Add|StreamManager.cs:381", Interlocked.Add(ref _activeStreamCount, -entries.Length));
+         List<Exception>? failures = null;
+         if (TryEnterDrainedRequestRetirement(entries))
+         {
+@@ -415,7 +415,7 @@ internal sealed partial class StreamManager
+         for (var index = 0; index < entries.Length; index++)
+             entries[index].Entry.RouteRetirementFailuresToWaiter();
+         SharpLinkTelemetry.AddActiveStreams(-entries.Length);
+-        Interlocked.Add(ref _activeStreamCount, -entries.Length);
++        LifecycleDiagnosticCounters.Observe("manager|Add|StreamManager.cs:418", Interlocked.Add(ref _activeStreamCount, -entries.Length));
+         List<Exception>? failures = null;
+         if (TryEnterDrainedRequestRetirement(entries))
+         {
+@@ -758,7 +758,7 @@ internal sealed partial class StreamManager
+             return;
+ 
+         SharpLinkTelemetry.AddActiveStreams(-1);
+-        Interlocked.Decrement(ref _activeStreamCount);
++        LifecycleDiagnosticCounters.Observe("manager|Decrement|StreamManager.cs:761", Interlocked.Decrement(ref _activeStreamCount));
+         try
+         {
+             CompleteDispatcher(entry, exception);
+@@ -798,6 +798,7 @@ internal sealed partial class StreamManager
+ 
+         lock (_dispatchersInitializationGate)
+         {
++            LifecycleDiagnosticCounters.Hit("manager|lock|StreamManager.cs:799");
+             dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+             if (dispatchersByRequestId is not null)
+                 return dispatchersByRequestId;
+diff --git a/src/SharpLink.Runtime/LifecycleDiagnosticCounters.cs b/src/SharpLink.Runtime/LifecycleDiagnosticCounters.cs
+new file mode 100644
+index 00000000..349bd62f
+--- /dev/null
++++ b/src/SharpLink.Runtime/LifecycleDiagnosticCounters.cs
+@@ -0,0 +1,40 @@
++namespace SharpLink.Runtime;
++
++// Diagnostic-only: each original atomic operation is evaluated before observation.
++internal static class LifecycleDiagnosticCounters
++{
++    private static readonly ThreadLocal<Dictionary<string, long[]>> Counters = new(static () => [], trackAllValues: true);
++    internal static string? Phase;
++    private static void Record(string site, bool success = false)
++    {
++        var phase = Volatile.Read(ref Phase);
++        if (phase is null) return;
++        var key = phase + "|" + site;
++        var values = Counters.Value!;
++        if (!values.TryGetValue(key, out var count)) values.Add(key, count = new long[2]);
++        count[0]++;
++        if (success) count[1]++;
++    }
++    internal static int Observe(string site, int result) { Record(site); return result; }
++    internal static long Observe(string site, long result) { Record(site); return result; }
++    internal static T? Observe<T>(string site, T? result) where T : class { Record(site); return result; }
++    internal static int ObserveCas(string site, int result, int expected) { Record(site, result == expected); return result; }
++    internal static long ObserveCas(string site, long result, long expected) { Record(site, result == expected); return result; }
++    internal static T? ObserveCas<T>(string site, T? result, T? expected) where T : class
++    { Record(site, ReferenceEquals(result, expected)); return result; }
++    internal static void Hit(string site) => Record(site);
++    internal static void Reset() { Phase = null; foreach (var values in Counters.Values) values.Clear(); }
++    internal static void Dump(string scenario)
++    {
++        Phase = null;
++        Dictionary<string, long[]> total = [];
++        foreach (var values in Counters.Values)
++            foreach (var item in values)
++            {
++                if (!total.TryGetValue(item.Key, out var counts)) total.Add(item.Key, counts = new long[2]);
++                counts[0] += item.Value[0]; counts[1] += item.Value[1];
++            }
++        foreach (var item in total.OrderBy(static pair => pair.Key))
++            Console.WriteLine($"{scenario}|{item.Key}|{item.Value[0]}|{item.Value[1]}");
++    }
++}

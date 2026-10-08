@@ -1,0 +1,79 @@
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamFlowFirstReceiveGateCountTests.cs b/test/SharpLink.UnitTests/Runtime/StreamFlowFirstReceiveGateCountTests.cs
+new file mode 100644
+index 00000000..9646ed1c
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowFirstReceiveGateCountTests.cs
+@@ -0,0 +1,73 @@
++using System.Linq;
++using System.Reflection;
++using System.Reflection.Emit;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public class StreamFlowFirstReceiveGateCountTests
++{
++    [Test]
++    public void FirstReceiveShouldUseOneControllerGate()
++    {
++        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
++        var type = typeof(StreamFlowController);
++        var fused = type.GetMethod("AcceptReceivedAndResolveCreditLease", flags);
++        var resolve = type.GetMethod("ResolveReceiveCreditLease", flags)!;
++        var accept = type.GetMethods(flags).Single(method => method.Name == "AcceptReceived" &&
++            method.GetParameters().Length == 2);
++        var originalCount = EnterScopeCount(resolve) + EnterScopeCount(accept);
++        var actualCount = fused is null ? originalCount : EnterScopeCount(fused);
++        var controller = new StreamFlowController(1, 1, 1024);
++        StreamFlowController.ResolvedReceiveCreditLease lease;
++        if (fused is null)
++        {
++            // Portable unchanged-N negative: run the complete old operation and count
++            // its actual two lock-enter instructions, rather than fail on method absence.
++            lease = controller.ResolveReceiveCreditLease(1120, 0);
++            controller.AcceptReceived(in lease, 1);
++        }
++        else
++        {
++            var admission = fused.CreateDelegate<Func<long, ushort, int,
++                StreamFlowController.ResolvedReceiveCreditLease>>(controller);
++            lease = admission(1120, 0, 1);
++        }
++        if (controller.RecordConsumed(in lease, 1) != 1 || controller.FlushConsumed(in lease) != 0)
++            throw new InvalidOperationException("the compared operation must debit and repay exactly one byte");
++        Console.WriteLine($"first receive gate entries: actual={actualCount}; original pair={originalCount}");
++        if (originalCount != 2 || actualCount != 1)
++            throw new InvalidOperationException($"first receive uses {actualCount} controller gates; expected exactly one");
++    }
++
++    private static int EnterScopeCount(MethodInfo method)
++    {
++        var codes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
++            .Where(field => field.FieldType == typeof(OpCode))
++            .Select(field => (OpCode)field.GetValue(null)!)
++            .ToDictionary(code => code.Value);
++        var body = method.GetMethodBody()!.GetILAsByteArray()!;
++        var count = 0;
++        for (var offset = 0; offset < body.Length;)
++        {
++            var first = body[offset++];
++            var value = first == 0xfe ? unchecked((short)(0xfe00 | body[offset++])) : (short)first;
++            var code = codes[value];
++            if (code.OperandType == OperandType.InlineMethod)
++            {
++                var target = method.Module.ResolveMethod(BitConverter.ToInt32(body, offset));
++                if (target?.DeclaringType == typeof(Lock) && target.Name == "EnterScope")
++                    count++;
++            }
++            offset += code.OperandType switch
++            {
++                OperandType.InlineNone => 0,
++                OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
++                OperandType.InlineVar => 2,
++                OperandType.InlineI8 or OperandType.InlineR => 8,
++                OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(body, offset),
++                _ => 4,
++            };
++        }
++        return count;
++    }
++}

@@ -1,0 +1,10 @@
+scenario,repeat,count,bytes_per_operation
+actual-session-constructor,0,4096,1448.00
+actual-session-constructor,1,4096,1448.00
+actual-session-constructor,2,4096,1448.00
+fresh-manager-empty-route,0,4096,16096.00
+fresh-manager-empty-route,1,4096,16096.00
+fresh-manager-empty-route,2,4096,16096.00
+layout-StreamManager,0,4096,128.00
+layout-DispatcherEntry,0,4096,88.00
+layout-DispatcherEntryCompletions,0,4096,96.00
