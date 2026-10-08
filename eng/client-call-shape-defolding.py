@@ -402,6 +402,9 @@ def generate_probe(variant: str, output_dir: Path) -> None:
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
     <AssemblyName>ShapeProbe</AssemblyName>
     <RootNamespace>ShapeProbe</RootNamespace>
   </PropertyGroup>
