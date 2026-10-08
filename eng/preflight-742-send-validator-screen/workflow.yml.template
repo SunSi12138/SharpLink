@@ -1,0 +1,76 @@
+# Requires the pinned independent compiled-path review before builds or timing.
+name: 742 Send Validator Bounded D G2 V JIT Screen
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-send-validator-screen.yml'
+      - 'eng/preflight-742-send-validator-screen/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 742-send-validator-screen
+  cancel-in-progress: false
+jobs:
+  original-jit-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require independently reviewed compiled paths before builds or timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import sys
+          sys.path.insert(0, str(pathlib.Path('eng/preflight-742-send-validator-screen').resolve()))
+          from prepare import require_review
+          require_review()
+          PY
+      - uses: ./.github/actions/setup-dotnet
+      - name: Reconstruct exact D G2 V production roots and preserve original validators
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-quiescent/self-tests.py
+          python3 eng/preflight-742-send-validator-screen/prepare.py "$RUNNER_TEMP/send-validator-screen" artifacts/send-validator-screen/source --require-codegen-review
+          mkdir -p artifacts/send-validator-screen/env
+          cp eng/preflight-742-send-validator-screen/codegen-review.json artifacts/send-validator-screen/env/
+          cp eng/preflight-742-send-validator-screen/codegen-proof.json artifacts/send-validator-screen/env/
+          cp eng/preflight-742-send-validator-screen/independent-native-codegen-review.md artifacts/send-validator-screen/env/
+          dotnet --info > artifacts/send-validator-screen/env/dotnet.txt
+          uname -a > artifacts/send-validator-screen/env/uname.txt
+          lscpu > artifacts/send-validator-screen/env/cpu.txt
+          python3 - <<'PY'
+          import os
+          available = sorted(os.sched_getaffinity(0))
+          assert len(available) >= 4, 'The original screen requires four available CPUs.'
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CPU_LIST=' + ','.join(map(str, available[:4])) + '\n')
+          PY
+          for label in g2-reconstruction/dev g2-reconstruction/candidate V; do
+            root="$RUNNER_TEMP/send-validator-screen/$label"
+            safe="${label//\//-}"
+            for project in SharpLink.Benchmarks SharpLink.StreamLoadTest; do
+              dotnet build "$root/test/$project" -c Release -p:PublishAot=false -m:1 /nodeReuse:false -p:UseSharedCompilation=false > "artifacts/send-validator-screen/env/build-$safe-$project.log" 2>&1 || { cat "artifacts/send-validator-screen/env/build-$safe-$project.log"; exit 1; }
+            done
+          done
+      - name: Exactly six complete arm permutations and five original workloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-send-validator-screen/screen.py "$RUNNER_TEMP/send-validator-screen/g2-reconstruction/dev" "$RUNNER_TEMP/send-validator-screen/g2-reconstruction/candidate" "$RUNNER_TEMP/send-validator-screen/V" artifacts/send-validator-screen/raw --affinity "$CPU_LIST"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-send-validator-DG2V-screen-${{ github.sha }}
+          path: artifacts/send-validator-screen
+          if-no-files-found: error
+          retention-days: 30

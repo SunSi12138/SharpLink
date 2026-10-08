@@ -1,0 +1,102 @@
+{
+  "review": "independent matched NativeAOT send-validator mechanism review",
+  "run": 37823636416,
+  "helper_commit": "815c1ac1ec1ec4141f38cfe06814d8d0caf4b257",
+  "status": "pass-compiled-mechanism-only",
+  "timing_performed": false,
+  "elf_sha256": {
+    "G2": "8e18ac39a35131476976372e0d73c90f9778506c135b7c25281dc098af881d59",
+    "V": "d612d20aa0b0396fae31ecf2cb0825e5856ebf0ecbb7231a4ffeb723c554a802"
+  },
+  "positive_control": {
+    "method": "StreamFlowController__TryValidateSendLease",
+    "address": "0x142650",
+    "checked_out_assignment_call": "0x142680",
+    "callee": "RhpCheckedAssignRefESI",
+    "out_stack_local_in_throwing_wrapper": "0x142620"
+  },
+  "variant": {
+    "method": "StreamFlowController__GetValidSendState",
+    "address": "0x1425f0",
+    "code_bytes": 61,
+    "calls": 0,
+    "gc_reference_output_stores": 0,
+    "result": "validated SendState in RAX or zero"
+  },
+  "variant_guards": {
+    "state_load": "0x1425f4",
+    "cast_input_null": "0x1425f8",
+    "SendState_type_compare": "0x142604",
+    "owner": "0x14260d",
+    "nonnull_cast_result": "0x142612",
+    "Attached": "0x142617",
+    "state_generation_load": "0x14261d",
+    "generation_compare": "0x142621",
+    "valid_return": "0x142627",
+    "invalid_null_return": "0x142629"
+  },
+  "variant_callers": {
+    "TryAcquireSendCredit_0": {
+      "validation_call": "0x13f761",
+      "target": "ValidateSendLease",
+      "comparison": "relocation-normalized mnemonic stream equal to G2"
+    },
+    "AcquireSendCreditAsync": {
+      "validation_call": "0x13f887",
+      "target": "ValidateSendLease",
+      "comparison": "relocation-normalized mnemonic stream equal to G2"
+    },
+    "AcquireResolvedContendedSendCreditAsync": {
+      "validation_call": "0x13f9fd",
+      "target": "GetValidSendState",
+      "null_branch": "0x13fa08",
+      "reject_target": "0x13fb36",
+      "gate_reentry": "0x13f9d9",
+      "abort_check": "0x13fa13",
+      "completed_check": "0x13fa1c",
+      "expected_state_assignment": "0x13faed",
+      "expected_generation_store": "0x13fafa"
+    },
+    "ReturnUnsentCredit": {
+      "validation_call": "0x13fd81",
+      "target": "GetValidSendState",
+      "null_branch": "0x13fd89",
+      "abort_branch": "0x13fd94",
+      "no_op_exit": "0x13fe4b",
+      "unchanged_checks": "credit size, terminal, checked arithmetic, duplicate-refund bounds; gate exits retained"
+    },
+    "ValidateSendLease": {
+      "validation_call": "0x1425d4",
+      "target": "GetValidSendState",
+      "null_branch": "0x1425dc",
+      "stream_closed_exception": "0x1425e0",
+      "throw": "0x1425e8"
+    }
+  },
+  "hot_rpc_int32_chain": {
+    "client_loop_call": "0x48a510",
+    "generated_loop_call": "0x49645c",
+    "resolved_sender": "0x64e460",
+    "builder_start_call": "0x64e531",
+    "builder_start": "0x67ff60",
+    "move_next_call": "0x67ffb5",
+    "resolved_sender_move_next": "0x4975d0",
+    "controller_admission_call": "0x4976ee",
+    "controller_admission": "0x13f810"
+  },
+  "additional_canonical_body_admission_call": "0x5615f9",
+  "evidence_files": [
+    "actual-extraction.json",
+    "actual-controller-G2.txt",
+    "actual-controller-V.txt",
+    "actual-rpc-G2.txt",
+    "actual-rpc-V.txt"
+  ],
+  "boundaries": [
+    "Static NativeAOT compiled mechanism only; no dynamic frequency, CPU attribution or speedup inferred.",
+    "JIT code generation not inspected.",
+    "Safety-test/provenance totals are covered by the separate independent verifier.",
+    "Do not infer ABI or instruction equivalence by helper symbol absence; actual outlined helper and caller instructions were inspected.",
+    "Original large ZIP was repartitioned without rebuild or remeasurement; byte provenance is documented separately."
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "status": "independently-reviewed-pass",
+  "safety_run_id": 37823636416,
+  "safety_helper_commit": "815c1ac1ec1ec4141f38cfe06814d8d0caf4b257",
+  "g2_production_tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+  "v_production_tree": "379e7ca76cc3431d464e8b3ffc56e245534b151c",
+  "review_report_sha256": "139c88b5585408cbca1911246b0f0b6d342f29f3dd30e1758c2d1eaf5fad7ab6",
+  "native_binary_sha256": {
+    "G2": "8e18ac39a35131476976372e0d73c90f9778506c135b7c25281dc098af881d59",
+    "V": "d612d20aa0b0396fae31ecf2cb0825e5856ebf0ecbb7231a4ffeb723c554a802"
+  },
+  "checks": {
+    "complete_safety_suites_passed": true,
+    "old_out_reference_assignment_control_identified": true,
+    "new_matched_resolved_path_reviewed": true,
+    "validation_and_caller_checks_preserved": true
+  },
+  "boundary": "Independent actual NativeAOT mechanism and full safety checks passed. This permits the fixed90-launch JIT diagnostic screen only; no performance gain or readiness is established.",
+  "review_report_file": "codegen-proof.json",
+  "review_notes_file": "independent-native-codegen-review.md",
+  "review_notes_sha256": "bb788ab2bf77f08e8099b97ada24773b50409f93f87721457ad79c0f9bed0707",
+  "safety_evidence": {
+    "run_url": "https://github.com/SunSi12138/SharpLink/actions/runs/37823636416",
+    "full_default_tests": {
+      "G2": 2133,
+      "V": 2133
+    },
+    "full_experimental_tests": {
+      "V": 2133
+    },
+    "ready_writer_checks": 171,
+    "legacy_lifecycle_rows_each_arm": 120,
+    "original_deterministic_allocation_gates_passed": true,
+    "original_lifecycle_allocation_threshold_unchanged": true
+  }
+}
