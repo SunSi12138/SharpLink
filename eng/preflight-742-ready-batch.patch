@@ -1,0 +1,353 @@
+diff --git a/src/SharpLink.Runtime/StreamFlowController.cs b/src/SharpLink.Runtime/StreamFlowController.cs
+index 26321b693c3e2af5ae90a96951aea22d5e752520..c3b36d8f43a95adaa29914e7bae673f8779d9702 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.cs
+@@ -218,7 +218,7 @@
+     {
+         cancellationToken.ThrowIfCancellationRequested();
+         CreditWaiter waiter;
+-        List<CreditWaiter>? ready;
++        ReadyWaiterBatch ready;
+         lock (_gate)
+         {
+             ThrowIfTerminated();
+@@ -306,7 +306,7 @@
+     {
+         cancellationToken.ThrowIfCancellationRequested();
+         CreditWaiter waiter;
+-        List<CreditWaiter>? ready;
++        ReadyWaiterBatch ready;
+         lock (_gate)
+         {
+             ThrowIfTerminated();
+@@ -368,7 +368,7 @@
+     public void ApplyWindowUpdate(long requestId, ushort streamId, int credit)
+     {
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+-        List<CreditWaiter>? ready = null;
++        ReadyWaiterBatch ready = default;
+         lock (_gate)
+         {
+             ThrowIfTerminated();
+@@ -405,7 +405,7 @@
+     internal void ReturnUnsentCredit(in ResolvedSendCreditLease lease, int credit)
+     {
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+-        List<CreditWaiter>? ready;
++        ReadyWaiterBatch ready;
+         lock (_gate)
+         {
+             if (_terminalException is not null)
+@@ -434,7 +434,7 @@
+     public void ReturnUnsentCredit(long requestId, ushort streamId, int credit)
+     {
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+-        List<CreditWaiter>? ready;
++        ReadyWaiterBatch ready;
+         lock (_gate)
+         {
+             if (_terminalException is not null)
+@@ -464,7 +464,7 @@
+     public void CompleteSendStream(long requestId, ushort streamId, Exception? exception = null)
+     {
+         List<CreditWaiter>? rejected = null;
+-        List<CreditWaiter>? ready;
++        ReadyWaiterBatch ready;
+         lock (_gate)
+         {
+             var key = new StreamKey(requestId, streamId);
+@@ -515,8 +515,8 @@
+     {
+         ArgumentNullException.ThrowIfNull(exception);
+         List<StreamKey>? removedKeys = null;
+-        List<CreditWaiter>? rejected = null;
+-        List<CreditWaiter>? ready;
++        ReadyWaiterBatch rejected = default;
++        ReadyWaiterBatch ready;
+         lock (_gate)
+         {
+             foreach (var pair in _sendStates)
+@@ -549,7 +549,7 @@
+                 {
+                     RemoveWaiter(node.Value);
+                     node.Value.Rejection = exception;
+-                    (rejected ??= []).Add(node.Value);
++                    rejected.Add(node.Value);
+                 }
+                 node = next;
+             }
+@@ -1012,9 +1012,9 @@
+         _sendConnectionCredit -= encodedBytes;
+     }
+ 
+-    private List<CreditWaiter>? AdmitWaiters()
+-    {
+-        List<CreditWaiter>? ready = null;
++    private ReadyWaiterBatch AdmitWaiters()
++    {
++        ReadyWaiterBatch ready = default;
+         var node = _waiters.First;
+         while (node is not null)
+         {
+@@ -1027,7 +1027,7 @@
+                 {
+                     RemoveWaiter(waiter);
+                     waiter.Rejection = CreateStreamClosedException();
+-                    (ready ??= []).Add(waiter);
++                    ready.Add(waiter);
+                     node = next;
+                     continue;
+                 }
+@@ -1039,7 +1039,7 @@
+                 {
+                     RemoveWaiter(waiter);
+                     waiter.Rejection = CreateStreamClosedException();
+-                    (ready ??= []).Add(waiter);
++                    ready.Add(waiter);
+                     node = next;
+                     continue;
+                 }
+@@ -1057,7 +1057,7 @@
+             {
+                 RemoveWaiter(waiter);
+                 waiter.Rejection = state.AbortException ?? CreateStreamClosedException();
+-                (ready ??= []).Add(waiter);
++                ready.Add(waiter);
+                 node = next;
+                 continue;
+             }
+@@ -1071,7 +1071,7 @@
+ 
+             Reserve(state, waiter.EncodedBytes);
+             RemoveWaiter(waiter);
+-            (ready ??= []).Add(waiter);
++            ready.Add(waiter);
+             node = next;
+         }
+         return ready;
+@@ -1118,10 +1118,8 @@
+     private bool HasConnectionCredit(long credit, int encodedBytes)
+         => encodedBytes <= credit || (encodedBytes > _connectionWindow && credit == _connectionWindow);
+ 
+-    private static void CompleteReadyWaiters(List<CreditWaiter>? ready)
+-    {
+-        if (ready is null)
+-            return;
++    private static void CompleteReadyWaiters(in ReadyWaiterBatch ready)
++    {
+         for (var index = 0; index < ready.Count; index++)
+         {
+             var waiter = ready[index];
+@@ -1177,7 +1175,7 @@
+ 
+     private void CancelWaiter(CreditWaiter waiter, CancellationToken cancellationToken)
+     {
+-        List<CreditWaiter>? ready;
++        ReadyWaiterBatch ready;
+         lock (_gate)
+         {
+             if (waiter.Node is null)
+@@ -1267,6 +1265,24 @@
+             Completed = false;
+             Attached = false;
+             Next = null;
++        }
++    }
++
++    // Empty and single-waiter admissions stay inline; overflow retains queue order.
++    private struct ReadyWaiterBatch
++    {
++        private CreditWaiter? _first;
++        private List<CreditWaiter>? _overflow;
++
++        public readonly int Count => _first is null ? 0 : 1 + (_overflow?.Count ?? 0);
++        public readonly CreditWaiter this[int index] => index == 0 ? _first! : _overflow![index - 1];
++
++        public void Add(CreditWaiter waiter)
++        {
++            if (_first is null)
++                _first = waiter;
++            else
++                (_overflow ??= []).Add(waiter);
+         }
+     }
+ 
+diff --git a/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs b/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
+index b0857e644a7d53ada534fc3464ac185d9724dad2..e06d30412fa2c6ca54b909f3a2e00e6e5f8b5d99 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
+@@ -55,7 +55,7 @@
+         cancellationToken.ThrowIfCancellationRequested();
+         var key = new StreamKey(requestId, streamId);
+         CreditWaiter waiter;
+-        List<CreditWaiter>? ready;
++        ReadyWaiterBatch ready;
+         lock (_gate)
+         {
+             ThrowIfTerminated();
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.ReadyBatch.cs b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.ReadyBatch.cs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d81f4f9fdf504410a0128ddade1f9dc1bdbbda0d
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.ReadyBatch.cs
+@@ -0,0 +1,160 @@
++using System.Threading;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public partial class StreamFlowControllerTests
++{
++    [Test]
++    public async Task ReadyBatchShouldRemainEmptyWhenNoWaiterCanReserve()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        await controller.AcquireSendCreditAsync(901, 0, 2, CancellationToken.None);
++        await controller.AcquireSendCreditAsync(902, 0, 2, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var blocked = controller.AcquireSendCreditAsync(901, 0, 2, cancellation.Token);
++
++        controller.ApplyWindowUpdate(902, 0, 1);
++        Ensure(!blocked.IsCompleted && controller.SendConnectionCredit == 1,
++            "insufficient connection credit must leave the ready batch empty");
++        controller.ReturnUnsentCredit(902, 0, 1);
++        Ensure(!blocked.IsCompleted && controller.SendConnectionCredit == 2,
++            "sufficient connection credit must not admit a stream-credit-blocked waiter");
++
++        cancellation.Cancel();
++        await ExpectCancellation(blocked);
++        controller.ReturnUnsentCredit(901, 0, 2);
++        Ensure(controller.SendConnectionCredit == 4, "an empty batch must not reserve any credit");
++    }
++
++    [Test]
++    public async Task ReadyBatchShouldCompleteOneEligibleWaiterBehindBlockedStream()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        await controller.AcquireSendCreditAsync(903, 0, 2, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var blocked = controller.AcquireSendCreditAsync(903, 0, 1, cancellation.Token);
++        var eligible = controller.AcquireSendCreditAsync(904, 0, 1, CancellationToken.None);
++
++        Ensure(eligible.IsCompletedSuccessfully && !blocked.IsCompleted,
++            "the single eligible waiter must complete synchronously without admitting the blocked head");
++        await eligible;
++        Ensure(controller.SendConnectionCredit == 1, "the ready waiter must reserve exactly one byte");
++        controller.ReturnUnsentCredit(904, 0, 1);
++        Ensure(!blocked.IsCompleted && controller.SendConnectionCredit == 2,
++            "returning the eligible waiter's debit must leave the stream-blocked head pending");
++
++        cancellation.Cancel();
++        await ExpectCancellation(blocked);
++        controller.ReturnUnsentCredit(903, 0, 2);
++    }
++
++    [Test]
++    public async Task ReadyBatchShouldCompleteOverflowWaitersInAdmissionOrder()
++    {
++        var controller = new StreamFlowController(8, 8, 1024);
++        await controller.AcquireSendCreditAsync(905, 0, 8, CancellationToken.None);
++        var pending = new ValueTask[7];
++        for (var index = 0; index < pending.Length; index++)
++            pending[index] = controller.AcquireSendCreditAsync(906 + index, 0, 1, CancellationToken.None);
++
++        // One inline entry and five overflow entries also cross List's initial capacity.
++        controller.ApplyWindowUpdate(905, 0, 6);
++        for (var index = 0; index < pending.Length - 1; index++)
++            await pending[index].AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(!pending[^1].IsCompleted && controller.SendConnectionCredit == 0,
++            "the first six waiters must reserve the returned bytes before the last waiter");
++
++        controller.ReturnUnsentCredit(906, 0, 1);
++        await pending[^1].AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(controller.SendConnectionCredit == 0,
++            "the next batch must not duplicate any reservation from the overflow batch");
++    }
++
++    [Test]
++    public async Task ReadyBatchShouldPreserveRejectedAndEligibleWaiterOrderOnAbort()
++    {
++        var controller = new StreamFlowController(4, 4, 1024);
++        await controller.AcquireSendCreditAsync(920, 0, 4, CancellationToken.None);
++        var rejectedFirst = controller.AcquireSendCreditAsync(920, 0, 1, CancellationToken.None);
++        var eligibleFirst = controller.AcquireSendCreditAsync(921, 0, 1, CancellationToken.None);
++        var rejectedSecond = controller.AcquireSendCreditAsync(920, 1, 1, CancellationToken.None);
++        var eligibleSecond = controller.AcquireSendCreditAsync(922, 0, 1, CancellationToken.None);
++        var blockedLast = controller.AcquireSendCreditAsync(923, 0, 3, CancellationToken.None);
++        var rejection = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "ready-batch abort");
++
++        controller.AbortSendStreams(920, rejection);
++        await ExpectSameException(rejectedFirst, rejection);
++        await ExpectSameException(rejectedSecond, rejection);
++        await eligibleFirst.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        await eligibleSecond.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(!blockedLast.IsCompleted && controller.SendConnectionCredit == 2,
++            "rejected waiters must not reserve credit or let the last waiter bypass earlier admissions");
++
++        controller.ReturnUnsentCredit(921, 0, 1);
++        await blockedLast.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(controller.SendConnectionCredit == 0,
++            "the surviving waiter must consume exactly the remaining three bytes");
++    }
++
++    [Test]
++    public async Task ReadyBatchShouldAdmitEligibleWaiterAfterCancelingConnectionBlockedHead()
++    {
++        var controller = new StreamFlowController(4, 4, 1024);
++        await controller.AcquireSendCreditAsync(924, 0, 4, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var canceled = controller.AcquireSendCreditAsync(925, 0, 3, cancellation.Token);
++        var eligible = controller.AcquireSendCreditAsync(926, 0, 1, CancellationToken.None);
++        var blockedLast = controller.AcquireSendCreditAsync(927, 0, 2, CancellationToken.None);
++        controller.ApplyWindowUpdate(924, 0, 2);
++        Ensure(!canceled.IsCompleted && !eligible.IsCompleted && !blockedLast.IsCompleted,
++            "later waiters must not bypass a connection-credit-blocked head");
++
++        cancellation.Cancel();
++        await ExpectCancellation(canceled);
++        await eligible.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(!blockedLast.IsCompleted && controller.SendConnectionCredit == 1,
++            "cancellation must admit only the first eligible waiter and must not reserve canceled credit");
++        controller.ApplyWindowUpdate(924, 0, 1);
++        await blockedLast.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(controller.SendConnectionCredit == 0, "the remaining waiter must own the final two bytes");
++    }
++
++    [Test]
++    public async Task SingleReadyAdmissionShouldAvoidReadyCollectionAllocation()
++    {
++        const int iterations = 10_000;
++        var controller = new StreamFlowController(2, 4, 1024);
++        await controller.AcquireSendCreditAsync(928, 0, 2, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var blocked = controller.AcquireSendCreditAsync(928, 0, 1, cancellation.Token);
++        MeasureSingleReadyAdmissions(controller, 1_024);
++
++        // Measure the real keyed contended path: the blocked stream forces each eligible
++        // acquisition through CreditWaiter, AdmitWaiters and synchronous completion.
++        // Reuse the eligible stream state and return its byte on every iteration.
++        var allocated = MeasureSingleReadyAdmissions(controller, iterations);
++        Console.WriteLine($"Single-ready admission: {allocated} bytes / {iterations} iterations");
++        Ensure(!blocked.IsCompleted && controller.SendConnectionCredit == 2,
++            "the measured loop must retain its blocked head and return every eligible debit");
++
++        cancellation.Cancel();
++        await ExpectCancellation(blocked);
++        controller.ReturnUnsentCredit(928, 0, 2);
++        // The 64-bit control allocates 320 bytes per admission; inline-first uses 232.
++        Ensure(allocated <= iterations * 256L,
++            $"single-ready admissions allocated {allocated} bytes; ready collections must remain inline");
++    }
++
++    private static long MeasureSingleReadyAdmissions(StreamFlowController controller, int iterations)
++    {
++        var before = GC.GetAllocatedBytesForCurrentThread();
++        for (var index = 0; index < iterations; index++)
++        {
++            var admission = controller.AcquireSendCreditAsync(929, 0, 1, CancellationToken.None);
++            Ensure(admission.IsCompletedSuccessfully, "the eligible waiter must complete inline");
++            admission.GetAwaiter().GetResult();
++            controller.ReturnUnsentCredit(929, 0, 1);
++        }
++        return GC.GetAllocatedBytesForCurrentThread() - before;
++    }
++}
