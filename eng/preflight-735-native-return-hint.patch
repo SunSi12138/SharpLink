@@ -1,0 +1,102 @@
+diff --git a/src/SharpLink.Runtime/StreamFlowController.cs b/src/SharpLink.Runtime/StreamFlowController.cs
+index 4354ef17..26321b69 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.cs
+@@ -633,7 +633,7 @@ internal sealed partial class StreamFlowController
+         {
+             if (_terminalException is not null)
+                 return 0;
+-            if (!TryValidateReceiveLease(lease, out var state))
++            if (GetValidReceiveState(lease) is not { } state)
+                 return 0;
+ 
+             var streamCredit = checked(state.Credit + encodedBytes);
+@@ -746,7 +746,7 @@ internal sealed partial class StreamFlowController
+     {
+         lock (_gate)
+         {
+-            if (_terminalException is not null || !TryValidateReceiveLease(lease, out var state))
++            if (_terminalException is not null || GetValidReceiveState(lease) is not { } state)
+                 return 0;
+             state.Completed = true;
+             var delta = TakePendingCredit(state);
+@@ -1097,20 +1097,19 @@ internal sealed partial class StreamFlowController
+ 
+     private ReceiveState ValidateReceiveLease(in ResolvedReceiveCreditLease lease)
+     {
+-        if (!TryValidateReceiveLease(lease, out var state))
++        if (GetValidReceiveState(lease) is not { } state)
+             throw CreateStreamClosedException();
+         return state;
+     }
+ 
+-    private bool TryValidateReceiveLease(
+-        in ResolvedReceiveCreditLease lease,
+-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ReceiveState? state)
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private ReceiveState? GetValidReceiveState(in ResolvedReceiveCreditLease lease)
+     {
+-        state = lease.State as ReceiveState;
++        var state = lease.State as ReceiveState;
+         return ReferenceEquals(lease.Owner, this) &&
+             state is not null &&
+             state.Attached &&
+-            state.Lease == lease.Generation;
++            state.Lease == lease.Generation ? state : null;
+     }
+ 
+     private bool HasStreamCredit(long credit, int encodedBytes)
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.ResolvedStateLease.cs b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.ResolvedStateLease.cs
+index e6d32db7..c087eaac 100644
+--- a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.ResolvedStateLease.cs
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.ResolvedStateLease.cs
+@@ -65,6 +65,49 @@ public partial class StreamFlowControllerTests
+             "the current receive lifecycle must retain its independent credit");
+     }
+ 
++    [Test]
++    public async Task InvalidResolvedReceiveLeasesShouldNotMutateLiveCredit()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        var current = controller.ResolveReceiveCreditLease(720, 1);
++        var detached = controller.ResolveReceiveCreditLease(721, 1);
++        controller.FlushConsumed(in detached);
++        controller.AcceptReceived(in current, 1);
++
++        StreamFlowController.ResolvedReceiveCreditLease[] invalidLeases =
++        [
++            default,
++            new(new StreamFlowController(2, 4, 1024), 720, 1, current.State!, current.Generation),
++            new(controller, 720, 1, null!, current.Generation),
++            new(controller, 720, 1, new object(), current.Generation),
++            new(controller, 720, 1, current.State!, current.Generation - 1),
++            detached,
++        ];
++        foreach (var invalid in invalidLeases)
++        {
++            try
++            {
++                controller.AcceptReceived(in invalid, 1);
++                throw new Exception("expected the invalid receive lease to be rejected");
++            }
++            catch (SharpLinkException exception)
++            {
++                Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed,
++                    "invalid receive leases must preserve the stream-closed error");
++            }
++
++            Ensure(controller.RecordConsumed(in invalid, 1) == 0,
++                "invalid receive leases must not return live credit");
++            Ensure(controller.FlushConsumed(in invalid) == 0,
++                "invalid receive leases must not complete the live stream");
++        }
++
++        controller.AcceptReceived(in current, 1);
++        Ensure(controller.RecordConsumed(in current, 2) == 2,
++            "the live receive lease must retain both bytes after invalid accesses");
++        await Task.CompletedTask;
++    }
++
+     [Test]
+     public async Task ResolvedSendWaiterCancellationShouldPreserveCurrentLease()
+     {

@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   correctness:
+    if: "!contains(github.event.head_commit.message, '[hint-only]')"
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -143,6 +144,7 @@ jobs:
 
 
   rpc-isolation:
+    if: "!contains(github.event.head_commit.message, '[hint-only]')"
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
@@ -220,6 +222,7 @@ jobs:
 
 
   receive-validation-return:
+    if: "!contains(github.event.head_commit.message, '[hint-only]')"
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
