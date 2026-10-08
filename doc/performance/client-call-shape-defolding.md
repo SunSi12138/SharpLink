@@ -251,14 +251,87 @@ and uploads the full evidence directory.
 
 ## Results
 
-The exact-head CI artifact is the source of truth. Before the PR is marked Ready for review, this
-section is updated with:
+- Evidence workflow: [run 37731525050](https://github.com/SunSi12138/SharpLink/actions/runs/37731525050).
+- Measured head: `b98fa48c37340514a09db5eea53b8fa3373436d3`.
+- Artifact: `client-call-shape-defolding-b98fa48c37340514a09db5eea53b8fa3373436d3`
+  (SHA-256 `1d679feafff0660f82d6526d3b12ad5754050c1745f893b66a884e30e7a489f3`).
+- This results commit changes documentation only. The same workflow must pass again on the final PR head;
+  the PR description pins that exact-head rerun before Ready for review.
 
-- exact head SHA and workflow run;
-- A/B/C/D source/IL/state-machine/JIT native metrics;
-- TieredPGO OFF/ON and NativeAOT prototype measurements;
-- NativeAOT image/build deltas;
-- full SharpLink RPC medians;
-- the gate result and final folded/selective/full conclusion.
+### Lattice and generated-client inventory
 
-No result is inferred from an older branch or a different host.
+- Cartesian / exact reachable / lifecycle-equivalent: **40,960 / 8,224 / 224**.
+- Production entry points and A/B/C/D entries: **5 / 5 / 7 / 112 / 8,224**.
+- Current benchmark generated client: **25 files / 13,018 LOC / 638.5 KiB**, with **34** compiled
+  closed-generic `Invoke*Async` MethodSpec call sites.
+
+| Entry point | Call sites | Closed generics |
+| --- | ---: | ---: |
+| `InvokeUnaryAsync` | 18 | 18 |
+| `InvokeOneWayAsync` | 5 | 5 |
+| `InvokeClientStreamingAsync` | 5 | 5 |
+| `InvokeServerStreamingAsync` | 3 | 3 |
+| `InvokeDuplexStreamingAsync` | 3 | 3 |
+
+### A/B/C/D prototype and codegen cost
+
+| Variant | Entries | Source LOC | JIT DLL KiB | Payload fields | State B | MoveNext IL B | JIT native B | PGO off ns | PGO on ns | AOT ns | AOT image KiB | AOT build s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| A | 5 | 212 | 18.5 | 9 | 56 | 353 | 558 | 1227.9 | 1317.6 | 521.4 | 1585.0 | 4.1 |
+| B | 7 | 245 | 20.0 | 8 | 56 | 330 | 538 | 1259.6 | 1305.8 | 523.9 | 1589.1 | 4.2 |
+| C | 112 | 1,537 | 92.0 | 5 | 48 | 249 | 374 | 1163.3 | 1275.8 | 636.9 | 1805.5 | 4.6 |
+| D | 8,224 | 88,445 | 6069.0 | 3 | 40 | 213 | 327 | 1166.5 | 1199.9 | 529.0 | 18370.1 | 182.2 |
+
+| Variant vs A | PGO off | PGO on | NativeAOT | JIT DLL | AOT image | AOT build |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| B | +2.58% | -0.90% | +0.47% | +8.11% | +0.26% | +1.95% |
+| C | -5.26% | -3.18% | +22.15% | +397.30% | +13.91% | +11.92% |
+| D | -5.00% | -8.94% | +1.45% | +32705.41% | +1059.03% | +4333.33% |
+
+C does shrink the representative async state from 9 payload fields / 56 B in A to 5 / 48 B and
+reduces representative `MoveNext` IL/native code. That improvement does not survive the cost gate:
+C is **22.15% slower under NativeAOT** and grows the AOT image by **13.91%**. D reduces the state
+further to 3 fields / 40 B and reaches an **8.94%** best JIT speedup, but rooting 8,224 entry points
+grows the JIT DLL by **32,705%**, the AOT image by **1,059%**, and AOT build time by **4,333%**.
+
+### Full SharpLink RPC matrix
+
+The same 24 scenarios run under TieredPGO off/on and NativeAOT. The NativeAOT full-RPC host is
+**12,538.5 KiB** and publishes in **36.8 s** after restore. OneWay latency ends at local send
+completion; streamed OneWay pacing remains outside that timestamp but inside process-wide
+throughput/CPU/allocation accounting.
+
+The table below is a compact per-shape median of the scenario medians. The uploaded `summary.md`
+contains every **72 mode/scenario median rows**; the architecture decision uses those complete raw
+scenario medians plus the isolated A/B/C/D attribution, not cross-scenario averages.
+
+| Mode | Shape | Scenarios | median QPS | median P50 us | median P99 us | median CPU us/op | median B/op |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| pgo-off | Unary | 9 | 10085 | 96.13 | 149.88 | 333.08 | 976.0 |
+| pgo-off | OneWay | 5 | 25607 | 10.82 | 36.20 | 117.49 | 1593.8 |
+| pgo-off | ClientStreaming | 4 | 6028 | 160.04 | 244.80 | 607.29 | 3801.6 |
+| pgo-off | ServerStreaming | 3 | 6159 | 158.00 | 239.34 | 587.37 | 2509.0 |
+| pgo-off | DuplexStreaming | 3 | 5025 | 192.23 | 276.93 | 732.07 | 4732.7 |
+| pgo-on | Unary | 9 | 8986 | 109.62 | 156.14 | 373.75 | 976.8 |
+| pgo-on | OneWay | 5 | 23438 | 13.98 | 55.08 | 169.02 | 1594.5 |
+| pgo-on | ClientStreaming | 4 | 5081 | 191.84 | 271.34 | 689.88 | 3886.5 |
+| pgo-on | ServerStreaming | 3 | 5608 | 172.82 | 251.06 | 647.13 | 2488.4 |
+| pgo-on | DuplexStreaming | 3 | 4088 | 237.92 | 340.57 | 901.39 | 4874.5 |
+| native-aot | Unary | 9 | 11543 | 89.84 | 127.33 | 234.01 | 976.6 |
+| native-aot | OneWay | 5 | 44610 | 3.39 | 9.21 | 47.86 | 1577.6 |
+| native-aot | ClientStreaming | 4 | 8672 | 112.09 | 168.04 | 345.67 | 3791.6 |
+| native-aot | ServerStreaming | 3 | 8860 | 110.23 | 165.18 | 348.20 | 2406.6 |
+| native-aot | DuplexStreaming | 3 | 7610 | 128.19 | 188.42 | 399.20 | 4705.0 |
+
+### Gate result and architecture decision
+
+- **Full D: No-Go.** The best prototype speedup is **8.94%**, but AOT image/build cost grows by
+  **1,059% / 4,333%**; the declared gate requires at least 5% speedup while both AOT costs remain
+  at or below 20%.
+- **Selective C: No-Go as a generic policy.** It clears the JIT speed threshold, but not the
+  NativeAOT/code-size gate: AOT is 22.15% slower and the image is 13.91% larger than A.
+- **Production default: keep the five folded `IRpcChannel` lifecycle entry points.** Static de-fold
+  can shrink async state machines, but broad specialization does not justify its code-size/AOT cost.
+  Future de-folding should be dimension-specific and require same-machine full-RPC evidence for the
+  exact lifecycle/state-ownership fact being specialized.
+- No shipping ABI, wire format, runtime entry point, or production behavior changes in this experiment.
