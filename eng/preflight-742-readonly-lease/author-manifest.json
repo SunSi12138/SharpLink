@@ -1,0 +1,130 @@
+{
+  "candidate": "R",
+  "recipe_commit": "06b737df0d9aab66caed9c446a572b3a8ce4efae",
+  "base_tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+  "production_tree": "df4383c7d00ee4a31c129ae42958e013f4ff5385",
+  "candidate_tree": "54a4426f42e8edba19e98457d7a8a1477fcfe940",
+  "baseline_tests_tree": "6d96ee8d21339bdef6e3d492f854afcbef02b329",
+  "new_test_cases": 14,
+  "original_suite_cases": 2128,
+  "expected_overlay_suite_cases": 2142,
+  "patches": {
+    "production.patch": {
+      "sha256": "1e1699632cc556481e7cde1df2b3bb44f9a7c0ff6a7ea45fc0ef0a6f148628ff",
+      "bytes": 2161
+    },
+    "tests.patch": {
+      "sha256": "675f3e966b7fb65ae4d9ada83952fcd64b25dc7d3c58b9d1781f907b6b72da66",
+      "bytes": 23233
+    }
+  },
+  "focused_tests": [
+    {
+      "class": "ResolvedStreamLeaseOwnershipTests",
+      "method": "ClientWrapperShouldOwnSnapshotBeforeUserCallbacks",
+      "count": 3,
+      "filter": "/*/*/ResolvedStreamLeaseOwnershipTests/ClientWrapperShouldOwnSnapshotBeforeUserCallbacks*"
+    },
+    {
+      "class": "ResolvedStreamLeaseOwnershipTests",
+      "method": "ReentrantPooledReuseShouldRejectTheOwnedOldGeneration",
+      "count": 4,
+      "filter": "/*/*/ResolvedStreamLeaseOwnershipTests/ReentrantPooledReuseShouldRejectTheOwnedOldGeneration*"
+    },
+    {
+      "class": "ResolvedStreamLeaseOwnershipTests",
+      "method": "PostAdmissionClockCallbackShouldRefundOnlyTheOwnedLease",
+      "count": 4,
+      "filter": "/*/*/ResolvedStreamLeaseOwnershipTests/PostAdmissionClockCallbackShouldRefundOnlyTheOwnedLease*"
+    },
+    {
+      "class": "ResolvedStreamLeaseOwnershipTests",
+      "method": "PendingSerializedBudgetShouldCaptureLeaseBeforeWrapperReturns",
+      "count": 2,
+      "filter": "/*/*/ResolvedStreamLeaseOwnershipTests/PendingSerializedBudgetShouldCaptureLeaseBeforeWrapperReturns*"
+    },
+    {
+      "class": "ResolvedStreamLeaseOwnershipTests",
+      "method": "DispatchAndDeferredBoundariesShouldKeepOwnedLeaseParameters",
+      "count": 1,
+      "filter": "/*/*/ResolvedStreamLeaseOwnershipTests/DispatchAndDeferredBoundariesShouldKeepOwnedLeaseParameters*"
+    }
+  ],
+  "production_files": [
+    "src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs",
+    "src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs",
+    "src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs"
+  ],
+  "test_files": [
+    "test/SharpLink.UnitTests/Runtime/ResolvedStreamLeaseOwnershipTests.cs"
+  ],
+  "source_manifests": {
+    "G2-source-hashes.json": {
+      "sha256": "0e4cb723add5ae7cd11a0e36e54a17c195299dcf5f3be2687862c17bccbe9db2",
+      "bytes": 307291
+    },
+    "G2-tests-source-hashes.json": {
+      "sha256": "0a6d6667b23b729c801e01ceb9a849a8a74e1a67e485dffd0bc005a7611e7286",
+      "bytes": 307522
+    },
+    "R-source-hashes.json": {
+      "sha256": "79d8623a97b30f577899f672f14d85672e7bc0012f43e1d11f84e8fae3c79141",
+      "bytes": 307291
+    },
+    "R-tests-source-hashes.json": {
+      "sha256": "b5a4c9cdadb7f963465bd54ce8f496b01e177c3954d00ae50debfeb81c36f870",
+      "bytes": 307522
+    }
+  },
+  "source_subtrees": {
+    "G2": "20ee26e0cd62027012a127e073fb565d43c6a1ec",
+    "R": "17665c929a76a00b4d6a198f5f6794974babeb68",
+    "G2-tests": "20ee26e0cd62027012a127e073fb565d43c6a1ec",
+    "R-tests": "17665c929a76a00b4d6a198f5f6794974babeb68"
+  },
+  "test_file_sha256": "eca2cd0d45c6b88520daaef578043281525e57ca83c01b43dfe15bdcb92c24b2",
+  "local_dotnet_execution": false,
+  "local_checks": {
+    "reconstruction_and_patch_trees": "passed",
+    "git_diff_check": "passed",
+    "source_snapshot_boundaries": "passed",
+    "original_test_preservation": "passed: all existing test files byte-identical",
+    "case_count": "static 14 new; expected total2142; runtime discovery unexecuted",
+    "project_reference_boundaries": "blocked: Python wrapper requires unavailable dotnet",
+    "maintainability": "not run: requires dotnet",
+    "csharp_compilation_and_tests": "not run: GitHub validation required",
+    "formatting": "not run: GitHub dotnet format required"
+  },
+  "review": {
+    "kind": "independent static source/design review",
+    "test_source_sha256": "eca2cd0d45c6b88520daaef578043281525e57ca83c01b43dfe15bdcb92c24b2",
+    "runtime_claim": false
+  },
+  "remote_gates_required": [
+    "G2 and R full same-overlay safety2142 cases each, zero skipped",
+    "All14 focused controls on both G2 and R; default/experimental configurations",
+    "Compiler/analyzer zero warnings, whitespace format, architecture and maintainability guards",
+    "Unchanged allocation, lifecycle, writer171 and ownership gates",
+    "Actual retained JIT and NativeAOT caller/callee codegen: second40-byte lease copy removed without compensating unconditional copy; record actual tier/PGO",
+    "Performance comparison and readiness remain unestablished"
+  ],
+  "scope": "Candidate source/safety overlay only; no A/V production changes, timings, publication, or readiness claim",
+  "local_artifacts": {
+    "SAFETY.md": {
+      "sha256": "c4efa5ed0c2929d155d412adb25a198c09bd665c793f6182b2d9cf2ca3a9f82e",
+      "bytes": 6323
+    },
+    "verify-artifacts.py": {
+      "sha256": "36c1e99d8fd995026b09fddb29958152a28afbbff24e2a14f996e15dbdc86305",
+      "bytes": 6262
+    },
+    "static-verification.json": {
+      "sha256": "0bc58d8efed808eacb013c0f2adeddef3b33e8f9fff17dd7bad4dbaf9f616943",
+      "bytes": 346
+    },
+    "README.md": {
+      "sha256": "042b6f42da7f763bfda447c701a6113909bd1836efccbee1098e89d6a9fbd5e1",
+      "bytes": 1645
+    }
+  }
+}

@@ -1,0 +1,205 @@
+name: 742 Readonly Inner Lease Safety Codegen Preflight
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-readonly-lease-preflight.yml'
+      - 'eng/preflight-742-readonly-lease/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 742-readonly-lease-safety-layout
+  cancel-in-progress: false
+jobs:
+  safety-and-root-layout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.112
+      - name: Reconstruct pristine G2 and R plus identical test overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/readonly-lease/env
+          python3 eng/preflight-742-readonly-lease/self-tests.py
+          python3 eng/preflight-742-quiescent/self-tests.py
+          python3 eng/preflight-742-readonly-lease/prepare.py "$RUNNER_TEMP/readonly-lease" artifacts/readonly-lease/source
+          dotnet --info > artifacts/readonly-lease/env/dotnet.txt
+          uname -a > artifacts/readonly-lease/env/uname.txt
+          lscpu > artifacts/readonly-lease/env/cpu.txt
+          python3 - <<'PY'
+          import os, subprocess
+          assert subprocess.check_output(['dotnet', '--version'], text=True).strip() == '10.0.112'
+          runtimes = subprocess.check_output(['dotnet', '--list-runtimes'], text=True)
+          assert any(line.startswith('Microsoft.NETCore.App 10.0.12 ') for line in runtimes.splitlines())
+          net10 = [tuple(map(int, line.split()[1].split('.'))) for line in runtimes.splitlines()
+                   if line.startswith('Microsoft.NETCore.App 10.')]
+          assert max(net10) == (10, 0, 12), 'Unqualified original safety hosts must select runtime10.0.12'
+          available = sorted(os.sched_getaffinity(0))
+          assert len(available) >= 4, 'Original four-CPU capacity required'
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CPU_LIST=' + ','.join(map(str, available[:4])) + '\n')
+          PY
+      - name: Run both complete default suites and original allocation lifecycle gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-readonly-lease/safety.py default "$RUNNER_TEMP/readonly-lease" artifacts/readonly-lease/default
+      - name: Run candidate original writer171 and complete experimental suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-readonly-lease/safety.py experimental "$RUNNER_TEMP/readonly-lease" artifacts/readonly-lease/experimental
+      - name: Build original RPC and verify unchanged owned byte array root state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-readonly-lease/codegen.py build "$RUNNER_TEMP/readonly-lease" artifacts/readonly-lease/jit
+      - name: Capture eight original RPC executions with exact JIT tier labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-readonly-lease/codegen.py run "$RUNNER_TEMP/readonly-lease" artifacts/readonly-lease/jit --affinity "$CPU_LIST"
+      - name: Collect actual NativeAOT retained paths for independent ownership inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-readonly-lease/native-codegen.py "$RUNNER_TEMP/readonly-lease" artifacts/readonly-lease/native
+      - name: Package retained evidence below the per artifact limit
+        id: package
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-readonly-lease/package.py artifacts/readonly-lease artifacts/readonly-lease-upload
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_safety == 'true'
+        with:
+          name: 742-readonly-lease-safety-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/safety
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_index == 'true'
+        with:
+          name: 742-readonly-lease-jit-index-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-index
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_G2_build == 'true'
+        with:
+          name: 742-readonly-lease-jit-G2-build-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-G2-build
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_R_build == 'true'
+        with:
+          name: 742-readonly-lease-jit-R-build-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-R-build
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_G2_tcp_Client100x16 == 'true'
+        with:
+          name: 742-readonly-lease-jit-G2-tcp-Client100x16-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-G2-tcp-Client100x16
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_R_tcp_Client100x16 == 'true'
+        with:
+          name: 742-readonly-lease-jit-R-tcp-Client100x16-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-R-tcp-Client100x16
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_G2_sharedmemory_Client100x4096 == 'true'
+        with:
+          name: 742-readonly-lease-jit-G2-sharedmemory-Client100x4096-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-G2-sharedmemory-Client100x4096
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_R_sharedmemory_Client100x4096 == 'true'
+        with:
+          name: 742-readonly-lease-jit-R-sharedmemory-Client100x4096-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-R-sharedmemory-Client100x4096
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_G2_sharedmemory_Server1x16 == 'true'
+        with:
+          name: 742-readonly-lease-jit-G2-sharedmemory-Server1x16-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-G2-sharedmemory-Server1x16
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_R_sharedmemory_Server1x16 == 'true'
+        with:
+          name: 742-readonly-lease-jit-R-sharedmemory-Server1x16-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-R-sharedmemory-Server1x16
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_G2_sharedmemory_Server100x16 == 'true'
+        with:
+          name: 742-readonly-lease-jit-G2-sharedmemory-Server100x16-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-G2-sharedmemory-Server100x16
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_R_sharedmemory_Server100x16 == 'true'
+        with:
+          name: 742-readonly-lease-jit-R-sharedmemory-Server100x16-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/jit-R-sharedmemory-Server100x16
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_index == 'true'
+        with:
+          name: 742-readonly-lease-native-index-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/native-index
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_G2_elf == 'true'
+        with:
+          name: 742-readonly-lease-native-G2-elf-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/native-G2-elf
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_G2_code == 'true'
+        with:
+          name: 742-readonly-lease-native-G2-code-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/native-G2-code
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_R_elf == 'true'
+        with:
+          name: 742-readonly-lease-native-R-elf-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/native-R-elf
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_R_code == 'true'
+        with:
+          name: 742-readonly-lease-native-R-code-${{ github.sha }}
+          path: artifacts/readonly-lease-upload/native-R-code
+          if-no-files-found: error
+          retention-days: 30

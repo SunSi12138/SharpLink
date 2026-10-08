@@ -1,0 +1,98 @@
+{
+  "workloads": [
+    [
+      "tcp",
+      "Client100x16"
+    ],
+    [
+      "sharedmemory",
+      "Client100x4096"
+    ],
+    [
+      "sharedmemory",
+      "Server1x16"
+    ],
+    [
+      "sharedmemory",
+      "Server100x16"
+    ]
+  ],
+  "arms": [
+    "G2",
+    "R"
+  ],
+  "launches": 8,
+  "repeats": 1,
+  "warmup_operations": 30,
+  "measurement_seconds": 5,
+  "operation_cap": 200000,
+  "processor_count": 4,
+  "method_filters": [
+    "SharpLink.Client!SharpLink.Client.ClientConnection:SendClientStreamAsync",
+    "SharpLink.Client!*ClientConnection*SendClientStreamAsync*:MoveNext",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:PumpGeneratedOutboundStreamAsync",
+    "SharpLink.Runtime!*RpcSession*PumpGeneratedOutboundStreamAsync*:MoveNext",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:SendClientStreamChunk*",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:SendGeneratedStreamChunk*",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:SendStreamChunkKnownSize*",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:SendUnsizedStreamChunk*",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:Acquire*StreamSendCredit*",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:TryAcquireStreamSendCredit*",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:AwaitResolvedSendCreditAsync",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:ReturnUnsentStreamCredit*",
+    "SharpLink.Runtime!*RpcSession*SendClientStreamChunk*:MoveNext",
+    "SharpLink.Runtime!*RpcSession*SendStreamChunkKnownSize*:MoveNext",
+    "SharpLink.Runtime!*RpcSession*SendUnsizedStreamChunk*:MoveNext",
+    "SharpLink.Runtime!*RpcSession*AwaitResolvedSendCreditAsync*:MoveNext",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:TryAcquireSendCredit",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:AcquireSendCreditAsync",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:AcquireSendCreditLeaseAsync",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:TryAcquireSendCreditLease",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:AcquireResolvedContendedSendCreditAsync",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:ValidateSendLease",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:TryValidateSendLease",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:GetValidSendState",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:ReturnUnsentCredit",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:SendClientUnsizedStreamChunkAsync",
+    "SharpLink.Runtime!*RpcSession*SendClientUnsizedStreamChunkAsync*:MoveNext",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:AwaitPreCreditBudgetAndRetainedFlowCreditAsync",
+    "SharpLink.Runtime!*RpcSession*AwaitPreCreditBudgetAndRetainedFlowCreditAsync*:MoveNext",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:TryAcquireResolvedStreamSendCredit",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:AcquireResolvedStreamSendCreditAsync",
+    "SharpLink.Runtime!SharpLink.Runtime.RpcSession:ThrowIf*PublicationRejected",
+    "SharpLink.Runtime!SharpLink.Runtime.StreamFlowController:*Resolved*SendCredit*",
+    "SharpLink.Runtime!*StreamFlowController*AcquireResolved*SendCredit*:MoveNext"
+  ],
+  "runtime_environment": {
+    "DOTNET_PROCESSOR_COUNT": "4",
+    "DOTNET_ReadyToRun": "0",
+    "DOTNET_TieredCompilation": "1",
+    "DOTNET_TieredPGO": "1",
+    "DOTNET_TC_QuickJitForLoops": "1"
+  },
+  "diagnostic_environment": {
+    "DOTNET_JitDisasmWithCodeBytes": "1",
+    "DOTNET_JitDisasmDiffable": "0",
+    "DOTNET_JitDisasmOnlyOptimized": "0",
+    "DOTNET_JitDisasmSummary": "0"
+  },
+  "boundary": "Diagnostic actual byte[] code collection only. Preserve exact tiers and profile sources; no timing comparison or acceptance. R excludes failed A/V.",
+  "review_method_groups": [
+    "SendClientStreamAsync",
+    "PumpGeneratedOutboundStreamAsync",
+    "SendClientStreamChunkResolvedAsync",
+    "SendGeneratedStreamChunkResolvedAsync",
+    "SendUnsizedStreamChunkResolvedAsync",
+    "SendStreamChunkKnownSizeResolvedAsync",
+    "SendClientUnsizedStreamChunkAsync",
+    "AwaitPreCreditBudgetAndRetainedFlowCreditAsync",
+    "TryAcquireResolvedStreamSendCredit",
+    "AcquireResolvedStreamSendCreditAsync",
+    "ReturnUnsentStreamCredit",
+    "TryAcquireResolvedSendCredit",
+    "AcquireResolvedSendCreditAsync",
+    "ReturnUnsentCredit",
+    "ThrowIfStreamPublicationRejected",
+    "ThrowIfClientStreamPublicationRejected"
+  ]
+}

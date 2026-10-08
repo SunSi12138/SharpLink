@@ -1,0 +1,436 @@
+diff --git a/test/SharpLink.UnitTests/Runtime/ResolvedStreamLeaseOwnershipTests.cs b/test/SharpLink.UnitTests/Runtime/ResolvedStreamLeaseOwnershipTests.cs
+new file mode 100644
+index 00000000..9a9ea3a2
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/ResolvedStreamLeaseOwnershipTests.cs
+@@ -0,0 +1,430 @@
++using System.Buffers.Binary;
++using System.IO.Pipelines;
++using System.Linq;
++using System.Reflection;
++using System.Runtime.CompilerServices;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public class ResolvedStreamLeaseOwnershipTests
++{
++    [Test]
++    [Arguments("serialization")]
++    [Arguments("deadline")]
++    [Arguments("size-probe")]
++    public async Task ClientWrapperShouldOwnSnapshotBeforeUserCallbacks(string boundary)
++    {
++        await using var fixture = new Fixture();
++        var original = fixture.SeedLease(1);
++        var replacement = fixture.SeedLease(2, debit: 2);
++        var holder = new LeaseHolder(original);
++        var codec = new CallbackCodec();
++        var time = new CallbackTimeProvider();
++        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), time);
++        var calls = 0;
++        void ReplaceCallerLease()
++        {
++            calls++;
++            Ensure(fixture.Credit(original) == 8 && fixture.Credit(replacement) == 6,
++                "the callback must run before the original admission and preserve the other stream's debit");
++            holder.Lease = replacement;
++        }
++        if (boundary == "serialization")
++            codec.AfterSerialize = ReplaceCallerLease;
++        else if (boundary == "size-probe")
++            codec.OnSizeProbe = ReplaceCallerLease;
++        else
++            time.OnTimestamp = () => { time.OnTimestamp = null; ReplaceCallerLease(); };
++
++        // Pass the mutable field straight to the production wrapper. A test helper taking a
++        // lease by value would introduce its own snapshot and conceal a wrapper regression.
++        await fixture.Session.SendClientStreamChunkResolvedAsync(
++            1, 0, new Payload(4), codec, boundary == "size-probe" ? codec : null,
++            deadline, time, CancellationToken.None, holder.Lease);
++
++        Ensure(calls == 1 && holder.Lease.RequestId == 2, "the caller must actually replace its lease");
++        Ensure(fixture.Credit(original) == 4 && fixture.Credit(replacement) == 6,
++            "the original stream alone must own the publication debit");
++        Ensure(fixture.Controller.SendConnectionCredit == 26, "both distinct stream debits must remain accounted");
++        var frames = await fixture.ReadDataFramesAsync();
++        Ensure(frames.SequenceEqual(new[] { (1UL, (ushort)0) }), "only the original wire key may be published");
++        fixture.ReturnCredit(1, 4);
++        fixture.ReturnCredit(2, 2);
++    }
++
++    [Test]
++    [Arguments(false, 1L)]
++    [Arguments(false, 2L)]
++    [Arguments(true, 1L)]
++    [Arguments(true, 2L)]
++    public async Task ReentrantPooledReuseShouldRejectTheOwnedOldGeneration(bool generated, long replacementRequestId)
++    {
++        await using var fixture = new Fixture();
++        var original = fixture.SeedLease(1);
++        var holder = new LeaseHolder(original);
++        var codec = new CallbackCodec();
++        var replaced = false;
++        codec.AfterSerialize = () =>
++        {
++            if (codec.SerializeCount != (generated ? 2 : 1))
++                return;
++            if (generated)
++                fixture.ReturnCredit(1, 4);
++            fixture.Session.CompleteSendStream(1, 0);
++            holder.Lease = fixture.SeedLease(replacementRequestId);
++            Ensure(ReferenceEquals(original.State, holder.Lease.State) && original.Generation != holder.Lease.Generation,
++                "the callback must reuse the same pooled object with a different generation");
++            replaced = true;
++        };
++
++        await ExpectFailure(() => generated
++            ? fixture.Session.PumpGeneratedOutboundStreamAsync(
++                1, 0, Items(2, 4), codec, payloadNullable: false, CancellationToken.None)
++            : fixture.Session.SendClientStreamChunkResolvedAsync(
++                1, 0, new Payload(4), codec, null, default, TimeProvider.System,
++                CancellationToken.None, holder.Lease), SharpLinkErrorCode.ConnectionClosed);
++
++        Ensure(replaced && fixture.Credit(holder.Lease) == 8 && fixture.Controller.SendConnectionCredit == 32,
++            "a stale owner must neither debit nor refund the replacement generation");
++        Ensure(fixture.Session.PreCreditSerializedBytes == 0 && fixture.Session.PreCreditSerializedWaiterCount == 0,
++            "stale admission must leave no serialized-memory owner or waiter");
++        var frames = await fixture.ReadDataFramesAsync();
++        Ensure(frames.Count == (generated ? 1 : 0) && frames.All(key => key == (1UL, (ushort)0)),
++            "only the generated first item, if present, may reach the wire");
++    }
++
++    [Test]
++    [Arguments(false, false)]
++    [Arguments(false, true)]
++    [Arguments(true, false)]
++    [Arguments(true, true)]
++    public async Task PostAdmissionClockCallbackShouldRefundOnlyTheOwnedLease(bool generated, bool callbackCancellation)
++    {
++        await using var fixture = new Fixture();
++        var original = fixture.SeedLease(1);
++        var replacement = fixture.SeedLease(2, debit: 2);
++        var holder = new LeaseHolder(original);
++        var codec = new CallbackCodec();
++        var time = new CallbackTimeProvider();
++        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), time);
++        using var cancellation = new CancellationTokenSource();
++        var callbackRan = false;
++        time.OnTimestamp = () =>
++        {
++            if (codec.SerializeCount != (generated ? 2 : 1) || fixture.Credit(original) != (generated ? 0 : 4))
++                return;
++            time.OnTimestamp = null;
++            Ensure(fixture.Credit(original) == (generated ? 0 : 4) && fixture.Credit(replacement) == 6,
++                "inspect each state at the callback so wrong debit plus wrong refund cannot cancel out");
++            Ensure(fixture.Controller.SendConnectionCredit == (generated ? 22 : 26),
++                "the callback must run after this retained item acquired protocol credit");
++            holder.Lease = replacement;
++            callbackRan = true;
++            if (callbackCancellation)
++            {
++                // This covers cancellation thrown by user clock code, not an additional
++                // production cancellation check after GetTimestamp has returned.
++                cancellation.Cancel();
++                cancellation.Token.ThrowIfCancellationRequested();
++            }
++            time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(2));
++        };
++
++        using (SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
++                   fixture.Session.Id, authentication: null, deadline, time)))
++        {
++            ValueTask Send() => generated
++                ? fixture.Session.PumpGeneratedOutboundStreamAsync(
++                    1, 0, Items(2, 4), codec, payloadNullable: false, cancellation.Token)
++                : fixture.Session.SendClientStreamChunkResolvedAsync(
++                    1, 0, new Payload(4), codec, null, deadline, time, cancellation.Token, holder.Lease);
++            if (callbackCancellation)
++                await ExpectCancellation(Send);
++            else
++                await ExpectFailure(Send, SharpLinkErrorCode.DeadlineExceeded);
++        }
++
++        Ensure(callbackRan && holder.Lease.RequestId == 2, "the post-admission callback must replace caller storage");
++        Ensure(fixture.Credit(original) == (generated ? 4 : 8) && fixture.Credit(replacement) == 6,
++            "refund exactly the retained item's original debit and preserve the replacement's prior debit");
++        Ensure(fixture.Controller.SendConnectionCredit == (generated ? 26 : 30),
++            "only an already-published first item and the unrelated debit may remain");
++        Ensure(fixture.Session.PreCreditSerializedBytes == 0 && fixture.Session.PreCreditSerializedWaiterCount == 0,
++            "post-admission rejection must leave no serialized-memory ownership");
++        var frames = await fixture.ReadDataFramesAsync();
++        Ensure(frames.Count == (generated ? 1 : 0), "the rejected retained item must never reach the wire");
++        if (generated)
++            fixture.ReturnCredit(1, 4);
++        fixture.AssertDuplicateRefundRejected(original, 4);
++        fixture.ReturnCredit(2, 2);
++        Ensure(fixture.Controller.SendConnectionCredit == 32, "final credit must balance exactly");
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task PendingSerializedBudgetShouldCaptureLeaseBeforeWrapperReturns(bool generated)
++    {
++        await using var fixture = new Fixture(streamWindow: 4, connectionWindow: 16, serializedBudget: 4);
++        var original = fixture.SeedLease(1, debit: generated ? 0 : 4);
++        var blocker = fixture.SeedLease(2, debit: 4);
++        var replacement = fixture.SeedLease(3, debit: 1);
++        var holder = new LeaseHolder(original);
++        var codec = new CallbackCodec();
++        var blockedSend = ValueTask.CompletedTask;
++        void StartBlocker()
++        {
++            Ensure(!generated || (codec.SerializeCount == 1 && fixture.Credit(original) == 0),
++                "the generated first item must publish before installing the global flow waiter");
++            blockedSend = fixture.Session.SendClientStreamChunkResolvedAsync(
++                2, 0, new Payload(4), new CallbackCodec(), null, default, TimeProvider.System,
++                CancellationToken.None, blocker);
++            Ensure(!blockedSend.IsCompleted && fixture.Session.PreCreditSerializedBytes == 4,
++                "the blocker must own the entire serialized budget while waiting for flow credit");
++        }
++        if (!generated)
++            StartBlocker();
++        var pending = generated
++            ? fixture.Session.PumpGeneratedOutboundStreamAsync(
++                1, 0, ItemsWithBlockerBeforeSecond(StartBlocker), codec, payloadNullable: false, CancellationToken.None)
++            : fixture.Session.SendClientStreamChunkResolvedAsync(
++                1, 0, new Payload(4), codec, null, default, TimeProvider.System,
++                CancellationToken.None, holder.Lease);
++        Ensure(!pending.IsCompleted && fixture.Session.PreCreditSerializedWaiterCount == 1 &&
++               codec.SerializeCount == (generated ? 2 : 1),
++            "the retained helper's first await must itself be a pending budget wait before the wrapper returns");
++        holder.Lease = replacement;
++        // Re-enter the same production wrapper and inner helper after the original stack
++        // returns. Throw before admission: global waiter fairness forbids bypassing the
++        // blocked flow waiter even when this unrelated stream still has enough credit.
++        var churnException = new InvalidOperationException("intentional pre-admission stack reuse");
++        var churnCodec = new CallbackCodec { AfterSerialize = () => throw churnException };
++        for (var index = 0; index < 3; index++)
++        {
++            try
++            {
++                await ReuseWrapperStack(fixture.Session, churnCodec, replacement);
++                throw new Exception("the stack-reuse serializer must throw before admission");
++            }
++            catch (InvalidOperationException exception) when (ReferenceEquals(exception, churnException))
++            {
++            }
++        }
++        Ensure(churnCodec.SerializeCount == 3 && fixture.Credit(original) == 0 &&
++               fixture.Credit(blocker) == 0 && fixture.Credit(replacement) == 3,
++            "stack reuse must leave the original and blocker exhausted and preserve the unrelated prior debit");
++
++        fixture.ReturnCredit(2, 4);
++        await blockedSend.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        await WaitUntilAsync(() => fixture.Session.PreCreditSerializedWaiterCount == 0);
++        Ensure(!pending.IsCompleted && fixture.Session.PreCreditSerializedBytes == 4,
++            "granting budget must leave the original retained send waiting for its own flow credit");
++        fixture.ReturnCredit(1, 4);
++        await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(fixture.Credit(original) == 0 && fixture.Credit(blocker) == 0 && fixture.Credit(replacement) == 3,
++            "the resumed send must debit the original stream and never the caller's replacement");
++        Ensure(fixture.Session.PreCreditSerializedBytes == 0 && fixture.Session.PreCreditSerializedWaiterCount == 0,
++            "both budget owners and the budget waiter must be released");
++        var frames = await fixture.ReadDataFramesAsync();
++        Ensure(frames.Count(key => key == (1UL, (ushort)0)) == (generated ? 2 : 1) &&
++               frames.Count(key => key == (2UL, (ushort)0)) == 1 &&
++               frames.All(key => key != (3UL, (ushort)0)) && frames.Count == (generated ? 3 : 2),
++            "wire request and stream keys must preserve original admission across the pending budget await");
++        fixture.ReturnCredit(1, 4);
++        fixture.ReturnCredit(2, 4);
++        fixture.ReturnCredit(3, 1);
++        Ensure(fixture.Controller.SendConnectionCredit == 16, "all original and replacement debits must balance");
++    }
++
++    [Test]
++    public Task DispatchAndDeferredBoundariesShouldKeepOwnedLeaseParameters()
++    {
++        foreach (var name in new[]
++                 {
++                     "SendClientStreamChunkResolvedAsync", "SendGeneratedStreamChunkResolvedAsync",
++                     "SendStreamChunkKnownSizeResolvedAsync", "AwaitPreCreditBudgetAndRetainedFlowCreditAsync",
++                     "ReturnUnsentStreamCredit"
++                 })
++        {
++            var parameters = typeof(RpcSession).GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
++                .Where(method => method.Name == name).SelectMany(method => method.GetParameters())
++                .Where(parameter => parameter.ParameterType == typeof(StreamFlowController.ResolvedSendCreditLease) ||
++                    parameter.ParameterType.GetElementType() == typeof(StreamFlowController.ResolvedSendCreditLease)).ToArray();
++            Ensure(parameters.Length == 1 && !parameters[0].ParameterType.IsByRef,
++                $"{name} must own a by-value snapshot instead of retaining or forwarding caller storage");
++        }
++        return Task.CompletedTask;
++    }
++
++    [MethodImpl(MethodImplOptions.NoInlining)]
++    private static ValueTask ReuseWrapperStack(RpcSession session, CallbackCodec codec,
++        StreamFlowController.ResolvedSendCreditLease lease)
++        => session.SendClientStreamChunkResolvedAsync(3, 0, new Payload(1), codec, null,
++            default, TimeProvider.System, CancellationToken.None, lease);
++
++    private static async IAsyncEnumerable<Payload> ItemsWithBlockerBeforeSecond(Action startBlocker)
++    {
++        yield return new Payload(4);
++        startBlocker();
++        yield return new Payload(4);
++        await Task.CompletedTask;
++    }
++
++    private static async IAsyncEnumerable<Payload> Items(int count, int bytes)
++    {
++        for (var index = 0; index < count; index++)
++            yield return new Payload(bytes);
++        await Task.CompletedTask;
++    }
++
++    private static async Task WaitUntilAsync(Func<bool> condition)
++    {
++        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
++        while (!condition())
++        {
++            timeout.Token.ThrowIfCancellationRequested();
++            await Task.Yield();
++        }
++    }
++
++    private static async Task ExpectFailure(Func<ValueTask> send, SharpLinkErrorCode code)
++    {
++        try { await send().AsTask().WaitAsync(TimeSpan.FromSeconds(5)); }
++        catch (SharpLinkException exception) when (exception.Code == code) { return; }
++        throw new Exception($"expected {code}");
++    }
++
++    private static async Task ExpectCancellation(Func<ValueTask> send)
++    {
++        try { await send().AsTask().WaitAsync(TimeSpan.FromSeconds(5)); }
++        catch (OperationCanceledException) { return; }
++        throw new Exception("expected cancellation from the post-admission clock callback");
++    }
++
++    private static void Ensure(bool condition, string message)
++    {
++        if (!condition) throw new InvalidOperationException(message);
++    }
++
++    private readonly record struct Payload(int Bytes);
++    private sealed class LeaseHolder(StreamFlowController.ResolvedSendCreditLease lease)
++    {
++        internal StreamFlowController.ResolvedSendCreditLease Lease = lease;
++    }
++
++    private sealed class CallbackCodec : IRpcCodec<Payload>, IRpcSizedCodec<Payload>
++    {
++        internal int SerializeCount { get; private set; }
++        internal Action? AfterSerialize { get; set; }
++        internal Action? OnSizeProbe { get; set; }
++        public bool CanExactSize => false;
++        public void Serialize(in Payload value, IBufferWriter<byte> buffer)
++        {
++            SerializeCount++;
++            buffer.GetSpan(value.Bytes)[..value.Bytes].Fill(0x5a);
++            buffer.Advance(value.Bytes);
++            AfterSerialize?.Invoke();
++        }
++        public Payload Deserialize(in ReadOnlySequence<byte> buffer) => new(checked((int)buffer.Length));
++        public bool TryGetEncodedSize(in Payload value, out int size) { size = 0; return false; }
++        public bool TryGetEncodedSize(in Payload value, out int size, out IRpcSizedCodecSnapshot? snapshot)
++        {
++            size = 0;
++            snapshot = null;
++            OnSizeProbe?.Invoke();
++            return false;
++        }
++        public void SerializeSized(in Payload value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
++            => throw new InvalidOperationException("these controls must use the unsized fallback");
++        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
++            => throw new InvalidOperationException("an unsized probe must not create a snapshot");
++    }
++
++    private sealed class CallbackTimeProvider : TimeProvider
++    {
++        private readonly ManualTimeProvider _clock = new();
++        internal Action? OnTimestamp { get; set; }
++        public override long TimestampFrequency => _clock.TimestampFrequency;
++        public override long GetTimestamp() { OnTimestamp?.Invoke(); return _clock.GetTimestamp(); }
++        public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
++        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
++            => _clock.CreateTimer(callback, state, dueTime, period);
++        internal void AdvanceWithoutRunningTimers(TimeSpan elapsed) => _clock.AdvanceWithoutRunningTimers(elapsed);
++    }
++
++    private sealed class Fixture : IAsyncDisposable
++    {
++        private readonly SharpLinkRuntimeContext _context;
++        private readonly Pipe _input = new();
++        private readonly Pipe _output = new();
++        internal RpcSession Session { get; }
++        internal StreamFlowController Controller { get; }
++        private readonly Lock _controllerGate;
++        internal Fixture(int streamWindow = 8, int connectionWindow = 32, int serializedBudget = 4)
++        {
++            _context = new SharpLinkRuntimeContextBuilder().Configure(options =>
++            {
++                options.FlowControl.MaxPreCreditSerializedBytes = serializedBudget;
++            }).Build(includeGeneratedAssemblyCatalog: false);
++            Session = RpcSessionTestFixture.CreateSessionOverTestTransport(
++                "readonly-lease-ownership", _input.Reader, _output.Writer,
++                RpcSessionTestFixture.ServerOptions(_context), completeHandshake: false);
++            RpcSessionTestFixture.CompleteHandshake(Session, ProtocolV2Capabilities.FlowControl,
++                streamReceiveWindowBytes: streamWindow, connectionReceiveWindowBytes: connectionWindow);
++            Controller = ((RpcSessionProtocolState)typeof(RpcSession)
++                .GetField("_protocolState", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Session)!).FlowController!;
++            _controllerGate = (Lock)typeof(StreamFlowController)
++                .GetField("_gate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(Controller)!;
++        }
++        internal StreamFlowController.ResolvedSendCreditLease SeedLease(long requestId, int debit = 0)
++        {
++            Ensure(Controller.TryAcquireSendCreditLease(requestId, 0, Math.Max(1, debit), out var lease),
++                "the seed must bind synchronously");
++            if (debit == 0)
++                Controller.ReturnUnsentCredit(in lease, 1);
++            return lease;
++        }
++        internal long Credit(StreamFlowController.ResolvedSendCreditLease lease)
++        {
++            lock (_controllerGate)
++                return (long)lease.State!.GetType().GetField("Credit", BindingFlags.Instance | BindingFlags.Public)!
++                    .GetValue(lease.State)!;
++        }
++        internal void ReturnCredit(long requestId, int bytes)
++            => Session.ApplyWindowUpdate(requestId, new ProtocolV2WindowUpdate(0, checked((uint)bytes)));
++        internal void AssertDuplicateRefundRejected(StreamFlowController.ResolvedSendCreditLease lease, int bytes)
++        {
++            try { Controller.ReturnUnsentCredit(in lease, bytes); }
++            catch (InvalidOperationException exception) when (exception.Message.Contains("returned more than once", StringComparison.Ordinal))
++            {
++                return;
++            }
++            throw new Exception("the already-refunded retained item must reject a second refund");
++        }
++        internal async Task<List<(ulong RequestId, ushort StreamId)>> ReadDataFramesAsync()
++        {
++            await Session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++            var frames = new List<(ulong, ushort)>();
++            if (!_output.Reader.TryRead(out var read))
++                return frames;
++            var remaining = read.Buffer;
++            while (ProtocolV2FrameParser.TryReadFrame(ref remaining, _context.Protocol, out var header, out var payload))
++            {
++                if (header.Type != ProtocolV2FrameType.StreamData)
++                    continue;
++                var streamId = BinaryPrimitives.ReadUInt16LittleEndian(payload.Slice(0, sizeof(ushort)).ToArray());
++                frames.Add((header.RequestId, streamId));
++            }
++            Ensure(remaining.IsEmpty, "the output must contain complete frames");
++            _output.Reader.AdvanceTo(read.Buffer.End);
++            return frames;
++        }
++        public async ValueTask DisposeAsync()
++        {
++            await Session.DisposeAsync();
++            await _output.Reader.CompleteAsync();
++            await _input.Writer.CompleteAsync();
++            _context.Dispose();
++        }
++    }
++}

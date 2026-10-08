@@ -1,0 +1,39 @@
+diff --git a/src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs b/src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs
+index 19b5f9c4..54d09c30 100644
+--- a/src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs
++++ b/src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs
+@@ -101,7 +101,7 @@ internal sealed partial class RpcSession
+                 terminalToken, creditLease, deadline, timeProvider, clientPublication: true);
+         }
+         return SendUnsizedStreamChunkResolvedAsync(
+-            requestId, streamId, item, codec, terminalToken, creditLease,
++            requestId, streamId, item, codec, terminalToken, in creditLease,
+             deadline, timeProvider, clientPublication: true);
+     }
+ 
+diff --git a/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs b/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
+index bd431a31..f515a60f 100644
+--- a/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
++++ b/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
+@@ -279,7 +279,7 @@ internal sealed partial class RpcSession
+                 cancellationToken, creditLease, deadline, deadlineTimeProvider);
+         }
+         return SendUnsizedStreamChunkResolvedAsync(
+-            requestId, streamId, item, codec, cancellationToken, creditLease,
++            requestId, streamId, item, codec, cancellationToken, in creditLease,
+             deadline, deadlineTimeProvider);
+     }
+ 
+diff --git a/src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs b/src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs
+index c68cd83d..894e52f8 100644
+--- a/src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs
++++ b/src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs
+@@ -252,7 +252,7 @@ internal sealed partial class RpcSession
+         T item,
+         IRpcCodec<T> codec,
+         CancellationToken cancellationToken,
+-        StreamFlowController.ResolvedSendCreditLease creditLease,
++        in StreamFlowController.ResolvedSendCreditLease creditLease,
+         RpcDeadline deadline = default,
+         TimeProvider? deadlineTimeProvider = null,
+         bool clientPublication = false)
