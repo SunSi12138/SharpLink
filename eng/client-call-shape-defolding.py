@@ -405,9 +405,6 @@ def generate_probe(variant: str, output_dir: Path) -> None:
     <AssemblyName>ShapeProbe</AssemblyName>
     <RootNamespace>ShapeProbe</RootNamespace>
   </PropertyGroup>
-  <ItemGroup>
-    <TrimmerRootAssembly Include="$(AssemblyName)" />
-  </ItemGroup>
 </Project>
 """
     (output_dir / "ShapeProbe.csproj").write_text(csproj, encoding="utf-8")
@@ -423,6 +420,7 @@ def generate_probe(variant: str, output_dir: Path) -> None:
     source_parts = [
         "using System;",
         "using System.Diagnostics;",
+        "using System.Diagnostics.CodeAnalysis;",
         "using System.Globalization;",
         "using System.IO;",
         "using System.Threading;",
@@ -467,6 +465,7 @@ def generate_probe(variant: str, output_dir: Path) -> None:
     source_parts += [
         "    ];",
         "",
+        "    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, typeof(Program))]",
         "    public static async Task<int> Main(string[] args)",
         "    {",
         "        if (args.Length != 2)",
