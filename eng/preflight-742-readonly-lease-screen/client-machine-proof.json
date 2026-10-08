@@ -1,0 +1,245 @@
+{
+  "run": 37855801421,
+  "helper": "7b84cd6a60dc9f8d8e7dfa8e29dc82c4adc2d535",
+  "source_trees": {
+    "G2": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+    "R": "df4383c7d00ee4a31c129ae42958e013f4ff5385"
+  },
+  "cells": {
+    "G2-tcp-Client100x16": {
+      "selected_methods": [
+        {
+          "method": "SharpLink.Runtime.RpcSession:SendUnsizedStreamChunkResolvedAsync[System.__Canon](long,ushort,System.__Canon,SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken,SharpLink.Runtime.StreamFlowController+ResolvedSendCreditLease,SharpLink.Abstractions.RpcDeadline,System.TimeProvider,bool):System.Threading.Tasks.ValueTask:this",
+          "file": "block-025.txt",
+          "sha256": "05a0699ffd4c18ce619b96be0516b4474bf5fa452d7453ca5efaf4e6e56d5dc6",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 5561,
+          "local_copy": "G2-tcp-Client100x16-block-025.txt",
+          "stack_reserve": 440,
+          "line_count": 1678
+        },
+        {
+          "method": "SharpLink.Client.ClientConnection:SendClientStreamAsync[System.__Canon](long,ushort,System.Collections.Generic.IAsyncEnumerable`1[System.__Canon],SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken):System.Threading.Tasks.Task:this",
+          "file": "block-036.txt",
+          "sha256": "9dd772e4eee7d07c56dc777ad7ce6649fd22767205697f440b09603d37351496",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 630,
+          "local_copy": "G2-tcp-Client100x16-block-036.txt",
+          "stack_reserve": 288,
+          "line_count": 220
+        },
+        {
+          "method": "SharpLink.Client.ClientConnection+<SendClientStreamAsync>d__62`1[System.__Canon]:MoveNext():this",
+          "file": "block-037.txt",
+          "sha256": "a26290e14fe91818393f4d31e59f5632d6039c6507767ac1c04904883b28a086",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 7946,
+          "local_copy": "G2-tcp-Client100x16-block-037.txt",
+          "stack_reserve": 920,
+          "line_count": 2302
+        },
+        {
+          "method": "SharpLink.Runtime.StreamFlowController:TryAcquireSendCredit(byref,int):bool:this",
+          "file": "block-027.txt",
+          "sha256": "53e5d436265aa6b80fb276c5bc1a85a66162b57c9be1badd355763ce7e25041f",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 711,
+          "local_copy": "G2-tcp-Client100x16-block-027.txt",
+          "stack_reserve": 64,
+          "line_count": 281
+        }
+      ],
+      "diagnostic_report_sha256": "0673666e18916bb7d03cb9c7334ab52af9db1ee5475c372038e23469f0a3aedd",
+      "invocation_sha256": "1dfd4509061ae868111e6dd3d9ac37c69c42ffe363408c4c62a17050b5981d83"
+    },
+    "G2-sharedmemory-Client100x4096": {
+      "selected_methods": [
+        {
+          "method": "SharpLink.Runtime.RpcSession:SendUnsizedStreamChunkResolvedAsync[System.__Canon](long,ushort,System.__Canon,SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken,SharpLink.Runtime.StreamFlowController+ResolvedSendCreditLease,SharpLink.Abstractions.RpcDeadline,System.TimeProvider,bool):System.Threading.Tasks.ValueTask:this",
+          "file": "block-025.txt",
+          "sha256": "e8155cc51f1fad84d9061f8397aa20442cd5240c1e0332fe5854fbdedcba23a9",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 5549,
+          "local_copy": "G2-sharedmemory-Client100x4096-block-025.txt",
+          "stack_reserve": 440,
+          "line_count": 1678
+        },
+        {
+          "method": "SharpLink.Client.ClientConnection:SendClientStreamAsync[System.__Canon](long,ushort,System.Collections.Generic.IAsyncEnumerable`1[System.__Canon],SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken):System.Threading.Tasks.Task:this",
+          "file": "block-036.txt",
+          "sha256": "044480857cb61587b69b60ab0cbeaf19b3ea7ec67fe906006c3b663a0365674a",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 630,
+          "local_copy": "G2-sharedmemory-Client100x4096-block-036.txt",
+          "stack_reserve": 288,
+          "line_count": 220
+        },
+        {
+          "method": "SharpLink.Client.ClientConnection+<SendClientStreamAsync>d__62`1[System.__Canon]:MoveNext():this",
+          "file": "block-037.txt",
+          "sha256": "4787a087439c7ad88213a35dad0153b772eb998f48635df858d933b7e5116d22",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 8215,
+          "local_copy": "G2-sharedmemory-Client100x4096-block-037.txt",
+          "stack_reserve": 936,
+          "line_count": 2393
+        },
+        {
+          "method": "SharpLink.Runtime.StreamFlowController:TryAcquireSendCredit(byref,int):bool:this",
+          "file": "block-027.txt",
+          "sha256": "da2a945ebb8fa5afa6a64d43846e8c50e6c3e8cc40000af1cd1c20aa74d3e250",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 691,
+          "local_copy": "G2-sharedmemory-Client100x4096-block-027.txt",
+          "stack_reserve": 64,
+          "line_count": 281
+        }
+      ],
+      "diagnostic_report_sha256": "bd47677b1ac96852877a7fc0b830d1179a05a9b60b3d31ca308ca49423c36250",
+      "invocation_sha256": "6d727eab49e229682794e3ddbf1a918474b2ac25551f9027fc32dfb0c01ac68e"
+    },
+    "R-tcp-Client100x16": {
+      "selected_methods": [
+        {
+          "method": "SharpLink.Runtime.RpcSession:SendUnsizedStreamChunkResolvedAsync[System.__Canon](long,ushort,System.__Canon,SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken,byref,SharpLink.Abstractions.RpcDeadline,System.TimeProvider,bool):System.Threading.Tasks.ValueTask:this",
+          "file": "block-025.txt",
+          "sha256": "44ca106efa327856edb8c3269065645a786abd0343f805e7c2a24e5ef3640460",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 5194,
+          "local_copy": "R-tcp-Client100x16-block-025.txt",
+          "stack_reserve": 440,
+          "line_count": 1532
+        },
+        {
+          "method": "SharpLink.Client.ClientConnection:SendClientStreamAsync[System.__Canon](long,ushort,System.Collections.Generic.IAsyncEnumerable`1[System.__Canon],SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken):System.Threading.Tasks.Task:this",
+          "file": "block-036.txt",
+          "sha256": "914bac9fc49baf95eef6abe2e29a2620cba6ac3de8266503c3ea7077b5f661b9",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 630,
+          "local_copy": "R-tcp-Client100x16-block-036.txt",
+          "stack_reserve": 288,
+          "line_count": 220
+        },
+        {
+          "method": "SharpLink.Client.ClientConnection+<SendClientStreamAsync>d__62`1[System.__Canon]:MoveNext():this",
+          "file": "block-037.txt",
+          "sha256": "7298c49227adcd321d95f16cfabd6150a72847fa24bfa2cbebb347359728df1f",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 8094,
+          "local_copy": "R-tcp-Client100x16-block-037.txt",
+          "stack_reserve": 920,
+          "line_count": 2371
+        },
+        {
+          "method": "SharpLink.Runtime.StreamFlowController:TryAcquireSendCredit(byref,int):bool:this",
+          "file": "block-027.txt",
+          "sha256": "076ec7e0c6a0e63d0c50188ac8e04ad179d766db963e4e6c50b4180ccd50c83f",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 713,
+          "local_copy": "R-tcp-Client100x16-block-027.txt",
+          "stack_reserve": 64,
+          "line_count": 282
+        }
+      ],
+      "diagnostic_report_sha256": "5566879cbb058bd8d57b91b27840506e02176ba578296f9bccba19c92796c2f8",
+      "invocation_sha256": "163df2ecc54533fef74c678480267e3f74b5c83b3a0280af21a68ff5ce867ac6"
+    },
+    "R-sharedmemory-Client100x4096": {
+      "selected_methods": [
+        {
+          "method": "SharpLink.Runtime.RpcSession:SendUnsizedStreamChunkResolvedAsync[System.__Canon](long,ushort,System.__Canon,SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken,byref,SharpLink.Abstractions.RpcDeadline,System.TimeProvider,bool):System.Threading.Tasks.ValueTask:this",
+          "file": "block-031.txt",
+          "sha256": "73c1ff4be3ac7a6df37e078fabf0101a4adff49788409cbd58ce0a98bf24e071",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 5194,
+          "local_copy": "R-sharedmemory-Client100x4096-block-031.txt",
+          "stack_reserve": 440,
+          "line_count": 1532
+        },
+        {
+          "method": "SharpLink.Client.ClientConnection:SendClientStreamAsync[System.__Canon](long,ushort,System.Collections.Generic.IAsyncEnumerable`1[System.__Canon],SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken):System.Threading.Tasks.Task:this",
+          "file": "block-036.txt",
+          "sha256": "e902dc9bea220ab92c92388c38568308b19c05dcb72f7a98ebbf40de408b62d9",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 630,
+          "local_copy": "R-sharedmemory-Client100x4096-block-036.txt",
+          "stack_reserve": 288,
+          "line_count": 220
+        },
+        {
+          "method": "SharpLink.Client.ClientConnection+<SendClientStreamAsync>d__62`1[System.__Canon]:MoveNext():this",
+          "file": "block-037.txt",
+          "sha256": "97f2d4970adc24cd30ea832f3c5f47b2287499dc9690dcddf7dc2089e9a55202",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 8237,
+          "local_copy": "R-sharedmemory-Client100x4096-block-037.txt",
+          "stack_reserve": 920,
+          "line_count": 2404
+        },
+        {
+          "method": "SharpLink.Runtime.StreamFlowController:TryAcquireSendCredit(byref,int):bool:this",
+          "file": "block-033.txt",
+          "sha256": "cff91fac1c71eef78f599abc591aab9d8152d830b7fe0bca63548997b65a938f",
+          "tier": "Tier1",
+          "pgo_source": "Synthesized PGO",
+          "code_bytes": 709,
+          "local_copy": "R-sharedmemory-Client100x4096-block-033.txt",
+          "stack_reserve": 64,
+          "line_count": 282
+        }
+      ],
+      "diagnostic_report_sha256": "339ea8bbfc2a9451126218d44c4ce58aeeb5ca7a7dca44d62018327bcd237ffd",
+      "invocation_sha256": "84ccfc9d64e0be8422a03799f1f257e9a8902c679dd54c1e8b40edeb0e8ed71e"
+    }
+  },
+  "boundary": "JIT instruction/source mechanism only; exact Tier1/Synthesized PGO. No timing/CPU benefit. Nested source/binary integrity report is a required companion.",
+  "manual_findings": {
+    "owned_snapshot": {
+      "source_state_range": "[state+0x80,state+0xA8)",
+      "destination": "[rbp-0x278,rbp-0x250)",
+      "bytes": 40,
+      "all_four_retained_roots": true
+    },
+    "second_copy": {
+      "G2": "two reference word moves then three movsq to [rsp+8,rsp+0x30)",
+      "R": "lea [rbp-0x278]; mov [rsp+8], pointer",
+      "argument_payload_reduction_bytes": 32
+    },
+    "R_callee": "incoming lease pointer [rbp+0x18] forwarded to controller without whole-value copy",
+    "admission_inlining": "G2 inlined in sender; R calls separately compiled TryAcquireSendCredit(byref,int). No claim of equal call overhead.",
+    "deferred_refund": "whole40B outgoing ownership copies remain in R inner callee; destination JIT bodies not emitted in these captures, not inspected",
+    "root_sizes": {
+      "client_G2": 256,
+      "client_R": 256,
+      "server_G2": 304,
+      "server_R": 304,
+      "lease": 40
+    },
+    "client_root_cleared_bytes": {
+      "tcp_G2": 600,
+      "tcp_R": 672,
+      "sharedmemory_G2": 680,
+      "sharedmemory_R": 672
+    },
+    "inner_sender_cleared_bytes": {
+      "G2": 240,
+      "R": 240
+    },
+    "R_controller_cleared_bytes": 40
+  }
+}

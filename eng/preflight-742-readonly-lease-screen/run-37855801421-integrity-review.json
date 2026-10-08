@@ -1,0 +1,247 @@
+{
+  "run": {
+    "id": 37855801421,
+    "attempt": 1,
+    "head": "7b84cd6a60dc9f8d8e7dfa8e29dc82c4adc2d535",
+    "tree": "a5fcfa74feb6b6b6418af97da84cc93f71f0703d",
+    "conclusion": "success"
+  },
+  "official_artifacts": 17,
+  "packaging_failures": [],
+  "full_suites": {
+    "G2-tests": 2142,
+    "R-tests": 2142,
+    "R-experimental": 2142
+  },
+  "focused_suites": {
+    "G2-tests": {
+      "ClientWrapperShouldOwnSnapshotBeforeUserCallbacks": 3,
+      "ReentrantPooledReuseShouldRejectTheOwnedOldGeneration": 4,
+      "PostAdmissionClockCallbackShouldRefundOnlyTheOwnedLease": 4,
+      "PendingSerializedBudgetShouldCaptureLeaseBeforeWrapperReturns": 2,
+      "DispatchAndDeferredBoundariesShouldKeepOwnedLeaseParameters": 1
+    },
+    "R-tests": {
+      "ClientWrapperShouldOwnSnapshotBeforeUserCallbacks": 3,
+      "ReentrantPooledReuseShouldRejectTheOwnedOldGeneration": 4,
+      "PostAdmissionClockCallbackShouldRefundOnlyTheOwnedLease": 4,
+      "PendingSerializedBudgetShouldCaptureLeaseBeforeWrapperReturns": 2,
+      "DispatchAndDeferredBoundariesShouldKeepOwnedLeaseParameters": 1
+    }
+  },
+  "allocations": {
+    "G2-tests": {
+      "rpc-add-sharedmemory-c1": {
+        "median": 1329.91,
+        "spread": 22.248000000000047,
+        "median_limit": 1450,
+        "spread_limit": 50
+      },
+      "rpc-add-sharedmemory-c8": {
+        "median": 560.6015625,
+        "spread": 22.71484375,
+        "median_limit": 650,
+        "spread_limit": 90
+      },
+      "rpc-oneway-sharedmemory-c1": {
+        "median": 800.372,
+        "spread": 0.40800000000001546,
+        "median_limit": 960,
+        "spread_limit": 20
+      },
+      "send-pump-idle-wake-balanced": {
+        "median": 616.628,
+        "spread": 0.55600000000004,
+        "median_limit": 700,
+        "spread_limit": 5
+      }
+    },
+    "R-tests": {
+      "rpc-add-sharedmemory-c1": {
+        "median": 1326.088,
+        "spread": 15.463999999999942,
+        "median_limit": 1450,
+        "spread_limit": 50
+      },
+      "rpc-add-sharedmemory-c8": {
+        "median": 556.20703125,
+        "spread": 20.421875,
+        "median_limit": 650,
+        "spread_limit": 90
+      },
+      "rpc-oneway-sharedmemory-c1": {
+        "median": 800.444,
+        "spread": 0.4820000000000846,
+        "median_limit": 960,
+        "spread_limit": 20
+      },
+      "send-pump-idle-wake-balanced": {
+        "median": 616.072,
+        "spread": 0.7560000000000855,
+        "median_limit": 700,
+        "spread_limit": 5
+      }
+    }
+  },
+  "lifecycle": {
+    "original": {
+      "rows_per_arm": 120,
+      "max_delta": 0.0,
+      "limit": 0.01
+    },
+    "production_callbacks": {
+      "rows_per_arm": 120,
+      "max_delta": 0.0,
+      "scope": "supplemental original probe; no new gate inferred"
+    }
+  },
+  "managed_layout": [
+    {
+      "arm": "G2",
+      "root": "SendClientStreamAsync",
+      "managed_size": 256,
+      "assembly_sha256": "5ba1e3aea241a1c18c4993e6fa2e3713ab5f120bd1e731863f36ef0c3e18fb08"
+    },
+    {
+      "arm": "G2",
+      "root": "PumpGeneratedOutboundStreamAsync",
+      "managed_size": 304,
+      "assembly_sha256": "ab7b7afafdee844217260e591e3fbbd09896336708d20280b9769ca21277583b"
+    },
+    {
+      "arm": "R",
+      "root": "SendClientStreamAsync",
+      "managed_size": 256,
+      "assembly_sha256": "a3b4a16d2957809c65d89cc22f7e68d777da932aacf5d05ab77a3058721d19f4"
+    },
+    {
+      "arm": "R",
+      "root": "PumpGeneratedOutboundStreamAsync",
+      "managed_size": 304,
+      "assembly_sha256": "cea913526060ed6ff79295f355be73d2681d11bc2d7f3afb958df283b985b2d9"
+    }
+  ],
+  "jit": [
+    {
+      "arm": "G2",
+      "transport": "tcp",
+      "scenario": "Client100x16",
+      "method_blocks": 42,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "osr": null,
+      "original_dynamic_pgo_status": "inconclusive"
+    },
+    {
+      "arm": "R",
+      "transport": "tcp",
+      "scenario": "Client100x16",
+      "method_blocks": 42,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "osr": null,
+      "original_dynamic_pgo_status": "inconclusive"
+    },
+    {
+      "arm": "G2",
+      "transport": "sharedmemory",
+      "scenario": "Client100x4096",
+      "method_blocks": 42,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "osr": null,
+      "original_dynamic_pgo_status": "inconclusive"
+    },
+    {
+      "arm": "R",
+      "transport": "sharedmemory",
+      "scenario": "Client100x4096",
+      "method_blocks": 42,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "osr": null,
+      "original_dynamic_pgo_status": "inconclusive"
+    },
+    {
+      "arm": "G2",
+      "transport": "sharedmemory",
+      "scenario": "Server1x16",
+      "method_blocks": 18,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "osr": null,
+      "original_dynamic_pgo_status": "inconclusive"
+    },
+    {
+      "arm": "R",
+      "transport": "sharedmemory",
+      "scenario": "Server1x16",
+      "method_blocks": 18,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "osr": null,
+      "original_dynamic_pgo_status": "inconclusive"
+    },
+    {
+      "arm": "G2",
+      "transport": "sharedmemory",
+      "scenario": "Server100x16",
+      "method_blocks": 39,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "osr": null,
+      "original_dynamic_pgo_status": "inconclusive"
+    },
+    {
+      "arm": "R",
+      "transport": "sharedmemory",
+      "scenario": "Server100x16",
+      "method_blocks": 39,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "osr": null,
+      "original_dynamic_pgo_status": "inconclusive"
+    }
+  ],
+  "native": {
+    "G2": {
+      "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+      "native_archive_sha256": "68d937ed7b83e2c7e3ce6d88d5ab1648d2fa59ccfc4dad0d43632176e8343dfa",
+      "publish_files": 15,
+      "source_identity_verified": true,
+      "execution_performed": false,
+      "semantic_mechanism_proof": "pending separate instruction review"
+    },
+    "R": {
+      "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+      "native_archive_sha256": "ff33dba5613979d4408053c7452eb9ed64e33d25b63afae76562597e5d059181",
+      "publish_files": 15,
+      "source_identity_verified": true,
+      "execution_performed": false,
+      "semantic_mechanism_proof": "pending separate instruction review"
+    }
+  },
+  "writer_checks": 171,
+  "writer_fixture_counts": [
+    17,
+    12,
+    8,
+    13
+  ],
+  "format_reference_maintainability": "passed frozen default-step commands; format log empty on success",
+  "actual_setup": {
+    "raw_rows": 36,
+    "process_order": [
+      "F",
+      "G",
+      "G",
+      "F"
+    ]
+  },
+  "safety_binary_limit": "Produced-binary SHA manifests and copied-probe identities verified; safety binary bytes were intentionally not archived and are not independently rehashed.",
+  "jit_binary_files": {
+    "G2": 67,
+    "R": 67
+  },
+  "boundary": "All retained artifact/source/binary/provenance and complete safety/allocation gates verified. Actual roots are Tier1/Synthesized PGO, not Dynamic/OSR. Native collection compiled-only. Semantic copy removal remains separate; no performance or promotion acceptance."
+}

@@ -1,0 +1,55 @@
+{
+  "status": "PASS_MECHANISM_ONLY",
+  "run_id": 37855801421,
+  "helper_commit": "7b84cd6a60dc9f8d8e7dfa8e29dc82c4adc2d535",
+  "production_trees": {
+    "G2": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+    "R": "df4383c7d00ee4a31c129ae42958e013f4ff5385"
+  },
+  "production_patch_sha256": "1e1699632cc556481e7cde1df2b3bb44f9a7c0ff6a7ea45fc0ef0a6f148628ff",
+  "safety_integrity_verified": true,
+  "mechanism": {
+    "owned_snapshot_preserved": true,
+    "second_outgoing_copy_replaced_by_pointer": true,
+    "no_unconditional_compensating_copy": true,
+    "deferred_and_refund_value_ownership_preserved": true
+  },
+  "jit": {
+    "tier": "Tier1",
+    "pgo": "Synthesized PGO",
+    "root_osr": false,
+    "admission_inlining_preserved": false,
+    "performance_claim": false,
+    "separate_generated_dispatch_wrapper_pgo": "Dynamic PGO",
+    "uncaptured_bodies": [
+      "AwaitPreCreditBudgetAndRetainedFlowCreditAsync starter/MoveNext",
+      "ReturnUnsentStreamCredit destination body"
+    ],
+    "deferred_refund_outbound_value_copies_inspected": true
+  },
+  "native": {
+    "scope": "compiled-only",
+    "workload_executed": false,
+    "performance_claim": false,
+    "deferred_starter_and_refund_bodies_inspected": true,
+    "elf_sha256": {
+      "G2": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+      "R": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24"
+    }
+  },
+  "performance_acceptance": false,
+  "original_full_acceptance_required": true,
+  "prior_negative_results_retained": true,
+  "proof_files": {
+    "client-jit-review.md": "cb9e771c6cbb0186f9e8da04e0766e36a06ee5903ce95cfcde12113c4ab37b43",
+    "client-machine-proof.json": "7d58d793af9d61f498b23ab7c5a644de6cffc6e8abe0a66fa70189057fa3ad3b",
+    "independent-compiled-review.md": "3ed7e804e78b183e08d2e912e40dfe2ef76b6f29136ef4e9dffc57e281c681cc",
+    "native-checks.json": "3bc06ac436ce43fbb583c128a88453e2136872d5fce39126abbf46575d4da5b3",
+    "native-method-map.json": "40049814feb90f564b43bcf5bf5c85587bd7a2f78a297132d6214f7b04105942",
+    "native-review.md": "e1474112e5ed970ee81a501dbe6fd467062f7fc650a1bc363277beea4d819bdd",
+    "run-37855801421-integrity-review.json": "8c87ebcfb04203aed627ee196314f2fb0866b4a8c2a15d845fe76ad66ee3aca2",
+    "safety-integrity-review.md": "5027571b504ec0a1497441a292a354d20b517b0ef0f252b0f62ce6e6279537cb",
+    "server-jit-review.md": "809f79c79c447f817d6ab00d8af3272e5494f7cb68042c0bcaa068d66e932541",
+    "server-jit-summary.json": "90fa8b78a62fa16e25c98c9e900b5352f3af7731668a70c5511ea0cdb0bb0925"
+  }
+}

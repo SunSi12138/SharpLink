@@ -1,0 +1,580 @@
+[
+  {
+    "arm": "G2",
+    "role": "client-root",
+    "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>__MoveNext",
+    "address": "0x554f40",
+    "size": 4734,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-client-root.txt",
+    "sha256": "9cb45a8a26a48ed611f57aac98e970c41904332a95ca3321322e41d8133e4e04",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x554f40",
+      "--stop-address=0x5561be",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "server-root",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>__MoveNext",
+    "address": "0x55f0a0",
+    "size": 7362,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-server-root.txt",
+    "sha256": "ea1adea7b216fb55ee039689d702c5110e9f29bcc3731d44364ab66fe7cfe79b",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x55f0a0",
+      "--stop-address=0x560d62",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "unsized",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__SendUnsizedStreamChunkResolvedAsync<System___Canon>",
+    "address": "0x68c6a0",
+    "size": 1201,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-unsized.txt",
+    "sha256": "59a9078ffb8967b8def3458f51ba49a78e624cc78e2b8608257fc6b1dbcc9ca7",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x68c6a0",
+      "--stop-address=0x68cb51",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "client-wrapper",
+    "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync<System___Canon>",
+    "address": "0x689dd0",
+    "size": 178,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-client-wrapper.txt",
+    "sha256": "da125a8b80089055af0991aed71df8826787007273e89cbaab11d79f86c57d2c",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x689dd0",
+      "--stop-address=0x689e82",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "server-wrapper",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync<System___Canon>",
+    "address": "0x68be90",
+    "size": 235,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-server-wrapper.txt",
+    "sha256": "8cdcbb5215c6134dac38788dffbc8cd43289b7f3d6d07805f04836a03c453c89",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x68be90",
+      "--stop-address=0x68bf7b",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "deferred-wrapper",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__AwaitPreCreditBudgetAndRetainedFlowCreditAsync",
+    "address": "0x135080",
+    "size": 305,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-deferred-wrapper.txt",
+    "sha256": "28cb4ad4a57e811bed801c7199ff4e95e991ff828b0796d57750b308abd81411",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x135080",
+      "--stop-address=0x1351b1",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "deferred-root",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__AwaitPreCreditBudgetAndRetainedFlowCreditAsync_d__199__MoveNext",
+    "address": "0x154a70",
+    "size": 1272,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-deferred-root.txt",
+    "sha256": "a485e232321e075cc58402b5aad6fa6783bc27d0a7fe73ef0da6624a40ba7a22",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x154a70",
+      "--stop-address=0x154f68",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "refund",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__ReturnUnsentStreamCredit_0",
+    "address": "0x131e70",
+    "size": 48,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-refund.txt",
+    "sha256": "517f05880f95ee487313f7903035fd7c760c3c681c59be9ea0095f866fc2d1ff",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x131e70",
+      "--stop-address=0x131ea0",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "admission",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__TryAcquireSendCredit_0",
+    "address": "0x13f710",
+    "size": 243,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-admission.txt",
+    "sha256": "2d47672355442cd189798052cb1b9f7c9d0d2ef3f6bbd58771cf702b7106ecbf",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x13f710",
+      "--stop-address=0x13f803",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "contended",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__AcquireResolvedContendedSendCreditAsync",
+    "address": "0x13f990",
+    "size": 578,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-contended.txt",
+    "sha256": "1eea66da748f340cfe28fcfafb2b1b9d56ab43dca757a370b60ad0cf0ea1155f",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x13f990",
+      "--stop-address=0x13fbd2",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "client-root",
+    "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>__MoveNext",
+    "address": "0x554ee0",
+    "size": 4696,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-client-root.txt",
+    "sha256": "a053c810702691528cc041c705cc2a70d7d989ac4f7d7b28ab25ecb3afe5cc0f",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x554ee0",
+      "--stop-address=0x556138",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "server-root",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>__MoveNext",
+    "address": "0x55f020",
+    "size": 7324,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-server-root.txt",
+    "sha256": "26212286029547c2b43462e1db566810be66c4677806bf74615229b5f5ae4535",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x55f020",
+      "--stop-address=0x560cbc",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "unsized",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__SendUnsizedStreamChunkResolvedAsync<System___Canon>",
+    "address": "0x68c5e0",
+    "size": 1207,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-unsized.txt",
+    "sha256": "1449a75f4ca7ce84c958e98bf5e0bdb93f96daa2b2b14c774873c906d1d0aabb",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x68c5e0",
+      "--stop-address=0x68ca97",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "client-wrapper",
+    "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync<System___Canon>",
+    "address": "0x689d10",
+    "size": 178,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-client-wrapper.txt",
+    "sha256": "aaec66a9ee96ef9fc698b73e9230f82e7de94611f5ae6f91c2f1dfc467dcf933",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x689d10",
+      "--stop-address=0x689dc2",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "server-wrapper",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync<System___Canon>",
+    "address": "0x68bdd0",
+    "size": 235,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-server-wrapper.txt",
+    "sha256": "ba93a962865b6427f89553a2e9be5dcc79d8a84280540ccd000ac8998fbfce45",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x68bdd0",
+      "--stop-address=0x68bebb",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "deferred-wrapper",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__AwaitPreCreditBudgetAndRetainedFlowCreditAsync",
+    "address": "0x135080",
+    "size": 305,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-deferred-wrapper.txt",
+    "sha256": "a1d2a1e3aeab61bd94d407e4f242f0e8986dcf90ee344e9028a773796530be69",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x135080",
+      "--stop-address=0x1351b1",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "deferred-root",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__AwaitPreCreditBudgetAndRetainedFlowCreditAsync_d__199__MoveNext",
+    "address": "0x154a70",
+    "size": 1272,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-deferred-root.txt",
+    "sha256": "d2cebe3b86b0ee412b0f2d607a39b713ab113b49d059110e4222f8b3366ba38d",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x154a70",
+      "--stop-address=0x154f68",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "refund",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__ReturnUnsentStreamCredit_0",
+    "address": "0x131e70",
+    "size": 48,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-refund.txt",
+    "sha256": "616bbac507b89c2c491a06a7c7ab229400410ccb5be98c03dc8481fc8600c279",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x131e70",
+      "--stop-address=0x131ea0",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "admission",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__TryAcquireSendCredit_0",
+    "address": "0x13f710",
+    "size": 243,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-admission.txt",
+    "sha256": "ac12ca36eb07f874e4a7774315440b2b35f538d5083f6cadf8fddd9c9e33ce08",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x13f710",
+      "--stop-address=0x13f803",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "contended",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__AcquireResolvedContendedSendCreditAsync",
+    "address": "0x13f990",
+    "size": 578,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-contended.txt",
+    "sha256": "d6790243508f84549af64eaa47d7a5a0c34b824b519517e27ffd752fa3fca973",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x13f990",
+      "--stop-address=0x13fbd2",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "validate",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__ValidateSendLease",
+    "address": "0x142610",
+    "size": 53,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-validate.txt",
+    "sha256": "4b28ea0c51e988ffeb0f93d47ac2b9d33b9e2023b5bd82125cc923314c3e9931",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x142610",
+      "--stop-address=0x142645",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "try-validate",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__TryValidateSendLease",
+    "address": "0x142650",
+    "size": 102,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-try-validate.txt",
+    "sha256": "569b405a5e1ae7cd2c61892a00de0d7ecf93e44e69938ee35ad736697084f940",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x142650",
+      "--stop-address=0x1426b6",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "controller-refund",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__ReturnUnsentCredit",
+    "address": "0x13fd40",
+    "size": 383,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-controller-refund.txt",
+    "sha256": "527ac4fbdee9e2a4258dd8a99d060d7d33fbcb1ca8b7cacaa114f875e6669276",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x13fd40",
+      "--stop-address=0x13febf",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "async-admission",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__AcquireSendCreditAsync",
+    "address": "0x13f810",
+    "size": 383,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-async-admission.txt",
+    "sha256": "50f2cc3d9ef441fa73c3945f18cd8db8da0cb50aa9e5ab68b61a1e072af50956",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x13f810",
+      "--stop-address=0x13f98f",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "client-box",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+    "address": "0x683ce0",
+    "size": 295,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-client-box.txt",
+    "sha256": "d7eec8c0d219e99b20a75b453598535fbd129bd9e4cd7a023fbb1e0bd8ddaa98",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x683ce0",
+      "--stop-address=0x683e07",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "server-box-thunk",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+    "address": "0x1f2e0",
+    "size": 5,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-server-box-thunk.txt",
+    "sha256": "fde13c88c7fd42bee89fcb783a4021af3c331dc38d016af4751bb591a3df86d2",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x1f2e0",
+      "--stop-address=0x1f2e5",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "validate",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__ValidateSendLease",
+    "address": "0x142610",
+    "size": 53,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-validate.txt",
+    "sha256": "7b4ae0a3fecaf2c5436270e9033ebd68165525e5b50c82a568e7b286afab8c68",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x142610",
+      "--stop-address=0x142645",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "try-validate",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__TryValidateSendLease",
+    "address": "0x142650",
+    "size": 102,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-try-validate.txt",
+    "sha256": "5910826632f4e0bde0d5d390438f32e0fa3bb8f13397e69af89e0cf52f1b1ce7",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x142650",
+      "--stop-address=0x1426b6",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "controller-refund",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__ReturnUnsentCredit",
+    "address": "0x13fd40",
+    "size": 383,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-controller-refund.txt",
+    "sha256": "fac565d9cea3e6230ad105c31c63d18882bbf5cf778ad60ff3432372953de65e",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x13fd40",
+      "--stop-address=0x13febf",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "async-admission",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_StreamFlowController__AcquireSendCreditAsync",
+    "address": "0x13f810",
+    "size": 383,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-async-admission.txt",
+    "sha256": "0fdb47693c9a9d894228d3ae379be4a0ea7d6d664a7c48b7614e82ed9c7745dd",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x13f810",
+      "--stop-address=0x13f98f",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "client-box",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+    "address": "0x683c20",
+    "size": 295,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-client-box.txt",
+    "sha256": "06f9b2609d3997c9c0a5167d0fb36b97f96d9863e6f5ffd06a88bc956f8cedef",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x683c20",
+      "--stop-address=0x683d47",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "server-box-thunk",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+    "address": "0x1f2e0",
+    "size": 5,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-server-box-thunk.txt",
+    "sha256": "58fc13983cdaf3d42d404f931a2a6f4279c531d88f75d1bbf6bb0baf5dadc019",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x1f2e0",
+      "--stop-address=0x1f2e5",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "G2",
+    "role": "server-box-implementation",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Client_SharpLink_Client_SharpLinkClient__StartDuplexStreamingInvokerAsync_d__181_3<SharpLink_Abstractions_SharpLink_Abstractions_RpcEmptyRequest__System___Canon__SharpLink_Benchmarks_SharpLink_Benchmarks___IBenchmarkRpc_SharpLinkStreams_7C5A0975F60FEE99>>",
+    "address": "0x674ee0",
+    "size": 295,
+    "elf_sha256": "0c21431a2db4bc7d1c0c8497c7a4124b8f594567dc3473e57211f8d4d8e01333",
+    "path": "g2-readonly-lease-review/native-compiled-path/G2-server-box-implementation.txt",
+    "sha256": "d8f0a0c5a57c0476b6d41f9518b1ea5c9800f9ede3cb5c83ea2bfbb4e0ff965c",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x674ee0",
+      "--stop-address=0x675007",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/G2/SharpLink.Benchmarks"
+    ]
+  },
+  {
+    "arm": "R",
+    "role": "server-box-implementation",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Client_SharpLink_Client_SharpLinkClient__StartDuplexStreamingInvokerAsync_d__181_3<SharpLink_Abstractions_SharpLink_Abstractions_RpcEmptyRequest__System___Canon__SharpLink_Benchmarks_SharpLink_Benchmarks___IBenchmarkRpc_SharpLinkStreams_7C5A0975F60FEE99>>",
+    "address": "0x674e20",
+    "size": 295,
+    "elf_sha256": "3936ef2bc54768187a1667e3f18a193a270d3efd1e8814e1f81c1f67a66c0e24",
+    "path": "g2-readonly-lease-review/native-compiled-path/R-server-box-implementation.txt",
+    "sha256": "97588f223aa21267243c138554553bad91174ac6ed6aaf994d55c15be303ea78",
+    "command": [
+      "objdump",
+      "-d",
+      "--start-address=0x674e20",
+      "--stop-address=0x674f47",
+      "g2-readonly-lease-preflight-review/run-37855801421-native-elf/R/SharpLink.Benchmarks"
+    ]
+  }
+]
