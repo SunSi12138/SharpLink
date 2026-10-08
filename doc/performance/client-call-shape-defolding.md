@@ -125,8 +125,14 @@ rather than measuring only the seven methods exercised at runtime.
 ## Full SharpLink RPC matrix
 
 `ClientCallShapeEvidenceRunner` uses the real generated proxy, client runtime, TCP transport, server
-runtime, generated server stub, and response path. OneWay is measured at its documented public
-local-send completion boundary; response calls are measured to end-to-end completion.
+runtime, generated server stub, and response path. OneWay latency is measured at its documented public
+local-send completion boundary; response calls are measured to end-to-end completion. For OneWay
+methods with client streams, the runner additionally paces every 64 completed local invocations (and
+each phase boundary) until the server service has consumed those streams, then completes a tiny Unary
+barrier on the same connection before starting the next batch. The pacing runs outside the per-call
+latency timestamp, but remains inside process-wide throughput/CPU/allocation accounting. This prevents
+the benchmark producer from accumulating completed send-state tombstones faster than peer credit can
+return while preserving the public OneWay completion contract.
 
 The matrix contains:
 
