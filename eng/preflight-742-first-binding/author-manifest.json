@@ -2,8 +2,8 @@
   "recipe_commit": "06b737df0d9aab66caed9c446a572b3a8ce4efae",
   "base_tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
   "production_tree": "4cb4ce7a13b06c3a6f3213e30215b6769ed49f90",
-  "candidate_tree": "7d0a713a5602465f7f6e056ab89fc7c38247f693",
-  "baseline_tests_tree": "fb04cb81c0603ac09a04d12d6819db24f10d25ed",
+  "candidate_tree": "19f7089b4984d7c14fbf3bf2a84bb973cd96cb88",
+  "baseline_tests_tree": "003b74dd145b2263bd505c814a67f3c203b028d2",
   "new_test_cases": 58,
   "original_suite_cases": 2128,
   "expected_overlay_suite_cases": 2186,
@@ -13,8 +13,8 @@
       "bytes": 3720
     },
     "tests.patch": {
-      "sha256": "331fdaa63075bdf9da3f475066c53c6ca3e999849d60c018694e1544f52b3852",
-      "bytes": 28111
+      "sha256": "94a71e0362de702adc85d484140639209107a80ba3323e49e3f31dfa8dacbb7f",
+      "bytes": 29572
     }
   },
   "focused_tests": [

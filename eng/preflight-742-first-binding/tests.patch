@@ -1,9 +1,9 @@
 diff --git a/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs b/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs
 new file mode 100644
-index 00000000..9db6a153
+index 00000000..6d396a27
 --- /dev/null
 +++ b/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs
-@@ -0,0 +1,506 @@
+@@ -0,0 +1,528 @@
 +using System.IO.Pipelines;
 +using System.Reflection;
 +using System.Runtime.CompilerServices;
@@ -55,7 +55,7 @@ index 00000000..9db6a153
 +        Ensure(fixture.Controller.SendConnectionCredit == 0 && fixture.Session.PreCreditSerializedBytes == 0,
 +            "two publications must own exactly eight wire bytes and no serialized budget");
 +        Ensure(await fixture.CountDataFramesAsync() == 2, "the writer must receive exactly two DATA frames");
-+        Ensure(fixture.Time.ActiveTimerCount == 0, "successful first binding must dispose its deadline timer");
++        fixture.AssertPumpTimersDisposed("successful first binding must dispose its deadline timer");
 +        fixture.ReturnPublishedCredit(8);
 +    }
 +
@@ -97,7 +97,7 @@ index 00000000..9db6a153
 +        Ensure(stream.MoveCount == 1 && stream.ConsumptionCount == 1 && stream.DisposeCount == 1,
 +            "a failed first binding must stop production and dispose once");
 +        Ensure(codec.ReleaseCount == (sized ? 1 : 0), "the blocked first snapshot must be released once");
-+        Ensure(fixture.Time.ActiveTimerCount == 0, "a failed first binding must dispose its timer");
++        fixture.AssertPumpTimersDisposed("a failed first binding must dispose its timer");
 +        fixture.ReleaseBlockerCredit();
 +        Ensure(fixture.Controller.SendConnectionCredit == 8,
 +            "late credit must not admit an abandoned first send or perform a duplicate refund");
@@ -177,8 +177,9 @@ index 00000000..9db6a153
 +            "expiry must beat an already completed unsuccessful first-send task");
 +        Ensure(stream.MoveCount == 1 && stream.ConsumptionCount == 1 && stream.DisposeCount == 1,
 +            "already completed failure must stop first binding and dispose once");
-+        Ensure(codec.ReleaseCount == 1 && fixture.Controller.SendConnectionCredit == 8 && fixture.Time.ActiveTimerCount == 0,
-+            "deadline arbitration must release the first snapshot and any debit without leaking a timer");
++        Ensure(codec.ReleaseCount == 1 && fixture.Controller.SendConnectionCredit == 8,
++            "deadline arbitration must release the first snapshot and any debit");
++        fixture.AssertPumpTimersDisposed("deadline arbitration must not leak a timer");
 +        Ensure(await fixture.CountDataFramesAsync() == 0, "expired completed failure must not publish DATA");
 +    }
 +
@@ -197,7 +198,7 @@ index 00000000..9db6a153
 +        var stream = new ProbeStream(itemCount: 2) { DeferredDisposal = disposal };
 +        await fixture.BlockConnectionCreditAsync();
 +        var pump = fixture.Start(stream, codec, cancellation.Token);
-+        Ensure(!pump.IsCompleted && fixture.Time.ActiveTimerCount == 1 && stream.MoveCount == 1,
++        Ensure(!pump.IsCompleted && fixture.Time.ActiveTimerCount == fixture.BaselineTimerCount + 1 && stream.MoveCount == 1,
 +            "the deadline race must be at the first-send wait, not MoveNext or a retained send");
 +
 +        // Hold timer callbacks back: the monotonic boundary must still beat the late source
@@ -217,7 +218,7 @@ index 00000000..9db6a153
 +        Ensure(disposal.ConsumptionCount == 1,
 +            "the detached cleanup observer must consume and observe the faulted disposal exactly once");
 +        await fixture.WaitForCleanupAsync(codec, sized);
-+        await fixture.Time.WaitForTimersDrainedAsync().WaitAsync(TimeSpan.FromSeconds(5));
++        await fixture.WaitForPumpTimerCleanupAsync();
 +        Ensure(stream.ConsumptionCount == 1 && codec.ReleaseCount == (sized ? 1 : 0),
 +            "deadline abandonment must not duplicate first-item or snapshot consumption");
 +        fixture.ReleaseBlockerCredit();
@@ -429,6 +430,7 @@ index 00000000..9db6a153
 +        private readonly Pipe _input = new();
 +        private readonly Pipe _output = new();
 +        internal ManualTimeProvider Time { get; } = new();
++        internal int BaselineTimerCount { get; }
 +        internal RpcSession Session { get; }
 +        internal long RequestId { get; }
 +        internal StreamFlowController Controller =>
@@ -446,10 +448,28 @@ index 00000000..9db6a153
 +                completeHandshake: false);
 +            RpcSessionTestFixture.CompleteHandshake(Session, ProtocolV2Capabilities.FlowControl,
 +                streamReceiveWindowBytes: 8, connectionReceiveWindowBytes: 8);
++            Ensure(Time.ActiveTimerCount == 0, "the fixture must not own timers before ClientConnection creation");
 +            _connection = new ClientConnection(_owner, Session, _lifetime, 8, context);
 +            _ = _connection.PendingCalls.Rent(context.Codecs.GetCodec<int>(), PendingCallKind.ClientStreaming,
 +                default, CancellationToken.None, out var requestId, hasResponsePayload: true, responseNullable: false);
 +            RequestId = requestId;
++            // PendingDeadlineScheduler owns one infinite/disarmed timer for this live
++            // connection. Pump cleanup must return to that known owner, not drain it.
++            BaselineTimerCount = Time.ActiveTimerCount;
++            Ensure(BaselineTimerCount == 1 && Time.EarliestTimerTimestamp == long.MaxValue,
++                "the live connection must own exactly one disarmed scheduler timer");
++        }
++        internal void AssertPumpTimersDisposed(string message)
++            => Ensure(Time.ActiveTimerCount == BaselineTimerCount && Time.EarliestTimerTimestamp == long.MaxValue, message);
++        internal async Task WaitForPumpTimerCleanupAsync()
++        {
++            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
++            while (Time.ActiveTimerCount != BaselineTimerCount)
++            {
++                timeout.Token.ThrowIfCancellationRequested();
++                await Task.Yield();
++            }
++            AssertPumpTimersDisposed("abandoned first-send cleanup must leave only the disarmed scheduler timer");
 +        }
 +        internal ValueTask BlockConnectionCreditAsync()
 +            => Session.AcquireStreamSendCreditAsync(BlockerRequestId, 0, 8, CancellationToken.None);
@@ -504,6 +524,8 @@ index 00000000..9db6a153
 +        {
 +            // ClientConnection owns both its Session and connection lifetime source.
 +            await _connection.DisposeAsync();
++            await Time.WaitForTimersDrainedAsync().WaitAsync(TimeSpan.FromSeconds(5));
++            Ensure(Time.ActiveTimerCount == 0, "disposing the connection must release the scheduler and all pump timers");
 +            await _output.Reader.CompleteAsync();
 +            await _input.Writer.CompleteAsync();
 +            await _owner.DisposeAsync();

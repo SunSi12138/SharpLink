@@ -12,8 +12,8 @@ All original helpers, measurement sources, budgets and validators stay unchanged
 
 - G2 production: `398d484fb5b8ab8adb75a74db7d577d929d2dc77`
 - A production: `4cb4ce7a13b06c3a6f3213e30215b6769ed49f90`
-- G2 with identical tests: `fb04cb81c0603ac09a04d12d6819db24f10d25ed`
-- A with identical tests: `7d0a713a5602465f7f6e056ab89fc7c38247f693`
+- G2 with identical tests: `003b74dd145b2263bd505c814a67f3c203b028d2`
+- A with identical tests: `19f7089b4984d7c14fbf3bf2a84bb973cd96cb88`
 
 Production changes only the first-binding await in `ClientConnection` and the
 generated server pump. Direct completed success consumes the result directly;
@@ -37,6 +37,16 @@ allocation probes remain unchanged. Their legacy F/G labels explicitly map to
 G2/A. The candidate keeps format/reference/maintainability checks and all original
 writer source checks, 171/171 writer checks and its full experimental suite.
 API snapshots, workload sources and lifecycle helpers are byte-identical.
+
+The first run, `37841272536`, remains failed evidence: 30 timer assertions failed
+on the G2 control before candidate validation. The test-only correction recognizes
+the live connection's existing disarmed scheduler timer. It asserts ownership
+0 before connection creation, 1 at the live baseline, 2 during a deadline wait,
+1 after pump cleanup, and 0 after connection disposal. Abandoned cleanup uses a
+bounded return-to-baseline wait; full timer drainage is required after disposal.
+All 58 cases, production bytes, suite populations, and safety/codegen gates remain
+unchanged. The retry must pass both complete arms; this correction is not a pass
+or exclusion of the failed run.
 
 ## Matched actual JIT roots
 
