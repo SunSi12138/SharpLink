@@ -1,0 +1,424 @@
+--- a/src/SharpLink.Runtime/StreamFlowController.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.cs
+@@ -227,11 +227,8 @@
+                 throw abortException;
+             if (state.Completed)
+                 throw CreateStreamClosedException();
+-            if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+-            {
+-                Reserve(state, encodedBytes);
++            if (TryReserveOrderedSendCredit(state, encodedBytes))
+                 return ValueTask.CompletedTask;
+-            }
+ 
+             waiter = new CreditWaiter(
+                 this,
+@@ -334,11 +331,8 @@
+                     throw abortException;
+                 if (state.Completed)
+                     throw CreateStreamClosedException();
+-                if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
+-                {
+-                    Reserve(state, encodedBytes);
++                if (TryReserveOrderedSendCredit(state, encodedBytes))
+                     return ValueTask.CompletedTask;
+-                }
+             }
+ 
+             var waitsForStateCapacity = state is null;
+--- a/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
+@@ -73,9 +73,8 @@
+                     throw abortException;
+                 if (state.Completed)
+                     throw CreateStreamClosedException();
+-                if (_waiters.Count == 0 && CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
++                if (TryReserveOrderedSendCredit(state, encodedBytes))
+                 {
+-                    Reserve(state, encodedBytes);
+                     return new ValueTask<ResolvedSendCreditLease>(
+                         new ResolvedSendCreditLease(this, requestId, streamId, state, state.Lease));
+                 }
+@@ -100,6 +99,25 @@
+ 
+         CompleteReadyWaiters(ready);
+         return AwaitFirstAdmissionLeaseAsync(waiter, cancellationToken);
++    }
++
++    private bool TryReserveOrderedSendCredit(SendState state, int encodedBytes)
++    {
++        if (!CanReserve(state.Credit, _sendConnectionCredit, encodedBytes))
++            return false;
++        // Match an AdmitWaiters scan that leaves every predecessor untouched.
++        for (var node = _waiters.First; node is not null; node = node.Next)
++        {
++            var waiter = node.Value;
++            if (waiter.CanCreateState ||
++                waiter.ExpectedState is not { Attached: true, Completed: false, AbortException: null } earlier ||
++                earlier.Lease != waiter.ExpectedLease ||
++                !HasConnectionCredit(_sendConnectionCredit, waiter.EncodedBytes) ||
++                HasStreamCredit(earlier.Credit, waiter.EncodedBytes))
++                return false;
++        }
++        Reserve(state, encodedBytes);
++        return true;
+     }
+ 
+     private static async ValueTask<ResolvedSendCreditLease> AwaitFirstAdmissionLeaseAsync(
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.TransientTail.cs
+@@ -0,0 +1,354 @@
++using System.Reflection;
++using System.Threading;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public partial class StreamFlowControllerTests
++{
++    [Test]
++    [Arguments(0, false)]
++    [Arguments(1, false)]
++    [Arguments(2, false)]
++    [Arguments(0, true)]
++    [Arguments(1, true)]
++    [Arguments(2, true)]
++    public async Task OrderedTailAdmissionShouldNotAllocateTransientWaiters(int admissionKind, bool cancellable)
++    {
++        const int iterations = 10_000;
++        var controller = new StreamFlowController(2, 4, 1024);
++        await controller.AcquireSendCreditAsync(940, 0, 2, CancellationToken.None);
++        await controller.AcquireSendCreditAsync(941, 0, 1, CancellationToken.None);
++        var lease = controller.ResolveSendCreditLease(941, 0);
++        controller.ReturnUnsentCredit(in lease, 1);
++        using var headCancellation = new CancellationTokenSource();
++        using var tailCancellation = new CancellationTokenSource();
++        var head = controller.AcquireSendCreditAsync(940, 0, 1, headCancellation.Token);
++        var token = cancellable ? tailCancellation.Token : CancellationToken.None;
++        MeasureOrderedTailAdmissions(controller, lease, admissionKind, token, 1_024);
++        var allocated = MeasureOrderedTailAdmissions(controller, lease, admissionKind, token, iterations);
++        Console.WriteLine($"Ordered tail kind {admissionKind}, cancellable {cancellable}: {allocated} bytes / {iterations} iterations");
++        Ensure(!head.IsCompleted && controller.SendConnectionCredit == 2,
++            "the measured tail must leave its predecessor pending and return every reserved byte");
++        headCancellation.Cancel();
++        await ExpectCancellation(head);
++        controller.ReturnUnsentCredit(940, 0, 2);
++        Ensure(allocated == 0,
++            $"ordered tail admissions allocated {allocated} bytes; no transient waiter should be created");
++    }
++
++    [Test]
++    public async Task OrderedTailShouldStopAtConnectionBlockedPredecessorBeforeCheckingItsStream()
++    {
++        var controller = new StreamFlowController(4, 8, 1024);
++        await controller.AcquireSendCreditAsync(942, 0, 4, CancellationToken.None);
++        await controller.AcquireSendCreditAsync(943, 0, 2, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var head = controller.AcquireSendCreditAsync(942, 0, 3, cancellation.Token);
++        var tail = controller.AcquireSendCreditAsync(944, 0, 1, CancellationToken.None);
++        Ensure(!head.IsCompleted && !tail.IsCompleted && controller.SendConnectionCredit == 2,
++            "a predecessor blocked on both credits must stop an independently eligible tail");
++        controller.ReturnUnsentCredit(943, 0, 2);
++        await tail.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(!head.IsCompleted && controller.SendConnectionCredit == 3,
++            "only after the predecessor fits connection credit may the tail pass its stream blockage");
++        cancellation.Cancel();
++        await ExpectCancellation(head);
++        controller.ReturnUnsentCredit(944, 0, 1);
++        controller.ReturnUnsentCredit(942, 0, 4);
++        Ensure(controller.SendConnectionCredit == 8, "all debits must be returned exactly once");
++    }
++
++    [Test]
++    public async Task OrderedTailShouldAllowSameKeySmallerRequestPastLargerStreamBlockedHead()
++    {
++        var controller = new StreamFlowController(4, 8, 1024);
++        await controller.AcquireSendCreditAsync(945, 0, 3, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var head = controller.AcquireSendCreditAsync(945, 0, 2, cancellation.Token);
++        var tail = controller.AcquireSendCreditAsync(945, 0, 1, CancellationToken.None);
++        Ensure(tail.IsCompletedSuccessfully && !head.IsCompleted && controller.SendConnectionCredit == 4,
++            "the existing scan allows a smaller same-key request past a stream-only-blocked head");
++        await tail;
++        cancellation.Cancel();
++        await ExpectCancellation(head);
++        controller.ReturnUnsentCredit(945, 0, 4);
++        Ensure(controller.SendConnectionCredit == 8, "same-key admissions must debit exactly four bytes");
++    }
++
++    [Test]
++    public async Task OrderedTailShouldCheckEveryStreamBlockedPredecessor()
++    {
++        var controller = new StreamFlowController(2, 8, 1024);
++        await controller.AcquireSendCreditAsync(946, 0, 2, CancellationToken.None);
++        await controller.AcquireSendCreditAsync(947, 0, 2, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var first = controller.AcquireSendCreditAsync(946, 0, 1, cancellation.Token);
++        var second = controller.AcquireSendCreditAsync(947, 0, 1, cancellation.Token);
++        var tail = controller.AcquireSendCreditAsync(948, 0, 1, CancellationToken.None);
++        Ensure(tail.IsCompletedSuccessfully && !first.IsCompleted && !second.IsCompleted,
++            "the tail may pass a queue consisting entirely of stream-only-blocked waiters");
++        await tail;
++        Ensure(controller.SendConnectionCredit == 3, "only the tail must reserve credit");
++        cancellation.Cancel();
++        await ExpectCancellation(first);
++        await ExpectCancellation(second);
++        controller.ReturnUnsentCredit(946, 0, 2);
++        controller.ReturnUnsentCredit(947, 0, 2);
++        controller.ReturnUnsentCredit(948, 0, 1);
++    }
++
++    [Test]
++    public async Task OrderedTailShouldStopAtLaterConnectionBlockedPredecessor()
++    {
++        var controller = new StreamFlowController(4, 12, 1024);
++        await controller.AcquireSendCreditAsync(964, 0, 4, CancellationToken.None);
++        await controller.AcquireSendCreditAsync(965, 0, 4, CancellationToken.None);
++        await controller.AcquireSendCreditAsync(966, 0, 1, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var first = controller.AcquireSendCreditAsync(964, 0, 1, cancellation.Token);
++        var second = controller.AcquireSendCreditAsync(965, 0, 4, cancellation.Token);
++        var tail = controller.AcquireSendCreditAsync(967, 0, 1, CancellationToken.None);
++        Ensure(!tail.IsCompleted && controller.SendConnectionCredit == 3,
++            "a later connection-blocked predecessor must stop the tail even after a safely skipped head");
++        controller.ReturnUnsentCredit(966, 0, 1);
++        await tail.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(!first.IsCompleted && !second.IsCompleted && controller.SendConnectionCredit == 3,
++            "the tail may pass only after both predecessors become connection-eligible");
++        cancellation.Cancel();
++        await ExpectCancellation(first);
++        await ExpectCancellation(second);
++        controller.ReturnUnsentCredit(964, 0, 4);
++        controller.ReturnUnsentCredit(965, 0, 4);
++        controller.ReturnUnsentCredit(967, 0, 1);
++    }
++
++    [Test]
++    public async Task OrderedTailShouldFallBackWhenPredecessorHasNoCapturedState()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        await controller.AcquireSendCreditAsync(968, 0, 2, CancellationToken.None);
++        await controller.AcquireSendCreditAsync(969, 0, 1, CancellationToken.None);
++        controller.ReturnUnsentCredit(969, 0, 1);
++        using var cancellation = new CancellationTokenSource();
++        var head = controller.AcquireSendCreditAsync(968, 0, 1, cancellation.Token);
++        var waiters = (System.Collections.IEnumerable)GetPrivateField<object>(controller, "_waiters");
++        foreach (var waiter in waiters)
++            SetTailTestField(waiter, "ExpectedState", null);
++        var before = GC.GetAllocatedBytesForCurrentThread();
++        var tail = controller.AcquireSendCreditAsync(969, 0, 1, CancellationToken.None);
++        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
++        Ensure(tail.IsCompletedSuccessfully && allocated > 0 && !head.IsCompleted,
++            "an uncaptured predecessor must use the existing lookup scan and remain stream-blocked");
++        await tail;
++        cancellation.Cancel();
++        await ExpectCancellation(head);
++        controller.ReturnUnsentCredit(968, 0, 2);
++        controller.ReturnUnsentCredit(969, 0, 1);
++    }
++
++    [Test]
++    public async Task OrderedTailShouldFallBackForPendingStateCapacityAndPreserveItsLimit()
++    {
++        var controller = new StreamFlowController(4, 12, 1024, maxConcurrentStreams: 2);
++        await controller.AcquireSendCreditAsync(949, 0, 4, CancellationToken.None);
++        await controller.AcquireSendCreditAsync(950, 0, 1, CancellationToken.None);
++        controller.CompleteSendStream(949, 0);
++        using var cancellation = new CancellationTokenSource();
++        var pending = controller.AcquireSendCreditAsync(951, 0, 1, cancellation.Token);
++        Ensure(!pending.IsCompleted && !controller.ResolveSendCreditLease(951, 0).IsResolved,
++            "the completed tombstone must keep the pending state unpublished");
++        var before = GC.GetAllocatedBytesForCurrentThread();
++        var tail = controller.AcquireSendCreditAsync(950, 0, 1, CancellationToken.None);
++        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
++        Ensure(tail.IsCompletedSuccessfully && allocated > 0,
++            "a pending-capacity predecessor must use the existing waiter scan even when the tail fits");
++        await tail;
++        Ensure(GetPrivateField<int>(controller, "_pendingSendStateWaiterCount") == 1,
++            "tail admission must preserve pending-capacity accounting");
++        try
++        {
++            _ = controller.AcquireSendCreditAsync(952, 0, 1, CancellationToken.None);
++            throw new Exception("expected the pending state capacity limit");
++        }
++        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
++        {
++        }
++        cancellation.Cancel();
++        await ExpectCancellation(pending);
++        Ensure(GetPrivateField<int>(controller, "_pendingSendStateWaiterCount") == 0,
++            "cancellation must release the original pending-capacity slot exactly once");
++        controller.ApplyWindowUpdate(949, 0, 4);
++        controller.ReturnUnsentCredit(950, 0, 2);
++        Ensure(controller.SendConnectionCredit == 12, "pending state rejection must not reserve credit");
++    }
++
++    [Test]
++    [Arguments("Attached")]
++    [Arguments("Lease")]
++    [Arguments("Completed")]
++    [Arguments("AbortException")]
++    public async Task OrderedTailShouldLetExistingScanRejectInvalidPredecessors(string invalidField)
++    {
++        var controller = new StreamFlowController(2, 6, 1024);
++        await controller.AcquireSendCreditAsync(953, 0, 2, CancellationToken.None);
++        var head = controller.AcquireSendCreditAsync(953, 0, 1, CancellationToken.None);
++        var state = GetSendState(controller, 953, 0);
++        var rejection = new SharpLinkException(SharpLinkErrorCode.Cancelled, "invalid queued predecessor");
++        // Public lifecycle methods remove these waiters eagerly. Inject each defensive
++        // scan case deterministically; no production hook or timing race is required.
++        object invalidValue = invalidField switch
++        {
++            "Attached" => false,
++            "Lease" => GetPrivateField<long>(state, "Lease") + 1,
++            "Completed" => true,
++            _ => rejection,
++        };
++        SetTailTestField(state, invalidField, invalidValue);
++        var tail = controller.AcquireSendCreditAsync(954, 0, 1, CancellationToken.None);
++        Ensure(tail.IsCompletedSuccessfully, "the existing scan must reject the predecessor and admit the tail");
++        await tail;
++        try
++        {
++            await head.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++            throw new Exception("expected the invalid predecessor to be rejected");
++        }
++        catch (SharpLinkException exception)
++        {
++            Ensure(invalidField == "AbortException" ? ReferenceEquals(exception, rejection) :
++                exception.Code == SharpLinkErrorCode.ConnectionClosed,
++                "the fallback must preserve the predecessor's exact rejection semantics");
++        }
++        Ensure(controller.SendConnectionCredit == 3,
++            "invalid predecessor removal must not debit or refund its outstanding credit");
++    }
++
++    [Test]
++    public async Task OrderedTailShouldNotBypassAnEligibleQueuedPredecessor()
++    {
++        var controller = new StreamFlowController(2, 6, 1024);
++        await controller.AcquireSendCreditAsync(955, 0, 2, CancellationToken.None);
++        var head = controller.AcquireSendCreditAsync(955, 0, 1, CancellationToken.None);
++        // Make the earlier entry eligible without running its normal credit-return scan,
++        // to exercise the conservative guard that must leave all mutation to AdmitWaiters.
++        SetTailTestField(GetSendState(controller, 955, 0), "Credit", 1L);
++        var tail = controller.AcquireSendCreditAsync(956, 0, 4, CancellationToken.None);
++        await head.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(!tail.IsCompleted && controller.SendConnectionCredit == 3,
++            "the earlier eligible waiter must consume its byte before the oversized tail tests connection credit");
++        controller.ReturnUnsentCredit(955, 0, 1);
++        await tail.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(controller.SendConnectionCredit == 0, "the tail must reserve only after four bytes become available");
++    }
++
++    [Test]
++    public async Task OrderedTailOptimizationMustNotPublishStateFromUnsuccessfulProbes()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        await controller.AcquireSendCreditAsync(957, 0, 2, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var head = controller.AcquireSendCreditAsync(957, 0, 1, cancellation.Token);
++        Ensure(!controller.TryAcquireSendCredit(958, 0, 1), "the keyed probe must still fail behind queued work");
++        Ensure(!controller.TryAcquireSendCreditLease(959, 0, 1, out var lease) && !lease.IsResolved,
++            "the first-lease probe must still fail without resolving a new state");
++        Ensure(controller.RetainedSendStreamCount == 1 && controller.ActiveSendStreamCount == 1 &&
++            controller.SendConnectionCredit == 2, "failed probes must publish no state and reserve no credit");
++        cancellation.Cancel();
++        await ExpectCancellation(head);
++        controller.ReturnUnsentCredit(957, 0, 2);
++    }
++
++    [Test]
++    public async Task OrderedTailFirstAdmissionShouldCaptureGenerationBeforePooledReuse()
++    {
++        var controller = new StreamFlowController(2, 6, 1024);
++        await controller.AcquireSendCreditAsync(960, 0, 2, CancellationToken.None);
++        using var cancellation = new CancellationTokenSource();
++        var head = controller.AcquireSendCreditAsync(960, 0, 1, cancellation.Token);
++        var admission = controller.AcquireSendCreditLeaseAsync(961, 0, 1, CancellationToken.None);
++        Ensure(admission.IsCompletedSuccessfully, "the first tail admission should complete inline");
++        var debited = controller.ResolveSendCreditLease(961, 0);
++        controller.ReturnUnsentCredit(in debited, 1);
++        controller.CompleteSendStream(961, 0);
++        var replacement = await controller.AcquireSendCreditLeaseAsync(961, 0, 1, CancellationToken.None);
++        var original = await admission;
++        Ensure(ReferenceEquals(original.State, replacement.State) && original.Generation != replacement.Generation &&
++            original.Generation == debited.Generation,
++            "the inline admission must retain the generation captured under the reserving gate");
++        controller.ReturnUnsentCredit(in original, 1);
++        Ensure(controller.SendConnectionCredit == 3, "the old lease must not refund the replacement's debit");
++        controller.ReturnUnsentCredit(in replacement, 1);
++        cancellation.Cancel();
++        await ExpectCancellation(head);
++        controller.ReturnUnsentCredit(960, 0, 2);
++    }
++
++    [Test]
++    public async Task OrderedTailShouldHonorPreCancellationAndKeepSuccessfulAdmissionAfterLaterCancellation()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        await controller.AcquireSendCreditAsync(962, 0, 2, CancellationToken.None);
++        using var headCancellation = new CancellationTokenSource();
++        using var tailCancellation = new CancellationTokenSource();
++        var head = controller.AcquireSendCreditAsync(962, 0, 1, headCancellation.Token);
++        tailCancellation.Cancel();
++        try
++        {
++            _ = controller.AcquireSendCreditLeaseAsync(963, 0, 1, tailCancellation.Token);
++            throw new Exception("expected pre-cancellation");
++        }
++        catch (OperationCanceledException)
++        {
++        }
++        Ensure(controller.RetainedSendStreamCount == 1 && controller.SendConnectionCredit == 2,
++            "a pre-canceled tail must not create state or reserve bytes");
++        using var afterAdmission = new CancellationTokenSource();
++        var admission = controller.AcquireSendCreditLeaseAsync(963, 0, 1, afterAdmission.Token);
++        Ensure(admission.IsCompletedSuccessfully, "the uncanceled eligible tail should complete inline");
++        afterAdmission.Cancel();
++        var lease = await admission;
++        Ensure(controller.SendConnectionCredit == 1 && !head.IsCompleted,
++            "cancellation after successful admission must neither refund it nor remove its predecessor");
++        controller.ReturnUnsentCredit(in lease, 1);
++        headCancellation.Cancel();
++        await ExpectCancellation(head);
++        controller.ReturnUnsentCredit(962, 0, 2);
++    }
++
++    private static long MeasureOrderedTailAdmissions(
++        StreamFlowController controller,
++        StreamFlowController.ResolvedSendCreditLease lease,
++        int admissionKind,
++        CancellationToken token,
++        int iterations)
++    {
++        var before = GC.GetAllocatedBytesForCurrentThread();
++        for (var index = 0; index < iterations; index++)
++        {
++            if (admissionKind == 2)
++            {
++                var admission = controller.AcquireSendCreditLeaseAsync(941, 0, 1, token);
++                Ensure(admission.IsCompletedSuccessfully, "first tail admission must complete inline");
++                var acquired = admission.GetAwaiter().GetResult();
++                Ensure(acquired.Generation == lease.Generation && ReferenceEquals(acquired.State, lease.State),
++                    "first tail admission must return the state that reserved credit");
++            }
++            else
++            {
++                var admission = admissionKind == 0
++                    ? controller.AcquireSendCreditAsync(941, 0, 1, token)
++                    : controller.AcquireSendCreditAsync(in lease, 1, token);
++                Ensure(admission.IsCompletedSuccessfully, "ordered tail admission must complete inline");
++                admission.GetAwaiter().GetResult();
++            }
++            controller.ReturnUnsentCredit(in lease, 1);
++        }
++        return GC.GetAllocatedBytesForCurrentThread() - before;
++    }
++
++    private static void SetTailTestField(object owner, string name, object? value)
++    {
++        var field = owner.GetType().GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
++            ?? throw new Exception($"tail test field {name} was not found");
++        field.SetValue(owner, value);
++    }
++}

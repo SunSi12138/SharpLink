@@ -1,0 +1,978 @@
+diff --git a/src/SharpLink.Client/ClientConnection.cs b/src/SharpLink.Client/ClientConnection.cs
+index ac2ea678..617764e0 100644
+--- a/src/SharpLink.Client/ClientConnection.cs
++++ b/src/SharpLink.Client/ClientConnection.cs
+@@ -367,42 +367,54 @@ internal sealed class ClientConnection :
+             if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+                 exactSizeCodec = null;
+ 
+-            await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
+-            var sendCreditLease = default(StreamFlowController.ResolvedSendCreditLease);
+-            while (true)
++            var enumerator = stream.GetAsyncEnumerator(cancellationToken);
++            try
+             {
++                var sendCreditLease = default(StreamFlowController.ResolvedSendCreditLease);
++                var sendCreditLeaseBound = false;
++                while (true)
++                {
++                    cancellationToken.ThrowIfCancellationRequested();
++                    if (!PendingCalls.TryAcceptProducerProgress(requestId))
++                        throw new SharpLinkException(
++                            SharpLinkErrorCode.DeadlineExceeded,
++                            "RPC deadline exceeded during client stream production.");
++
++                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
++                        break;
++
++                    if (!sendCreditLeaseBound)
++                    {
++                        sendCreditLease = await Session.SendClientStreamChunkWithCreditLeaseAsync(
++                            requestId, streamId, enumerator.Current, codec, exactSizeCodec,
++                            deadline, _timeProvider, cancellationToken, sendCreditLease).ConfigureAwait(false);
++                        sendCreditLeaseBound = true;
++                    }
++                    else
++                    {
++                        await Session.SendClientStreamChunkResolvedAsync(
++                            requestId, streamId, enumerator.Current, codec, exactSizeCodec,
++                            deadline, _timeProvider, cancellationToken, sendCreditLease).ConfigureAwait(false);
++                    }
++                }
++
+                 cancellationToken.ThrowIfCancellationRequested();
+                 if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                     throw new SharpLinkException(
+                         SharpLinkErrorCode.DeadlineExceeded,
+-                        "RPC deadline exceeded during client stream production.");
+-
+-                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+-                    break;
+-
+-                sendCreditLease = await Session.SendClientStreamChunkWithCreditLeaseAsync(
++                        "RPC deadline exceeded before client stream completion.");
++                Session.SendClientStreamComplete(
+                     requestId,
+                     streamId,
+-                    enumerator.Current,
+-                    codec,
+-                    exactSizeCodec,
+                     deadline,
+                     _timeProvider,
+-                    cancellationToken,
+-                    sendCreditLease).ConfigureAwait(false);
++                    cancellationToken);
++            }
++            finally
++            {
++                if (enumerator is not null)
++                    await enumerator.DisposeAsync().ConfigureAwait(false);
+             }
+-
+-            cancellationToken.ThrowIfCancellationRequested();
+-            if (!PendingCalls.TryAcceptProducerProgress(requestId))
+-                throw new SharpLinkException(
+-                    SharpLinkErrorCode.DeadlineExceeded,
+-                    "RPC deadline exceeded before client stream completion.");
+-            Session.SendClientStreamComplete(
+-                requestId,
+-                streamId,
+-                deadline,
+-                _timeProvider,
+-                cancellationToken);
+         }
+         catch (Exception exception)
+         {
+diff --git a/src/SharpLink.Runtime/RpcSession.cs b/src/SharpLink.Runtime/RpcSession.cs
+index 76d8dffc..b90dc50e 100644
+--- a/src/SharpLink.Runtime/RpcSession.cs
++++ b/src/SharpLink.Runtime/RpcSession.cs
+@@ -164,6 +164,14 @@ internal sealed partial class RpcSession
+         return lease;
+     }
+ 
++    internal ValueTask AcquireResolvedStreamSendCreditAsync(
++        in StreamFlowController.ResolvedSendCreditLease lease, int encodedBytes, CancellationToken cancellationToken)
++    {
++        var controller = Volatile.Read(ref _protocolState).FlowController;
++        return controller is null ? ValueTask.CompletedTask :
++            controller.AcquireSendCreditAsync(in lease, encodedBytes, cancellationToken);
++    }
++
+     internal bool TryAcquireStreamSendCredit(
+         StreamFlowController.ResolvedSendCreditLease lease,
+         long requestId,
+diff --git a/src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs b/src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs
+index 12489f76..19b5f9c4 100644
+--- a/src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs
++++ b/src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs
+@@ -79,6 +79,32 @@ internal sealed partial class RpcSession
+         return AwaitClientStreamChunkWithoutLeaseAsync(pending);
+     }
+ 
++    internal ValueTask SendClientStreamChunkResolvedAsync<T>(
++        long requestId,
++        ushort streamId,
++        T item,
++        IRpcCodec<T> codec,
++        IRpcSizedCodec<T>? exactSizeCodec,
++        RpcDeadline deadline,
++        TimeProvider timeProvider,
++        CancellationToken terminalToken,
++        StreamFlowController.ResolvedSendCreditLease creditLease)
++    {
++        ArgumentNullException.ThrowIfNull(codec);
++        ArgumentNullException.ThrowIfNull(timeProvider);
++        ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
++        if (exactSizeCodec is not null &&
++            exactSizeCodec.TryGetEncodedSize(item, out var encodedBytes, out var snapshot))
++        {
++            return SendStreamChunkKnownSizeResolvedAsync(
++                requestId, streamId, item, exactSizeCodec, encodedBytes, snapshot,
++                terminalToken, creditLease, deadline, timeProvider, clientPublication: true);
++        }
++        return SendUnsizedStreamChunkResolvedAsync(
++            requestId, streamId, item, codec, terminalToken, creditLease,
++            deadline, timeProvider, clientPublication: true);
++    }
++
+     internal ValueTask<StreamFlowController.ResolvedSendCreditLease>
+         SendClientStreamChunkWithCreditLeaseAsync<T>(
+             long requestId,
+diff --git a/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs b/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
+index 691e81b2..bd431a31 100644
+--- a/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
++++ b/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
+@@ -48,6 +48,7 @@ internal sealed partial class RpcSession
+         if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+             exactSizeCodec = null;
+         var sendCreditLease = default(StreamFlowController.ResolvedSendCreditLease);
++        var sendCreditLeaseBound = false;
+         try
+         {
+             while (true)
+@@ -86,35 +87,66 @@ internal sealed partial class RpcSession
+                         "A non-nullable RPC stream response was null.");
+                 }
+ 
+-                var send = SendGeneratedStreamChunkAsync(
+-                    requestId,
+-                    streamId,
+-                    item,
+-                    codec,
+-                    exactSizeCodec,
+-                    deadline,
+-                    deadlineTimeProvider,
+-                    lifetimeCancellation.Token,
+-                    sendCreditLease);
+-                if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
++                // The first successful publication binds the lifetime even when flow control
++                // is disabled and the lease stays default. Later sends return no lease payload.
++                if (!sendCreditLeaseBound)
+                 {
+-                    sendCreditLease = await send.ConfigureAwait(false);
++                    var send = SendGeneratedStreamChunkAsync(
++                        requestId,
++                        streamId,
++                        item,
++                        codec,
++                        exactSizeCodec,
++                        deadline,
++                        deadlineTimeProvider,
++                        lifetimeCancellation.Token,
++                        sendCreditLease);
++                    if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
++                    {
++                        sendCreditLease = await send.ConfigureAwait(false);
++                    }
++                    else
++                    {
++                        Task sendTask = send.AsTask();
++                        if (!await SharpLinkTimer.WaitAsync(
++                                sendTask,
++                                deadline,
++                                deadlineTimeProvider,
++                                lifetimeCancellation.Token).ConfigureAwait(false))
++                        {
++                            deadlineWon = true;
++                            TryCancelGeneratedLifetime(lifetimeCancellation);
++                            _ = ObserveAbandonedGeneratedSendAsync(sendTask);
++                            throw CreateGeneratedStreamDeadlineExceededException();
++                        }
++                        // A true timer result has already observed successful task completion.
++                        // Read the first binding without another async result/awaiter field.
++                        sendCreditLease = ((Task<StreamFlowController.ResolvedSendCreditLease>)sendTask)
++                            .GetAwaiter().GetResult();
++                    }
++                    sendCreditLeaseBound = true;
++                    continue;
++                }
++
++                var resolvedSend = SendGeneratedStreamChunkResolvedAsync(
++                    requestId, streamId, item, codec, exactSizeCodec, deadline,
++                    deadlineTimeProvider, lifetimeCancellation.Token, sendCreditLease);
++                if (!deadline.HasValue || deadlineTimeProvider is null || resolvedSend.IsCompletedSuccessfully)
++                {
++                    await resolvedSend.ConfigureAwait(false);
+                 }
+                 else
+                 {
+-                    var sendTask = send.AsTask();
++                    var sendTask = resolvedSend.AsTask();
+                     if (!await SharpLinkTimer.WaitAsync(
+-                            sendTask,
+-                            deadline,
+-                            deadlineTimeProvider,
+-                            lifetimeCancellation.Token).ConfigureAwait(false))
++                            sendTask, deadline, deadlineTimeProvider, lifetimeCancellation.Token).ConfigureAwait(false))
+                     {
+                         deadlineWon = true;
+                         TryCancelGeneratedLifetime(lifetimeCancellation);
+                         _ = ObserveAbandonedGeneratedSendAsync(sendTask);
+                         throw CreateGeneratedStreamDeadlineExceededException();
+                     }
+-                    sendCreditLease = await sendTask.ConfigureAwait(false);
++                    // WaitAsync has already observed this nongeneric task's completion.
+                 }
+             }
+ 
+@@ -228,6 +260,29 @@ internal sealed partial class RpcSession
+     // Keep the generated-server path concrete and codec-bound. Exact-size codecs retain the
+     // credit-before-serialize path; only the universal unsized fallback enters the session-owned
+     // pre-credit serialized-memory admission helper.
++    private ValueTask SendGeneratedStreamChunkResolvedAsync<T>(
++        long requestId,
++        ushort streamId,
++        T item,
++        IRpcCodec<T> codec,
++        IRpcSizedCodec<T>? exactSizeCodec,
++        RpcDeadline deadline,
++        TimeProvider? deadlineTimeProvider,
++        CancellationToken cancellationToken,
++        StreamFlowController.ResolvedSendCreditLease creditLease)
++    {
++        if (exactSizeCodec is not null &&
++            exactSizeCodec.TryGetEncodedSize(item, out var encodedBytes, out var snapshot))
++        {
++            return SendStreamChunkKnownSizeResolvedAsync(
++                requestId, streamId, item, exactSizeCodec, encodedBytes, snapshot,
++                cancellationToken, creditLease, deadline, deadlineTimeProvider);
++        }
++        return SendUnsizedStreamChunkResolvedAsync(
++            requestId, streamId, item, codec, cancellationToken, creditLease,
++            deadline, deadlineTimeProvider);
++    }
++
+     private ValueTask<StreamFlowController.ResolvedSendCreditLease>
+         SendGeneratedStreamChunkAsync<T>(
+             long requestId,
+@@ -341,6 +396,77 @@ internal sealed partial class RpcSession
+         }
+     }
+ 
++    internal async ValueTask SendStreamChunkKnownSizeResolvedAsync<T>(
++        long requestId,
++        ushort streamId,
++        T item,
++        IRpcSizedCodec<T> sizedCodec,
++        int encodedBytes,
++        IRpcSizedCodecSnapshot? sizedSnapshot,
++        CancellationToken cancellationToken,
++        StreamFlowController.ResolvedSendCreditLease creditLease,
++        RpcDeadline deadline = default,
++        TimeProvider? deadlineTimeProvider = null,
++        bool clientPublication = false)
++    {
++        var creditBytes = Math.Max(1, encodedBytes);
++        var creditAcquired = false;
++        IRpcByteBufferWriter? writer = null;
++        var ownsWriter = true;
++        try
++        {
++            await AcquireResolvedStreamSendCreditAsync(in creditLease, creditBytes, cancellationToken)
++                .ConfigureAwait(false);
++            creditAcquired = true;
++
++            writer = RuntimeContext.Buffers.Rent(
++                checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes + 4));
++            using (writer.BeginPacketScope(
++                       ProtocolV2FrameType.StreamData,
++                       ProtocolV2FrameFlags.None,
++                       unchecked((ulong)requestId)))
++            {
++                writer.GetSpan(sizeof(ushort) + encodedBytes + 4);
++                writer.Advance(0);
++                var idSpan = writer.GetSpan(sizeof(ushort));
++                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
++                writer.Advance(sizeof(ushort));
++                sizedCodec.SerializeSized(item, writer, encodedBytes, sizedSnapshot);
++                if (sizedSnapshot is not null)
++                {
++                    sizedCodec.ReleaseSnapshot(sizedSnapshot);
++                    sizedSnapshot = null;
++                }
++            }
++
++            var actualEncodedBytes = writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort);
++            if (actualEncodedBytes != encodedBytes)
++            {
++                throw new InvalidOperationException(
++                    clientPublication
++                        ? "Client stream item size differed after credit was acquired."
++                        : "Generated stream item size differed after credit was acquired.");
++            }
++
++            ThrowIfStreamPublicationRejected(deadline, deadlineTimeProvider, cancellationToken, clientPublication, beforePublication: true);
++            ownsWriter = false;
++            SendPacket(writer);
++        }
++        catch
++        {
++            if (creditAcquired)
++                ReturnUnsentStreamCredit(creditLease, requestId, streamId, creditBytes);
++            throw;
++        }
++        finally
++        {
++            if (sizedSnapshot is not null)
++                sizedCodec.ReleaseSnapshot(sizedSnapshot);
++            if (ownsWriter && writer is not null)
++                RuntimeContext.Buffers.Return(writer);
++        }
++    }
++
+     internal async ValueTask SendStreamChunkKnownSizeAsync<T>(
+         long requestId,
+         ushort streamId,
+diff --git a/src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs b/src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs
+index 97ce0d19..c68cd83d 100644
+--- a/src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs
++++ b/src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs
+@@ -246,6 +246,140 @@ internal sealed partial class RpcSession
+         => Volatile.Read(ref _preCreditSerializedBudget)?
+             .CompleteStream(requestId, streamId, exception);
+ 
++    internal ValueTask SendUnsizedStreamChunkResolvedAsync<T>(
++        long requestId,
++        ushort streamId,
++        T item,
++        IRpcCodec<T> codec,
++        CancellationToken cancellationToken,
++        StreamFlowController.ResolvedSendCreditLease creditLease,
++        RpcDeadline deadline = default,
++        TimeProvider? deadlineTimeProvider = null,
++        bool clientPublication = false)
++    {
++        ArgumentNullException.ThrowIfNull(codec);
++        IRpcByteBufferWriter? writer = null;
++        var ownsWriter = true;
++        var creditAcquired = false;
++        try
++        {
++            if (Volatile.Read(ref _terminal) is { } terminal)
++                throw terminal.Exception;
++            ThrowIfStreamPublicationRejected(deadline, deadlineTimeProvider, cancellationToken, clientPublication);
++
++            writer = RentFrameWriter();
++            using (writer.BeginPacketScope(
++                       ProtocolV2FrameType.StreamData,
++                       ProtocolV2FrameFlags.None,
++                       unchecked((ulong)requestId)))
++            {
++                var idSpan = writer.GetSpan(sizeof(ushort));
++                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
++                writer.Advance(sizeof(ushort));
++                codec.Serialize(item, writer);
++            }
++
++            var encodedBytes = Math.Max(
++                1,
++                writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
++            ThrowIfStreamPublicationRejected(deadline, deadlineTimeProvider, cancellationToken, clientPublication);
++
++            if (!HasStreamFlowControl ||
++                TryAcquireResolvedStreamSendCredit(in creditLease, encodedBytes))
++            {
++                creditAcquired = HasStreamFlowControl;
++                try
++                {
++                    ThrowIfStreamPublicationRejected(deadline, deadlineTimeProvider, cancellationToken, clientPublication, beforePublication: true);
++                    ownsWriter = false;
++                    SendPacket(writer);
++                }
++                catch
++                {
++                    if (creditAcquired)
++                        ReturnUnsentStreamCredit(creditLease, requestId, streamId, encodedBytes);
++                    throw;
++                }
++                return ValueTask.CompletedTask;
++            }
++
++            // Only writers that are known to require asynchronous flow-credit admission are
++            // charged to the pre-credit budget. Fast consumers therefore execute the same single
++            // flow-controller lock/reserve as dev and never touch the byte budget.
++            var budget = GetOrCreatePreCreditSerializedBudget();
++            var pendingBudget = budget.AcquireAsync(
++                requestId,
++                streamId,
++                encodedBytes,
++                cancellationToken);
++            ownsWriter = false;
++            return AwaitPreCreditBudgetAndRetainedFlowCreditAsync(
++                pendingBudget,
++                writer,
++                requestId,
++                streamId,
++                encodedBytes,
++                budget,
++                cancellationToken,
++                deadline,
++                deadlineTimeProvider,
++                creditLease,
++                clientPublication);
++        }
++        finally
++        {
++            if (ownsWriter && writer is not null)
++                RuntimeContext.Buffers.Return(writer);
++        }
++    }
++
++    private async ValueTask AwaitPreCreditBudgetAndRetainedFlowCreditAsync(
++        ValueTask pendingBudget,
++        IRpcByteBufferWriter writer,
++        long requestId,
++        ushort streamId,
++        int encodedBytes,
++        PreCreditSerializedBudget budget,
++        CancellationToken cancellationToken,
++        RpcDeadline deadline,
++        TimeProvider? deadlineTimeProvider,
++        StreamFlowController.ResolvedSendCreditLease creditLease,
++        bool clientPublication)
++    {
++        var ownsWriter = true;
++        var ownsBudget = false;
++        var creditAcquired = false;
++        try
++        {
++            await pendingBudget.ConfigureAwait(false);
++            ownsBudget = true;
++
++            await AcquireResolvedStreamSendCreditAsync(in creditLease, encodedBytes, cancellationToken)
++                .ConfigureAwait(false);
++            creditAcquired = true;
++
++            budget.Release(encodedBytes);
++            ownsBudget = false;
++
++            ThrowIfStreamPublicationRejected(deadline, deadlineTimeProvider, cancellationToken, clientPublication, beforePublication: true);
++            ownsWriter = false;
++            SendPacket(writer);
++        }
++        catch
++        {
++            if (creditAcquired)
++                ReturnUnsentStreamCredit(creditLease, requestId, streamId, encodedBytes);
++            throw;
++        }
++        finally
++        {
++            if (ownsBudget)
++                budget.Release(encodedBytes);
++            if (ownsWriter)
++                RuntimeContext.Buffers.Return(writer);
++        }
++    }
++
+     private ValueTask SerializeUnsizedStreamChunk<T>(
+         long requestId,
+         ushort streamId,
+@@ -376,6 +510,26 @@ internal sealed partial class RpcSession
+         }
+     }
+ 
++    private bool TryAcquireResolvedStreamSendCredit(
++        in StreamFlowController.ResolvedSendCreditLease creditLease, int encodedBytes)
++        => Volatile.Read(ref _protocolState).FlowController?
++            .TryAcquireSendCredit(in creditLease, encodedBytes) ?? true;
++
++    private static void ThrowIfStreamPublicationRejected(
++        RpcDeadline deadline,
++        TimeProvider? timeProvider,
++        CancellationToken cancellationToken,
++        bool clientPublication,
++        bool beforePublication = false)
++    {
++        if (clientPublication)
++            ThrowIfClientStreamPublicationRejected(deadline, timeProvider!, cancellationToken);
++        else if (beforePublication)
++            ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
++        else
++            cancellationToken.ThrowIfCancellationRequested();
++    }
++
+     private bool TryAcquireStreamSendCredit(long requestId, ushort streamId, int encodedBytes)
+     {
+         var controller = Volatile.Read(ref _protocolState).FlowController;
+diff --git a/test/SharpLink.UnitTests/Runtime/ResolvedStreamPublicationTests.cs b/test/SharpLink.UnitTests/Runtime/ResolvedStreamPublicationTests.cs
+new file mode 100644
+index 00000000..43435d62
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/ResolvedStreamPublicationTests.cs
+@@ -0,0 +1,374 @@
++using System.Buffers;
++using System.Collections.Generic;
++using System.IO.Pipelines;
++using System.Reflection;
++using System.Runtime.CompilerServices;
++using System.Threading;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public class ResolvedStreamPublicationTests
++{
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task FirstAndRetainedSendsShouldUseTheSameGeneration(bool sized)
++    {
++        await using var fixture = new Fixture(window: 8);
++        var codec = new CountingCodec(sized);
++        var first = fixture.First(codec, 4);
++        Ensure(first.IsCompletedSuccessfully, "first admission should complete synchronously");
++        var lease = await first;
++        var retained = fixture.Retained(codec, 4, lease);
++        Ensure(retained.IsCompletedSuccessfully, "retained publication should complete synchronously");
++        await retained;
++        Ensure(fixture.Controller.SendConnectionCredit == 0, "both sends must debit exactly four bytes");
++        var current = fixture.Controller.ResolveSendCreditLease(1, 0);
++        Ensure(ReferenceEquals(lease.State, current.State) && lease.Generation == current.Generation,
++            "retained publication must use the original generation");
++        Ensure(codec.SerializeCount == 2 && codec.ReleaseCount == (sized ? 2 : 0),
++            "each item and sized snapshot must be handled once");
++        fixture.ReturnCredit(8);
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task RetainedSendShouldWaitWithoutRebindingAndResumeOnce(bool sized)
++    {
++        await using var fixture = new Fixture(window: 4);
++        var codec = new CountingCodec(sized);
++        var lease = await fixture.First(codec, 4);
++        var send = fixture.Retained(codec, 4, lease);
++        Ensure(!send.IsCompleted, "retained send must wait for exhausted credit");
++        Ensure(codec.SerializeCount == (sized ? 1 : 2), "sized serialization must remain after credit");
++        Ensure(fixture.Session.PreCreditSerializedBytes == (sized ? 0 : 4),
++            "only unsized waiting publication owns serialized budget");
++        fixture.ReturnCredit(4);
++        await send.AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(codec.SerializeCount == 2 && codec.ReleaseCount == (sized ? 2 : 0),
++            "resumption must publish and release the snapshot once");
++        Ensure(fixture.Session.PreCreditSerializedBytes == 0 && fixture.Controller.SendConnectionCredit == 0,
++            "ownership must transfer from serialized bytes to one protocol debit");
++        fixture.ReturnCredit(4);
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task RetainedSendCancellationShouldLeaveOnlyTheFirstDebit(bool sized)
++    {
++        await using var fixture = new Fixture(window: 4);
++        var codec = new CountingCodec(sized);
++        var lease = await fixture.First(codec, 4);
++        using var cancellation = new CancellationTokenSource();
++        var send = fixture.Retained(codec, 4, lease, cancellation.Token);
++        Ensure(!send.IsCompleted, "the cancellation control must suspend");
++        cancellation.Cancel();
++        await ExpectCancellation(send);
++        Ensure(fixture.Controller.SendConnectionCredit == 0, "cancellation must not refund the first published item");
++        Ensure(fixture.Session.PreCreditSerializedBytes == 0 && fixture.Session.PreCreditSerializedWaiterCount == 0,
++            "cancellation must leave no serialized owner or waiter");
++        Ensure(codec.ReleaseCount == (sized ? 2 : 0), "cancellation must release the captured sized snapshot");
++        fixture.ReturnCredit(4);
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task RetainedSendQueueRejectionShouldRefundExactlyOnce(bool sized)
++    {
++        const int bytes = 30 * 1024;
++        await using var fixture = new Fixture(window: bytes, sendQueueBytes: 32 * 1024);
++        var codec = new CountingCodec(sized);
++        var lease = await fixture.First(codec, 1);
++        fixture.ReturnCredit(1);
++        // Normal DATA cannot consume the pump's reserved 4 KiB protocol-progress capacity.
++        await ExpectFailure(() => fixture.Retained(codec, bytes, lease), SharpLinkErrorCode.ResourceExhausted);
++        Ensure(fixture.Controller.SendConnectionCredit == bytes && fixture.Session.PreCreditSerializedBytes == 0,
++            "rejected unsent DATA must refund its debit and local budget exactly once");
++        try
++        {
++            fixture.Controller.ReturnUnsentCredit(in lease, bytes);
++            throw new Exception("duplicate refund should fail");
++        }
++        catch (InvalidOperationException exception) when (exception.Message.Contains("returned more than once", StringComparison.Ordinal))
++        {
++        }
++        Ensure(codec.ReleaseCount == (sized ? 2 : 0), "queue rejection must not retain snapshots");
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task RetainedClientSerializationCrossingDeadlineShouldNotKeepADebit(bool sized)
++    {
++        await using var fixture = new Fixture(window: 8);
++        var codec = new CountingCodec(sized);
++        var lease = await fixture.First(codec, 4);
++        var time = new ManualTimeProvider();
++        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), time);
++        codec.AfterSerialize = () => time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(2));
++        await ExpectFailure(() => fixture.Session.SendClientStreamChunkResolvedAsync(
++            1, 0, new Payload(4), codec, sized ? codec : null,
++            deadline, time, CancellationToken.None, lease), SharpLinkErrorCode.DeadlineExceeded);
++        Ensure(fixture.Controller.SendConnectionCredit == 4, "expired retained publication must leave only the first debit");
++        Ensure(codec.ReleaseCount == (sized ? 2 : 0), "deadline failure must release the snapshot exactly once");
++        fixture.ReturnCredit(4);
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task RetainedSendShouldRejectAReusedGeneration(bool sized)
++    {
++        await using var fixture = new Fixture(window: 4);
++        var codec = new CountingCodec(sized);
++        var stale = await fixture.First(codec, 4);
++        fixture.ReturnCredit(4);
++        fixture.Session.CompleteSendStream(1, 0);
++        var replacement = await fixture.First(codec, 4);
++        Ensure(ReferenceEquals(stale.State, replacement.State) && stale.Generation != replacement.Generation,
++            "the control must reuse the same pooled state with a new generation");
++        await ExpectFailure(() => fixture.Retained(codec, 4, stale), SharpLinkErrorCode.ConnectionClosed);
++        Ensure(fixture.Controller.SendConnectionCredit == 0, "stale retained publication must not credit the replacement");
++        fixture.ReturnCredit(4);
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task GeneratedPumpShouldCancelItsSecondRetainedSend(bool sized)
++    {
++        await using var fixture = new Fixture(window: 4);
++        var codec = new CountingCodec(sized);
++        using var cancellation = new CancellationTokenSource();
++        var pump = fixture.Session.PumpGeneratedOutboundStreamAsync(
++            1, 0, Items(3, 4), codec, payloadNullable: false, cancellation.Token);
++        Ensure(!pump.IsCompleted, "the generated pump must suspend on its second item");
++        Ensure(codec.SerializeCount == (sized ? 1 : 2), "the second item must follow sized/unsized ownership order");
++        cancellation.Cancel();
++        await ExpectCancellation(pump);
++        Ensure(fixture.Session.PreCreditSerializedBytes == 0 && fixture.Controller.SendConnectionCredit == 0,
++            "generated cancellation must retain only the first wire debit");
++        Ensure(codec.ReleaseCount == (sized ? 2 : 0), "generated cancellation must release both captured snapshots");
++        fixture.ReturnCredit(4);
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task FlowDisabledPumpShouldSendAllItemsWithAnUnresolvedLease(bool sized)
++    {
++        await using var fixture = new Fixture(window: 4, flowControl: false);
++        var codec = new CountingCodec(sized);
++        await fixture.Session.PumpGeneratedOutboundStreamAsync(
++            1, 0, Items(3, 4), codec, payloadNullable: false, CancellationToken.None);
++        Ensure(codec.SerializeCount == 3 && codec.ReleaseCount == (sized ? 3 : 0),
++            "the flow-disabled lifetime must publish all first and subsequent items");
++        Ensure(fixture.Session.PreCreditSerializedByteLimit == 0, "flow-disabled sends must not create a byte budget");
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task GeneratedRetainedSendDeadlineShouldAbandonWithoutPublishingOrDoubleRefund(bool sized)
++    {
++        await using var fixture = new Fixture(window: 4);
++        var codec = new CountingCodec(sized);
++        var time = new ManualTimeProvider();
++        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), time);
++        using (SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
++                   fixture.Session.Id, authentication: null, deadline, time)))
++        {
++            var pump = fixture.Session.PumpGeneratedOutboundStreamAsync(
++                1, 0, Items(2, 4), codec, payloadNullable: false, CancellationToken.None);
++            Ensure(!pump.IsCompleted, "the second generated item must be waiting at the retained-send deadline branch");
++            time.Advance(TimeSpan.FromSeconds(1));
++            await ExpectFailure(() => pump, SharpLinkErrorCode.DeadlineExceeded);
++        }
++        await fixture.WaitForPreCreditCleanupAsync().WaitAsync(TimeSpan.FromSeconds(5));
++        if (sized)
++            await codec.SecondSnapshotReleased.WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(fixture.Controller.SendConnectionCredit == 0, "deadline cancellation must not refund the published first DATA");
++        fixture.ReturnCredit(4);
++        Ensure(fixture.Controller.SendConnectionCredit == 4, "late credit must not admit the abandoned retained DATA");
++        Ensure(await fixture.CountDataFramesAsync() == 1, "the expired second item must never reach the writer");
++        Ensure(codec.ReleaseCount == (sized ? 2 : 0), "deadline abandonment must release the captured snapshot once");
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task GeneratedRetainedSerializationCrossingDeadlineShouldRefundOnlyItsOwnDebit(bool sized)
++    {
++        await using var fixture = new Fixture(window: 8);
++        var codec = new CountingCodec(sized);
++        var time = new ManualTimeProvider();
++        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), time);
++        codec.AfterSerialize = () =>
++        {
++            if (codec.SerializeCount == 2)
++                time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(2));
++        };
++        using (SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
++                   fixture.Session.Id, authentication: null, deadline, time)))
++        {
++            await ExpectFailure(() => fixture.Session.PumpGeneratedOutboundStreamAsync(
++                1, 0, Items(2, 4), codec, payloadNullable: false, CancellationToken.None),
++                SharpLinkErrorCode.DeadlineExceeded);
++        }
++        Ensure(fixture.Controller.SendConnectionCredit == 4, "the generated guard must refund only the unsent retained DATA");
++        Ensure(await fixture.CountDataFramesAsync() == 1, "only the first generated DATA may be published");
++        Ensure(codec.ReleaseCount == (sized ? 2 : 0), "the generated guard must release each sized snapshot once");
++        fixture.ReturnCredit(4);
++    }
++
++    [Test]
++    public async Task EmptyGeneratedPumpShouldNotCreateSendState()
++    {
++        await using var fixture = new Fixture(window: 4);
++        await fixture.Session.PumpGeneratedOutboundStreamAsync(
++            1, 0, Items(0, 4), new CountingCodec(false), payloadNullable: false, CancellationToken.None);
++        Ensure(fixture.Controller.RetainedSendStreamCount == 0, "empty streams must not resolve or publish a send state");
++    }
++
++    [Test]
++    public async Task FirstAndRetainedResultShapesShouldRemainExplicit()
++    {
++        var leaseBytes = Unsafe.SizeOf<StreamFlowController.ResolvedSendCreditLease>();
++        var firstBytes = Unsafe.SizeOf<ValueTask<StreamFlowController.ResolvedSendCreditLease>>();
++        var retainedBytes = Unsafe.SizeOf<ValueTask>();
++        Console.WriteLine($"Send result layout: lease={leaseBytes}, first ValueTask={firstBytes}, retained ValueTask={retainedBytes}");
++        Ensure(firstBytes > retainedBytes, "a retained send should not carry the first-admission lease payload");
++        await Task.CompletedTask;
++    }
++
++    private static async IAsyncEnumerable<Payload> Items(int count, int bytes)
++    {
++        for (var index = 0; index < count; index++)
++            yield return new Payload(bytes);
++        await Task.CompletedTask;
++    }
++
++    private static async Task ExpectCancellation(ValueTask pending)
++    {
++        try { await pending.AsTask().WaitAsync(TimeSpan.FromSeconds(5)); }
++        catch (OperationCanceledException) { return; }
++        throw new Exception("expected cancellation");
++    }
++
++    private static async Task ExpectFailure(Func<ValueTask> send, SharpLinkErrorCode code)
++    {
++        try { await send().AsTask().WaitAsync(TimeSpan.FromSeconds(5)); }
++        catch (SharpLinkException exception) when (exception.Code == code) { return; }
++        throw new Exception($"expected {code}");
++    }
++
++    private static void Ensure(bool condition, string message)
++    {
++        if (!condition) throw new InvalidOperationException(message);
++    }
++
++    private readonly record struct Payload(int Bytes);
++
++    private sealed class CountingCodec(bool sized) : IRpcCodec<Payload>, IRpcSizedCodec<Payload>
++    {
++        private readonly TaskCompletionSource<bool> _secondSnapshotReleased =
++            new(TaskCreationOptions.RunContinuationsAsynchronously);
++        internal Task SecondSnapshotReleased => _secondSnapshotReleased.Task;
++        internal int SerializeCount { get; private set; }
++        internal int ReleaseCount { get; private set; }
++        internal Action? AfterSerialize { get; set; }
++        internal bool Sized => sized;
++        public bool CanExactSize => sized;
++        public void Serialize(in Payload value, IBufferWriter<byte> buffer)
++        {
++            SerializeCount++;
++            buffer.GetSpan(value.Bytes)[..value.Bytes].Fill(0x5a);
++            buffer.Advance(value.Bytes);
++            AfterSerialize?.Invoke();
++        }
++        public Payload Deserialize(in ReadOnlySequence<byte> buffer) => new(checked((int)buffer.Length));
++        public bool TryGetEncodedSize(in Payload value, out int size) { size = value.Bytes; return sized; }
++        public bool TryGetEncodedSize(in Payload value, out int size, out IRpcSizedCodecSnapshot? snapshot)
++        {
++            size = value.Bytes;
++            snapshot = new Snapshot();
++            return sized;
++        }
++        public void SerializeSized(in Payload value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
++        {
++            Ensure(snapshot is Snapshot { Released: false } && size == value.Bytes, "snapshot must remain live through serialization");
++            Serialize(in value, buffer);
++        }
++        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
++        {
++            Ensure(snapshot is Snapshot { Released: false }, "snapshot must be released exactly once");
++            ((Snapshot)snapshot!).Released = true;
++            ReleaseCount++;
++            if (ReleaseCount == 2)
++                _secondSnapshotReleased.TrySetResult(true);
++        }
++        private sealed class Snapshot : IRpcSizedCodecSnapshot { internal bool Released; }
++    }
++
++    private sealed class Fixture : IAsyncDisposable
++    {
++        private readonly SharpLinkRuntimeContext _context;
++        private readonly Pipe _input = new();
++        private readonly Pipe _output = new();
++        internal RpcSession Session { get; }
++        internal StreamFlowController Controller =>
++            ((RpcSessionProtocolState)typeof(RpcSession).GetField("_protocolState", BindingFlags.Instance | BindingFlags.NonPublic)!
++                .GetValue(Session)!).FlowController!;
++        internal Fixture(int window, bool flowControl = true, int sendQueueBytes = 4 * 1024 * 1024)
++        {
++            _context = new SharpLinkRuntimeContextBuilder().Configure(options =>
++            {
++                options.FlowControl.MaxSendQueueBytes = sendQueueBytes;
++                options.FlowControl.MaxPreCreditSerializedBytes = Math.Max(1, window);
++            }).Build(includeGeneratedAssemblyCatalog: false);
++            Session = RpcSessionTestFixture.CreateSessionOverTestTransport(
++                "retained-send-result", _input.Reader, _output.Writer,
++                RpcSessionTestFixture.ServerOptions(_context), completeHandshake: false);
++            RpcSessionTestFixture.CompleteHandshake(Session,
++                flowControl ? ProtocolV2Capabilities.FlowControl : ProtocolV2Capabilities.None,
++                streamReceiveWindowBytes: window, connectionReceiveWindowBytes: window);
++        }
++        internal ValueTask<StreamFlowController.ResolvedSendCreditLease> First(CountingCodec codec, int bytes)
++            => Session.SendClientStreamChunkWithCreditLeaseAsync(1, 0, new Payload(bytes), codec,
++                codec.Sized ? codec : null, default, TimeProvider.System, CancellationToken.None, default);
++        internal ValueTask Retained(CountingCodec codec, int bytes, StreamFlowController.ResolvedSendCreditLease lease,
++            CancellationToken cancellationToken = default)
++            => Session.SendClientStreamChunkResolvedAsync(1, 0, new Payload(bytes), codec,
++                codec.Sized ? codec : null, default, TimeProvider.System, cancellationToken, lease);
++        internal void ReturnCredit(int bytes) => Session.ApplyWindowUpdate(1, new ProtocolV2WindowUpdate(0, checked((uint)bytes)));
++        internal async Task WaitForPreCreditCleanupAsync()
++        {
++            // Deadline abandonment deliberately observes the send separately. Wait for that
++            // owned cleanup condition rather than relying on a sleep or continuation ordering.
++            while (Session.PreCreditSerializedBytes != 0 || Session.PreCreditSerializedWaiterCount != 0)
++                await Task.Yield();
++        }
++        internal async Task<int> CountDataFramesAsync()
++        {
++            await Session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++            var read = await _output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++            var remaining = read.Buffer;
++            var count = 0;
++            while (ProtocolV2FrameParser.TryReadFrame(ref remaining, _context.Protocol, out var header, out _))
++                if (header.Type == ProtocolV2FrameType.StreamData) count++;
++            Ensure(remaining.IsEmpty, "the output must contain complete frames");
++            _output.Reader.AdvanceTo(read.Buffer.End);
++            return count;
++        }
++        public async ValueTask DisposeAsync()
++        {
++            await Session.DisposeAsync();
++            await _output.Reader.CompleteAsync();
++            await _input.Writer.CompleteAsync();
++            _context.Dispose();
++        }
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Client/ClientStreamSendDisposalTests.cs b/test/SharpLink.UnitTests/Client/ClientStreamSendDisposalTests.cs
+new file mode 100644
+index 00000000..c28bfb50
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Client/ClientStreamSendDisposalTests.cs
+@@ -0,0 +1,74 @@
++using System.Collections.Generic;
++using System.IO.Pipelines;
++using SharpLink.Client;
++
++namespace SharpLink.UnitTests.Client;
++
++public sealed class ClientStreamSendDisposalTests
++{
++    [Test]
++    [Arguments(false, false)]
++    [Arguments(false, true)]
++    [Arguments(true, false)]
++    [Arguments(true, true)]
++    public async Task FirstAndRetainedSendLoopShouldPreserveAsyncDisposalOwnership(bool moveFails, bool disposeFails)
++    {
++        await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
++        var context = (SharpLinkRuntimeContext)owner.RuntimeContext;
++        var input = new Pipe();
++        var output = new Pipe();
++        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
++            "client-send-disposal", input.Reader, output.Writer, RpcSessionTestFixture.ClientOptions(context));
++        using var lifetime = new CancellationTokenSource();
++        await using var connection = new ClientConnection(owner, session, lifetime, 8, context);
++        var codec = context.Codecs.GetCodec<int>();
++        _ = connection.PendingCalls.Rent(codec, PendingCallKind.ClientStreaming,
++            default, CancellationToken.None, out var requestId, hasResponsePayload: true, responseNullable: false);
++        var moveFailure = new InvalidOperationException("move failed");
++        var disposeFailure = new InvalidOperationException("dispose failed");
++        var producer = new Producer(moveFails ? moveFailure : null);
++        var send = connection.SendClientStreamAsync(requestId, 0, producer, codec);
++        await producer.DisposalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(producer.MoveCount == 3 && producer.DisposeCount == 1,
++            "the loop must send the first and retained item before disposing exactly once");
++        Ensure(!send.IsCompleted, "the sender must await asynchronous enumerator disposal");
++        if (disposeFails) producer.Disposal.TrySetException(disposeFailure);
++        else producer.Disposal.TrySetResult(true);
++        Exception? failure = null;
++        try { await send.WaitAsync(TimeSpan.FromSeconds(5)); }
++        catch (Exception exception) { failure = exception; }
++        var expected = disposeFails ? disposeFailure : moveFails ? moveFailure : null;
++        Ensure(ReferenceEquals(failure, expected), "disposal must preserve the compiler await-using exception precedence");
++        Ensure(producer.DisposeCount == 1, "fault propagation must not retry disposal");
++        await output.Reader.CompleteAsync();
++        await input.Writer.CompleteAsync();
++    }
++
++    private sealed class Producer(Exception? moveFailure) : IAsyncEnumerable<int>, IAsyncEnumerator<int>
++    {
++        internal TaskCompletionSource<bool> DisposalStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
++        internal TaskCompletionSource<bool> Disposal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
++        internal int MoveCount { get; private set; }
++        internal int DisposeCount { get; private set; }
++        public int Current => MoveCount;
++        public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default) => this;
++        public ValueTask<bool> MoveNextAsync()
++        {
++            MoveCount++;
++            if (MoveCount < 3) return ValueTask.FromResult(true);
++            if (moveFailure is not null) return ValueTask.FromException<bool>(moveFailure);
++            return ValueTask.FromResult(false);
++        }
++        public ValueTask DisposeAsync()
++        {
++            DisposeCount++;
++            DisposalStarted.TrySetResult(true);
++            return new ValueTask(Disposal.Task);
++        }
++    }
++
++    private static void Ensure(bool condition, string message)
++    {
++        if (!condition) throw new InvalidOperationException(message);
++    }
++}

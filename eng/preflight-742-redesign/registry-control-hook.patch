@@ -1,0 +1,27 @@
+diff --git a/src/SharpLink.Runtime/StreamManager.cs b/src/SharpLink.Runtime/StreamManager.cs
+--- a/src/SharpLink.Runtime/StreamManager.cs
++++ b/src/SharpLink.Runtime/StreamManager.cs
+@@ -422,6 +422,7 @@
+             return;
+         }
+ 
++        StreamManagerTestHooks.AfterPeerTerminalMarked?.Invoke(requestId, streamId);
+         if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var retainedEntry))
+         {
+             PublishReceiveTerminal(requestId, streamId, retainedEntry);
+@@ -1029,6 +1030,15 @@
+ internal static class StreamManagerTestHooks
+ {
+     [ThreadStatic]
++    private static Action<long, ushort>? s_afterPeerTerminalMarked;
++
++    internal static Action<long, ushort>? AfterPeerTerminalMarked
++    {
++        get => s_afterPeerTerminalMarked;
++        set => s_afterPeerTerminalMarked = value;
++    }
++
++    [ThreadStatic]
+     private static Action? s_beforeRoutingMapInitialize;
+     [ThreadStatic]
+     private static Action<long, ushort>? s_beforeReceiveTerminalPublish;

@@ -1,0 +1,3295 @@
+diff --git a/src/SharpLink.Client/ClientConnection.cs b/src/SharpLink.Client/ClientConnection.cs
+index ac2ea678..42625737 100644
+--- a/src/SharpLink.Client/ClientConnection.cs
++++ b/src/SharpLink.Client/ClientConnection.cs
+@@ -442,7 +442,7 @@ internal sealed class ClientConnection :
+             return ValueTask.CompletedTask;
+ 
+         Session.StreamManager.Unregister(requestId, 0);
+-        if (dispatchState is null || dispatchState.IsDetached)
++        if (dispatchState is null)
+         {
+             if (Session.IsConnected)
+                 TrySendCancel(requestId, ProtocolV2CancelReason.ConsumerAbandoned);
+@@ -586,7 +586,7 @@ internal sealed class ClientConnection :
+     {
+         try
+         {
+-            await dispatchState.WaitForDetachedAsync(Session.LifetimeToken).ConfigureAwait(false);
++            await dispatchState.WaitForReceiveRetirementAsync(Session.LifetimeToken).ConfigureAwait(false);
+         }
+         catch (OperationCanceledException) when (!Session.IsConnected)
+         {
+diff --git a/src/SharpLink.Runtime/IStreamDispatchLease.cs b/src/SharpLink.Runtime/IStreamDispatchLease.cs
+index 1951f971..78554a23 100644
+--- a/src/SharpLink.Runtime/IStreamDispatchLease.cs
++++ b/src/SharpLink.Runtime/IStreamDispatchLease.cs
+@@ -23,5 +23,10 @@ internal interface IStreamDispatchState
+ 
+     ValueTask WaitForDetachedAsync(CancellationToken cancellationToken);
+ 
++    // Logical detach may precede DATA/credit cleanup. Wire cancellation waits for the
++    // stronger barrier; child mailbox states retain their existing detach contract.
++    ValueTask WaitForReceiveRetirementAsync(CancellationToken cancellationToken)
++        => WaitForDetachedAsync(cancellationToken);
++
+     void Close();
+ }
+diff --git a/src/SharpLink.Runtime/IStreamDispatcher.cs b/src/SharpLink.Runtime/IStreamDispatcher.cs
+index af9d6a15..8f472fdd 100644
+--- a/src/SharpLink.Runtime/IStreamDispatcher.cs
++++ b/src/SharpLink.Runtime/IStreamDispatcher.cs
+@@ -23,7 +23,8 @@ internal interface IStreamConsumptionAwareDispatcher : IStreamDispatcher
+     void SetBytesConsumedCallback(
+         Action<long, ushort, int>? callback,
+         long requestId,
+-        ushort streamId);
++        ushort streamId)
++        => throw new NotSupportedException("This dispatcher uses an immutable receive binding.");
+ 
+     bool TrySetResolvedBytesConsumedCallback(
+         ResolvedStreamBytesCallback? callback,
+@@ -34,3 +35,10 @@ internal interface IStreamConsumptionAwareDispatcher : IStreamDispatcher
+ internal delegate void ResolvedStreamBytesCallback(
+     in StreamFlowController.ResolvedReceiveCreditLease lease,
+     int encodedByteCount);
++
++// The concrete sealed entry keeps the hot consumption call nonvirtual and stores one
++// generation-bound lease. A mailbox child can have a different dispatch lifetime owner.
++internal interface IStreamReceiveCreditBoundDispatcher : IStreamConsumptionAwareDispatcher
++{
++    void SetReceiveCreditBinding(StreamManager.DispatcherEntry? binding);
++}
+diff --git a/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.RetentionChecks.cs b/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.RetentionChecks.cs
+index bddddda1..5c0cb9a4 100644
+--- a/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.RetentionChecks.cs
++++ b/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.RetentionChecks.cs
+@@ -8,10 +8,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T>
+         get
+         {
+             if (_codec is not null || _error is not null || Volatile.Read(ref _dispatchState) is not null ||
+-                _bytesConsumed is not null || _localAbortBytesConsumed is not null ||
+-                _resolvedBytesConsumed is not null || _receiveCreditLease.Owner is not null ||
+-                _receiveCreditLease.State is not null || _localAbortResolvedBytesConsumed is not null ||
+-                _localAbortReceiveCreditLease.Owner is not null || _localAbortReceiveCreditLease.State is not null ||
++                _receiveCreditBinding is not null || _localAbortReceiveCreditBinding is not null ||
+                 _consumerAbandoned is not null || _consumerAbandonedAsync is not null ||
+                 _current is not null || _enumerationToken.CanBeCanceled ||
+                 _additionalEnumerationToken.CanBeCanceled ||
+diff --git a/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs b/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs
+index 67d893f2..32075c06 100644
+--- a/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs
++++ b/src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs
+@@ -4,7 +4,7 @@ namespace SharpLink.Runtime;
+ /// <typeparam name="T">The decoded stream item type.</typeparam>
+ /// <remarks>Dispose the enumerator to release buffered items and return the dispatcher to its pool.</remarks>
+ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+-    IStreamConsumptionAwareDispatcher,
++    IStreamReceiveCreditBoundDispatcher,
+     IStreamDispatchLease,
+     IStreamLocalAbortDispatcher,
+     IAsyncEnumerable<T>,
+@@ -84,20 +84,12 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+     private T? _current;
+     private IRpcCodec<T>? _codec;
+     private bool _payloadNullable;
+-    private Action<long, ushort, int>? _bytesConsumed;
+-    private ResolvedStreamBytesCallback? _resolvedBytesConsumed;
+-    private StreamFlowController.ResolvedReceiveCreditLease _receiveCreditLease;
++    private StreamManager.DispatcherEntry? _receiveCreditBinding;
+     private Action<long>? _consumerAbandoned;
+     private Func<long, IStreamDispatchState?, ValueTask>? _consumerAbandonedAsync;
+-    private long _flowControlRequestId;
+-    private ushort _flowControlStreamId;
+     private long _consumerAbandonedRequestId;
+     private int _consumerTerminal;
+-    private Action<long, ushort, int>? _localAbortBytesConsumed;
+-    private ResolvedStreamBytesCallback? _localAbortResolvedBytesConsumed;
+-    private StreamFlowController.ResolvedReceiveCreditLease _localAbortReceiveCreditLease;
+-    private long _localAbortRequestId;
+-    private ushort _localAbortStreamId;
++    private StreamManager.DispatcherEntry? _localAbortReceiveCreditBinding;
+     private long _localAbortRetentionLeaseState;
+     private int _localAbortDeliveryState;
+     private int _localAbortBufferRetired;
+@@ -230,19 +222,11 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ 
+         _error = null;
+         _current = default;
+-        _bytesConsumed = null;
+-        _resolvedBytesConsumed = null;
+-        _receiveCreditLease = default;
++        _receiveCreditBinding = null;
+         _consumerAbandoned = null;
+         _consumerAbandonedAsync = null;
+-        _flowControlRequestId = 0;
+-        _flowControlStreamId = 0;
+         _consumerAbandonedRequestId = 0;
+-        _localAbortBytesConsumed = null;
+-        _localAbortResolvedBytesConsumed = null;
+-        _localAbortReceiveCreditLease = default;
+-        _localAbortRequestId = 0;
+-        _localAbortStreamId = 0;
++        _localAbortReceiveCreditBinding = null;
+         Volatile.Write(ref _localAbortRetentionLeaseState, 0);
+         Volatile.Write(ref _localAbortDeliveryState, 0);
+         Volatile.Write(ref _localAbortBufferRetired, 0);
+@@ -460,25 +444,9 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ #endif
+     }
+ 
+-    /// <inheritdoc />
+-    public void SetBytesConsumedCallback(
+-        Action<long, ushort, int>? callback,
+-        long requestId,
+-        ushort streamId)
+-    {
+-        _bytesConsumed = callback;
+-        _flowControlRequestId = requestId;
+-        _flowControlStreamId = streamId;
+-    }
++    public void SetReceiveCreditBinding(StreamManager.DispatcherEntry? binding)
++        => _receiveCreditBinding = binding;
+ 
+-    public bool TrySetResolvedBytesConsumedCallback(
+-        ResolvedStreamBytesCallback? callback,
+-        in StreamFlowController.ResolvedReceiveCreditLease lease)
+-    {
+-        _resolvedBytesConsumed = callback;
+-        _receiveCreditLease = lease;
+-        return true;
+-    }
+     void IStreamLocalAbortDispatcher.CompleteLocalAbort(Exception? exception)
+     {
+         if (!TryAcquireDispatch(out var retentionLeaseState))
+@@ -487,18 +455,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         // Snapshot receive-credit ownership before publishing the local terminal. A racing
+         // consumer DisposeAsync may participate in the one-shot retirement as soon as the
+         // terminal becomes visible, so it must never observe an uninitialized credit snapshot.
+-        _localAbortBytesConsumed = _bytesConsumed;
+-        _localAbortResolvedBytesConsumed = _resolvedBytesConsumed;
+-        _localAbortReceiveCreditLease = _receiveCreditLease;
+-        _localAbortRequestId = _flowControlRequestId;
+-        _localAbortStreamId = _flowControlStreamId;
++        _localAbortReceiveCreditBinding = _receiveCreditBinding;
+         if (!TryClaimLocalAbort(exception))
+         {
+-            _localAbortBytesConsumed = null;
+-            _localAbortResolvedBytesConsumed = null;
+-            _localAbortReceiveCreditLease = default;
+-            _localAbortRequestId = 0;
+-            _localAbortStreamId = 0;
++            _localAbortReceiveCreditBinding = null;
+             ReleaseDispatch(retentionLeaseState);
+             return;
+         }
+@@ -542,21 +502,9 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         while (TryDequeueCore(out _, out var encodedByteCount))
+             discardedBytes = checked(discardedBytes + encodedByteCount);
+         if (discardedBytes != 0)
+-        {
+-            if (_localAbortResolvedBytesConsumed is { } resolved)
+-                resolved(in _localAbortReceiveCreditLease, discardedBytes);
+-            else
+-                _localAbortBytesConsumed?.Invoke(
+-                    _localAbortRequestId,
+-                    _localAbortStreamId,
+-                    discardedBytes);
+-        }
++            _localAbortReceiveCreditBinding?.RecordConsumed(discardedBytes);
+ 
+-        _localAbortBytesConsumed = null;
+-        _localAbortResolvedBytesConsumed = null;
+-        _localAbortReceiveCreditLease = default;
+-        _localAbortRequestId = 0;
+-        _localAbortStreamId = 0;
++        _localAbortReceiveCreditBinding = null;
+     }
+ 
+     private void ReleaseLocalAbortRetention()
+@@ -1483,19 +1431,11 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+         _error = null;
+         _codec = null;
+         _payloadNullable = false;
+-        _bytesConsumed = null;
+-        _resolvedBytesConsumed = null;
+-        _receiveCreditLease = default;
++        _receiveCreditBinding = null;
+         _consumerAbandoned = null;
+         _consumerAbandonedAsync = null;
+-        _flowControlRequestId = 0;
+-        _flowControlStreamId = 0;
+         _consumerAbandonedRequestId = 0;
+-        _localAbortBytesConsumed = null;
+-        _localAbortResolvedBytesConsumed = null;
+-        _localAbortReceiveCreditLease = default;
+-        _localAbortRequestId = 0;
+-        _localAbortStreamId = 0;
++        _localAbortReceiveCreditBinding = null;
+         Volatile.Write(ref _localAbortRetentionLeaseState, 0);
+         Volatile.Write(ref _localAbortDeliveryState, 0);
+         Volatile.Write(ref _localAbortBufferRetired, 0);
+@@ -1589,12 +1529,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
+ 
+     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+     private void NotifyBytesConsumed(int encodedByteCount)
+-    {
+-        if (_resolvedBytesConsumed is { } resolved)
+-            resolved(in _receiveCreditLease, encodedByteCount);
+-        else
+-            _bytesConsumed?.Invoke(_flowControlRequestId, _flowControlStreamId, encodedByteCount);
+-    }
++        => _receiveCreditBinding?.RecordConsumed(encodedByteCount);
+ 
+     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+     private void ThrowIfEnumerationCanceled()
+diff --git a/src/SharpLink.Runtime/PreAdmissionStreamDispatcher.cs b/src/SharpLink.Runtime/PreAdmissionStreamDispatcher.cs
+index 594927c8..b734de58 100644
+--- a/src/SharpLink.Runtime/PreAdmissionStreamDispatcher.cs
++++ b/src/SharpLink.Runtime/PreAdmissionStreamDispatcher.cs
+@@ -13,7 +13,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+     Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? decodeCompressed = null,
+     bool retainUntilLocalCompletion = false,
+     int maxRetainedBytes = int.MaxValue)
+-    : IStreamConsumptionAwareDispatcher, IStreamDispatchLease, IStreamDispatchState
++    : IStreamReceiveCreditBoundDispatcher, IStreamDispatchLease, IStreamDispatchState
+ {
+     private const int MaxBufferedElements = 4096;
+     private static Action<long, ushort, bool>? s_bufferedItemObserverForTests;
+@@ -28,11 +28,9 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+     private Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload>? _decodeCompressed = decodeCompressed;
+     private IStreamDispatcher? _dispatcher;
+     private IStreamDispatchLease? _childLease;
+-    private Action<long, ushort, int>? _bytesConsumed;
+-    private ResolvedStreamBytesCallback? _resolvedBytesConsumed;
+-    private StreamFlowController.ResolvedReceiveCreditLease _receiveCreditLease;
+-    private long _requestId;
+-    private ushort _streamId;
++    private StreamManager.DispatcherEntry? _receiveCreditBinding;
++    private long RequestId => _receiveCreditBinding?.ReceiveCreditLease.RequestId ?? 0;
++    private ushort StreamId => _receiveCreditBinding?.ReceiveCreditLease.StreamId ?? 0;
+     private Exception? _completion;
+     private bool _completed;
+     private bool _completionForwarded;
+@@ -200,7 +198,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+             }
+             if (buffered)
+             {
+-                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(_requestId, _streamId, false);
++                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(RequestId, StreamId, false);
+                 return ValueTask.CompletedTask;
+             }
+ 
+@@ -338,7 +336,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+             }
+             if (buffered)
+             {
+-                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(_requestId, _streamId, true);
++                Volatile.Read(ref s_bufferedItemObserverForTests)?.Invoke(RequestId, StreamId, true);
+                 return ValueTask.CompletedTask;
+             }
+ 
+@@ -494,75 +492,19 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+         CompleteAttachedDispatcher(attached, exception);
+     }
+ 
+-    public void SetBytesConsumedCallback(
+-        Action<long, ushort, int>? callback,
+-        long requestId,
+-        ushort streamId)
++    public void SetReceiveCreditBinding(StreamManager.DispatcherEntry? binding)
+     {
+-        IStreamConsumptionAwareDispatcher? consumptionAware = null;
+-        var childLeaseAcquired = false;
++        IStreamDispatcher? child = null;
+         lock (_gate)
+         {
+-            _bytesConsumed = callback;
+-            _requestId = requestId;
+-            _streamId = streamId;
++            _receiveCreditBinding = binding;
+             _configurationVersion++;
+-            if (!_attachmentInProgress && !_childClosed && !_childDetached &&
+-                _dispatcher is IStreamConsumptionAwareDispatcher child &&
+-                TryAcquireChildDispatchLocked(out _))
+-            {
+-                consumptionAware = child;
+-                childLeaseAcquired = true;
+-            }
+-        }
+-
+-        if (consumptionAware is null)
+-            return;
+-        try
+-        {
+-            consumptionAware.SetBytesConsumedCallback(callback, requestId, streamId);
+-        }
+-        finally
+-        {
+-            if (childLeaseAcquired)
+-                ReleaseChildDispatch();
++            if (!_attachmentInProgress && !_childClosed && !_childDetached)
++                _ = TryAcquireChildDispatchLocked(out child);
+         }
+-    }
+-
+-    public bool TrySetResolvedBytesConsumedCallback(
+-        ResolvedStreamBytesCallback? callback,
+-        in StreamFlowController.ResolvedReceiveCreditLease lease)
+-    {
+-        IStreamConsumptionAwareDispatcher? consumptionAware = null;
+-        var childLeaseAcquired = false;
+-        lock (_gate)
+-        {
+-            _resolvedBytesConsumed = callback;
+-            _receiveCreditLease = lease;
+-            _configurationVersion++;
+-            if (!_attachmentInProgress && !_childClosed && !_childDetached &&
+-                _dispatcher is IStreamConsumptionAwareDispatcher child &&
+-                TryAcquireChildDispatchLocked(out _))
+-            {
+-                consumptionAware = child;
+-                childLeaseAcquired = true;
+-            }
+-        }
+-
+-        if (consumptionAware is not null)
+-        {
+-            try
+-            {
+-                _ = consumptionAware.TrySetResolvedBytesConsumedCallback(callback, in lease);
+-            }
+-            finally
+-            {
+-                if (childLeaseAcquired)
+-                    ReleaseChildDispatch();
+-            }
+-        }
+-
+-        return true;
++        if (child is null) return;
++        try { ConfigureReceiveBinding(child, binding); }
++        finally { ReleaseChildDispatch(); }
+     }
+ 
+     ValueTask IStreamDispatchLease.DispatchAcquiredAsync(
+@@ -834,11 +776,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+         var dispatchStateBound = false;
+         while (true)
+         {
+-            Action<long, ushort, int>? bytesConsumed;
+-            ResolvedStreamBytesCallback? resolvedBytesConsumed;
+-            StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease;
+-            long requestId;
+-            ushort streamId;
++            StreamManager.DispatcherEntry? receiveCreditBinding;
+             int version;
+             lock (_gate)
+             {
+@@ -847,24 +785,11 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+                 {
+                     return;
+                 }
+-                bytesConsumed = _bytesConsumed;
+-                resolvedBytesConsumed = _resolvedBytesConsumed;
+-                receiveCreditLease = _receiveCreditLease;
+-                requestId = _requestId;
+-                streamId = _streamId;
++                receiveCreditBinding = _receiveCreditBinding;
+                 version = _configurationVersion;
+             }
+ 
+-            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+-            {
+-                consumptionAware.SetBytesConsumedCallback(bytesConsumed, requestId, streamId);
+-                if (resolvedBytesConsumed is not null && receiveCreditLease.IsResolved)
+-                {
+-                    _ = consumptionAware.TrySetResolvedBytesConsumedCallback(
+-                        resolvedBytesConsumed,
+-                        in receiveCreditLease);
+-                }
+-            }
++            ConfigureReceiveBinding(dispatcher, receiveCreditBinding);
+             if (!dispatchStateBound && dispatcher is IStreamDispatchLease dispatchLease)
+             {
+                 dispatchLease.BindDispatchState(this);
+@@ -882,6 +807,21 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+         }
+     }
+ 
++    private static void ConfigureReceiveBinding(IStreamDispatcher dispatcher,
++        StreamManager.DispatcherEntry? binding)
++    {
++        if (binding is not null)
++            binding.ConfigureReceiveDispatcher(dispatcher);
++        else if (dispatcher is IStreamReceiveCreditBoundDispatcher bound)
++            bound.SetReceiveCreditBinding(null);
++        else if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
++        {
++            var empty = default(StreamFlowController.ResolvedReceiveCreditLease);
++            _ = consumptionAware.TrySetResolvedBytesConsumedCallback(null, in empty);
++            consumptionAware.SetBytesConsumedCallback(null, 0, 0);
++        }
++    }
++
+     private bool TryAcquireLiveChildDispatchLocked(out IStreamDispatcher? dispatcher)
+     {
+         dispatcher = null;
+@@ -1111,12 +1051,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
+ 
+     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+     private void NotifyBytesConsumed(int encodedByteCount)
+-    {
+-        if (_resolvedBytesConsumed is { } resolved)
+-            resolved(in _receiveCreditLease, encodedByteCount);
+-        else
+-            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
+-    }
++        => _receiveCreditBinding?.RecordConsumed(encodedByteCount);
+ 
+     private sealed record RetentionPolicy(
+         Func<int, bool> ReserveBytes,
+diff --git a/src/SharpLink.Runtime/StreamManager.DeferredRetirement.cs b/src/SharpLink.Runtime/StreamManager.DeferredRetirement.cs
+index 8f861afd..55fc37da 100644
+--- a/src/SharpLink.Runtime/StreamManager.DeferredRetirement.cs
++++ b/src/SharpLink.Runtime/StreamManager.DeferredRetirement.cs
+@@ -2,53 +2,68 @@ namespace SharpLink.Runtime;
+ 
+ internal sealed partial class StreamManager
+ {
+-    private void RetireStreamAfterDispatches(
+-        long requestId, ushort streamId, RequestDispatchers requestDispatchers,
+-        DispatcherEntry entry, bool clearCallback)
++    private static void RetireStreamAfterDispatches(DispatcherEntry entry, bool clearCallback,
++        bool detachImmediately = true)
+     {
+-        if (entry.HasActiveDispatches)
+-        {
+-            ScheduleStreamRetirement(requestId, streamId, requestDispatchers, entry, clearCallback);
+-            return;
+-        }
+-        FinishStreamRetirement(requestId, streamId, requestDispatchers, entry, clearCallback);
+-    }
+-
+-    private void ScheduleStreamRetirement(
+-        long requestId, ushort streamId, RequestDispatchers requestDispatchers,
+-        DispatcherEntry entry, bool clearCallback)
+-    {
+-        // Keep closure allocation out of the ordinary already-drained lifecycle path.
+-        entry.RunWhenDispatchesDrained(() => FinishStreamRetirement(
+-            requestId, streamId, requestDispatchers, entry, clearCallback));
+-        // Preserve the existing immediate detach notification. The atomic cleanup pin
+-        // prevents pool return until callbacks, credit and route retirement are finished.
+-        entry.Detach();
++        entry.RequestStreamRetirement(clearCallback);
++        if (detachImmediately)
++            entry.Detach();
+     }
+ 
+-    private void FinishStreamRetirement(
+-        long requestId, ushort streamId, RequestDispatchers requestDispatchers,
+-        DispatcherEntry entry, bool clearCallback)
++    private void FinishStreamRetirement(DispatcherEntry entry, bool clearCallback)
+     {
++        ref readonly var lease = ref entry.ReceiveCreditLease;
+         try
+         {
+             if (clearCallback) ClearBytesConsumedCallback(entry.Dispatcher);
+         }
++        catch (Exception exception)
++        {
++            entry.RecordReceiveRetirementFailure(exception);
++            throw;
++        }
+         finally
+         {
+-            try
+-            {
+-                PublishReceiveTerminal(requestId, streamId, entry);
+-            }
++            try { PublishReceiveTerminal(lease.RequestId, lease.StreamId, entry); }
+             finally
+             {
+-                _ = requestDispatchers.FinishRetirement(streamId, entry);
++                // Registry identity is rechecked; the captured entry is never replaced by
++                // a fresh lookup result during cleanup, including connection-wide drain.
++                var map = Volatile.Read(ref _dispatchersByRequestId);
++                RequestDispatchers? request = null;
++                if (map is not null && map.TryGetValue(lease.RequestId, out request))
++                    _ = request.FinishRetirement(lease.StreamId, entry);
++                entry.MarkReceiveRetired();
+                 entry.Detach();
+-                RemoveEmptyRequest(requestId, requestDispatchers);
++                if (request is not null)
++                    RemoveEmptyRequest(lease.RequestId, request);
+             }
+         }
+     }
+ 
++    private static bool TryEnterDrainedRequestRetirement(RequestDrainEntry[] entries)
++    {
++        for (var index = 0; index < entries.Length; index++)
++        {
++            if (entries[index].Entry.TryEnterDrainedRequestRetirement())
++                continue;
++            for (var acquired = 0; acquired < index; acquired++)
++                entries[acquired].Entry.ExitDrainedRequestRetirement();
++            return false;
++        }
++        return true;
++    }
++
++    private static void ExitDrainedRequestRetirement(RequestDrainEntry[] entries,
++        ref List<Exception>? failures)
++    {
++        for (var index = 0; index < entries.Length; index++)
++        {
++            try { entries[index].Entry.ExitDrainedRequestRetirement(); }
++            catch (Exception exception) { AddRetirementFailure(ref failures, exception); }
++        }
++    }
++
+     // Cold path only: completing a request must not wait on an acquired dispatch on the
+     // caller's thread, nor detach the receive callback that dispatch still owns.
+     private void CompleteRequestEntriesWhenDrained(
+@@ -57,6 +72,19 @@ internal sealed partial class StreamManager
+         RequestDrainEntry[] entries,
+         Exception? exception,
+         ref List<Exception>? failures)
++    {
++        CompleteRequestDispatchers(entries, exception, ref failures);
++
++        var retirement = new DeferredRequestRetirement(this, requestId, requestDispatchers, entries);
++        for (var index = 0; index < entries.Length; index++)
++            entries[index].Entry.RunWhenRequestDispatchesDrained(retirement.NotifyDrained);
++        // The scheduling reference prevents an inline last-release from finalizing
++        // before every entry has installed its one-shot notification.
++        retirement.NotifyDrained();
++    }
++
++    private static void CompleteRequestDispatchers(RequestDrainEntry[] entries, Exception? exception,
++        ref List<Exception>? failures)
+     {
+         for (var index = 0; index < entries.Length; index++)
+         {
+@@ -66,16 +94,10 @@ internal sealed partial class StreamManager
+             }
+             catch (Exception completionException)
+             {
++                entries[index].Entry.RecordReceiveRetirementFailure(completionException);
+                 (failures ??= []).Add(completionException);
+             }
+         }
+-
+-        var retirement = new DeferredRequestRetirement(this, requestId, requestDispatchers, entries);
+-        for (var index = 0; index < entries.Length; index++)
+-            entries[index].Entry.RunWhenDispatchesDrained(retirement.NotifyDrained);
+-        // The scheduling reference prevents an inline last-release from finalizing
+-        // before every entry has installed its one-shot notification.
+-        retirement.NotifyDrained();
+     }
+ 
+     private sealed class DeferredRequestRetirement
+diff --git a/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs b/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs
+new file mode 100644
+index 00000000..1809bbe7
+--- /dev/null
++++ b/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs
+@@ -0,0 +1,226 @@
++namespace SharpLink.Runtime;
++
++internal sealed partial class StreamManager
++{
++    internal sealed partial class DispatcherEntry
++    {
++        internal bool IsReceiveRetired => (Volatile.Read(ref _state) & ReceiveRetiredMask) != 0;
++
++        internal void RecordReceiveRetirementFailure(Exception exception)
++            => GetOrCreateCompletions().RecordReceiveRetirementFailure(exception);
++
++        internal void RouteRetirementFailuresToWaiter()
++            => Interlocked.Or(ref _state, AsyncRetirementMask);
++
++        internal void MarkReceiveRetired()
++        {
++            Interlocked.Or(ref _state, ReceiveRetirementReadyMask);
++            TryCompleteReceiveRetirement();
++        }
++
++        private void TryCompleteReceiveRetirement()
++        {
++            var state = Volatile.Read(ref _state);
++            if ((state & (ReceiveRetirementReadyMask | DetachedMask | DrainNotificationFinishedMask)) !=
++                    (ReceiveRetirementReadyMask | DetachedMask | DrainNotificationFinishedMask) ||
++                (state & (CountMask | CleanupMask)) != 0)
++                return;
++            Interlocked.Or(ref _state, ReceiveRetiredMask);
++            Volatile.Read(ref _completions)?.SignalReceiveRetired();
++        }
++
++        public ValueTask WaitForReceiveRetirementAsync(CancellationToken cancellationToken)
++        {
++            if ((Volatile.Read(ref _state) & ReceiveRetiredMask) != 0)
++            {
++                var failure = Volatile.Read(ref _completions)?.ReceiveRetirementFailure;
++                return failure is null ? ValueTask.CompletedTask : ValueTask.FromException(failure);
++            }
++            var completions = GetOrCreateCompletions();
++            if ((Volatile.Read(ref _state) & ReceiveRetiredMask) != 0)
++                completions.SignalReceiveRetired();
++            return completions.WaitForReceiveRetirementAsync(cancellationToken);
++        }
++
++        internal void Release()
++        {
++            var state = Interlocked.Decrement(ref _state);
++            if ((state & CountMask) == CountMask)
++                throw new InvalidOperationException("Stream dispatcher lease underflowed.");
++            if ((state & (ClosedMask | PeerTerminalReceivedMask)) != 0 && (state & CountMask) == 0)
++            {
++                // Only Close makes zero acquisitions monotonic. A retained peer-ended
++                // route can still acquire attachment/control work after a zero count.
++                if ((state & ClosedMask) != 0)
++                    Volatile.Read(ref _completions)?.SignalDispatchesDrained();
++                RunAfterDispatchesDrained();
++                TryNotifyDispatcherDrained();
++            }
++        }
++
++        internal void RequestPeerReceiveTerminal()
++        {
++            while (true)
++            {
++                var state = Volatile.Read(ref _state);
++                // Close transfers publication to the actual retirement owner. A pending
++                // peer request wins before Close (and pins that retirement), or loses this
++                // CAS and cannot start a competing publisher beside the drained fast path.
++                if ((state & (ClosedMask | PeerTerminalPendingMask | ReceiveTerminalPublishedMask)) != 0)
++                    return;
++                if (Interlocked.CompareExchange(ref _state, state | PeerTerminalPendingMask, state) == state)
++                    break;
++            }
++            RunAfterDispatchesDrained();
++        }
++
++        internal bool TryEnterDrainedRequestRetirement()
++        {
++            while (true)
++            {
++                var state = Volatile.Read(ref _state);
++                // Close excludes later DATA/control and later peer-publication scheduling.
++                // The same runner bit excludes a publisher already in flight.
++                if ((state & ClosedMask) == 0 || (state & (CountMask | CleanupMask)) != 0)
++                    return false;
++                if (Interlocked.CompareExchange(ref _state, state | DrainWorkRunningMask, state) == state)
++                    return true;
++            }
++        }
++
++        internal void ExitDrainedRequestRetirement()
++        {
++            Interlocked.And(ref _state, ~DrainWorkRunningMask);
++            TryNotifyDispatcherDrained();
++        }
++
++        internal void RequestStreamRetirement(bool clearCallback)
++        {
++            var flags = ReceiveRetirementPendingMask | StreamRetirementWorkMask;
++            if (clearCallback) flags |= ClearReceiveCallbackMask;
++            if ((Interlocked.Or(ref _state, flags) & ReceiveRetirementPendingMask) != 0)
++                throw new InvalidOperationException("Receive retirement already has a drain owner.");
++            RunAfterDispatchesDrained();
++        }
++
++        internal void RunWhenDispatchesDrained(Action continuation)
++            => SetDrainContinuation(continuation, recordFailureOnEntry: true);
++
++        internal void RunWhenRequestDispatchesDrained(Action continuation)
++            => SetDrainContinuation(continuation, recordFailureOnEntry: false);
++
++        private void SetDrainContinuation(Action continuation, bool recordFailureOnEntry)
++        {
++            if ((Interlocked.Or(ref _state, ReceiveRetirementPendingMask) & ReceiveRetirementPendingMask) != 0)
++                throw new InvalidOperationException("Receive retirement already has a drain owner.");
++            GetOrCreateCompletions().SetAfterDispatchesDrained(continuation, recordFailureOnEntry);
++            RunAfterDispatchesDrained();
++        }
++
++        // One runner orders receive-terminal publication before route retirement. Pending
++        // work pins pool return; callbacks execute outside registry, mailbox and flow locks.
++        private void RunAfterDispatchesDrained()
++        {
++            Exception? failure = null;
++            while (true)
++            {
++                var state = Volatile.Read(ref _state);
++                var completions = Volatile.Read(ref _completions);
++                if ((state & (CountMask | DrainWorkRunningMask)) != 0 ||
++                    (state & (PeerTerminalPendingMask | StreamRetirementWorkMask)) == 0 &&
++                    completions?.HasAfterDispatchesDrained != true)
++                    break;
++                if (Interlocked.CompareExchange(ref _state, state | DrainWorkRunningMask, state) != state)
++                    continue;
++                try
++                {
++                    if ((Volatile.Read(ref _state) & PeerTerminalPendingMask) != 0)
++                    {
++                        try
++                        {
++                            _owner?.PublishReceiveTerminal(_receiveCreditLease.RequestId,
++                                _receiveCreditLease.StreamId, this);
++                        }
++                        catch (Exception exception)
++                        {
++                            RecordReceiveRetirementFailure(exception);
++                            failure = exception;
++                        }
++                        finally { Interlocked.And(ref _state, ~PeerTerminalPendingMask); }
++                    }
++                    // A retained peer-ended route could acquire control/attachment work
++                    // while its publication callback ran. Actual retirement must recheck the
++                    // count after Close before consuming its one-shot work.
++                    var workState = Volatile.Read(ref _state);
++                    if ((workState & CountMask) == 0)
++                    {
++                        var streamWork = (workState & StreamRetirementWorkMask) != 0;
++                        var recordFailureOnEntry = true;
++                        var continuation = streamWork ? null :
++                            Volatile.Read(ref _completions)?.TakeAfterDispatchesDrained(out recordFailureOnEntry);
++                        if (streamWork || continuation is not null)
++                        {
++                            try
++                            {
++                                if (streamWork)
++                                    _owner!.FinishStreamRetirement(this, (workState & ClearReceiveCallbackMask) != 0);
++                                else
++                                    continuation!();
++                            }
++                            catch (Exception exception)
++                            {
++                                // Request finalization already records errors on each owning
++                                // entry. Its aggregate belongs to the request, not the last
++                                // entry that happens to release the group barrier.
++                                if (recordFailureOnEntry)
++                                    RecordReceiveRetirementFailure(exception);
++                                failure = failure is null ? exception : new AggregateException(failure, exception);
++                            }
++                            finally
++                            {
++                                Interlocked.And(ref _state,
++                                    ~(ReceiveRetirementPendingMask | StreamRetirementWorkMask | ClearReceiveCallbackMask));
++                            }
++                        }
++                    }
++                }
++                finally { Interlocked.And(ref _state, ~DrainWorkRunningMask); }
++                // A concurrent scheduler that found the runner active has already installed
++                // its work. Recheck after releasing the runner to avoid a lost notification.
++            }
++            TryNotifyDispatcherDrained();
++            if (failure is not null && (Volatile.Read(ref _state) & AsyncRetirementMask) == 0)
++                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
++        }
++
++        private void TryNotifyDispatcherDrained()
++        {
++            while (true)
++            {
++                var state = Volatile.Read(ref _state);
++                if ((state & DetachedMask) == 0 ||
++                    (state & (CountMask | CleanupMask | DrainNotifiedMask)) != 0)
++                    return;
++                if (Interlocked.CompareExchange(ref _state, state | DrainNotifiedMask, state) != state)
++                    continue;
++                try
++                {
++                    if (Dispatcher is IStreamDispatchLease lease)
++                        lease.OnDispatchesDrained();
++                }
++                catch (Exception exception)
++                {
++                    RecordReceiveRetirementFailure(exception);
++                    if ((Volatile.Read(ref _state) & AsyncRetirementMask) == 0)
++                        throw;
++                }
++                finally
++                {
++                    Interlocked.Or(ref _state, DrainNotificationFinishedMask);
++                    TryCompleteReceiveRetirement();
++                }
++                return;
++            }
++        }
++    }
++}
+diff --git a/src/SharpLink.Runtime/StreamManager.Registration.cs b/src/SharpLink.Runtime/StreamManager.Registration.cs
+new file mode 100644
+index 00000000..b42319d2
+--- /dev/null
++++ b/src/SharpLink.Runtime/StreamManager.Registration.cs
+@@ -0,0 +1,126 @@
++namespace SharpLink.Runtime;
++
++internal sealed partial class StreamManager
++{
++    private void RegisterCore(long requestId, ushort streamId, IStreamDispatcher dispatcher, bool ignoreExisting)
++    {
++        ArgumentNullException.ThrowIfNull(dispatcher);
++        var termination = Volatile.Read(ref _termination);
++        if (termination is not null)
++        {
++            dispatcher.Complete(termination.Exception);
++            return;
++        }
++
++        var routes = GetOrCreateDispatchersByRequestId();
++        var request = routes.GetOrAdd(requestId, static _ => new RequestDispatchers());
++        if (dispatcher is not DiscardingStreamDispatcher &&
++            request.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted, out var attachedEntry))
++        {
++            if (alreadyCompleted)
++                Unregister(requestId, streamId, attachedEntry);
++            return;
++        }
++
++        if (Interlocked.Increment(ref _activeStreamCount) > _maxActiveStreams)
++        {
++            Interlocked.Decrement(ref _activeStreamCount);
++            var exception = new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
++                $"Active inbound stream routes exceeded the per-connection limit of {_maxActiveStreams}.");
++            try { dispatcher.Complete(exception); }
++            finally
++            {
++                RemoveEmptyRequest(requestId, request);
++                _activeStreamCapacityExceeded?.Invoke(exception);
++            }
++            if (ignoreExisting) return;
++            throw exception;
++        }
++
++        SharpLinkTelemetry.AddActiveStreams(1);
++        DispatcherEntry? entry = null;
++        var reserved = false;
++        try
++        {
++            // Bind first: a rejected second binding must never mutate the original owner.
++            entry = new DispatcherEntry(dispatcher, this, requestId, streamId);
++            while (!request.TryReserve(streamId, entry, out var sealedRequest))
++            {
++                if (!sealedRequest)
++                {
++                    if (ignoreExisting) return;
++                    throw new InvalidOperationException("The stream is already registered.");
++                }
++                // Empty containers are sealed before unlinking. A holder of an old reference
++                // must retry against the map, never publish into a detached container.
++                routes.TryRemove(requestId, request);
++                request = routes.GetOrAdd(requestId, static _ => new RequestDispatchers());
++            }
++            reserved = true;
++            entry.InitializeReceiveCredit(_resolveReceiveCreditLease?.Invoke(requestId, streamId) ?? default);
++            ConfigureReceiveBinding(entry);
++            entry.ActivateRegistration();
++        }
++        catch
++        {
++            if (reserved && request.TryBeginRetirement(streamId, entry!, out var retiring))
++            {
++                SharpLinkTelemetry.AddActiveStreams(-1);
++                Interlocked.Decrement(ref _activeStreamCount);
++                RetireStreamAfterDispatches(retiring, clearCallback: true);
++            }
++            throw;
++        }
++        finally
++        {
++            if (!reserved)
++            {
++                try
++                {
++                    entry?.MarkReceiveRetired();
++                    entry?.Detach();
++                }
++                finally
++                {
++                    SharpLinkTelemetry.AddActiveStreams(-1);
++                    Interlocked.Decrement(ref _activeStreamCount);
++                    RemoveEmptyRequest(requestId, request);
++                }
++            }
++            entry?.FinishRegistration();
++        }
++
++        termination = Volatile.Read(ref _termination);
++        if (termination is not null)
++            CompleteTerminatedRegistration(requestId, streamId, request, termination.Exception, entry);
++    }
++
++    private void ConfigureReceiveBinding(DispatcherEntry entry, IStreamDispatcher? dispatcher = null)
++    {
++        dispatcher ??= entry.Dispatcher;
++        if (dispatcher is IStreamReceiveCreditBoundDispatcher bound)
++        {
++            bound.SetReceiveCreditBinding(entry);
++            return;
++        }
++        if (dispatcher is not IStreamConsumptionAwareDispatcher consumptionAware)
++            return;
++
++        // Compatibility for simple non-pooled dispatchers. Runtime-owned dispatchers use
++        // the immutable entry binding and never switch callbacks after publication.
++        ref readonly var lease = ref entry.ReceiveCreditLease;
++        consumptionAware.SetBytesConsumedCallback(_bytesConsumed, lease.RequestId, lease.StreamId);
++        if (_resolvedBytesConsumed is not null && lease.IsResolved)
++            _ = consumptionAware.TrySetResolvedBytesConsumedCallback(_resolvedBytesConsumed, in lease);
++    }
++
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
++    private void RecordConsumed(DispatcherEntry entry, int encodedBytes)
++    {
++        ref readonly var lease = ref entry.ReceiveCreditLease;
++        if (_resolvedBytesConsumed is not null && lease.IsResolved)
++            _resolvedBytesConsumed(in lease, encodedBytes);
++        else
++            _bytesConsumed?.Invoke(lease.RequestId, lease.StreamId, encodedBytes);
++    }
++}
+diff --git a/src/SharpLink.Runtime/StreamManager.Routing.cs b/src/SharpLink.Runtime/StreamManager.Routing.cs
+index a8fa8e89..1ab0c717 100644
+--- a/src/SharpLink.Runtime/StreamManager.Routing.cs
++++ b/src/SharpLink.Runtime/StreamManager.Routing.cs
+@@ -7,219 +7,98 @@ internal sealed partial class StreamManager
+     private sealed class RequestDispatchers
+     {
+         private DispatcherEntry? _defaultDispatcher;
+-        private readonly Lock _gate = new();
+         // Default-only requests use the inline slot; allocate the named map only
+         // when a nonzero stream is actually published under the same registry lock.
+         private Dictionary<ushort, DispatcherEntry>? _byStreamId;
+ 
+-        public bool TryRegister(
+-            long requestId,
+-            ushort streamId,
+-            DispatcherEntry entry,
+-            Func<long, ushort, StreamFlowController.ResolvedReceiveCreditLease>? resolveReceiveCreditLease,
+-            out StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease)
++        private bool _sealed;
++
++        public bool TryReserve(ushort streamId, DispatcherEntry entry, out bool sealedRequest)
+         {
+-            lock (_gate)
++            lock (this)
+             {
+-                if (streamId == 0 ? _defaultDispatcher is not null : _byStreamId?.ContainsKey(streamId) == true)
+-                {
+-                    receiveCreditLease = default;
++                sealedRequest = _sealed;
++                if (_sealed || (streamId == 0 ? _defaultDispatcher is not null :
++                        _byStreamId?.ContainsKey(streamId) == true))
+                     return false;
+-                }
+-
+-                // The entry has already bound its dispatcher. Only a free route key may
+-                // attach receive flow state, and only this captured generation may be rolled back.
+-                try
+-                {
+-                    receiveCreditLease = resolveReceiveCreditLease?.Invoke(requestId, streamId) ?? default;
+-                    entry.ReceiveCreditLease = receiveCreditLease;
+-                    if (streamId == 0)
+-                        Volatile.Write(ref _defaultDispatcher, entry);
+-                    else
+-                        (_byStreamId ??= []).Add(streamId, entry);
+-                    return true;
+-                }
+-                catch
+-                {
+-                    // If insertion failed after resolution, retire only the generation this
+-                    // unpublished entry captured. Never re-resolve a route key during rollback.
+-                    var lease = entry.ReceiveCreditLease;
+-                    _ = lease.Owner?.FlushConsumed(in lease);
+-                    throw;
+-                }
++                if (streamId == 0)
++                    Volatile.Write(ref _defaultDispatcher, entry);
++                else
++                    (_byStreamId ??= []).Add(streamId, entry);
++                return true;
+             }
+         }
+ 
+-        public bool TryAttachPreAdmission(
+-            ushort streamId,
+-            IStreamDispatcher dispatcher,
+-            out bool alreadyCompleted)
++        public bool TrySealIfEmpty()
+         {
+-            alreadyCompleted = false;
+-            if (streamId == 0)
+-            {
+-                var entry = Volatile.Read(ref _defaultDispatcher);
+-                if (entry?.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+-                    !entry.TryAcquire())
+-                {
+-                    return false;
+-                }
+-                try
+-                {
+-                    if (!preAdmission.TryBeginAttach(dispatcher, out alreadyCompleted))
+-                        return false;
+-                    preAdmission.FinishAttach(dispatcher);
+-                    return true;
+-                }
+-                finally
+-                {
+-                    entry.Release();
+-                }
+-            }
+-
+-            DispatcherEntry? acquiredEntry;
+-            PreAdmissionStreamDispatcher? acquiredPreAdmission;
+-            lock (_gate)
++            lock (this)
+             {
+-                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) ||
+-                    entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+-                    !entry.TryAcquire())
+-                {
++                if (_defaultDispatcher is not null || _byStreamId is { Count: > 0 })
+                     return false;
+-                }
+-                if (!preAdmission.TryBeginAttach(dispatcher, out alreadyCompleted))
+-                {
+-                    entry.Release();
+-                    return false;
+-                }
+-                acquiredEntry = entry;
+-                acquiredPreAdmission = preAdmission;
+-            }
+-            try
+-            {
+-                acquiredPreAdmission.FinishAttach(dispatcher);
++                _sealed = true;
+                 return true;
+             }
+-            finally
+-            {
+-                acquiredEntry.Release();
+-            }
+         }
+ 
+-        public bool TryAbandonInboundRoute(ushort streamId, out bool peerTerminalReceived)
++        public bool TryAttachPreAdmission(ushort streamId, IStreamDispatcher dispatcher,
++            out bool alreadyCompleted, out DispatcherEntry? attachedEntry)
+         {
+-            peerTerminalReceived = false;
+-            if (streamId == 0)
+-            {
+-                var entry = Volatile.Read(ref _defaultDispatcher);
+-                if (entry?.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+-                    !entry.TryAcquire())
+-                {
+-                    return false;
+-                }
+-                try
+-                {
+-                    preAdmission.Abandon(out _);
+-                    peerTerminalReceived = entry.PeerTerminalReceived;
+-                    return true;
+-                }
+-                finally
+-                {
+-                    entry.Release();
+-                }
+-            }
+-
+-            DispatcherEntry? acquiredEntry;
+-            PreAdmissionStreamDispatcher? acquiredPreAdmission;
+-            lock (_gate)
+-            {
+-                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) ||
+-                    entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
+-                    !entry.TryAcquire())
+-                {
+-                    return false;
+-                }
+-                acquiredEntry = entry;
+-                acquiredPreAdmission = preAdmission;
+-            }
++            alreadyCompleted = false;
++            attachedEntry = null;
++            if (!TryAcquire(streamId, out var entry))
++                return false;
+             try
+             {
+-                acquiredPreAdmission.Abandon(out _);
+-                peerTerminalReceived = acquiredEntry.PeerTerminalReceived;
++                if (entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
++                    !preAdmission.TryBeginAttach(dispatcher, out alreadyCompleted))
++                    return false;
++                preAdmission.FinishAttach(dispatcher);
++                attachedEntry = entry;
+                 return true;
+             }
+-            finally
+-            {
+-                acquiredEntry.Release();
+-            }
++            finally { entry.Release(); }
+         }
+ 
+-        public bool TryMarkPeerTerminal(ushort streamId)
++        public bool TryAbandonInboundRoute(ushort streamId, out bool peerTerminalReceived,
++            out DispatcherEntry? abandonedEntry)
+         {
+-            if (streamId == 0)
+-            {
+-                var entry = Volatile.Read(ref _defaultDispatcher);
+-                if (entry is null || !entry.TryAcquire())
+-                    return false;
+-                try
+-                {
+-                    entry.MarkPeerTerminalReceived();
+-                    return true;
+-                }
+-                finally
+-                {
+-                    entry.Release();
+-                }
+-            }
+-
+-            DispatcherEntry? acquiredEntry;
+-            lock (_gate)
+-            {
+-                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) || !entry.TryAcquire())
+-                    return false;
+-                acquiredEntry = entry;
+-            }
++            peerTerminalReceived = false;
++            abandonedEntry = null;
++            if (!TryAcquire(streamId, out var entry))
++                return false;
+             try
+             {
+-                acquiredEntry.MarkPeerTerminalReceived();
++                if (entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission)
++                    return false;
++                preAdmission.Abandon(out _);
++                peerTerminalReceived = entry.PeerTerminalReceived;
++                abandonedEntry = entry;
+                 return true;
+             }
+-            finally
+-            {
+-                acquiredEntry.Release();
+-            }
++            finally { entry.Release(); }
+         }
+ 
+-        public bool TryCompleteRetainedRoute(
+-            ushort streamId,
+-            Exception? exception,
+-            out DispatcherEntry entry)
++        public bool TryMarkPeerTerminal(ushort streamId, out DispatcherEntry entry)
+         {
+-            if (streamId == 0)
+-            {
+-                var found = Volatile.Read(ref _defaultDispatcher);
+-                if (found?.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
+-                    preAdmission.TryCompleteAndRetain(exception))
+-                {
+-                    entry = found;
+-                    return true;
+-                }
+-                entry = null!;
++            if (!TryAcquire(streamId, out entry))
+                 return false;
+-            }
++            try { entry.MarkPeerTerminalReceived(); }
++            finally { entry.Release(); }
++            return true;
++        }
+ 
+-            lock (_gate)
+-            {
+-                if (_byStreamId is not null && _byStreamId.TryGetValue(streamId, out var found) &&
+-                    found.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
+-                    preAdmission.TryCompleteAndRetain(exception))
+-                {
+-                    entry = found;
+-                    return true;
+-                }
+-                entry = null!;
++        public bool TryCompleteRetainedRoute(ushort streamId, Exception? exception,
++            out DispatcherEntry entry, DispatcherEntry? expected = null)
++        {
++            if (!TryAcquire(streamId, out entry))
+                 return false;
++            try
++            {
++                return (expected is null || ReferenceEquals(expected, entry)) &&
++                    entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
++                    preAdmission.TryCompleteAndRetain(exception);
+             }
++            finally { entry.Release(); }
+         }
+ 
+         public bool TryGetPreAdmission(
+@@ -233,7 +112,7 @@ internal sealed partial class StreamManager
+                 dispatcher = found!;
+                 return found is not null;
+             }
+-            lock (_gate)
++            lock (this)
+             {
+                 var found = _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var entry)
+                     ? entry.Dispatcher as PreAdmissionStreamDispatcher
+@@ -254,7 +133,7 @@ internal sealed partial class StreamManager
+                 dispatcher = found!;
+                 return found is not null;
+             }
+-            lock (_gate)
++            lock (this)
+             {
+                 var found = _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var entry)
+                     ? entry.Dispatcher as DiscardingStreamDispatcher
+@@ -264,13 +143,14 @@ internal sealed partial class StreamManager
+             }
+         }
+ 
+-        public bool TryAcquire(ushort streamId, out DispatcherEntry entry)
++        public bool TryAcquire(ushort streamId, out DispatcherEntry entry, bool forData = false)
+         {
+             if (streamId != 0)
+             {
+-                lock (_gate)
++                lock (this)
+                 {
+-                    if (_byStreamId is not null && _byStreamId.TryGetValue(streamId, out entry!) && entry.TryAcquire())
++                    if (_byStreamId is not null && _byStreamId.TryGetValue(streamId, out entry!) &&
++                        (forData ? entry.TryAcquireData() : entry.TryAcquire()))
+                         return true;
+                     entry = null!;
+                     return false;
+@@ -278,7 +158,7 @@ internal sealed partial class StreamManager
+             }
+ 
+             var defaultEntry = Volatile.Read(ref _defaultDispatcher);
+-            if (defaultEntry is not null && defaultEntry.TryAcquire())
++            if (defaultEntry is not null && (forData ? defaultEntry.TryAcquireData() : defaultEntry.TryAcquire()))
+             {
+                 entry = defaultEntry;
+                 return true;
+@@ -289,17 +169,23 @@ internal sealed partial class StreamManager
+         }
+ 
+         public bool TryBeginRetirement(ushort streamId, out DispatcherEntry entry)
++            => TryBeginRetirement(streamId, expected: null, out entry);
++
++        public bool TryBeginRetirement(ushort streamId, DispatcherEntry? expected, out DispatcherEntry entry)
+         {
+-            lock (_gate)
++            lock (this)
+             {
+                 var found = streamId == 0
+                     ? _defaultDispatcher
+                     : _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var candidate) ? candidate : null;
+-                if (found is null || !found.TryClaimRetirement())
++                if (found is null || expected is not null && !ReferenceEquals(found, expected))
+                 {
+                     entry = null!;
+                     return false;
+                 }
++                entry = found;
++                if (!found.TryClaimRetirement())
++                    return false;
+ 
+                 found.Close();
+                 entry = found;
+@@ -309,7 +195,7 @@ internal sealed partial class StreamManager
+ 
+         public bool FinishRetirement(ushort streamId, DispatcherEntry entry)
+         {
+-            lock (_gate)
++            lock (this)
+             {
+                 if (streamId == 0)
+                 {
+@@ -329,29 +215,38 @@ internal sealed partial class StreamManager
+             }
+         }
+ 
+-        public RequestDrainEntry[] BeginDrain()
++        public RequestDrainEntry[] BeginDrain() => BeginDrain(out _);
++
++        public RequestDrainEntry[] BeginDrain(out RequestDrainEntry[] alreadyRetiring)
+         {
+-            lock (_gate)
++            lock (this)
+             {
+                 var entries = new List<RequestDrainEntry>();
++                List<RequestDrainEntry>? prior = null;
+                 if (_defaultDispatcher is { } defaultDispatcher &&
+                     defaultDispatcher.TryClaimRetirement())
+                 {
+                     defaultDispatcher.Close();
+                     entries.Add(new RequestDrainEntry(0, defaultDispatcher));
+                 }
++                else if (_defaultDispatcher is { } retiringDefault)
++                    (prior ??= []).Add(new RequestDrainEntry(0, retiringDefault));
+ 
+                 if (_byStreamId is { } namedDispatchers)
+                 {
+                     foreach (var pair in namedDispatchers)
+                     {
+                         if (!pair.Value.TryClaimRetirement())
++                        {
++                            (prior ??= []).Add(new RequestDrainEntry(pair.Key, pair.Value));
+                             continue;
++                        }
+                         pair.Value.Close();
+                         entries.Add(new RequestDrainEntry(pair.Key, pair.Value));
+                     }
+                 }
+ 
++                alreadyRetiring = prior is null ? [] : [.. prior];
+                 return [.. entries];
+             }
+         }
+@@ -359,8 +254,9 @@ internal sealed partial class StreamManager
+         public int CompleteAll(Exception? exception, ref List<Exception>? failures)
+         {
+             List<DispatcherEntry> claimed = [];
+-            lock (_gate)
++            lock (this)
+             {
++                _sealed = true;
+                 if (_defaultDispatcher is { } defaultDispatcher)
+                 {
+                     Volatile.Write(ref _defaultDispatcher, null);
+@@ -396,7 +292,7 @@ internal sealed partial class StreamManager
+         {
+             try
+             {
+-                entry.Dispatcher.Complete(exception);
++                CompleteDispatcher(entry, exception);
+             }
+             catch (Exception completionException)
+             {
+@@ -404,6 +300,7 @@ internal sealed partial class StreamManager
+             }
+             try
+             {
++                entry.MarkReceiveRetired();
+                 entry.Detach();
+             }
+             catch (Exception detachException)
+@@ -416,13 +313,13 @@ internal sealed partial class StreamManager
+         {
+             get
+             {
+-                lock (_gate)
++                lock (this)
+                     return _defaultDispatcher is null && (_byStreamId is null || _byStreamId.Count == 0);
+             }
+         }
+     }
+ 
+-    private sealed class DispatcherEntry : IStreamDispatchState
++    internal sealed partial class DispatcherEntry : IStreamDispatchState
+     {
+         private const long ClosedMask = long.MinValue;
+         private const long DetachedMask = 1L << 32;
+@@ -430,7 +327,20 @@ internal sealed partial class StreamManager
+         private const long ReceiveTerminalPublishedMask = 1L << 34;
+         private const long PeerTerminalReceivedMask = 1L << 35;
+         private const long RetirementClaimedMask = 1L << 36;
++        private const long InitializingMask = 1L << 37;
++        private const long CreditInitializedMask = 1L << 38;
++        private const long PeerTerminalPendingMask = 1L << 39;
++        private const long DrainWorkRunningMask = 1L << 40;
++        private const long DrainNotifiedMask = 1L << 41;
++        private const long ReceiveRetiredMask = 1L << 42;
++        private const long ReceiveRetirementReadyMask = 1L << 43;
++        private const long AsyncRetirementMask = 1L << 44;
++        private const long DrainNotificationFinishedMask = 1L << 45;
++        private const long StreamRetirementWorkMask = 1L << 46;
++        private const long ClearReceiveCallbackMask = 1L << 47;
++        private const long CleanupMask = ReceiveRetirementPendingMask | PeerTerminalPendingMask | DrainWorkRunningMask;
+         private const long CountMask = int.MaxValue;
++        private readonly StreamManager? _owner;
+         // One atomic word orders the last release against detach. Separate count and
+         // detached reads can both claim the same pooled-dispatcher drain notification.
+         private long _state;
+@@ -444,18 +354,51 @@ internal sealed partial class StreamManager
+             StreamFlowController.ResolvedReceiveCreditLease receiveCreditLease)
+         {
+             Dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+-            ReceiveCreditLease = receiveCreditLease;
++            _receiveCreditLease = receiveCreditLease;
++            if (dispatcher is IStreamDispatchLease lease)
++                lease.BindDispatchState(this);
++        }
++
++        internal DispatcherEntry(IStreamDispatcher dispatcher, StreamManager owner,
++            long requestId, ushort streamId)
++        {
++            Dispatcher = dispatcher;
++            _owner = owner;
++            _receiveCreditLease = new StreamFlowController.ResolvedReceiveCreditLease(
++                null!, requestId, streamId, null!, 0);
++            // The registration owner pins the dispatcher through configuration and rollback.
++            _state = InitializingMask | 1;
+             if (dispatcher is IStreamDispatchLease lease)
+                 lease.BindDispatchState(this);
+         }
+ 
+         internal IStreamDispatcher Dispatcher { get; }
+-        internal StreamFlowController.ResolvedReceiveCreditLease ReceiveCreditLease { get; set; }
++        private StreamFlowController.ResolvedReceiveCreditLease _receiveCreditLease;
++        internal ref readonly StreamFlowController.ResolvedReceiveCreditLease ReceiveCreditLease
++            => ref _receiveCreditLease;
++        internal bool ReceiveCreditInitialized
++            => (Volatile.Read(ref _state) & CreditInitializedMask) != 0;
++
++        internal void InitializeReceiveCredit(StreamFlowController.ResolvedReceiveCreditLease lease)
++        {
++            if (lease.IsResolved)
++                _receiveCreditLease = lease;
++            Interlocked.Or(ref _state, CreditInitializedMask);
++        }
++
++        internal void ActivateRegistration() => Interlocked.And(ref _state, ~InitializingMask);
++        internal void FinishRegistration() => Release();
++
++        [MethodImpl(MethodImplOptions.AggressiveInlining)]
++        internal void RecordConsumed(int encodedBytes) => _owner?.RecordConsumed(this, encodedBytes);
++
++        internal void ConfigureReceiveDispatcher(IStreamDispatcher dispatcher)
++            => _owner?.ConfigureReceiveBinding(this, dispatcher);
+ 
+         // A detached pooled dispatcher is still pinned while final receive cleanup is
+         // running, even after the final DATA acquisition has decremented the count.
+         public bool HasActiveDispatches
+-            => (Volatile.Read(ref _state) & (CountMask | ReceiveRetirementPendingMask)) != 0;
++            => (Volatile.Read(ref _state) & (CountMask | CleanupMask)) != 0;
+ 
+         public bool IsDetached => (Volatile.Read(ref _state) & DetachedMask) != 0;
+ 
+@@ -470,13 +413,19 @@ internal sealed partial class StreamManager
+         internal bool TryClaimRetirement()
+             => (Interlocked.Or(ref _state, RetirementClaimedMask) & RetirementClaimedMask) == 0;
+ 
+-        internal bool TryAcquire()
++        internal bool TryAcquire() => TryAcquireCore(forData: false);
++        internal bool TryAcquireData() => TryAcquireCore(forData: true);
++
++        private bool TryAcquireCore(bool forData)
+         {
+             while (true)
+             {
+                 var state = Volatile.Read(ref _state);
+-                if ((state & ClosedMask) != 0 || (state & CountMask) == CountMask)
++                if ((state & (ClosedMask | InitializingMask)) != 0 || (state & CountMask) == CountMask)
+                     return false;
++                if (forData && (state & PeerTerminalReceivedMask) != 0)
++                    throw new SharpLinkProtocolViolationException(ProtocolViolationReason.ProtocolState,
++                        "StreamData was received after the peer completed the stream.");
+                 if (Interlocked.CompareExchange(ref _state, state + 1, state) != state)
+                     continue;
+ 
+@@ -484,63 +433,17 @@ internal sealed partial class StreamManager
+             }
+         }
+ 
+-        internal void Release()
+-        {
+-            var state = Interlocked.Decrement(ref _state);
+-            if ((state & CountMask) == CountMask)
+-                throw new InvalidOperationException("Stream dispatcher lease underflowed.");
+-            if ((state & ClosedMask) != 0 && (state & CountMask) == 0)
+-            {
+-                var completions = Volatile.Read(ref _completions);
+-                completions?.SignalDispatchesDrained();
+-                RunAfterDispatchesDrained(completions);
+-                // Use this release's atomic snapshot, not a new read after signaling:
+-                // a drain continuation may have detached and notified in the meantime.
+-                if ((state & DetachedMask) != 0 && (state & ReceiveRetirementPendingMask) == 0 &&
+-                    Dispatcher is IStreamDispatchLease lease)
+-                    lease.OnDispatchesDrained();
+-            }
+-        }
+-
+-        internal void RunWhenDispatchesDrained(Action continuation)
+-        {
+-            if ((Interlocked.Or(ref _state, ReceiveRetirementPendingMask) & ReceiveRetirementPendingMask) != 0)
+-                throw new InvalidOperationException("Receive retirement already has a drain owner.");
+-            var completions = GetOrCreateCompletions();
+-            completions.SetAfterDispatchesDrained(continuation);
+-            // Close excludes new acquisitions. The cleanup pin must not count as DATA
+-            // when deciding who runs the continuation.
+-            if ((Volatile.Read(ref _state) & CountMask) == 0)
+-                RunAfterDispatchesDrained(completions);
+-        }
+-
+-        private void RunAfterDispatchesDrained(DispatcherEntryCompletions? completions)
+-        {
+-            var continuation = completions?.TakeAfterDispatchesDrained();
+-            if (continuation is null)
+-                return;
+-            try
+-            {
+-                continuation();
+-            }
+-            finally
+-            {
+-                var state = Interlocked.And(ref _state, ~ReceiveRetirementPendingMask);
+-                if ((state & DetachedMask) != 0 && (state & CountMask) == 0 &&
+-                    Dispatcher is IStreamDispatchLease lease)
+-                    lease.OnDispatchesDrained();
+-            }
+-        }
+-
+         public ValueTask WaitForDispatchesDrainedAsync()
+         {
+-            if (!HasActiveDispatches)
++            if ((Volatile.Read(ref _state) & CountMask) == 0)
+                 return ValueTask.CompletedTask;
+ 
+             var completions = GetOrCreateCompletions();
+-            if (!HasActiveDispatches)
++            var state = Volatile.Read(ref _state);
++            if ((state & CountMask) == 0)
+             {
+-                completions.SignalDispatchesDrained();
++                if ((state & ClosedMask) != 0)
++                    completions.SignalDispatchesDrained();
+                 return ValueTask.CompletedTask;
+             }
+ 
+@@ -582,11 +485,7 @@ internal sealed partial class StreamManager
+             if ((state & DetachedMask) != 0)
+                 return;
+             Volatile.Read(ref _completions)?.SignalDetached();
+-            // Whichever transition observes both detached and zero leases owns the
+-            // notification. Last Release handles a detach that still had active leases.
+-            if ((state & (CountMask | ReceiveRetirementPendingMask)) == 0 &&
+-                Dispatcher is IStreamDispatchLease lease)
+-                lease.OnDispatchesDrained();
++            TryNotifyDispatcherDrained();
+         }
+ 
+         private DispatcherEntryCompletions GetOrCreateCompletions()
+@@ -605,16 +504,26 @@ internal sealed partial class StreamManager
+             private int _detachedSignaled;
+             private TaskCompletionSource? _dispatchesDrainedCompletion;
+             private TaskCompletionSource? _detachedCompletion;
++            private TaskCompletionSource? _receiveRetirementCompletion;
++            private int _receiveRetirementSignaled;
++            private Exception? _receiveRetirementFailure;
+             private Action? _afterDispatchesDrained;
++            private bool _recordDrainFailureOnEntry;
+ 
+-            internal void SetAfterDispatchesDrained(Action continuation)
++            internal void SetAfterDispatchesDrained(Action continuation, bool recordFailureOnEntry)
+             {
++                _recordDrainFailureOnEntry = recordFailureOnEntry;
+                 if (Interlocked.CompareExchange(ref _afterDispatchesDrained, continuation, null) is not null)
+                     throw new InvalidOperationException("Receive retirement already has a drain continuation.");
+             }
+ 
+-            internal Action? TakeAfterDispatchesDrained()
+-                => Interlocked.Exchange(ref _afterDispatchesDrained, null);
++            internal bool HasAfterDispatchesDrained => Volatile.Read(ref _afterDispatchesDrained) is not null;
++            internal Action? TakeAfterDispatchesDrained(out bool recordFailureOnEntry)
++            {
++                var continuation = Interlocked.Exchange(ref _afterDispatchesDrained, null);
++                recordFailureOnEntry = _recordDrainFailureOnEntry;
++                return continuation;
++            }
+ 
+             internal void SignalDispatchesDrained()
+             {
+@@ -652,6 +561,46 @@ internal sealed partial class StreamManager
+                     : new ValueTask(completion.Task);
+             }
+ 
++            internal Exception? ReceiveRetirementFailure => Volatile.Read(ref _receiveRetirementFailure);
++
++            internal void RecordReceiveRetirementFailure(Exception exception)
++            {
++                while (true)
++                {
++                    var previous = Volatile.Read(ref _receiveRetirementFailure);
++                    if (ReferenceEquals(previous, exception)) return;
++                    List<Exception>? failures = previous is null ? null : [previous];
++                    AddRetirementFailure(ref failures, exception);
++                    var failure = failures!.Count == 1 ? failures[0] : new AggregateException(failures);
++                    if (Interlocked.CompareExchange(ref _receiveRetirementFailure, failure, previous) == previous)
++                        return;
++                }
++            }
++
++            internal void SignalReceiveRetired()
++            {
++                Interlocked.Exchange(ref _receiveRetirementSignaled, 1);
++                CompleteReceiveRetirement(Volatile.Read(ref _receiveRetirementCompletion));
++            }
++
++            internal ValueTask WaitForReceiveRetirementAsync(CancellationToken cancellationToken)
++            {
++                var completion = GetOrCreateCompletion(ref _receiveRetirementCompletion);
++                if (Volatile.Read(ref _receiveRetirementSignaled) != 0)
++                    CompleteReceiveRetirement(completion);
++                return cancellationToken.CanBeCanceled
++                    ? new ValueTask(completion.Task.WaitAsync(cancellationToken))
++                    : new ValueTask(completion.Task);
++            }
++
++            private void CompleteReceiveRetirement(TaskCompletionSource? completion)
++            {
++                if (ReceiveRetirementFailure is { } failure)
++                    completion?.TrySetException(failure);
++                else
++                    completion?.TrySetResult();
++            }
++
+             private static TaskCompletionSource GetOrCreateCompletion(
+                 ref TaskCompletionSource? completion)
+             {
+diff --git a/src/SharpLink.Runtime/StreamManager.cs b/src/SharpLink.Runtime/StreamManager.cs
+index 93a07e2a..cd7b0512 100644
+--- a/src/SharpLink.Runtime/StreamManager.cs
++++ b/src/SharpLink.Runtime/StreamManager.cs
+@@ -84,173 +84,13 @@ internal sealed partial class StreamManager
+         ushort streamId,
+         IStreamDispatcher dispatcher,
+         bool ignoreExisting)
+-    {
+-        ArgumentNullException.ThrowIfNull(dispatcher);
+-        var termination = Volatile.Read(ref _termination);
+-        if (termination is not null)
+-        {
+-            dispatcher.Complete(termination.Exception);
+-            return;
+-        }
+-
+-        var requestDispatchers = GetOrCreateDispatchersByRequestId().GetOrAdd(
+-            requestId,
+-            static _ => new RequestDispatchers());
+-        if (dispatcher is not DiscardingStreamDispatcher &&
+-            requestDispatchers.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted))
+-        {
+-            if (alreadyCompleted)
+-                Unregister(requestId, streamId);
+-            return;
+-        }
+-
+-        var activeStreamCount = Interlocked.Increment(ref _activeStreamCount);
+-        if (activeStreamCount > _maxActiveStreams)
+-        {
+-            Interlocked.Decrement(ref _activeStreamCount);
+-            var exception = new SharpLinkException(
+-                SharpLinkErrorCode.ResourceExhausted,
+-                $"Active inbound stream routes exceeded the per-connection limit of {_maxActiveStreams}.");
+-            try
+-            {
+-                dispatcher.Complete(exception);
+-            }
+-            finally
+-            {
+-                RemoveEmptyRequest(requestId, requestDispatchers);
+-                _activeStreamCapacityExceeded?.Invoke(exception);
+-            }
+-            if (ignoreExisting)
+-                return;
+-            throw exception;
+-        }
+-
+-        SharpLinkTelemetry.AddActiveStreams(1);
+-        DispatcherEntry entry;
+-        try
+-        {
+-            // Binding validates dispatcher ownership before changing its callbacks or
+-            // attaching any receive state. A failed bind must not damage an existing route.
+-            entry = new DispatcherEntry(dispatcher, default);
+-        }
+-        catch
+-        {
+-            SharpLinkTelemetry.AddActiveStreams(-1);
+-            Interlocked.Decrement(ref _activeStreamCount);
+-            RemoveEmptyRequest(requestId, requestDispatchers);
+-            throw;
+-        }
+-
+-        var receiveCreditLease = default(StreamFlowController.ResolvedReceiveCreditLease);
+-        try
+-        {
+-            if (dispatcher is IStreamConsumptionAwareDispatcher consumptionAware)
+-                consumptionAware.SetBytesConsumedCallback(_bytesConsumed, requestId, streamId);
+-        }
+-        catch
+-        {
+-            try
+-            {
+-                ClearBytesConsumedCallback(dispatcher);
+-            }
+-            finally
+-            {
+-                try { entry.Detach(); }
+-                finally
+-                {
+-                    SharpLinkTelemetry.AddActiveStreams(-1);
+-                    Interlocked.Decrement(ref _activeStreamCount);
+-                    RemoveEmptyRequest(requestId, requestDispatchers);
+-                }
+-            }
+-            throw;
+-        }
+-
+-        bool registered;
+-        try
+-        {
+-            registered = requestDispatchers.TryRegister(
+-                requestId,
+-                streamId,
+-                entry,
+-                _resolveReceiveCreditLease,
+-                out receiveCreditLease);
+-        }
+-        catch
+-        {
+-            try
+-            {
+-                ClearBytesConsumedCallback(dispatcher);
+-            }
+-            finally
+-            {
+-                try { entry.Detach(); }
+-                finally
+-                {
+-                    SharpLinkTelemetry.AddActiveStreams(-1);
+-                    Interlocked.Decrement(ref _activeStreamCount);
+-                    RemoveEmptyRequest(requestId, requestDispatchers);
+-                }
+-            }
+-            throw;
+-        }
+-
+-        if (!registered)
+-        {
+-            try
+-            {
+-                ClearBytesConsumedCallback(dispatcher);
+-            }
+-            finally
+-            {
+-                try { entry.Detach(); }
+-                finally
+-                {
+-                    SharpLinkTelemetry.AddActiveStreams(-1);
+-                    Interlocked.Decrement(ref _activeStreamCount);
+-                    RemoveEmptyRequest(requestId, requestDispatchers);
+-                }
+-            }
+-            if (ignoreExisting)
+-                return;
+-            throw new InvalidOperationException("The stream is already registered.");
+-        }
+-
+-        if (dispatcher is IStreamConsumptionAwareDispatcher resolvedConsumptionAware &&
+-            _resolvedBytesConsumed is not null &&
+-            receiveCreditLease.IsResolved)
+-        {
+-            try
+-            {
+-                _ = resolvedConsumptionAware.TrySetResolvedBytesConsumedCallback(
+-                    _resolvedBytesConsumed,
+-                    in receiveCreditLease);
+-            }
+-            catch
+-            {
+-                // The route and receive generation were already published together.
+-                // Unregister owns exact-generation retirement before surfacing the callback error.
+-                Unregister(requestId, streamId);
+-                throw;
+-            }
+-        }
+-
+-        termination = Volatile.Read(ref _termination);
+-        if (termination is not null)
+-        {
+-            CompleteTerminatedRegistration(
+-                requestId,
+-                streamId,
+-                requestDispatchers,
+-                termination.Exception);
+-        }
+-    }
++        => RegisterCore(requestId, streamId, dispatcher, ignoreExisting);
+ 
+     /// <inheritdoc />
+     internal void Unregister(long requestId) => Unregister(requestId, 0);
+ 
+     /// <inheritdoc />
+-    internal void Unregister(long requestId, ushort streamId)
++    internal void Unregister(long requestId, ushort streamId, DispatcherEntry? expected = null)
+     {
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null ||
+@@ -259,12 +99,12 @@ internal sealed partial class StreamManager
+             return;
+         }
+ 
+-        if (requestDispatchers.TryBeginRetirement(streamId, out var entry))
++        if (requestDispatchers.TryBeginRetirement(streamId, expected, out var entry))
+         {
+             var dispatcher = entry.Dispatcher;
+             SharpLinkTelemetry.AddActiveStreams(-1);
+             Interlocked.Decrement(ref _activeStreamCount);
+-            RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
++            RetireStreamAfterDispatches(entry,
+                 clearCallback: dispatcher is not PreAdmissionStreamDispatcher);
+         }
+     }
+@@ -279,12 +119,11 @@ internal sealed partial class StreamManager
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is not null &&
+             dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
+-            requestDispatchers.TryAcquire(streamId, out var entry))
++            requestDispatchers.TryAcquire(streamId, out var entry, forData: true))
+         {
+             ValueTask dispatch;
+             try
+             {
+-                ThrowIfPeerTerminal(entry);
+                 var dispatcher = entry.Dispatcher;
+                 var encodedByteCount = Math.Max(1, checked((int)payload.Length));
+                 if ((_acceptBytes is not null ||
+@@ -321,16 +160,6 @@ internal sealed partial class StreamManager
+         return ValueTask.CompletedTask;
+     }
+ 
+-    private static void ThrowIfPeerTerminal(DispatcherEntry entry)
+-    {
+-        if (entry.PeerTerminalReceived)
+-        {
+-            throw new SharpLinkProtocolViolationException(
+-                ProtocolViolationReason.ProtocolState,
+-                "StreamData was received after the peer completed the stream.");
+-        }
+-    }
+-
+     private static ValueTask CompleteDispatch(DispatcherEntry entry, ValueTask dispatch)
+     {
+         if (dispatch.IsCompletedSuccessfully)
+@@ -387,21 +216,22 @@ internal sealed partial class StreamManager
+             return;
+         }
+ 
+-        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out _))
++        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var capturedEntry) ||
++            capturedEntry is null)
+             return;
+ 
+-        if (requestDispatchers.TryBeginRetirement(streamId, out var entry))
++        if (requestDispatchers.TryBeginRetirement(streamId, capturedEntry, out var entry))
+         {
+             var dispatcher = entry.Dispatcher;
+             SharpLinkTelemetry.AddActiveStreams(-1);
+             Interlocked.Decrement(ref _activeStreamCount);
+             try
+             {
+-                dispatcher.Complete(exception);
++                CompleteDispatcher(entry, exception);
+             }
+             finally
+             {
+-                RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
++                RetireStreamAfterDispatches(entry,
+                     clearCallback: false);
+             }
+         }
+@@ -417,29 +247,30 @@ internal sealed partial class StreamManager
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null ||
+             !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+-            !requestDispatchers.TryMarkPeerTerminal(streamId))
++            !requestDispatchers.TryMarkPeerTerminal(streamId, out var capturedEntry))
+         {
+             return;
+         }
+ 
+-        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var retainedEntry))
++        StreamManagerTestHooks.AfterPeerTerminalMarked?.Invoke(requestId, streamId);
++        if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var retainedEntry, capturedEntry))
+         {
+-            PublishReceiveTerminal(requestId, streamId, retainedEntry);
++            retainedEntry.RequestPeerReceiveTerminal();
+             return;
+         }
+ 
+-        if (requestDispatchers.TryBeginRetirement(streamId, out var entry))
++        if (requestDispatchers.TryBeginRetirement(streamId, capturedEntry, out var entry))
+         {
+             var dispatcher = entry.Dispatcher;
+             SharpLinkTelemetry.AddActiveStreams(-1);
+             Interlocked.Decrement(ref _activeStreamCount);
+             try
+             {
+-                dispatcher.Complete(exception);
++                CompleteDispatcher(entry, exception);
+             }
+             finally
+             {
+-                RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
++                RetireStreamAfterDispatches(entry,
+                     clearCallback: false);
+             }
+         }
+@@ -457,70 +288,30 @@ internal sealed partial class StreamManager
+     {
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null ||
+-            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+-            !requestDispatchers.TryBeginRetirement(streamId, out var entry))
++            !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
+         {
+             return ValueTask.CompletedTask;
+         }
+ 
++        if (!requestDispatchers.TryBeginRetirement(streamId, out var entry))
++            return entry is null ? ValueTask.CompletedTask :
++                entry.WaitForReceiveRetirementAsync(CancellationToken.None);
++
++        entry.RouteRetirementFailuresToWaiter();
+         SharpLinkTelemetry.AddActiveStreams(-1);
+         Interlocked.Decrement(ref _activeStreamCount);
+         try
+         {
+-            entry.Dispatcher.Complete(exception);
++            CompleteDispatcher(entry, exception);
+         }
+         catch
+         {
+-            RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
++            RetireStreamAfterDispatches(entry,
+                 clearCallback: true);
+             throw;
+         }
+-        if (!entry.HasActiveDispatches)
+-        {
+-            FinalizeLocallyTerminatedStream(requestId, streamId, requestDispatchers, entry);
+-            return ValueTask.CompletedTask;
+-        }
+-
+-        return AwaitDispatchesAndFinalizeAsync(
+-            requestId,
+-            streamId,
+-            requestDispatchers,
+-            entry);
+-    }
+-
+-    private async ValueTask AwaitDispatchesAndFinalizeAsync(
+-        long requestId,
+-        ushort streamId,
+-        RequestDispatchers requestDispatchers,
+-        DispatcherEntry entry)
+-    {
+-        await entry.WaitForDispatchesDrainedAsync().ConfigureAwait(false);
+-        FinalizeLocallyTerminatedStream(requestId, streamId, requestDispatchers, entry);
+-    }
+-
+-    private void FinalizeLocallyTerminatedStream(
+-        long requestId,
+-        ushort streamId,
+-        RequestDispatchers requestDispatchers,
+-        DispatcherEntry entry)
+-    {
+-        try
+-        {
+-            ClearBytesConsumedCallback(entry.Dispatcher);
+-        }
+-        finally
+-        {
+-            try
+-            {
+-                PublishReceiveTerminal(requestId, streamId, entry);
+-            }
+-            finally
+-            {
+-                _ = requestDispatchers.FinishRetirement(streamId, entry);
+-                entry.Detach();
+-                RemoveEmptyRequest(requestId, requestDispatchers);
+-            }
+-        }
++        RetireStreamAfterDispatches(entry, clearCallback: true, detachImmediately: false);
++        return entry.WaitForReceiveRetirementAsync(CancellationToken.None);
+     }
+ 
+     /// <inheritdoc />
+@@ -562,15 +353,13 @@ internal sealed partial class StreamManager
+         SharpLinkTelemetry.AddActiveStreams(-entries.Length);
+         Interlocked.Add(ref _activeStreamCount, -entries.Length);
+         List<Exception>? failures = null;
+-        if (entries.All(static item => !item.Entry.HasActiveDispatches))
++        if (TryEnterDrainedRequestRetirement(entries))
+         {
+-            FinalizeRequestEntries(requestId, entries, requestDispatchers, exception, ref failures);
+-            RemoveEmptyRequest(requestId, requestDispatchers);
++            try { FinalizeRequestEntries(requestId, entries, requestDispatchers, exception, ref failures); }
++            finally { ExitDrainedRequestRetirement(entries, ref failures); }
+         }
+         else
+         {
+-            // Complete the mailbox now so acquired DATA is discarded/consumed, but retain
+-            // callbacks, the receive generation and route keys until all acquisitions release.
+             CompleteRequestEntriesWhenDrained(requestId, requestDispatchers, entries, exception, ref failures);
+         }
+         ThrowCompletionFailures(failures);
+@@ -588,48 +377,68 @@ internal sealed partial class StreamManager
+             !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
+             return ValueTask.CompletedTask;
+ 
+-        var entries = requestDispatchers.BeginDrain();
++        var entries = requestDispatchers.BeginDrain(out var alreadyRetiring);
+         if (entries.Length == 0)
+         {
+             RemoveEmptyRequest(requestId, requestDispatchers);
+-            return ValueTask.CompletedTask;
++            return alreadyRetiring.Length == 0 ? ValueTask.CompletedTask :
++                AwaitRequestRetirementsAsync(alreadyRetiring, [], null);
+         }
+ 
++        for (var index = 0; index < entries.Length; index++)
++            entries[index].Entry.RouteRetirementFailuresToWaiter();
+         SharpLinkTelemetry.AddActiveStreams(-entries.Length);
+         Interlocked.Add(ref _activeStreamCount, -entries.Length);
+         List<Exception>? failures = null;
+-        for (var index = 0; index < entries.Length; index++)
++        if (TryEnterDrainedRequestRetirement(entries))
+         {
+             try
+             {
+-                entries[index].Entry.Dispatcher.Complete(exception);
+-            }
+-            catch (Exception completionException)
+-            {
+-                (failures ??= []).Add(completionException);
++                CompleteRequestDispatchers(entries, exception, ref failures);
++                FinalizeRequestDrain(requestId, requestDispatchers, entries, ref failures);
+             }
++            finally { ExitDrainedRequestRetirement(entries, ref failures); }
+         }
+-
+-        if (entries.All(static item => !item.Entry.HasActiveDispatches))
++        else
++        CompleteRequestEntriesWhenDrained(requestId, requestDispatchers, entries, exception, ref failures);
++        if (alreadyRetiring.Length == 0 && entries.All(static item => item.Entry.IsReceiveRetired))
+         {
+-            FinalizeRequestDrain(requestId, requestDispatchers, entries, ref failures);
++            ObserveCompletedRequestRetirements(entries, ref failures);
+             ThrowCompletionFailures(failures);
+             return ValueTask.CompletedTask;
+         }
+-
+-        return AwaitRequestDispatchesAndFinalizeAsync(requestId, requestDispatchers, entries, failures);
++        return AwaitRequestRetirementsAsync(entries, alreadyRetiring, failures);
+     }
+ 
+-    private async ValueTask AwaitRequestDispatchesAndFinalizeAsync(
+-        long requestId,
+-        RequestDispatchers requestDispatchers,
+-        RequestDrainEntry[] entries,
+-        List<Exception>? failures)
++    private static void ObserveCompletedRequestRetirements(RequestDrainEntry[] entries,
++        ref List<Exception>? failures)
+     {
+         for (var index = 0; index < entries.Length; index++)
+-            await entries[index].Entry.WaitForDispatchesDrainedAsync().ConfigureAwait(false);
++        {
++            try { entries[index].Entry.WaitForReceiveRetirementAsync(CancellationToken.None).GetAwaiter().GetResult(); }
++            catch (Exception exception)
++            {
++                AddRetirementFailure(ref failures, exception);
++            }
++        }
++    }
+ 
+-        FinalizeRequestDrain(requestId, requestDispatchers, entries, ref failures);
++    private static async ValueTask AwaitRequestRetirementsAsync(
++        RequestDrainEntry[] entries, RequestDrainEntry[] alreadyRetiring, List<Exception>? failures)
++    {
++        for (var index = 0; index < entries.Length + alreadyRetiring.Length; index++)
++        {
++            try
++            {
++                var entry = index < entries.Length ? entries[index] : alreadyRetiring[index - entries.Length];
++                await entry.Entry.WaitForReceiveRetirementAsync(CancellationToken.None)
++                    .ConfigureAwait(false);
++            }
++            catch (Exception exception)
++            {
++                AddRetirementFailure(ref failures, exception);
++            }
++        }
+         ThrowCompletionFailures(failures);
+     }
+ 
+@@ -649,6 +458,7 @@ internal sealed partial class StreamManager
+             }
+             catch (Exception completionException)
+             {
++                entry.RecordReceiveRetirementFailure(completionException);
+                 (failures ??= []).Add(completionException);
+             }
+             try
+@@ -657,6 +467,7 @@ internal sealed partial class StreamManager
+             }
+             catch (Exception detachException)
+             {
++                entry.RecordReceiveRetirementFailure(detachException);
+                 (failures ??= []).Add(detachException);
+             }
+         }
+@@ -677,10 +488,11 @@ internal sealed partial class StreamManager
+             var entry = entries[index].Entry;
+             try
+             {
+-                entry.Dispatcher.Complete(exception);
++                CompleteDispatcher(entry, exception);
+             }
+             catch (Exception completionException)
+             {
++                entry.RecordReceiveRetirementFailure(completionException);
+                 (failures ??= []).Add(completionException);
+             }
+             try
+@@ -689,6 +501,7 @@ internal sealed partial class StreamManager
+             }
+             catch (Exception completionException)
+             {
++                entry.RecordReceiveRetirementFailure(completionException);
+                 (failures ??= []).Add(completionException);
+             }
+             try
+@@ -697,6 +510,7 @@ internal sealed partial class StreamManager
+             }
+             catch (Exception detachException)
+             {
++                entry.RecordReceiveRetirementFailure(detachException);
+                 (failures ??= []).Add(detachException);
+             }
+         }
+@@ -727,6 +541,7 @@ internal sealed partial class StreamManager
+             try
+             {
+                 _ = requestDispatchers.FinishRetirement(item.StreamId, item.Entry);
++                item.Entry.MarkReceiveRetired();
+             }
+             catch (Exception removalException)
+             {
+@@ -736,6 +551,40 @@ internal sealed partial class StreamManager
+         RemoveEmptyRequest(requestId, requestDispatchers);
+     }
+ 
++    private static void CompleteDispatcher(DispatcherEntry entry, Exception? exception)
++    {
++        try { entry.Dispatcher.Complete(exception); }
++        catch (Exception failure)
++        {
++            entry.RecordReceiveRetirementFailure(failure);
++            throw;
++        }
++    }
++
++    private static void AddRetirementFailure(ref List<Exception>? failures, Exception exception)
++    {
++        if (failures is null)
++        {
++            failures = [exception];
++            return;
++        }
++        var existingFailures = failures;
++        if (existingFailures.Any(existing => ContainsFailure(existing, exception)))
++            return;
++        if (exception is AggregateException aggregate &&
++            aggregate.InnerExceptions.Any(item => existingFailures.Any(existing => ContainsFailure(existing, item))))
++        {
++            foreach (var inner in aggregate.InnerExceptions)
++                AddRetirementFailure(ref failures, inner);
++            return;
++        }
++        failures.Add(exception);
++    }
++
++    private static bool ContainsFailure(Exception existing, Exception sought)
++        => ReferenceEquals(existing, sought) || existing is AggregateException aggregate &&
++            aggregate.InnerExceptions.Any(inner => ContainsFailure(inner, sought));
++
+     private static void ThrowCompletionFailures(List<Exception>? failures)
+     {
+         if (failures is { Count: 1 })
+@@ -802,13 +651,14 @@ internal sealed partial class StreamManager
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null ||
+             !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+-            !requestDispatchers.TryAbandonInboundRoute(streamId, out var peerTerminalReceived))
++            !requestDispatchers.TryAbandonInboundRoute(streamId, out var peerTerminalReceived, out var abandonedEntry))
+         {
+             return false;
+         }
+ 
++        StreamManagerTestHooks.AfterInboundRouteAbandoned?.Invoke(requestId, streamId);
+         if (peerTerminalReceived)
+-            Unregister(requestId, streamId);
++            Unregister(requestId, streamId, abandonedEntry);
+         return true;
+     }
+ 
+@@ -822,7 +672,7 @@ internal sealed partial class StreamManager
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null ||
+             !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) ||
+-            !requestDispatchers.TryAcquire(streamId, out var entry))
++            !requestDispatchers.TryAcquire(streamId, out var entry, forData: true))
+         {
+             dispatch = default;
+             return false;
+@@ -831,7 +681,6 @@ internal sealed partial class StreamManager
+         var matched = true;
+         try
+         {
+-            ThrowIfPeerTerminal(entry);
+             if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
+             {
+                 if (_acceptResolvedBytes is not null && entry.ReceiveCreditLease.IsResolved)
+@@ -878,34 +727,43 @@ internal sealed partial class StreamManager
+         long requestId,
+         ushort streamId,
+         RequestDispatchers requestDispatchers,
+-        Exception? exception)
++        Exception? exception,
++        DispatcherEntry? expected = null)
+     {
+-        if (!requestDispatchers.TryBeginRetirement(streamId, out var entry))
++        if (!requestDispatchers.TryBeginRetirement(streamId, expected, out var entry))
+             return;
+ 
+         SharpLinkTelemetry.AddActiveStreams(-1);
+         Interlocked.Decrement(ref _activeStreamCount);
+         try
+         {
+-            entry.Dispatcher.Complete(exception);
++            CompleteDispatcher(entry, exception);
+         }
+         finally
+         {
+-            RetireStreamAfterDispatches(requestId, streamId, requestDispatchers, entry,
++            RetireStreamAfterDispatches(entry,
+                 clearCallback: false);
+         }
+     }
+ 
+     private void PublishReceiveTerminal(long requestId, ushort streamId, DispatcherEntry entry)
+     {
+-        if (!entry.TryPublishReceiveTerminal())
++        if (!entry.ReceiveCreditInitialized || !entry.TryPublishReceiveTerminal())
+             return;
+ 
+-        StreamManagerTestHooks.BeforeReceiveTerminalPublish?.Invoke(requestId, streamId);
+-        if (_resolvedStreamCompleted is not null && entry.ReceiveCreditLease.IsResolved)
+-            _resolvedStreamCompleted(entry.ReceiveCreditLease);
+-        else
+-            _streamCompleted?.Invoke(requestId, streamId);
++        try
++        {
++            StreamManagerTestHooks.BeforeReceiveTerminalPublish?.Invoke(requestId, streamId);
++            if (_resolvedStreamCompleted is not null && entry.ReceiveCreditLease.IsResolved)
++                _resolvedStreamCompleted(entry.ReceiveCreditLease);
++            else
++                _streamCompleted?.Invoke(requestId, streamId);
++        }
++        catch (Exception exception)
++        {
++            entry.RecordReceiveRetirementFailure(exception);
++            throw;
++        }
+     }
+ 
+     private StripedLongMap<RequestDispatchers> GetOrCreateDispatchersByRequestId()
+@@ -948,6 +806,10 @@ internal sealed partial class StreamManager
+         if (dispatcher is not IStreamConsumptionAwareDispatcher consumptionAware)
+             return;
+ 
++        // A typed consumer can still own buffered credit after route retirement. Its
++        // immutable binding is released only by its own final buffer/pool cleanup.
++        if (dispatcher is IStreamReceiveCreditBoundDispatcher)
++            return;
+         var emptyLease = default(StreamFlowController.ResolvedReceiveCreditLease);
+         _ = consumptionAware.TrySetResolvedBytesConsumedCallback(null, in emptyLease);
+         consumptionAware.SetBytesConsumedCallback(null, 0, 0);
+@@ -956,7 +818,7 @@ internal sealed partial class StreamManager
+     private void RemoveEmptyRequest(long requestId, RequestDispatchers requestDispatchers)
+     {
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+-        if (requestDispatchers.IsEmpty && dispatchersByRequestId is not null)
++        if (requestDispatchers.TrySealIfEmpty() && dispatchersByRequestId is not null)
+             dispatchersByRequestId.TryRemove(requestId, requestDispatchers);
+     }
+ 
+@@ -977,13 +839,9 @@ internal sealed partial class StreamManager
+ 
+ }
+ 
+-internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispatcher
++internal sealed class DiscardingStreamDispatcher : IStreamReceiveCreditBoundDispatcher
+ {
+-    private Action<long, ushort, int>? _bytesConsumed;
+-    private ResolvedStreamBytesCallback? _resolvedBytesConsumed;
+-    private StreamFlowController.ResolvedReceiveCreditLease _receiveCreditLease;
+-    private long _requestId;
+-    private ushort _streamId;
++    private StreamManager.DispatcherEntry? _receiveCreditBinding;
+ 
+     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
+         => DispatchAsync(payload, Math.Max(1, checked((int)payload.Length)));
+@@ -991,43 +849,36 @@ internal sealed class DiscardingStreamDispatcher : IStreamConsumptionAwareDispat
+     public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
+     {
+         _ = payload;
+-        if (_resolvedBytesConsumed is { } resolved)
+-            resolved(in _receiveCreditLease, encodedByteCount);
+-        else
+-            _bytesConsumed?.Invoke(_requestId, _streamId, encodedByteCount);
++        _receiveCreditBinding?.RecordConsumed(encodedByteCount);
+         return ValueTask.CompletedTask;
+     }
+ 
+-    public void Complete(bool isError, string? errorMessage)
+-    {
+-        _ = isError;
+-        _ = errorMessage;
+-    }
++    public void Complete(bool isError, string? errorMessage) { }
++    public void Complete(Exception? exception) { }
++    public void SetReceiveCreditBinding(StreamManager.DispatcherEntry? binding)
++        => _receiveCreditBinding = binding;
++}
+ 
+-    public void Complete(Exception? exception) => _ = exception;
++internal static class StreamManagerTestHooks
++{
++    [ThreadStatic]
++    private static Action<long, ushort>? s_afterInboundRouteAbandoned;
+ 
+-    public void SetBytesConsumedCallback(
+-        Action<long, ushort, int>? callback,
+-        long requestId,
+-        ushort streamId)
++    internal static Action<long, ushort>? AfterInboundRouteAbandoned
+     {
+-        _bytesConsumed = callback;
+-        _requestId = requestId;
+-        _streamId = streamId;
++        get => s_afterInboundRouteAbandoned;
++        set => s_afterInboundRouteAbandoned = value;
+     }
+ 
+-    public bool TrySetResolvedBytesConsumedCallback(
+-        ResolvedStreamBytesCallback? callback,
+-        in StreamFlowController.ResolvedReceiveCreditLease lease)
++    [ThreadStatic]
++    private static Action<long, ushort>? s_afterPeerTerminalMarked;
++
++    internal static Action<long, ushort>? AfterPeerTerminalMarked
+     {
+-        _resolvedBytesConsumed = callback;
+-        _receiveCreditLease = lease;
+-        return true;
++        get => s_afterPeerTerminalMarked;
++        set => s_afterPeerTerminalMarked = value;
+     }
+-}
+ 
+-internal static class StreamManagerTestHooks
+-{
+     [ThreadStatic]
+     private static Action? s_beforeRoutingMapInitialize;
+     [ThreadStatic]
+diff --git a/test/SharpLink.UnitTests/Abstractions/LegacyApiSurfaceTests.cs b/test/SharpLink.UnitTests/Abstractions/LegacyApiSurfaceTests.cs
+index e0ede9de..ffbc4705 100644
+--- a/test/SharpLink.UnitTests/Abstractions/LegacyApiSurfaceTests.cs
++++ b/test/SharpLink.UnitTests/Abstractions/LegacyApiSurfaceTests.cs
+@@ -11,6 +11,7 @@ public class LegacyApiSurfaceTests
+     [
+         "SharpLink.Runtime.IStreamDispatcher",
+         "SharpLink.Runtime.IStreamConsumptionAwareDispatcher",
++        "SharpLink.Runtime.IStreamReceiveCreditBoundDispatcher",
+         "SharpLink.Runtime.IStreamDispatchLease",
+         "SharpLink.Runtime.IStreamDispatchState",
+         "SharpLink.Runtime.PooledAsyncStreamDispatcher`1",
+diff --git a/test/SharpLink.UnitTests/Client/ClientConnectionConsumerAbandonmentTests.cs b/test/SharpLink.UnitTests/Client/ClientConnectionConsumerAbandonmentTests.cs
+index fa8d401b..61e6042e 100644
+--- a/test/SharpLink.UnitTests/Client/ClientConnectionConsumerAbandonmentTests.cs
++++ b/test/SharpLink.UnitTests/Client/ClientConnectionConsumerAbandonmentTests.cs
+@@ -8,7 +8,7 @@ using SharpLink.UnitTests.Runtime;
+ 
+ namespace SharpLink.UnitTests.Client;
+ 
+-public class ClientConnectionConsumerAbandonmentTests
++public partial class ClientConnectionConsumerAbandonmentTests
+ {
+     private static readonly TimeSpan RaceCoordinationTimeout = TimeSpan.FromSeconds(10);
+ 
+diff --git a/test/SharpLink.UnitTests/Client/ClientConnectionReceiveRetirementTests.cs b/test/SharpLink.UnitTests/Client/ClientConnectionReceiveRetirementTests.cs
+new file mode 100644
+index 00000000..4d1bce1a
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Client/ClientConnectionReceiveRetirementTests.cs
+@@ -0,0 +1,90 @@
++using System.IO.Pipelines;
++using System.Linq;
++using SharpLink.Client;
++using SharpLink.UnitTests.Runtime;
++
++namespace SharpLink.UnitTests.Client;
++
++public partial class ClientConnectionConsumerAbandonmentTests
++{
++    [Test]
++    public async Task ConsumerCancelMustWaitBeyondLogicalDetachUntilReceivePublicationCompletes()
++    {
++        await using var owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
++        var runtime = (SharpLinkRuntimeContext)owner.RuntimeContext;
++        var input = new Pipe();
++        var output = new Pipe();
++        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
++            "consumer-retirement-credit-order", input.Reader, output.Writer,
++            RpcSessionTestFixture.ClientOptions(runtime), completeHandshake: false);
++        RpcSessionTestFixture.CompleteHandshake(session,
++            ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.CancellationReason,
++            streamReceiveWindowBytes: 4, connectionReceiveWindowBytes: 4);
++        using var cancellation = new CancellationTokenSource();
++        await using var connection = new ClientConnection(owner, session, cancellation, 8, runtime);
++        var dispatcher = new RetirementGateDispatcher();
++        const long requestId = 9650;
++        session.StreamManager.Register(requestId, dispatcher);
++        var dispatch = session.StreamManager.DispatchChunkAsync(requestId,
++            new ReadOnlySequence<byte>(new byte[] { 1 }));
++        session.StreamManager.Unregister(requestId);
++        Ensure(dispatcher.State.IsDetached, "logical detach must retain its immediate existing contract");
++        using var publishing = new ManualResetEventSlim();
++        using var release = new ManualResetEventSlim();
++        var finalRelease = Task.Run(() =>
++        {
++            StreamManagerTestHooks.BeforeReceiveTerminalPublish = (_, _) =>
++            {
++                publishing.Set();
++                if (!release.Wait(RaceCoordinationTimeout)) throw new TimeoutException("Missing final-credit release.");
++            };
++            try { dispatcher.Release(); }
++            finally { StreamManagerTestHooks.BeforeReceiveTerminalPublish = null; }
++        });
++        ValueTask abandonment = default;
++        try
++        {
++            Ensure(publishing.Wait(RaceCoordinationTimeout), "the final credit callback must be paused");
++            Ensure(dispatcher.State.WaitForDispatchesDrainedAsync().IsCompletedSuccessfully,
++                "DATA-drained and receive-retired are deliberately distinct barriers");
++            abandonment = connection.OnConsumerAbandonedAsync(requestId, dispatcher.State);
++            Ensure(!abandonment.IsCompleted,
++                "logical detach alone must not allow Cancel to overtake final receive credit");
++        }
++        finally { release.Set(); }
++        await finalRelease.WaitAsync(RaceCoordinationTimeout);
++        await dispatch;
++        await abandonment;
++        var frames = await FlushAndReadFramesAsync(session, output);
++        Ensure(frames.Where(frame => frame.RequestId == requestId).Select(frame => frame.Type)
++                .SequenceEqual([ProtocolV2FrameType.WindowUpdate, ProtocolV2FrameType.Cancel]),
++            "final WindowUpdate must enter the writer before consumer Cancel");
++    }
++
++    private sealed class RetirementGateDispatcher : IStreamConsumptionAwareDispatcher, IStreamDispatchLease
++    {
++        private readonly TaskCompletionSource _completion = new();
++        private Action<long, ushort, int>? _consumed;
++        private long _requestId;
++        private ushort _streamId;
++        internal IStreamDispatchState State { get; private set; } = null!;
++        public void BindDispatchState(IStreamDispatchState state) => State = state;
++        public void OnDispatchesDrained() { }
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => new(_completion.Task);
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount) => DispatchAsync(payload);
++        public ValueTask DispatchAcquiredAsync(ReadOnlySequence<byte> payload, int encodedByteCount) => DispatchAsync(payload);
++        internal void Release()
++        {
++            _consumed?.Invoke(_requestId, _streamId, 1);
++            _completion.SetResult();
++        }
++        public void Complete(bool isError, string? errorMessage) { }
++        public void Complete(Exception? exception) { }
++        public void SetBytesConsumedCallback(Action<long, ushort, int>? callback, long requestId, ushort streamId)
++        {
++            _consumed = callback;
++            _requestId = requestId;
++            _streamId = streamId;
++        }
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherResolvedRetentionTests.cs b/test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherResolvedRetentionTests.cs
+index 9baf09ab..c07838c4 100644
+--- a/test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherResolvedRetentionTests.cs
++++ b/test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherResolvedRetentionTests.cs
+@@ -6,11 +6,12 @@ namespace SharpLink.UnitTests.Runtime;
+ public sealed class PooledAsyncStreamDispatcherResolvedRetentionTests
+ {
+     [Test]
+-    [Arguments("_resolvedBytesConsumed")]
+-    [Arguments("_receiveCreditLease")]
+-    [Arguments("_localAbortResolvedBytesConsumed")]
+-    [Arguments("_localAbortReceiveCreditLease")]
+-    public async Task RetentionOracleShouldDetectEachResolvedReferenceIndependently(string fieldName)
++    [Arguments("_receiveCreditBinding", true)]
++    [Arguments("_receiveCreditBinding", false)]
++    [Arguments("_localAbortReceiveCreditBinding", true)]
++    [Arguments("_localAbortReceiveCreditBinding", false)]
++    public async Task RetentionOracleShouldDetectEachResolvedReferenceIndependently(
++        string fieldName, bool captureCallbackOwner)
+     {
+         PooledAsyncStreamDispatcher<string?>.ClearPoolForTests();
+         var dispatcher = PooledAsyncStreamDispatcher<string?>.Rent(default, StringCodec.Instance);
+@@ -36,9 +37,11 @@ public sealed class PooledAsyncStreamDispatcherResolvedRetentionTests
+ 
+             // Inject exactly one reference into an otherwise clean pooled object. This
+             // fails if the oracle forgets that field, even when all other cleanup is correct.
+-            object retained = field.FieldType == typeof(ResolvedStreamBytesCallback)
+-                ? (ResolvedStreamBytesCallback)Consumed
+-                : receiveLease;
++            // Each old independent root remains covered: callback capture and controller/state
++            // lease now live behind the same immutable binding, including the abort snapshot.
++            var retained = PooledDispatcherReceiveBindingExtensions.Create(
++                null, captureCallbackOwner ? Consumed : null,
++                captureCallbackOwner ? default : receiveLease, 42, 1);
+             field.SetValue(dispatcher, retained);
+             Require(dispatcher.HasRetainedReferencesForTests,
+                 $"retention oracle ignored {fieldName}");
+@@ -87,14 +90,12 @@ public sealed class PooledAsyncStreamDispatcherResolvedRetentionTests
+ 
+             localAbort.CompleteLocalAbort(new OperationCanceledException("local-abort retention control"));
+             var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+-            var callback = typeof(PooledAsyncStreamDispatcher<string?>).GetField(
+-                "_localAbortResolvedBytesConsumed", flags)!.GetValue(dispatcher);
+-            var captured = (StreamFlowController.ResolvedReceiveCreditLease)typeof(PooledAsyncStreamDispatcher<string?>)
+-                .GetField("_localAbortReceiveCreditLease", flags)!.GetValue(dispatcher)!;
+-            Require(callback is ResolvedStreamBytesCallback &&
+-                    ReferenceEquals(captured.Owner, controller) &&
+-                    ReferenceEquals(captured.State, receiveLease.State),
+-                "the local-abort snapshot must actually hold both strong references before retirement");
++            var captured = (StreamManager.DispatcherEntry?)typeof(PooledAsyncStreamDispatcher<string?>)
++                .GetField("_localAbortReceiveCreditBinding", flags)!.GetValue(dispatcher);
++            Require(captured is not null &&
++                    ReferenceEquals(captured.ReceiveCreditLease.Owner, controller) &&
++                    ReferenceEquals(captured.ReceiveCreditLease.State, receiveLease.State),
++                "the local-abort snapshot must hold the exact immutable receive generation before retirement");
+ 
+             // Normal callback detachment must not erase the outstanding abort snapshot.
+             var emptyLease = default(StreamFlowController.ResolvedReceiveCreditLease);
+diff --git a/test/SharpLink.UnitTests/Runtime/PooledDispatcherReceiveBindingExtensions.cs b/test/SharpLink.UnitTests/Runtime/PooledDispatcherReceiveBindingExtensions.cs
+new file mode 100644
+index 00000000..279e2e73
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/PooledDispatcherReceiveBindingExtensions.cs
+@@ -0,0 +1,41 @@
++namespace SharpLink.UnitTests.Runtime;
++
++// Standalone dispatcher fixtures use real immutable entry bindings without registering a
++// transport route or changing the fixture's independent dispatch-lifetime state machine.
++internal static class PooledDispatcherReceiveBindingExtensions
++{
++    internal static void SetBytesConsumedCallback<T>(this PooledAsyncStreamDispatcher<T> dispatcher,
++        Action<long, ushort, int>? callback, long requestId, ushort streamId)
++        => dispatcher.SetReceiveCreditBinding(callback is null ? null :
++            Create(callback, null, default, requestId, streamId));
++
++    internal static bool TrySetResolvedBytesConsumedCallback<T>(this PooledAsyncStreamDispatcher<T> dispatcher,
++        ResolvedStreamBytesCallback? callback, in StreamFlowController.ResolvedReceiveCreditLease lease)
++    {
++        dispatcher.SetReceiveCreditBinding(callback is null ? null :
++            Create(null, callback, lease, lease.RequestId, lease.StreamId));
++        return true;
++    }
++
++    internal static StreamManager.DispatcherEntry Create(Action<long, ushort, int>? keyed,
++        ResolvedStreamBytesCallback? resolved, StreamFlowController.ResolvedReceiveCreditLease lease,
++        long requestId, ushort streamId)
++    {
++        var manager = new StreamManager(new RuntimeConcurrencyOptions(), null, keyed, null,
++            maxActiveStreams: 1, activeStreamCapacityExceeded: null,
++            resolvedBytesConsumed: resolved);
++        var entry = new StreamManager.DispatcherEntry(StandaloneDispatcher.Instance, manager, requestId, streamId);
++        entry.InitializeReceiveCredit(lease);
++        entry.ActivateRegistration();
++        entry.FinishRegistration();
++        return entry;
++    }
++
++    private sealed class StandaloneDispatcher : IStreamDispatcher
++    {
++        internal static readonly StandaloneDispatcher Instance = new();
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => ValueTask.CompletedTask;
++        public void Complete(bool isError, string? errorMessage) { }
++        public void Complete(Exception? exception) { }
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/PreAdmissionImmutableBindingTests.cs b/test/SharpLink.UnitTests/Runtime/PreAdmissionImmutableBindingTests.cs
+new file mode 100644
+index 00000000..363f41bd
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/PreAdmissionImmutableBindingTests.cs
+@@ -0,0 +1,61 @@
++namespace SharpLink.UnitTests.Runtime;
++
++public sealed class PreAdmissionImmutableBindingTests
++{
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task ExplicitBindingClearMustReachChildAcrossAttachment(bool duringAttachment)
++    {
++        var timeout = TimeSpan.FromSeconds(10);
++        using var configured = new ManualResetEventSlim();
++        using var release = new ManualResetEventSlim();
++        var bytes = 0;
++        var binding = PooledDispatcherReceiveBindingExtensions.Create(
++            (_, _, count) => bytes += count, null, default, 9630, 1);
++        var mailbox = new PreAdmissionStreamDispatcher(
++            new SharpLinkBufferWriterPool(new BufferWriterPoolOptions()),
++            _ => true, _ => { }, () => throw new InvalidOperationException("Unexpected capacity."));
++        mailbox.SetReceiveCreditBinding(binding);
++        var child = new BindingChild(value =>
++        {
++            if (value is null || !duringAttachment) return;
++            configured.Set();
++            if (!release.Wait(timeout)) throw new TimeoutException("Missing attachment release.");
++        });
++        if (!mailbox.TryBeginAttach(child, out _)) throw new InvalidOperationException("Attach must begin.");
++        var attachment = Task.Run(() => mailbox.FinishAttach(child));
++        try
++        {
++            if (duringAttachment && !configured.Wait(timeout))
++                throw new TimeoutException("Missing child configuration.");
++            if (!duringAttachment) await attachment.WaitAsync(timeout);
++            mailbox.SetReceiveCreditBinding(null);
++        }
++        finally { release.Set(); }
++        await attachment.WaitAsync(timeout);
++        if (child.Binding is not null) throw new InvalidOperationException("Explicit clear did not reach child.");
++        await mailbox.DispatchAsync(new ReadOnlySequence<byte>(new byte[] { 1 }), 1);
++        if (bytes != 0) throw new InvalidOperationException("Child used a binding after explicit clear.");
++        mailbox.Abandon(out _);
++    }
++
++    private sealed class BindingChild(Action<StreamManager.DispatcherEntry?> configured)
++        : IStreamReceiveCreditBoundDispatcher
++    {
++        internal StreamManager.DispatcherEntry? Binding;
++        public void SetReceiveCreditBinding(StreamManager.DispatcherEntry? binding)
++        {
++            Binding = binding;
++            configured(binding);
++        }
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => DispatchAsync(payload, 1);
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
++        {
++            Binding?.RecordConsumed(encodedByteCount);
++            return ValueTask.CompletedTask;
++        }
++        public void Complete(bool isError, string? errorMessage) { }
++        public void Complete(Exception? exception) { }
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerImmutableBindingTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerImmutableBindingTests.cs
+new file mode 100644
+index 00000000..b213f06d
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerImmutableBindingTests.cs
+@@ -0,0 +1,84 @@
++using System.Reflection;
++
++namespace SharpLink.UnitTests.Runtime;
++
++[NotInParallel("dispatcher-pool")]
++public sealed class StreamManagerImmutableBindingTests
++{
++    [Test]
++    public async Task DelayedConsumptionMustKeepItsGenerationAcrossDispatcherAndStateReuse()
++    {
++        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
++        var controller = new StreamFlowController(4, 4, 1024, 1);
++        var returned = 0;
++        void Consume(in StreamFlowController.ResolvedReceiveCreditLease lease, int bytes)
++            => returned += controller.RecordConsumed(in lease, bytes);
++        void Accept(in StreamFlowController.ResolvedReceiveCreditLease lease, int bytes)
++            => controller.AcceptReceived(in lease, bytes);
++        var manager = new StreamManager(new RuntimeConcurrencyOptions(), null, null, null, 1, null,
++            controller.ResolveReceiveCreditLease, Accept, Consume, lease => returned += controller.FlushConsumed(in lease));
++        var dispatcher = PooledAsyncStreamDispatcher<string>.Rent(default, TextCodec.Instance);
++        var payload = new ReadOnlySequence<byte>(new byte[4]);
++        manager.Register(9611, dispatcher);
++        var field = typeof(PooledAsyncStreamDispatcher<string>).GetField("_receiveCreditBinding",
++            BindingFlags.Instance | BindingFlags.NonPublic)!;
++        var oldBinding = (StreamManager.DispatcherEntry)field.GetValue(dispatcher)!;
++        await manager.DispatchChunkAsync(9611, payload);
++        manager.CompleteStream(9611, exception: null);
++        Require(returned == 0, "peer terminal must not return buffered bytes before consumption");
++        var consumer = dispatcher.GetAsyncEnumerator();
++        Require(await consumer.MoveNextAsync(), "the completed route must keep its buffered item");
++        Require(returned == 4, "delayed consumption must return the old generation's exact credit");
++        await consumer.DisposeAsync();
++        Require(!dispatcher.HasRetainedReferencesForTests, "pool entry must release both binding references");
++
++        var replacement = PooledAsyncStreamDispatcher<string>.Rent(default, TextCodec.Instance);
++        Require(ReferenceEquals(replacement, dispatcher), "fixture must reuse the same pooled dispatcher");
++        manager.Register(9612, replacement);
++        var newBinding = (StreamManager.DispatcherEntry)field.GetValue(replacement)!;
++        Require(ReferenceEquals(oldBinding.ReceiveCreditLease.State, newBinding.ReceiveCreditLease.State) &&
++                oldBinding.ReceiveCreditLease.Generation != newBinding.ReceiveCreditLease.Generation,
++            "fixture must reuse the flow-state object with a new generation");
++        await manager.DispatchChunkAsync(9612, payload);
++        oldBinding.RecordConsumed(4);
++        Require(returned == 4, "a retained old binding must never credit a newly rented flow generation");
++        manager.CompleteStream(9612, exception: null);
++        await replacement.DisposeAsync();
++        Require(returned == 8 && !replacement.HasRetainedReferencesForTests,
++            "new-generation disposal must return its four bytes exactly once and clear roots");
++        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
++    }
++
++    [Test]
++    public async Task AlreadyCompletedDispatcherRegistrationMustKeepOwnershipUntilExplicitDetach()
++    {
++        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
++        var manager = new StreamManager();
++        var dispatcher = PooledAsyncStreamDispatcher<string>.Rent(default, TextCodec.Instance);
++        dispatcher.Complete(new OperationCanceledException("terminal won registration"));
++        manager.Register(9613, dispatcher);
++        Require(manager.ActiveStreamCount == 1, "late registration retains its explicitly owned route");
++        manager.Unregister(9613);
++        await dispatcher.DisposeAsync();
++        Require(!dispatcher.HasRetainedReferencesForTests &&
++                PooledAsyncStreamDispatcher<string>.RetainedCountForTests == 1,
++            "registration retention must end only after closed-route cleanup permits pool return");
++        PooledAsyncStreamDispatcher<string>.ClearPoolForTests();
++    }
++
++    private sealed class TextCodec : IRpcCodec<string>
++    {
++        internal static readonly TextCodec Instance = new();
++        public string Deserialize(in ReadOnlySequence<byte> payload) => "item";
++        public void Serialize(in string value, IBufferWriter<byte> writer)
++        {
++            writer.GetSpan(4)[..4].Clear();
++            writer.Advance(4);
++        }
++    }
++
++    private static void Require(bool condition, string message)
++    {
++        if (!condition) throw new InvalidOperationException(message);
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerPackedFlagsTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerPackedFlagsTests.cs
+index 5c4f0ba7..2396dbb4 100644
+--- a/test/SharpLink.UnitTests/Runtime/StreamManagerPackedFlagsTests.cs
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerPackedFlagsTests.cs
+@@ -110,6 +110,26 @@ public sealed class StreamManagerPackedFlagsTests
+         Require(entry.Dispatcher.Drained == 1, "boundary fixture must detach once");
+     }
+ 
++    [Test]
++    public async Task RetainedPeerTerminalMustNotPermanentlySignalAnOpenDispatchCounter()
++    {
++        var entry = new EntryProbe();
++        Require(entry.Acquire(), "initial control acquisition must succeed");
++        var firstWait = entry.State.WaitForDispatchesDrainedAsync();
++        entry.MarkPeerTerminal();
++        entry.Release();
++        Require(entry.Acquire(), "retained peer-ended route must still allow attachment acquisition");
++        entry.State.Close();
++        var finalWait = entry.State.WaitForDispatchesDrainedAsync();
++        Require(!firstWait.IsCompleted && !finalWait.IsCompleted,
++            "a transient zero before Close must not bypass a later attachment acquisition");
++        entry.Release();
++        await firstWait;
++        await finalWait;
++        entry.Detach();
++        Require(entry.Dispatcher.Drained == 1, "final monotonic drain must notify exactly once");
++    }
++
+     [Test]
+     [Arguments((ushort)0)]
+     [Arguments((ushort)7)]
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerPeerPublicationBarrierTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerPeerPublicationBarrierTests.cs
+new file mode 100644
+index 00000000..fb09db6e
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerPeerPublicationBarrierTests.cs
+@@ -0,0 +1,56 @@
++namespace SharpLink.UnitTests.Runtime;
++
++public sealed class StreamManagerPeerPublicationBarrierTests
++{
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task AsyncRetirementMustJoinAnAlreadyRunningPeerPublication(bool wholeRequest)
++    {
++        var timeout = TimeSpan.FromSeconds(10);
++        var flow = new StreamFlowController(4, 4, 1024, 1);
++        var manager = new StreamManager(new RuntimeConcurrencyOptions(), null, null, null, 2, null,
++            flow.ResolveReceiveCreditLease, resolvedStreamCompleted: lease => flow.FlushConsumed(in lease));
++        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
++        manager.ReservePreAdmissionStreams(9640, 1, buffers, _ => true, _ => { }, static () => { },
++            retainUntilLocalCompletion: true);
++        using var publishing = new ManualResetEventSlim();
++        using var release = new ManualResetEventSlim();
++        var peer = Task.Run(() =>
++        {
++            StreamManagerTestHooks.BeforeReceiveTerminalPublish = (_, _) =>
++            {
++                publishing.Set();
++                if (!release.Wait(timeout)) throw new TimeoutException("Missing terminal release.");
++            };
++            try { manager.CompletePeerStream(9640, 1, exception: null); }
++            finally { StreamManagerTestHooks.BeforeReceiveTerminalPublish = null; }
++        });
++        ValueTask retiring = default;
++        var keyRejected = false;
++        try
++        {
++            if (!publishing.Wait(timeout)) throw new TimeoutException("Missing peer publication.");
++            retiring = wholeRequest
++                ? manager.CompleteRequestStreamsAfterDispatchesAsync(9640, exception: null)
++                : manager.CompleteStreamAfterDispatchesAsync(9640, 1, exception: null);
++            if (retiring.IsCompleted) throw new InvalidOperationException("Async close overtook peer publication.");
++            try { manager.Register(9640, 1, new SinkDispatcher()); }
++            catch (InvalidOperationException) { keyRejected = true; }
++            if (!keyRejected) throw new InvalidOperationException("Key became reusable before old publication.");
++        }
++        finally { release.Set(); }
++        await peer.WaitAsync(timeout);
++        await retiring.AsTask().WaitAsync(timeout);
++        manager.Register(9640, 1, new SinkDispatcher());
++        if (manager.ActiveStreamCount != 1) throw new InvalidOperationException("Replacement accounting failed.");
++        manager.Unregister(9640, 1);
++    }
++
++    private sealed class SinkDispatcher : IStreamDispatcher
++    {
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => ValueTask.CompletedTask;
++        public void Complete(bool isError, string? errorMessage) { }
++        public void Complete(Exception? exception) { }
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerRegistrationTransactionTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerRegistrationTransactionTests.cs
+new file mode 100644
+index 00000000..a6600fdd
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerRegistrationTransactionTests.cs
+@@ -0,0 +1,117 @@
++namespace SharpLink.UnitTests.Runtime;
++
++public partial class StreamManagerTests
++{
++    [Test]
++    public async Task RegistrationMustNotPublishIntoAnUnlinkedRequestContainer()
++    {
++        const long requestId = 9601;
++        var manager = new StreamManager();
++        manager.Register(requestId, 1, new RecordingDispatcher());
++        using var configured = new ManualResetEventSlim();
++        using var release = new ManualResetEventSlim();
++        var dispatcher = new RegistrationBarrierDispatcher(() =>
++        {
++            configured.Set();
++            if (!release.Wait(RaceCoordinationTimeout))
++                throw new TimeoutException("Registration control was not released.");
++        });
++        var registration = Task.Run(() => manager.Register(requestId, 2, dispatcher));
++        try
++        {
++            Ensure(configured.Wait(RaceCoordinationTimeout), "registration must reach configuration");
++            manager.Unregister(requestId, 1);
++        }
++        finally
++        {
++            release.Set();
++        }
++        await registration.WaitAsync(RaceCoordinationTimeout);
++        await manager.DispatchChunkAsync(requestId, 2, new ReadOnlySequence<byte>(new byte[] { 1 }));
++        Ensure(dispatcher.DispatchCount == 1,
++            "successful registration must stay reachable after the previous last route retires");
++        manager.CompleteAll(exception: null);
++        Ensure(manager.ActiveStreamCount == 0 && dispatcher.CompleteCount == 1,
++            "the successfully registered route must remain reachable by connection cleanup");
++    }
++
++    [Test]
++    [Arguments((ushort)0)]
++    [Arguments((ushort)7)]
++    public async Task PeerTerminalMustNotRetireAReplacementEntry(ushort streamId)
++    {
++        const long requestId = 9602;
++        var manager = new StreamManager();
++        var original = new RecordingDispatcher();
++        var replacement = new RecordingDispatcher();
++        manager.Register(requestId, streamId, original);
++        // Keep the same request container mapped while the target route is replaced.
++        manager.Register(requestId, 99, new RecordingDispatcher());
++        StreamManagerTestHooks.AfterPeerTerminalMarked = (markedRequest, markedStream) =>
++        {
++            Ensure(markedRequest == requestId && markedStream == streamId,
++                "the barrier must identify the captured route");
++            manager.Unregister(requestId, streamId);
++            manager.Register(requestId, streamId, replacement);
++        };
++        try
++        {
++            manager.CompletePeerStream(requestId, streamId, exception: null);
++        }
++        finally
++        {
++            StreamManagerTestHooks.AfterPeerTerminalMarked = null;
++        }
++        await manager.DispatchChunkAsync(requestId, streamId,
++            new ReadOnlySequence<byte>(new byte[] { 1 }));
++        Ensure(replacement.DispatchCount == 1 && replacement.CompleteCount == 0,
++            "a terminal captured for the old entry must not complete or remove its replacement");
++        manager.CompleteAll(exception: null);
++    }
++
++    [Test]
++    public async Task LocalAbandonmentMustNotUnregisterAReplacementEntry()
++    {
++        const long requestId = 9670;
++        var manager = new StreamManager();
++        manager.ReservePreAdmissionStreams(requestId, 1,
++            new SharpLinkBufferWriterPool(new BufferWriterPoolOptions()),
++            static _ => true, static _ => { }, static () => { }, retainUntilLocalCompletion: true);
++        manager.Register(requestId, 99, new RecordingDispatcher());
++        manager.CompletePeerStream(requestId, 1, exception: null);
++        var replacement = new RecordingDispatcher();
++        StreamManagerTestHooks.AfterInboundRouteAbandoned = (_, _) =>
++        {
++            manager.Unregister(requestId, 1);
++            manager.Register(requestId, 1, replacement);
++        };
++        try { manager.AbandonExistingRequestStreams(requestId, 1); }
++        finally { StreamManagerTestHooks.AfterInboundRouteAbandoned = null; }
++        await manager.DispatchChunkAsync(requestId, 1, new ReadOnlySequence<byte>(new byte[] { 1 }));
++        Ensure(replacement.DispatchCount == 1 && replacement.CompleteCount == 0,
++            "local abandonment must target only its captured route generation");
++        manager.CompleteAll(exception: null);
++    }
++
++    private sealed class RegistrationBarrierDispatcher(Action beforeConfiguration)
++        : IStreamConsumptionAwareDispatcher
++    {
++        public int DispatchCount { get; private set; }
++        public int CompleteCount { get; private set; }
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
++        {
++            DispatchCount++;
++            return ValueTask.CompletedTask;
++        }
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount)
++            => DispatchAsync(payload);
++        public void Complete(bool isError, string? errorMessage) => Complete(exception: null);
++        public void Complete(Exception? exception) => CompleteCount++;
++        public void SetBytesConsumedCallback(Action<long, ushort, int>? callback,
++            long requestId, ushort streamId)
++        {
++            if (requestId != 0)
++                beforeConfiguration();
++        }
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerRetainedPeerTerminalTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerRetainedPeerTerminalTests.cs
+new file mode 100644
+index 00000000..66b6dfab
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerRetainedPeerTerminalTests.cs
+@@ -0,0 +1,51 @@
++namespace SharpLink.UnitTests.Runtime;
++
++public sealed class StreamManagerRetainedPeerTerminalTests
++{
++    [Test]
++    public async Task RetainedPeerTerminalMustWaitForAlreadyAcquiredDataBeforeReceiveFlush()
++    {
++        var timeout = TimeSpan.FromSeconds(10);
++        var controller = new StreamFlowController(4, 4, 1024, 1);
++        using var beforeDebit = new ManualResetEventSlim();
++        using var releaseDebit = new ManualResetEventSlim();
++        var terminalCalls = 0;
++        var returned = 0;
++        void Accept(in StreamFlowController.ResolvedReceiveCreditLease lease, int count)
++        {
++            beforeDebit.Set();
++            if (!releaseDebit.Wait(timeout)) throw new TimeoutException("Missing debit release.");
++            controller.AcceptReceived(in lease, count);
++        }
++        void Consume(in StreamFlowController.ResolvedReceiveCreditLease lease, int count)
++            => Interlocked.Add(ref returned, controller.RecordConsumed(in lease, count));
++        void Terminal(StreamFlowController.ResolvedReceiveCreditLease lease)
++        {
++            Interlocked.Increment(ref terminalCalls);
++            Interlocked.Add(ref returned, controller.FlushConsumed(in lease));
++        }
++        var manager = new StreamManager(new RuntimeConcurrencyOptions(), null, null, null, 1, null,
++            controller.ResolveReceiveCreditLease, Accept, Consume, Terminal);
++        var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
++        manager.ReservePreAdmissionStreams(9620, 1, buffers, _ => true, _ => { },
++            () => throw new InvalidOperationException("Unexpected capacity exhaustion."),
++            retainUntilLocalCompletion: true);
++        var dispatch = Task.Run(async () => await manager.DispatchChunkAsync(9620, 1,
++            new ReadOnlySequence<byte>(new byte[] { 1 })));
++        var prematurelyPublished = false;
++        try
++        {
++            if (!beforeDebit.Wait(timeout)) throw new TimeoutException("Missing acquired DATA.");
++            manager.CompletePeerStream(9620, 1, exception: null);
++            prematurelyPublished = Volatile.Read(ref terminalCalls) != 0;
++        }
++        finally { releaseDebit.Set(); }
++        await dispatch.WaitAsync(timeout);
++        if (prematurelyPublished || terminalCalls != 1 || returned != 1)
++            throw new InvalidOperationException(
++                "Retained peer terminal must wait for acquired DATA, then return its exact credit once.");
++        manager.AbandonExistingRequestStreams(9620, 1);
++        if (manager.ActiveStreamCount != 0)
++            throw new InvalidOperationException("Local completion must retire the terminal retained route.");
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerRetirementFailureTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerRetirementFailureTests.cs
+new file mode 100644
+index 00000000..88452e26
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerRetirementFailureTests.cs
+@@ -0,0 +1,215 @@
++namespace SharpLink.UnitTests.Runtime;
++
++public sealed class StreamManagerRetirementFailureTests
++{
++    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
++
++    [Test]
++    public async Task RequestRetirementMustObserveIdleFailureWhileJoiningPriorRetirement()
++    {
++        var expected = new InvalidOperationException("idle dispatcher drain failed");
++        var manager = new StreamManager();
++        var blocked = new DrainDispatcher(blockDispatch: true);
++        var idle = new DrainDispatcher(onDrained: () => throw expected);
++        manager.Register(9660, 1, blocked);
++        manager.Register(9660, 2, idle);
++        var dispatch = manager.DispatchChunkAsync(9660, 1, new ReadOnlySequence<byte>(new byte[] { 1 }));
++        manager.Unregister(9660, 1);
++        var retiring = manager.CompleteRequestStreamsAfterDispatchesAsync(9660, exception: null);
++        Require(!retiring.IsCompleted, "request retirement must join the prior stream retirement");
++        blocked.Release();
++        await dispatch.AsTask().WaitAsync(Timeout);
++        Exception? observed = null;
++        try { await retiring.AsTask().WaitAsync(Timeout); }
++        catch (Exception exception) { observed = exception; }
++        Require(ReferenceEquals(observed, expected), "the newly retired idle stream's error must not be lost");
++        Require(manager.ActiveStreamCount == 0 && blocked.DrainCount == 1 && idle.DrainCount == 1,
++            "both retirement owners must finish exactly once");
++    }
++
++    [Test]
++    public async Task RetirementCompletionMustWaitForDrainNotificationOutcome()
++    {
++        var expected = new InvalidOperationException("paused drain notification failed");
++        using var entered = new ManualResetEventSlim();
++        using var release = new ManualResetEventSlim();
++        var dispatcher = new DrainDispatcher(onDrained: () =>
++        {
++            entered.Set();
++            if (!release.Wait(Timeout)) throw new TimeoutException("Missing notification release.");
++            throw expected;
++        });
++        var manager = new StreamManager();
++        manager.Register(9661, dispatcher);
++        var retirement = Task.Run(async () => await manager.CompleteStreamAfterDispatchesAsync(9661, 0, null));
++        ValueTask joined = default;
++        try
++        {
++            Require(entered.Wait(Timeout), "notification must be executing");
++            // Duplicate finalization observations are harmless; started notification is not
++            // a completed outcome even when every other condition has become terminal.
++            ((StreamManager.DispatcherEntry)dispatcher.State).MarkReceiveRetired();
++            joined = dispatcher.State.WaitForReceiveRetirementAsync(CancellationToken.None);
++            Require(!joined.IsCompleted, "retirement must not publish success while notification can still fail");
++        }
++        finally { release.Set(); }
++        foreach (var wait in new[] { retirement, joined.AsTask() })
++        {
++            Exception? observed = null;
++            try { await wait.WaitAsync(Timeout); }
++            catch (Exception exception) { observed = exception; }
++            Require(ReferenceEquals(observed, expected), "all retirement waiters must observe the final error");
++        }
++        Require(dispatcher.DrainCount == 1, "notification must keep exactly one owner");
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task ConcurrentRetirementJoinerMustObserveDirectCallbackCleanupFailure(bool failureDuringComplete)
++    {
++        var expected = new InvalidOperationException("direct callback cleanup failed");
++        using var entered = new ManualResetEventSlim();
++        using var release = new ManualResetEventSlim();
++        var manager = new StreamManager();
++        var dispatcher = new ClearingFailureDispatcher(() =>
++        {
++            entered.Set();
++            if (!release.Wait(Timeout)) throw new TimeoutException("Missing cleanup release.");
++            throw expected;
++        }, failureDuringComplete);
++        manager.Register(9662, dispatcher);
++        var first = Task.Run(async () => await manager.CompleteStreamAfterDispatchesAsync(9662, 0, null));
++        ValueTask second = default;
++        try
++        {
++            Require(entered.Wait(Timeout), "first retirement must be inside direct callback cleanup");
++            second = manager.CompleteStreamAfterDispatchesAsync(9662, 0, null);
++            Require(!second.IsCompleted, "second retirement must join the captured in-progress owner");
++        }
++        finally { release.Set(); }
++        foreach (var wait in new[] { first, second.AsTask() })
++        {
++            Exception? observed = null;
++            try { await wait.WaitAsync(Timeout); }
++            catch (Exception exception) { observed = exception; }
++            Require(ReferenceEquals(observed, expected), "owner and joiner must preserve the same cleanup failure");
++        }
++    }
++
++    [Test]
++    public async Task DeferredRequestRetirementMustReportEachDistinctFailureOnce()
++    {
++        var firstFailure = new InvalidOperationException("first cleanup failed");
++        var secondFailure = new InvalidOperationException("second cleanup failed");
++        var first = new ClearingFailureDispatcher(() => throw firstFailure, blockDispatch: true);
++        var second = new ClearingFailureDispatcher(() => throw secondFailure);
++        var manager = new StreamManager();
++        manager.Register(9663, 1, first);
++        manager.Register(9663, 2, second);
++        var dispatch = manager.DispatchChunkAsync(9663, 1, new ReadOnlySequence<byte>(new byte[] { 1 }));
++        var retirement = manager.CompleteRequestStreamsAfterDispatchesAsync(9663, exception: null);
++        first.Release();
++        await dispatch;
++        Exception? observed = null;
++        try { await retirement.AsTask().WaitAsync(Timeout); }
++        catch (Exception exception) { observed = exception; }
++        Require(observed is AggregateException, "two distinct cleanup failures must be aggregated");
++        var leaves = ((AggregateException)observed!).Flatten().InnerExceptions;
++        Require(leaves.Count == 2 && leaves.Contains(firstFailure) && leaves.Contains(secondFailure),
++            "group completion must not duplicate failures into the last entry's result");
++    }
++
++    [Test]
++    public void ClosedRetirementOwnerMustExcludeALatePeerPublicationRequest()
++    {
++        var publications = 0;
++        var manager = new StreamManager(new RuntimeConcurrencyOptions(), null, null,
++            (_, _) => publications++);
++        var dispatcher = new DrainDispatcher();
++        manager.Register(9664, dispatcher);
++        dispatcher.State.Close();
++        ((StreamManager.DispatcherEntry)dispatcher.State).RequestPeerReceiveTerminal();
++        Require(publications == 0, "a peer request after Close must defer to the actual retirement owner");
++        manager.Unregister(9664);
++        Require(publications == 1, "the actual retirement owner must publish exactly once");
++        manager.Register(9664, new DrainDispatcher());
++        manager.Unregister(9664);
++        Require(publications == 2, "the retired key must admit a distinct replacement generation");
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task RequestRetirementMustRollBackAnIdlePinBeforeJoiningBlockedData(bool asynchronous)
++    {
++        var publications = 0;
++        var manager = new StreamManager(new RuntimeConcurrencyOptions(), null, null,
++            (_, _) => Interlocked.Increment(ref publications));
++        var idle = new DrainDispatcher();
++        var blocked = new DrainDispatcher(blockDispatch: true);
++        // BeginDrain always visits the inline default before named streams. The first
++        // quiescent runner claim must therefore roll back when the second claim is busy.
++        manager.Register(9665, 0, idle);
++        manager.Register(9665, 1, blocked);
++        var dispatch = manager.DispatchChunkAsync(9665, 1, new ReadOnlySequence<byte>(new byte[] { 1 }));
++        ValueTask retirement;
++        if (asynchronous)
++            retirement = manager.CompleteRequestStreamsAfterDispatchesAsync(9665, exception: null);
++        else
++        {
++            manager.CompleteRequestStreams(9665, exception: null);
++            retirement = new ValueTask(Task.WhenAll(
++                idle.State.WaitForReceiveRetirementAsync(CancellationToken.None).AsTask(),
++                blocked.State.WaitForReceiveRetirementAsync(CancellationToken.None).AsTask()));
++        }
++        Require(!retirement.IsCompleted && publications == 0,
++            "partial claim fallback must retain the whole-request publication barrier");
++        blocked.Release();
++        await dispatch.AsTask().WaitAsync(Timeout);
++        await retirement.AsTask().WaitAsync(Timeout);
++        Require(publications == 2 && idle.DrainCount == 1 && blocked.DrainCount == 1 &&
++                !idle.State.HasActiveDispatches && !blocked.State.HasActiveDispatches,
++            "every rolled-back or deferred pin must drain once without stranding retirement");
++    }
++
++    private sealed class ClearingFailureDispatcher(Action onFailure, bool failureDuringComplete = false,
++        bool blockDispatch = false) : IStreamConsumptionAwareDispatcher
++    {
++        private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
++            => blockDispatch ? new(_completion.Task) : ValueTask.CompletedTask;
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int encodedByteCount) => DispatchAsync(payload);
++        public void Complete(bool isError, string? errorMessage) => Complete(exception: null);
++        public void Complete(Exception? exception)
++        {
++            if (failureDuringComplete) onFailure();
++        }
++        internal void Release() => _completion.TrySetResult();
++        public void SetBytesConsumedCallback(Action<long, ushort, int>? callback, long requestId, ushort streamId)
++        {
++            if (requestId == 0 && !failureDuringComplete) onFailure();
++        }
++    }
++
++    private sealed class DrainDispatcher(bool blockDispatch = false, Action? onDrained = null)
++        : IStreamDispatcher, IStreamDispatchLease
++    {
++        private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
++        internal IStreamDispatchState State { get; private set; } = null!;
++        internal int DrainCount;
++        public void BindDispatchState(IStreamDispatchState state) => State = state;
++        public void OnDispatchesDrained() { DrainCount++; onDrained?.Invoke(); }
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload)
++            => blockDispatch ? new(_completion.Task) : ValueTask.CompletedTask;
++        public ValueTask DispatchAcquiredAsync(ReadOnlySequence<byte> payload, int encodedByteCount) => DispatchAsync(payload);
++        internal void Release() => _completion.TrySetResult();
++        public void Complete(bool isError, string? errorMessage) { }
++        public void Complete(Exception? exception) { }
++    }
++
++    private static void Require(bool condition, string message)
++    {
++        if (!condition) throw new InvalidOperationException(message);
++    }
++}
