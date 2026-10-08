@@ -1,0 +1,38 @@
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs
+index b93dd1b2..5c824004 100644
+--- a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs
+@@ -123,13 +123,19 @@ public class StreamFlowControllerDirectionalGateTests
+             try { controller.Complete(first); }
+             catch (Exception error) { threadFailure = error; }
+             finally { firstFinished.Set(); }
+-        }) { IsBackground = true };
++        })
++        {
++            IsBackground = true
++        };
+         var secondThread = new Thread(() =>
+         {
+             try { controller.Complete(second); }
+             catch (Exception error) { threadFailure = error; }
+             finally { secondFinished.Set(); }
+-        }) { IsBackground = true };
++        })
++        {
++            IsBackground = true
++        };
+         try
+         {
+             using (Gate(controller, send: false).EnterScope())
+@@ -189,7 +195,10 @@ public class StreamFlowControllerDirectionalGateTests
+             try { operation(); }
+             catch (Exception error) { failure = error; }
+             finally { finished.Set(); }
+-        }) { IsBackground = true };
++        })
++        {
++            IsBackground = true
++        };
+         bool progressed;
+         using (heldGate.EnterScope())
+         {

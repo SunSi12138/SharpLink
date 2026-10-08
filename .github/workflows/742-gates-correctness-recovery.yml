@@ -1,0 +1,98 @@
+name: 742 Directional Gate Correctness Recovery
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-gates-correctness-recovery.yml'
+      - 'eng/preflight-742-gates-recovery/**'
+permissions:
+  contents: read
+concurrency:
+  group: 742-directional-gates-correctness-recovery
+  cancel-in-progress: false
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Reconstruct exact archived N and formatter-only H2
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-gates/self-tests.py
+          python3 eng/preflight-742-gates-recovery/prepare.py "$RUNNER_TEMP/gates"
+          echo "OLD_N_ROOT=$RUNNER_TEMP/gates/n-reconstruction/candidate" >> "$GITHUB_ENV"
+          echo "CANDIDATE_ROOT=$RUNNER_TEMP/gates/candidate" >> "$GITHUB_ENV"
+          echo "OUT=$PWD/artifacts/gates-correctness-recovery" >> "$GITHUB_ENV"
+          mkdir -p artifacts/gates-correctness-recovery
+          cp "$RUNNER_TEMP/gates/identities.json" artifacts/gates-correctness-recovery/
+          dotnet --info > artifacts/gates-correctness-recovery/dotnet.txt
+          lscpu > artifacts/gates-correctness-recovery/cpu.txt
+      - name: Portable old-N gate-progress negative controls and exact restoration
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-gates/gate-controls.py "$OLD_N_ROOT" "$OUT"
+      - name: Honest fixed constructor cost with isolated paired N and H probe builds
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-gates-recovery/constructor.py "$OLD_N_ROOT" "$CANDIDATE_ROOT" "$OUT/constructor"
+      - name: Build exact H2 and run all default engineering gates
+        run: |
+          set -euo pipefail
+          cd "$CANDIDATE_ROOT"
+          git diff --exit-code -- src test
+          test "$(git write-tree)" = dd15220add5703f5ecebe7367644d13775b60c0f
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true > "$OUT/final-build.log" 2>&1 || { cat "$OUT/final-build.log"; exit 1; }
+          mapfile -t changed < <(git diff --cached --name-only -- src test)
+          dotnet format whitespace test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore --verify-no-changes --include "${changed[@]}" 2>&1 | tee "$OUT/format.log"
+          python3 eng/check-project-reference-boundaries.py 2>&1 | tee "$OUT/references.log"
+          bash eng/check-maintainability.sh 2>&1 | tee "$OUT/maintainability.log"
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee "$OUT/default-unit.log"
+      - name: Preserve original single-consumption and suspended consumer negative controls
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-redesign/ownership-controls.py "$CANDIDATE_ROOT" "$OUT"
+      - name: Restore exact H2 and run original deterministic allocation gate
+        run: |
+          set -euo pipefail
+          cd "$CANDIDATE_ROOT"
+          git diff --exit-code -- src test
+          test "$(git write-tree)" = dd15220add5703f5ecebe7367644d13775b60c0f
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true > "$OUT/restored-build.log" 2>&1 || { cat "$OUT/restored-build.log"; exit 1; }
+          for suite in ClientStreamValueTaskConsumptionTests PooledDispatcherSlowWaitTests StreamFlowControllerDirectionalGateTests; do
+            dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter "/*/*/$suite/*" 2>&1 | tee "$OUT/$suite-final.log"
+          done
+          dotnet build test/SharpLink.Benchmarks -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > "$OUT/benchmark-build.log" 2>&1 || { cat "$OUT/benchmark-build.log"; exit 1; }
+          SHARPLINK_ALLOCATION_OUTPUT="$OUT/allocation-gate.json" bash eng/run-allocation-gate.sh 2>&1 | tee "$OUT/allocation-gate.log"
+      - name: Original 171 writer checks and full experimental suite
+        run: |
+          set -euo pipefail
+          cd "$CANDIDATE_ROOT"
+          python3 eng/test-ready-writer.py 2>&1 | tee "$OUT/writer-source-checks.log"
+          python3 eng/test-ready-writer-budget.py 2>&1 | tee "$OUT/writer-budget-checks.log"
+          python3 eng/test-ready-writer-collection.py 2>&1 | tee "$OUT/writer-collection-checks.log"
+          python3 eng/test-ready-writer-native.py 2>&1 | tee "$OUT/writer-native-source-checks.log"
+          python3 eng/prepare-ready-writer.py --apply
+          dotnet build test/SharpLink.Benchmarks -c Release -p:ReadyWriterExperiment=true -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true > "$OUT/writer-build.log" 2>&1 || { cat "$OUT/writer-build.log"; exit 1; }
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --ready-writer-self-test 2>&1 | tee "$OUT/writer-checks.log"
+          grep -Fx '171/171 ready writer transport checks passed.' "$OUT/writer-checks.log"
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true > "$OUT/experimental-build.log" 2>&1 || { cat "$OUT/experimental-build.log"; exit 1; }
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee "$OUT/experimental-unit.log"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-gates-correctness-recovery-${{ github.sha }}
+          path: |
+            artifacts/gates-correctness-recovery
+            ${{ runner.temp }}/gates/candidate/artifacts/first-receive-integration
+          if-no-files-found: error
+          retention-days: 30
+
