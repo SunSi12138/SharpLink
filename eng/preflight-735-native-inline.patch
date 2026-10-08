@@ -1,0 +1,20 @@
+diff --git a/src/SharpLink.Runtime/StreamFlowController.cs b/src/SharpLink.Runtime/StreamFlowController.cs
+index 4354ef17..8fea1b4c 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.cs
+@@ -1095,6 +1095,7 @@ internal sealed partial class StreamFlowController
+             state.Lease == lease.Generation;
+     }
+ 
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+     private ReceiveState ValidateReceiveLease(in ResolvedReceiveCreditLease lease)
+     {
+         if (!TryValidateReceiveLease(lease, out var state))
+@@ -1102,6 +1103,7 @@ internal sealed partial class StreamFlowController
+         return state;
+     }
+ 
++    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+     private bool TryValidateReceiveLease(
+         in ResolvedReceiveCreditLease lease,
+         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ReceiveState? state)
