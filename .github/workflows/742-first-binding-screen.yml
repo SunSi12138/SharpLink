@@ -1,0 +1,101 @@
+# Requires the pinned independent compiled-path review before builds or timing.
+name: 742 First Binding Bounded D G2 A JIT Screen
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-first-binding-screen.yml'
+      - 'eng/preflight-742-first-binding-screen/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 742-first-binding-screen
+  cancel-in-progress: false
+jobs:
+  original-jit-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require independently reviewed compiled paths before builds or timing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import sys
+          sys.path.insert(0, str(pathlib.Path('eng/preflight-742-first-binding-screen').resolve()))
+          from prepare import require_review
+          require_review()
+          PY
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.112
+      - name: Reconstruct exact D G2 A production roots and preserve original validators
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-quiescent/self-tests.py
+          python3 eng/preflight-742-first-binding-screen/self-tests.py
+          python3 eng/preflight-742-first-binding-screen/prepare.py "$RUNNER_TEMP/first-binding-screen" artifacts/first-binding-screen/source --require-codegen-review
+          mkdir -p artifacts/first-binding-screen/env
+          cp eng/preflight-742-first-binding-screen/codegen-review.json artifacts/first-binding-screen/env/
+          python3 - <<'PY'
+          import json, pathlib, shutil
+          kit = pathlib.Path('eng/preflight-742-first-binding-screen')
+          for name in json.loads((kit / 'codegen-review.json').read_text())['proof_files']:
+              shutil.copyfile(kit / name, pathlib.Path('artifacts/first-binding-screen/env') / name)
+          PY
+          dotnet --info > artifacts/first-binding-screen/env/dotnet.txt
+          uname -a > artifacts/first-binding-screen/env/uname.txt
+          lscpu > artifacts/first-binding-screen/env/cpu.txt
+          python3 - <<'PY'
+          import os, subprocess
+          assert subprocess.check_output(['dotnet', '--version'], text=True).strip() == '10.0.112'
+          versions = [tuple(map(int, line.split()[1].split('.'))) for line in
+                      subprocess.check_output(['dotnet', '--list-runtimes'], text=True).splitlines()
+                      if line.startswith('Microsoft.NETCore.App 10.')]
+          assert max(versions) == (10, 0, 12), 'Original runtime10.0.12 must be selected'
+          available = sorted(os.sched_getaffinity(0))
+          assert len(available) >= 4, 'The original screen requires four available CPUs.'
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CPU_LIST=' + ','.join(map(str, available[:4])) + '\n')
+          PY
+          for label in g2-reconstruction/dev g2-reconstruction/candidate A; do
+            root="$RUNNER_TEMP/first-binding-screen/$label"
+            safe="${label//\//-}"
+            for project in SharpLink.Benchmarks SharpLink.StreamLoadTest; do
+              dotnet build "$root/test/$project" -c Release -p:PublishAot=false -m:1 /nodeReuse:false -p:UseSharedCompilation=false > "artifacts/first-binding-screen/env/build-$safe-$project.log" 2>&1 || { cat "artifacts/first-binding-screen/env/build-$safe-$project.log"; exit 1; }
+            done
+          done
+      - name: Exactly six complete arm permutations and five original workloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-first-binding-screen/screen.py "$RUNNER_TEMP/first-binding-screen/g2-reconstruction/dev" "$RUNNER_TEMP/first-binding-screen/g2-reconstruction/candidate" "$RUNNER_TEMP/first-binding-screen/A" artifacts/first-binding-screen/raw --affinity "$CPU_LIST"
+      - name: Verify retained screen artifact stays below24MiB
+        id: artifact
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          root = pathlib.Path('artifacts/first-binding-screen')
+          files = [path for path in root.rglob('*') if path.is_file()]
+          assert files and sum(path.stat().st_size for path in files) < 24 * 1024 * 1024
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('ready=true\n')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.artifact.outputs.ready == 'true'
+        with:
+          name: 742-first-binding-DG2A-screen-${{ github.sha }}
+          path: artifacts/first-binding-screen
+          if-no-files-found: error
+          retention-days: 30

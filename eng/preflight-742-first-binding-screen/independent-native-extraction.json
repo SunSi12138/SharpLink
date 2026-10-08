@@ -1,0 +1,146 @@
+[
+  {
+    "arm": "G2",
+    "role": "client-start",
+    "address": "000000000001f230",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncMethodBuilderCore__Start<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+    "file": "native-G2-client-start.txt",
+    "symbol_size": 5,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "G2",
+    "role": "server-start",
+    "address": "000000000001f2d8",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncMethodBuilderCore__Start<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+    "file": "native-G2-server-start.txt",
+    "symbol_size": 5,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "G2",
+    "role": "server-box",
+    "address": "000000000001f2e0",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+    "file": "native-G2-server-box.txt",
+    "symbol_size": 5,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "G2",
+    "role": "client-movenext",
+    "address": "0000000000554f40",
+    "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>__MoveNext",
+    "file": "native-G2-client-movenext.txt",
+    "symbol_size": 4734,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "G2",
+    "role": "server-movenext",
+    "address": "000000000055f0a0",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>__MoveNext",
+    "file": "native-G2-server-movenext.txt",
+    "symbol_size": 7362,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "G2",
+    "role": "client-box",
+    "address": "0000000000683ce0",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+    "file": "native-G2-client-box.txt",
+    "symbol_size": 295,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "G2",
+    "role": "client-wrapper",
+    "address": "0000000000689dd0",
+    "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync<System___Canon>",
+    "file": "native-G2-client-wrapper.txt",
+    "symbol_size": 178,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "G2",
+    "role": "server-wrapper",
+    "address": "000000000068be90",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync<System___Canon>",
+    "file": "native-G2-server-wrapper.txt",
+    "symbol_size": 235,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "A",
+    "role": "client-start",
+    "address": "000000000001f228",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncMethodBuilderCore__Start<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+    "file": "native-A-client-start.txt",
+    "symbol_size": 5,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "A",
+    "role": "server-start",
+    "address": "000000000001f2d0",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncMethodBuilderCore__Start<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+    "file": "native-A-server-start.txt",
+    "symbol_size": 5,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "A",
+    "role": "client-movenext",
+    "address": "0000000000554f20",
+    "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>__MoveNext",
+    "file": "native-A-client-movenext.txt",
+    "symbol_size": 4840,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "A",
+    "role": "server-movenext",
+    "address": "000000000055f0e0",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>__MoveNext",
+    "file": "native-A-server-movenext.txt",
+    "symbol_size": 7131,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "A",
+    "role": "client-box",
+    "address": "0000000000683c40",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+    "file": "native-A-client-box.txt",
+    "symbol_size": 295,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "A",
+    "role": "server-box",
+    "address": "0000000000684ba0",
+    "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+    "file": "native-A-server-box.txt",
+    "symbol_size": 295,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "A",
+    "role": "client-wrapper",
+    "address": "0000000000689e70",
+    "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync<System___Canon>",
+    "file": "native-A-client-wrapper.txt",
+    "symbol_size": 177,
+    "independent_objdump_bytes_match": true
+  },
+  {
+    "arm": "A",
+    "role": "server-wrapper",
+    "address": "000000000068bf30",
+    "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync<System___Canon>",
+    "file": "native-A-server-wrapper.txt",
+    "symbol_size": 210,
+    "independent_objdump_bytes_match": true
+  }
+]

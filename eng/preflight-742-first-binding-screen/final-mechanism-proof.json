@@ -1,0 +1,876 @@
+{
+  "schema": "first-binding-independent-compiled-proof/v1",
+  "status": "final",
+  "verdict": "PASS_MECHANISM_ONLY",
+  "review_completed": true,
+  "run_id": 37846827122,
+  "run_url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122",
+  "helper_commit": "48aecc599cb8ee91219d727b10ccdad572a776d4",
+  "production_trees": {
+    "G2": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+    "A": "4cb4ce7a13b06c3a6f3213e30215b6769ed49f90"
+  },
+  "production_patch": {
+    "path": "run-37846827122-artifacts/safety/source/production.patch",
+    "sha256": "1dc3031cff439568d3f1c2e86b9e9ab02a246e0e4cc726f676dae8d73f410794",
+    "bytes": 3720,
+    "artifact_id": 11580352426,
+    "artifact_member": "source/production.patch"
+  },
+  "integrity_proof": {
+    "path": "run-37846827122-integrity-review.json",
+    "sha256": "8ad5afca1326aaa60d62fad66d74f2daf5d4917da51c304a7981d3da8daea120",
+    "bytes": 9167
+  },
+  "reports": {
+    "independent-compiled-review.md": {
+      "path": "compiled-path-analysis/independent-compiled-review.md",
+      "sha256": "f5235c8f93102da0df5477b6e75869daa53672515b123276c73ce9463ccb7981",
+      "bytes": 13273
+    },
+    "layout-and-code-summary.json": {
+      "path": "compiled-path-analysis/layout-and-code-summary.json",
+      "sha256": "6537b3708f2d8376ad914b39c91a3d44a6a31460e9b52e6f51f42c7b88f80504",
+      "bytes": 2365
+    },
+    "independent-native-extraction.json": {
+      "path": "compiled-path-analysis/independent-native-extraction.json",
+      "sha256": "833ee5fa48cd10c77fc87e7c2c33a350ece1ece457a4d528d4a7aadb51490ce4",
+      "bytes": 5963
+    },
+    "native-method-map.json": {
+      "path": "compiled-path-analysis/native-method-map.json",
+      "sha256": "098cd29159beda26d90b81c4d46cd37fd1488633d7d47f22096cbb2e95435a77",
+      "bytes": 4865
+    }
+  },
+  "scope": {
+    "payload": "System.Byte[]",
+    "jit_instantiation": "System.__Canon",
+    "native_instantiation": "System___Canon",
+    "codec": "BlitArrayCodec<byte>, unsized",
+    "roots": [
+      "ClientConnection.SendClientStreamAsync",
+      "RpcSession.PumpGeneratedOutboundStreamAsync"
+    ],
+    "managed_runtime": "10.0.12",
+    "sdk": "10.0.112",
+    "jit_tier": "Tier1",
+    "jit_profile": "Synthesized PGO",
+    "native_runtime_kind": "NativeAOT linux-x64",
+    "cases": [
+      "tcp-Client100x16",
+      "sharedmemory-Server1x16"
+    ],
+    "server_one_item_does_not_establish_retained_branch_execution": true
+  },
+  "managed_layout": {
+    "inputs": {
+      "G2": {
+        "path": "run-37846827122-artifacts/jit-G2/managed-root-layout.json",
+        "sha256": "4bda0ab103e7668d43a88fe5c5c02e8be4e9775ee4d6a7272b19eb3df708b8a1",
+        "bytes": 8891,
+        "artifact_id": 11579859022,
+        "artifact_member": "managed-root-layout.json"
+      },
+      "A": {
+        "path": "run-37846827122-artifacts/jit-A/managed-root-layout.json",
+        "sha256": "6bfa8f1b2f4dda58f166f08cb431b19c56290712fef14ed56571c9579a5af3e2",
+        "bytes": 8743,
+        "artifact_id": 11579904063,
+        "artifact_member": "managed-root-layout.json"
+      }
+    },
+    "comparison": {
+      "path": "run-37846827122-artifacts/jit-index/managed-layout-comparison.json",
+      "sha256": "695240a3ac44c8617f17d718a3f40bbec1648d8d44da6fa1ab2cdc051fa39d8f",
+      "bytes": 3584,
+      "artifact_id": 11580352431,
+      "artifact_member": "managed-layout-comparison.json"
+    },
+    "exactly_one_field_type_size_changed_per_root": true,
+    "all_other_field_names_types_sizes_match": true,
+    "new_hoisted_send_valuetask_field": false,
+    "retained_lease_bytes": 40,
+    "roots": [
+      {
+        "root": "SendClientStreamAsync",
+        "field": "<>u__2",
+        "old_awaiter_bytes": 56,
+        "new_awaiter_bytes": 16,
+        "new_awaiter": "ConfiguredTaskAwaiter<ResolvedSendCreditLease>",
+        "G2_state_bytes": 256,
+        "A_state_bytes": 216,
+        "delta_bytes": -40
+      },
+      {
+        "root": "PumpGeneratedOutboundStreamAsync",
+        "field": "<>u__3",
+        "old_awaiter_bytes": 56,
+        "new_awaiter_bytes": 16,
+        "new_awaiter": "ConfiguredTaskAwaiter",
+        "G2_state_bytes": 304,
+        "A_state_bytes": 264,
+        "delta_bytes": -40
+      }
+    ]
+  },
+  "compiled_semantics": {
+    "first_result_success_bypasses_AsTask": true,
+    "one_AsTask_consumption_on_other_first_result_states": true,
+    "task_reference_reuse_branch_inspected": true,
+    "fault_cancel_nonsuccess_handling_before_result_access": true,
+    "binding_flag_after_successful_lease_result": true,
+    "generated_deadline_provider_arbitration_preserved": true,
+    "timer_false_sets_deadline_won_cancels_observes_and_throws": true,
+    "value_task_source_and_result_task_fallback_code_still_present": true,
+    "task_backing_claim_scope": "The unchanged real first-send helpers return inline results or ordinary default-builder Task-backed ValueTasks. Generic fallback code is retained; separate safety/task-identity tests supply dynamic evidence."
+  },
+  "jit_reviewed_bodies": [
+    {
+      "arm": "G2",
+      "case": "tcp-Client100x16",
+      "method": "SharpLink.Client.ClientConnection:SendClientStreamAsync[System.__Canon](long,ushort,System.Collections.Generic.IAsyncEnumerable`1[System.__Canon],SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken):System.Threading.Tasks.Task:this",
+      "tier": "Tier1",
+      "pgo_source": "Synthesized PGO",
+      "profile_source": "Synthesized PGO",
+      "osr_entry": null,
+      "code_bytes": 637,
+      "body": {
+        "path": "run-37846827122-artifacts/jit-G2/tcp-Client100x16/methods/block-025.txt",
+        "sha256": "f324aa03711cac02338c81afb5cbf2a1803fd10ef0241da7f8159f57cd231a22",
+        "bytes": 10322,
+        "artifact_id": 11579859022,
+        "artifact_member": "tcp-Client100x16/methods/block-025.txt"
+      },
+      "inventory": {
+        "path": "run-37846827122-artifacts/jit-G2/tcp-Client100x16/methods/inventory.json",
+        "sha256": "01c1344cd1f9a0c9bc53f53622396d683a89ade354d196e917a52657cf0c00ae",
+        "bytes": 231430,
+        "artifact_id": 11579859022,
+        "artifact_member": "tcp-Client100x16/methods/inventory.json"
+      },
+      "raw_stream": {
+        "path": "run-37846827122-artifacts/jit-G2/tcp-Client100x16/jit-all-tiers.txt",
+        "sha256": "c2bdbd5708af66cf0a452b4630ddedd1e977ee56c6236cc0f8455b8a3c7c5186",
+        "bytes": 652259,
+        "artifact_id": 11579859022,
+        "artifact_member": "tcp-Client100x16/jit-all-tiers.txt"
+      }
+    },
+    {
+      "arm": "G2",
+      "case": "tcp-Client100x16",
+      "method": "SharpLink.Client.ClientConnection+<SendClientStreamAsync>d__62`1[System.__Canon]:MoveNext():this",
+      "tier": "Tier1",
+      "pgo_source": "Synthesized PGO",
+      "profile_source": "Synthesized PGO",
+      "osr_entry": null,
+      "code_bytes": 7970,
+      "body": {
+        "path": "run-37846827122-artifacts/jit-G2/tcp-Client100x16/methods/block-026.txt",
+        "sha256": "368bf4927bf2bec4fcd110ff96534bdc971a020030ecdba72f69fd9b2bd79a74",
+        "bytes": 116278,
+        "artifact_id": 11579859022,
+        "artifact_member": "tcp-Client100x16/methods/block-026.txt"
+      },
+      "inventory": {
+        "path": "run-37846827122-artifacts/jit-G2/tcp-Client100x16/methods/inventory.json",
+        "sha256": "01c1344cd1f9a0c9bc53f53622396d683a89ade354d196e917a52657cf0c00ae",
+        "bytes": 231430,
+        "artifact_id": 11579859022,
+        "artifact_member": "tcp-Client100x16/methods/inventory.json"
+      },
+      "raw_stream": {
+        "path": "run-37846827122-artifacts/jit-G2/tcp-Client100x16/jit-all-tiers.txt",
+        "sha256": "c2bdbd5708af66cf0a452b4630ddedd1e977ee56c6236cc0f8455b8a3c7c5186",
+        "bytes": 652259,
+        "artifact_id": 11579859022,
+        "artifact_member": "tcp-Client100x16/jit-all-tiers.txt"
+      }
+    },
+    {
+      "arm": "G2",
+      "case": "sharedmemory-Server1x16",
+      "method": "SharpLink.Runtime.RpcSession:PumpGeneratedOutboundStreamAsync[System.__Canon](long,ushort,System.Collections.Generic.IAsyncEnumerable`1[System.__Canon],SharpLink.Abstractions.IRpcCodec`1[System.__Canon],bool,System.Threading.CancellationToken):System.Threading.Tasks.ValueTask:this",
+      "tier": "Tier1",
+      "pgo_source": "Synthesized PGO",
+      "profile_source": "Synthesized PGO",
+      "osr_entry": null,
+      "code_bytes": 702,
+      "body": {
+        "path": "run-37846827122-artifacts/jit-G2/sharedmemory-Server1x16/methods/block-012.txt",
+        "sha256": "7fb34eb1298a3281d1827fbbbf2d229f1830399d5dab52d31d7d5ce14a2f8fc4",
+        "bytes": 11329,
+        "artifact_id": 11579859022,
+        "artifact_member": "sharedmemory-Server1x16/methods/block-012.txt"
+      },
+      "inventory": {
+        "path": "run-37846827122-artifacts/jit-G2/sharedmemory-Server1x16/methods/inventory.json",
+        "sha256": "bcb5e47474c47dd14c14fc708cc59bb8ab57697efd3740a350ab86b85f98dce5",
+        "bytes": 215770,
+        "artifact_id": 11579859022,
+        "artifact_member": "sharedmemory-Server1x16/methods/inventory.json"
+      },
+      "raw_stream": {
+        "path": "run-37846827122-artifacts/jit-G2/sharedmemory-Server1x16/jit-all-tiers.txt",
+        "sha256": "591f29ff251ac394b5030d50b0b0dc404c73411a39769aae6f78f85e950ff3e8",
+        "bytes": 591080,
+        "artifact_id": 11579859022,
+        "artifact_member": "sharedmemory-Server1x16/jit-all-tiers.txt"
+      }
+    },
+    {
+      "arm": "G2",
+      "case": "sharedmemory-Server1x16",
+      "method": "SharpLink.Runtime.RpcSession+<PumpGeneratedOutboundStreamAsync>d__153`1[System.__Canon]:MoveNext():this",
+      "tier": "Tier1",
+      "pgo_source": "Synthesized PGO",
+      "profile_source": "Synthesized PGO",
+      "osr_entry": null,
+      "code_bytes": 11947,
+      "body": {
+        "path": "run-37846827122-artifacts/jit-G2/sharedmemory-Server1x16/methods/block-013.txt",
+        "sha256": "a9ce7c3f3ec19f00dc3725d014ae4195b4092b6a75aeefd6d5a2d3e7295f71f8",
+        "bytes": 178843,
+        "artifact_id": 11579859022,
+        "artifact_member": "sharedmemory-Server1x16/methods/block-013.txt"
+      },
+      "inventory": {
+        "path": "run-37846827122-artifacts/jit-G2/sharedmemory-Server1x16/methods/inventory.json",
+        "sha256": "bcb5e47474c47dd14c14fc708cc59bb8ab57697efd3740a350ab86b85f98dce5",
+        "bytes": 215770,
+        "artifact_id": 11579859022,
+        "artifact_member": "sharedmemory-Server1x16/methods/inventory.json"
+      },
+      "raw_stream": {
+        "path": "run-37846827122-artifacts/jit-G2/sharedmemory-Server1x16/jit-all-tiers.txt",
+        "sha256": "591f29ff251ac394b5030d50b0b0dc404c73411a39769aae6f78f85e950ff3e8",
+        "bytes": 591080,
+        "artifact_id": 11579859022,
+        "artifact_member": "sharedmemory-Server1x16/jit-all-tiers.txt"
+      }
+    },
+    {
+      "arm": "A",
+      "case": "tcp-Client100x16",
+      "method": "SharpLink.Client.ClientConnection:SendClientStreamAsync[System.__Canon](long,ushort,System.Collections.Generic.IAsyncEnumerable`1[System.__Canon],SharpLink.Abstractions.IRpcCodec`1[System.__Canon],System.Threading.CancellationToken):System.Threading.Tasks.Task:this",
+      "tier": "Tier1",
+      "pgo_source": "Synthesized PGO",
+      "profile_source": "Synthesized PGO",
+      "osr_entry": null,
+      "code_bytes": 625,
+      "body": {
+        "path": "run-37846827122-artifacts/jit-A/tcp-Client100x16/methods/block-025.txt",
+        "sha256": "be71effd09d805309b862ed298e27ca7bf197559e4241d17dd1bd3bdf2d9f7c9",
+        "bytes": 10249,
+        "artifact_id": 11579904063,
+        "artifact_member": "tcp-Client100x16/methods/block-025.txt"
+      },
+      "inventory": {
+        "path": "run-37846827122-artifacts/jit-A/tcp-Client100x16/methods/inventory.json",
+        "sha256": "1a08be5a700dc4cfc70994e7396314a42beb591c828343ae57e3ba7fa2b3a8f1",
+        "bytes": 233427,
+        "artifact_id": 11579904063,
+        "artifact_member": "tcp-Client100x16/methods/inventory.json"
+      },
+      "raw_stream": {
+        "path": "run-37846827122-artifacts/jit-A/tcp-Client100x16/jit-all-tiers.txt",
+        "sha256": "01b55dfd60e335b1d8c9e8f35c50715ffe3abf468c8906af52f33f8505d2f7b6",
+        "bytes": 655899,
+        "artifact_id": 11579904063,
+        "artifact_member": "tcp-Client100x16/jit-all-tiers.txt"
+      }
+    },
+    {
+      "arm": "A",
+      "case": "tcp-Client100x16",
+      "method": "SharpLink.Client.ClientConnection+<SendClientStreamAsync>d__62`1[System.__Canon]:MoveNext():this",
+      "tier": "Tier1",
+      "pgo_source": "Synthesized PGO",
+      "profile_source": "Synthesized PGO",
+      "osr_entry": null,
+      "code_bytes": 8082,
+      "body": {
+        "path": "run-37846827122-artifacts/jit-A/tcp-Client100x16/methods/block-026.txt",
+        "sha256": "c404ec4526c12e26633835d352f59b9d126febd1c72b49877857077b8b179ed2",
+        "bytes": 118216,
+        "artifact_id": 11579904063,
+        "artifact_member": "tcp-Client100x16/methods/block-026.txt"
+      },
+      "inventory": {
+        "path": "run-37846827122-artifacts/jit-A/tcp-Client100x16/methods/inventory.json",
+        "sha256": "1a08be5a700dc4cfc70994e7396314a42beb591c828343ae57e3ba7fa2b3a8f1",
+        "bytes": 233427,
+        "artifact_id": 11579904063,
+        "artifact_member": "tcp-Client100x16/methods/inventory.json"
+      },
+      "raw_stream": {
+        "path": "run-37846827122-artifacts/jit-A/tcp-Client100x16/jit-all-tiers.txt",
+        "sha256": "01b55dfd60e335b1d8c9e8f35c50715ffe3abf468c8906af52f33f8505d2f7b6",
+        "bytes": 655899,
+        "artifact_id": 11579904063,
+        "artifact_member": "tcp-Client100x16/jit-all-tiers.txt"
+      }
+    },
+    {
+      "arm": "A",
+      "case": "sharedmemory-Server1x16",
+      "method": "SharpLink.Runtime.RpcSession:PumpGeneratedOutboundStreamAsync[System.__Canon](long,ushort,System.Collections.Generic.IAsyncEnumerable`1[System.__Canon],SharpLink.Abstractions.IRpcCodec`1[System.__Canon],bool,System.Threading.CancellationToken):System.Threading.Tasks.ValueTask:this",
+      "tier": "Tier1",
+      "pgo_source": "Synthesized PGO",
+      "profile_source": "Synthesized PGO",
+      "osr_entry": null,
+      "code_bytes": 702,
+      "body": {
+        "path": "run-37846827122-artifacts/jit-A/sharedmemory-Server1x16/methods/block-012.txt",
+        "sha256": "4fafd29ef05aaaa2ab15c759f4463b580a31de4fdbdcd76006bb1d499a63b041",
+        "bytes": 11198,
+        "artifact_id": 11579904063,
+        "artifact_member": "sharedmemory-Server1x16/methods/block-012.txt"
+      },
+      "inventory": {
+        "path": "run-37846827122-artifacts/jit-A/sharedmemory-Server1x16/methods/inventory.json",
+        "sha256": "8b7828f6784ce991a0d63d05618e58e09c84bab42f79d8b18be9c188f469da46",
+        "bytes": 216421,
+        "artifact_id": 11579904063,
+        "artifact_member": "sharedmemory-Server1x16/methods/inventory.json"
+      },
+      "raw_stream": {
+        "path": "run-37846827122-artifacts/jit-A/sharedmemory-Server1x16/jit-all-tiers.txt",
+        "sha256": "a701a2ef2a794593451e1a953f7270e0bbd83d961b38776f6cf7c796c22f34f0",
+        "bytes": 595220,
+        "artifact_id": 11579904063,
+        "artifact_member": "sharedmemory-Server1x16/jit-all-tiers.txt"
+      }
+    },
+    {
+      "arm": "A",
+      "case": "sharedmemory-Server1x16",
+      "method": "SharpLink.Runtime.RpcSession+<PumpGeneratedOutboundStreamAsync>d__153`1[System.__Canon]:MoveNext():this",
+      "tier": "Tier1",
+      "pgo_source": "Synthesized PGO",
+      "profile_source": "Synthesized PGO",
+      "osr_entry": null,
+      "code_bytes": 12262,
+      "body": {
+        "path": "run-37846827122-artifacts/jit-A/sharedmemory-Server1x16/methods/block-013.txt",
+        "sha256": "16b6671e771b60378739de572b608420bb8caf67a14fc11a996a5a4dc49051ce",
+        "bytes": 182398,
+        "artifact_id": 11579904063,
+        "artifact_member": "sharedmemory-Server1x16/methods/block-013.txt"
+      },
+      "inventory": {
+        "path": "run-37846827122-artifacts/jit-A/sharedmemory-Server1x16/methods/inventory.json",
+        "sha256": "8b7828f6784ce991a0d63d05618e58e09c84bab42f79d8b18be9c188f469da46",
+        "bytes": 216421,
+        "artifact_id": 11579904063,
+        "artifact_member": "sharedmemory-Server1x16/methods/inventory.json"
+      },
+      "raw_stream": {
+        "path": "run-37846827122-artifacts/jit-A/sharedmemory-Server1x16/jit-all-tiers.txt",
+        "sha256": "a701a2ef2a794593451e1a953f7270e0bbd83d961b38776f6cf7c796c22f34f0",
+        "bytes": 595220,
+        "artifact_id": 11579904063,
+        "artifact_member": "sharedmemory-Server1x16/jit-all-tiers.txt"
+      }
+    }
+  ],
+  "native_elfs": {
+    "G2": {
+      "path": "run-37846827122-native-elf/G2/SharpLink.Benchmarks",
+      "sha256": "8e18ac39a35131476976372e0d73c90f9778506c135b7c25281dc098af881d59",
+      "bytes": 36328264,
+      "artifact_id": 11580013880,
+      "artifact_member": "native-rpc-elf.tar.gz",
+      "archive_member": "./SharpLink.Benchmarks"
+    },
+    "A": {
+      "path": "run-37846827122-native-elf/A/SharpLink.Benchmarks",
+      "sha256": "dde3dbd0f3a66764fd9ef7b4e09f1dc819235e15080e5b6678c9d22dcb2976af",
+      "bytes": 36328544,
+      "artifact_id": 11580357500,
+      "artifact_member": "native-rpc-elf.tar.gz",
+      "archive_member": "./SharpLink.Benchmarks"
+    }
+  },
+  "native_reviewed_bodies": [
+    {
+      "arm": "G2",
+      "role": "client-start",
+      "address": "000000000001f230",
+      "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncMethodBuilderCore__Start<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+      "symbol_size": 5,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-G2-client-start.txt",
+        "sha256": "ed3d8b4ea341dac611989757671751a55c3c7ea800ce6db25f26ca29b92bc38c",
+        "bytes": 690
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-G2-client-start-fresh.txt",
+        "sha256": "7719a019e8b71ae513df1e8482cb0efa6417dad58358e744175f5b3bf174ec2f",
+        "bytes": 932
+      }
+    },
+    {
+      "arm": "G2",
+      "role": "server-start",
+      "address": "000000000001f2d8",
+      "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncMethodBuilderCore__Start<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+      "symbol_size": 5,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-G2-server-start.txt",
+        "sha256": "3d1aff52ac28585e2ae94641a722471aeddc52dc36f011b8c7edccf065f5acd8",
+        "bytes": 698
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-G2-server-start-fresh.txt",
+        "sha256": "cc2688aab7d350aaa07f5e9389614366e560a322a6cb7eaf0524d8bf5865c586",
+        "bytes": 940
+      }
+    },
+    {
+      "arm": "G2",
+      "role": "server-box",
+      "address": "000000000001f2e0",
+      "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+      "symbol_size": 5,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-G2-server-box.txt",
+        "sha256": "1f505adda75314ab2ae8087adaf35721fa533402375c87350289f71a01a77179",
+        "bytes": 830
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-G2-server-box-fresh.txt",
+        "sha256": "4987c8b1ef7caffeacff4e44054826283d7888d41b1384a82f614976ac3c66e3",
+        "bytes": 1072
+      }
+    },
+    {
+      "arm": "G2",
+      "role": "client-movenext",
+      "address": "0000000000554f40",
+      "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>__MoveNext",
+      "symbol_size": 4734,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-G2-client-movenext.txt",
+        "sha256": "472d28b50191924d3fd1923e4ab28d161d87f2a1c4d4bed1c7b07cee1e847a8f",
+        "bytes": 74654
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-G2-client-movenext-fresh.txt",
+        "sha256": "9edfa45e7a3177e34c9816ea542f005486d0d323d1fd4aae3a1ff50dc681f61a",
+        "bytes": 74932
+      }
+    },
+    {
+      "arm": "G2",
+      "role": "server-movenext",
+      "address": "000000000055f0a0",
+      "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>__MoveNext",
+      "symbol_size": 7362,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-G2-server-movenext.txt",
+        "sha256": "d34b53c48055af8f7a32e132acb823426a17f57799d2d170cb297818fbf21021",
+        "bytes": 126183
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-G2-server-movenext-fresh.txt",
+        "sha256": "1684e27b511e71297c3149bf6677a80ed13cb23502a777bcf3778ae54156a2fd",
+        "bytes": 126029
+      }
+    },
+    {
+      "arm": "G2",
+      "role": "client-box",
+      "address": "0000000000683ce0",
+      "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+      "symbol_size": 295,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-G2-client-box.txt",
+        "sha256": "a5450901528154a61175b621aaf20a3e78681efec39396668c74815dc5de81ad",
+        "bytes": 8908
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-G2-client-box-fresh.txt",
+        "sha256": "68b903739fe386cec1e7cf2bfe836be745311505f25498a9d224a6a8dcb02300",
+        "bytes": 8358
+      }
+    },
+    {
+      "arm": "G2",
+      "role": "client-wrapper",
+      "address": "0000000000689dd0",
+      "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync<System___Canon>",
+      "symbol_size": 178,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-G2-client-wrapper.txt",
+        "sha256": "cc6af3a16cc4efe311f346c4fd0180a917522543ef1781b1026aef87327bcf26",
+        "bytes": 3142
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-G2-client-wrapper-fresh.txt",
+        "sha256": "f359027ab8578fd0e6cbbd4250139935b62cac9f24fa27eb42ab6ffea20cc912",
+        "bytes": 2988
+      }
+    },
+    {
+      "arm": "G2",
+      "role": "server-wrapper",
+      "address": "000000000068be90",
+      "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync<System___Canon>",
+      "symbol_size": 235,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-G2-server-wrapper.txt",
+        "sha256": "c71b88047f63653ed4cd743efe089aa8fc4a9de812aec97fc3a74f9ba288c100",
+        "bytes": 3142
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-G2-server-wrapper-fresh.txt",
+        "sha256": "8f7a20dc503990390a8e966d97c8d38cd69746de9320dcabcecfb8d2ea2070c1",
+        "bytes": 3312
+      }
+    },
+    {
+      "arm": "A",
+      "role": "client-start",
+      "address": "000000000001f228",
+      "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncMethodBuilderCore__Start<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+      "symbol_size": 5,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-A-client-start.txt",
+        "sha256": "82508f1c4359f42f3fed6c6ba20ef97f982268b85f09538762cd9d9e3eac5546",
+        "bytes": 690
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-A-client-start-fresh.txt",
+        "sha256": "6d478b97c77b7977c01ebb126b3548a68f4463b0f0a06792eeeba1ebbead7829",
+        "bytes": 931
+      }
+    },
+    {
+      "arm": "A",
+      "role": "server-start",
+      "address": "000000000001f2d0",
+      "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncMethodBuilderCore__Start<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+      "symbol_size": 5,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-A-server-start.txt",
+        "sha256": "45bc132a4292b64d658ad0e54465b606bd9640c75f0975122be13fa44d0fce65",
+        "bytes": 698
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-A-server-start-fresh.txt",
+        "sha256": "bc880d80a656c4949a5305adc9045361556f6765a27cb1ed8e762126ae4fa5dd",
+        "bytes": 939
+      }
+    },
+    {
+      "arm": "A",
+      "role": "client-movenext",
+      "address": "0000000000554f20",
+      "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>__MoveNext",
+      "symbol_size": 4840,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-A-client-movenext.txt",
+        "sha256": "5d8c43424a6b1a478cfd821367c90239cb07c14b17bf0ea015f2ac93ac5ccdca",
+        "bytes": 77793
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-A-client-movenext-fresh.txt",
+        "sha256": "50b8675d349be23b422b9ad93f1078267f34c58008b7678fdfe753a59f9cd682",
+        "bytes": 77854
+      }
+    },
+    {
+      "arm": "A",
+      "role": "server-movenext",
+      "address": "000000000055f0e0",
+      "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>__MoveNext",
+      "symbol_size": 7131,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-A-server-movenext.txt",
+        "sha256": "94b5b2afcef75754284e66504166016f9542c8edee4b8b34e5c47a72f695d0fc",
+        "bytes": 121825
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-A-server-movenext-fresh.txt",
+        "sha256": "ba11f2fae90b29dbebdc8caabf09ab704d44ecb0d5e50aac41639a6ceb2ea98a",
+        "bytes": 121994
+      }
+    },
+    {
+      "arm": "A",
+      "role": "client-box",
+      "address": "0000000000683c40",
+      "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync_d__62_1<System___Canon>>",
+      "symbol_size": 295,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-A-client-box.txt",
+        "sha256": "55d63ad38c2f5d728768fe824943023cd18ebff71720de13f412bdbb94cace08",
+        "bytes": 8906
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-A-client-box-fresh.txt",
+        "sha256": "fc8371e442eea9ea2f9da0609e4f876a57027ef3891dfaa7f21dfc3863eea9af",
+        "bytes": 8355
+      }
+    },
+    {
+      "arm": "A",
+      "role": "server-box",
+      "address": "0000000000684ba0",
+      "symbol": "S_P_CoreLib_System_Runtime_CompilerServices_AsyncTaskMethodBuilder_1<S_P_CoreLib_System_Threading_Tasks_VoidTaskResult>__GetStateMachineBox<SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync_d__153_1<System___Canon>>",
+      "symbol_size": 295,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-A-server-box.txt",
+        "sha256": "8fc012c23be261380437fdc8f18358ec31bbf70a140e8cd515e64de6bb773c7c",
+        "bytes": 9012
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-A-server-box-fresh.txt",
+        "sha256": "d0d76bc05e050c7bfc774ac98b68654a2d3b8b2ec80c30293a3c9fd67d489d28",
+        "bytes": 8461
+      }
+    },
+    {
+      "arm": "A",
+      "role": "client-wrapper",
+      "address": "0000000000689e70",
+      "symbol": "SharpLink_Client_SharpLink_Client_ClientConnection__SendClientStreamAsync<System___Canon>",
+      "symbol_size": 177,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-A-client-wrapper.txt",
+        "sha256": "7e0826d37e8201460de27bbeaac244537a69ce6f0549c24c91690703b2b0c748",
+        "bytes": 3137
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-A-client-wrapper-fresh.txt",
+        "sha256": "055733d522ec433df75761534b7cd4deb8a7a31529caa8f929b7acdb960a1032",
+        "bytes": 2946
+      }
+    },
+    {
+      "arm": "A",
+      "role": "server-wrapper",
+      "address": "000000000068bf30",
+      "symbol": "SharpLink_Runtime_SharpLink_Runtime_RpcSession__PumpGeneratedOutboundStreamAsync<System___Canon>",
+      "symbol_size": 210,
+      "independent_objdump_bytes_match": true,
+      "archived_body_excerpt": {
+        "path": "compiled-path-analysis/native-A-server-wrapper.txt",
+        "sha256": "a931257dc207b2b768f87c7a5bd11e5f77c46d93ea8460d431ecbd2e6bd45892",
+        "bytes": 3216
+      },
+      "independent_objdump": {
+        "path": "compiled-path-analysis/native-A-server-wrapper-fresh.txt",
+        "sha256": "80ce5c0961e2b4c42fdbd0d44a3d130c8a085679a517b1bc85fb5fc2901a4ccd",
+        "bytes": 3061
+      }
+    }
+  ],
+  "native_G2_server_box_alias": {
+    "thunk_address": "0x1f2e0",
+    "target_address": "0x674ee0",
+    "followed": true,
+    "independent_target_body": {
+      "path": "compiled-path-analysis/native-G2-server-box-shared-fresh.txt",
+      "sha256": "4f790712b411132f47ca43c27062c1dfb38e6c25474f53c9b09752bd079c7ec9",
+      "bytes": 10529
+    },
+    "G2_copy_bytes": 304,
+    "A_copy_bytes": 264
+  },
+  "generated_path_source_archives": {
+    "G2": {
+      "path": "run-37846827122-artifacts/jit-G2/generated-source.tar.gz",
+      "sha256": "6a74d3c855907388d615379a2ccdf0c813c19984f8e2b0cee93a3992a7b0870c",
+      "bytes": 44631,
+      "artifact_id": 11579859022,
+      "artifact_member": "generated-source.tar.gz"
+    },
+    "A": {
+      "path": "run-37846827122-artifacts/jit-A/generated-source.tar.gz",
+      "sha256": "a13c9eed60ae1eac94a31f7295122587f472318ecd86d0a14c44be55da5bd887",
+      "bytes": 44623,
+      "artifact_id": 11579904063,
+      "artifact_member": "generated-source.tar.gz"
+    }
+  },
+  "tradeoffs": [
+    {
+      "runtime": "JIT Tier1/Synthesized PGO",
+      "root": "client",
+      "case": "tcp-Client100x16",
+      "state_G2": 256,
+      "state_A": 216,
+      "wrapper_zero_unique_G2": 256,
+      "wrapper_zero_unique_A": 216,
+      "wrapper_zero_written_G2": 272,
+      "wrapper_zero_written_A": 216,
+      "wrapper_stack_G2": 288,
+      "wrapper_stack_A": 256,
+      "movenext_zero_G2": 600,
+      "movenext_zero_A": 560,
+      "movenext_stack_G2": 920,
+      "movenext_stack_A": 888,
+      "movenext_code_G2": 7970,
+      "movenext_code_A": 8082
+    },
+    {
+      "runtime": "JIT Tier1/Synthesized PGO",
+      "root": "server",
+      "case": "sharedmemory-Server1x16",
+      "state_G2": 304,
+      "state_A": 264,
+      "wrapper_zero_unique_G2": 304,
+      "wrapper_zero_unique_A": 264,
+      "wrapper_zero_written_G2": 304,
+      "wrapper_zero_written_A": 264,
+      "wrapper_stack_G2": 336,
+      "wrapper_stack_A": 304,
+      "movenext_zero_G2": 1088,
+      "movenext_zero_A": 952,
+      "movenext_stack_G2": 1256,
+      "movenext_stack_A": 1112,
+      "movenext_code_G2": 11947,
+      "movenext_code_A": 12262
+    },
+    {
+      "runtime": "NativeAOT linux-x64",
+      "root": "client",
+      "instantiation": "System___Canon",
+      "native_state_copy_G2": 256,
+      "native_state_copy_A": 216,
+      "wrapper_zero_unique_G2": 256,
+      "wrapper_zero_unique_A": 216,
+      "wrapper_stack_G2": 272,
+      "wrapper_stack_A": 224,
+      "movenext_zero_G2": 568,
+      "movenext_zero_A": 568,
+      "movenext_stack_G2": 792,
+      "movenext_stack_A": 792,
+      "movenext_code_G2": 4734,
+      "movenext_code_A": 4840
+    },
+    {
+      "runtime": "NativeAOT linux-x64",
+      "root": "server",
+      "instantiation": "System___Canon",
+      "native_state_copy_G2": 304,
+      "native_state_copy_A": 264,
+      "wrapper_zero_unique_G2": 336,
+      "wrapper_zero_unique_A": 296,
+      "wrapper_zero_includes_return_temporaries": 32,
+      "wrapper_stack_G2": 352,
+      "wrapper_stack_A": 304,
+      "movenext_zero_G2": 888,
+      "movenext_zero_A": 752,
+      "movenext_stack_G2": 1112,
+      "movenext_stack_A": 984,
+      "movenext_code_G2": 7362,
+      "movenext_code_A": 7131
+    }
+  ],
+  "decision": {
+    "mechanism_gate_pass": true,
+    "separate_safety_and_allocation_proof_required": true,
+    "supports_separately_authorized_bounded_unchanged_settings_timing_screen": true,
+    "throughput_improvement_established": false,
+    "cpu_benefit_established": false,
+    "allocation_totals_established_by_this_review": false,
+    "promotion_or_acceptance_established": false,
+    "complete_dynamic_pgo_chain_established": false,
+    "no_local_workload_binary_execution": true,
+    "no_new_measurements_by_reviewer": true
+  },
+  "limits": [
+    "JIT profiles are Synthesized PGO, not Dynamic PGO.",
+    "MoveNext code grows for both captured JIT roots and NativeAOT client; NativeAOT client stack reserve/zeroing is unchanged.",
+    "MoveNext temporary clearing occurs per entry/resumption, not automatically per item.",
+    "Only two matched JIT workload cells were captured.",
+    "Whole-program allocation neutrality and CPU importance are not inferred from field sizes, copy sizes or helper absence.",
+    "Safety suite/allocation/lifecycle outcomes are owned by the separate immutable safety/integrity proof."
+  ],
+  "path_convention": "Paths are relative to the review root; official raw inputs also carry artifact_id and artifact_member, and native binaries carry archive_member. Analysis reports and extracted snippets are under compiled-path-analysis/.",
+  "official_artifacts": [
+    {
+      "id": 11580357500,
+      "name": "742-first-binding-native-A-elf-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "3105550044cc145eefbc2e710b539e5ef77be2b0b767a04b9d07b655782be111",
+      "bytes": 14385171,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11580357500"
+    },
+    {
+      "id": 11580352431,
+      "name": "742-first-binding-jit-index-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "e0f98dbba5481aa76984bb3f21216d0ae03f3b5efe8a93296b0d9ec39f1d57c0",
+      "bytes": 572874,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11580352431"
+    },
+    {
+      "id": 11580352426,
+      "name": "742-first-binding-safety-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "4d7c2ebd281ce6cb5a2b86c01d4d94da83eb304810f3304b7ac118a2a0b58529",
+      "bytes": 998488,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11580352426"
+    },
+    {
+      "id": 11580013880,
+      "name": "742-first-binding-native-G2-elf-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "1bef576fa8766b7fd112571dccdc587afda261e123713d8c30330ea367d36ed0",
+      "bytes": 14385415,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11580013880"
+    },
+    {
+      "id": 11579904063,
+      "name": "742-first-binding-jit-A-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "30ce0ac9f7c034d309d63466462048f543706f67e8fea05200949dd359e8ea0a",
+      "bytes": 13300034,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11579904063"
+    },
+    {
+      "id": 11579874218,
+      "name": "742-first-binding-native-A-code-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "13eeecbda3d8bcea5fd5c69095808d6c8e0de22c3fdf24354d6985447d76b464",
+      "bytes": 12306501,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11579874218"
+    },
+    {
+      "id": 11579859022,
+      "name": "742-first-binding-jit-G2-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "3b0d615ebd57aa73d731603b14a4cf12111b57f378795c256fa00fd75ad104f7",
+      "bytes": 13298084,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11579859022"
+    },
+    {
+      "id": 11579794341,
+      "name": "742-first-binding-native-index-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "c1dfff5a7d4345171e66721705f12a45bd1369c31952245ce49d68a580c774d2",
+      "bytes": 460851,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11579794341"
+    },
+    {
+      "id": 11579549804,
+      "name": "742-first-binding-native-G2-code-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "sha256": "632091dfa926d1811aaf5050eea926f27837962f36683068e2d1d8df414adf1c",
+      "bytes": 12306271,
+      "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122/artifacts/11579549804"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "status": "independently-reviewed-pass",
+  "codegen_run_id": 37846827122,
+  "codegen_helper_commit": "48aecc599cb8ee91219d727b10ccdad572a776d4",
+  "safety_run_id": 37844180672,
+  "safety_helper_commit": "634e6ca9693dbb716d08bad45f26adc30801ad38",
+  "production_trees": {
+    "G2": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+    "A": "4cb4ce7a13b06c3a6f3213e30215b6769ed49f90"
+  },
+  "compiled_file": "final-mechanism-proof.json",
+  "integrity_file": "run-37846827122-integrity-review.json",
+  "proof_files": {
+    "final-mechanism-proof.json": "2eaa2cedd53ffb8de405f7572a6f7d3d0db68eee79c018365d61f34b5aa27dbd",
+    "independent-compiled-review.md": "f5235c8f93102da0df5477b6e75869daa53672515b123276c73ce9463ccb7981",
+    "layout-and-code-summary.json": "6537b3708f2d8376ad914b39c91a3d44a6a31460e9b52e6f51f42c7b88f80504",
+    "independent-native-extraction.json": "833ee5fa48cd10c77fc87e7c2c33a350ece1ece457a4d528d4a7aadb51490ce4",
+    "native-method-map.json": "098cd29159beda26d90b81c4d46cd37fd1488633d7d47f22096cbb2e95435a77",
+    "run-37846827122-integrity-review.json": "8ad5afca1326aaa60d62fad66d74f2daf5d4917da51c304a7981d3da8daea120"
+  },
+  "boundary": "Final independent mechanism/semantics and separate safety/integrity review permit only the separately authorized bounded unchanged-settings D/G2/A screen. JIT code growth and unchanged native-client frame/clearing remain explicit; no timing, CPU benefit or acceptance is established."
+}

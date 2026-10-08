@@ -1,0 +1,268 @@
+{
+  "run": {
+    "id": 37846827122,
+    "url": "https://github.com/SunSi12138/SharpLink/actions/runs/37846827122",
+    "head_sha": "48aecc599cb8ee91219d727b10ccdad572a776d4",
+    "tree": "04b9cc780e8d62aeb08baaf67b2ad62a5037ce54",
+    "attempt": 1,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "started": "2026-10-08T21:26:48Z",
+    "updated": "2026-10-08T21:32:35Z"
+  },
+  "official_zip_artifacts": [
+    {
+      "id": 11580357500,
+      "name": "742-first-binding-native-A-elf-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 14385171,
+      "sha256": "sha256:3105550044cc145eefbc2e710b539e5ef77be2b0b767a04b9d07b655782be111",
+      "verified": true
+    },
+    {
+      "id": 11580352431,
+      "name": "742-first-binding-jit-index-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 572874,
+      "sha256": "sha256:e0f98dbba5481aa76984bb3f21216d0ae03f3b5efe8a93296b0d9ec39f1d57c0",
+      "verified": true
+    },
+    {
+      "id": 11580352426,
+      "name": "742-first-binding-safety-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 998488,
+      "sha256": "sha256:4d7c2ebd281ce6cb5a2b86c01d4d94da83eb304810f3304b7ac118a2a0b58529",
+      "verified": true
+    },
+    {
+      "id": 11580013880,
+      "name": "742-first-binding-native-G2-elf-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 14385415,
+      "sha256": "sha256:1bef576fa8766b7fd112571dccdc587afda261e123713d8c30330ea367d36ed0",
+      "verified": true
+    },
+    {
+      "id": 11579904063,
+      "name": "742-first-binding-jit-A-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 13300034,
+      "sha256": "sha256:30ce0ac9f7c034d309d63466462048f543706f67e8fea05200949dd359e8ea0a",
+      "verified": true
+    },
+    {
+      "id": 11579874218,
+      "name": "742-first-binding-native-A-code-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 12306501,
+      "sha256": "sha256:13eeecbda3d8bcea5fd5c69095808d6c8e0de22c3fdf24354d6985447d76b464",
+      "verified": true
+    },
+    {
+      "id": 11579859022,
+      "name": "742-first-binding-jit-G2-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 13298084,
+      "sha256": "sha256:3b0d615ebd57aa73d731603b14a4cf12111b57f378795c256fa00fd75ad104f7",
+      "verified": true
+    },
+    {
+      "id": 11579794341,
+      "name": "742-first-binding-native-index-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 460851,
+      "sha256": "sha256:c1dfff5a7d4345171e66721705f12a45bd1369c31952245ce49d68a580c774d2",
+      "verified": true
+    },
+    {
+      "id": 11579549804,
+      "name": "742-first-binding-native-G2-code-48aecc599cb8ee91219d727b10ccdad572a776d4",
+      "bytes": 12306271,
+      "sha256": "sha256:632091dfa926d1811aaf5050eea926f27837962f36683068e2d1d8df414adf1c",
+      "verified": true
+    }
+  ],
+  "managed_layout": [
+    {
+      "arm": "G2",
+      "root": "SendClientStreamAsync",
+      "bytes": 256,
+      "assembly_sha256": "5ba1e3aea241a1c18c4993e6fa2e3713ab5f120bd1e731863f36ef0c3e18fb08",
+      "awaiters": [
+        {
+          "name": "<>u__1",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1+ConfiguredValueTaskAwaiter[System.Boolean]",
+          "managedSize": 16
+        },
+        {
+          "name": "<>u__2",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1+ConfiguredValueTaskAwaiter[SharpLink.Runtime.StreamFlowController+ResolvedSendCreditLease]",
+          "managedSize": 56
+        },
+        {
+          "name": "<>u__3",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable+ConfiguredValueTaskAwaiter",
+          "managedSize": 16
+        }
+      ]
+    },
+    {
+      "arm": "G2",
+      "root": "PumpGeneratedOutboundStreamAsync",
+      "bytes": 304,
+      "assembly_sha256": "ab7b7afafdee844217260e591e3fbbd09896336708d20280b9769ca21277583b",
+      "awaiters": [
+        {
+          "name": "<>u__1",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1+ConfiguredValueTaskAwaiter[System.Boolean]",
+          "managedSize": 16
+        },
+        {
+          "name": "<>u__2",
+          "type": "System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter[System.Boolean]",
+          "managedSize": 16
+        },
+        {
+          "name": "<>u__3",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1+ConfiguredValueTaskAwaiter[SharpLink.Runtime.StreamFlowController+ResolvedSendCreditLease]",
+          "managedSize": 56
+        },
+        {
+          "name": "<>u__4",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable+ConfiguredValueTaskAwaiter",
+          "managedSize": 16
+        }
+      ]
+    },
+    {
+      "arm": "A",
+      "root": "SendClientStreamAsync",
+      "bytes": 216,
+      "assembly_sha256": "4135a04fe0f539c08a85f9a1c0bccfc0169d1eb4e4914be24b9d5fb5fc532f09",
+      "awaiters": [
+        {
+          "name": "<>u__1",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1+ConfiguredValueTaskAwaiter[System.Boolean]",
+          "managedSize": 16
+        },
+        {
+          "name": "<>u__2",
+          "type": "System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter[SharpLink.Runtime.StreamFlowController+ResolvedSendCreditLease]",
+          "managedSize": 16
+        },
+        {
+          "name": "<>u__3",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable+ConfiguredValueTaskAwaiter",
+          "managedSize": 16
+        }
+      ]
+    },
+    {
+      "arm": "A",
+      "root": "PumpGeneratedOutboundStreamAsync",
+      "bytes": 264,
+      "assembly_sha256": "8fd368a1a815d822841ad1a4feb3e86efdff5e5728899c8f08e300c038ddd397",
+      "awaiters": [
+        {
+          "name": "<>u__1",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable`1+ConfiguredValueTaskAwaiter[System.Boolean]",
+          "managedSize": 16
+        },
+        {
+          "name": "<>u__2",
+          "type": "System.Runtime.CompilerServices.ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter[System.Boolean]",
+          "managedSize": 16
+        },
+        {
+          "name": "<>u__3",
+          "type": "System.Runtime.CompilerServices.ConfiguredTaskAwaitable+ConfiguredTaskAwaiter",
+          "managedSize": 16
+        },
+        {
+          "name": "<>u__4",
+          "type": "System.Runtime.CompilerServices.ConfiguredValueTaskAwaitable+ConfiguredValueTaskAwaiter",
+          "managedSize": 16
+        }
+      ]
+    }
+  ],
+  "captures": [
+    {
+      "arm": "G2",
+      "scenario": "Client100x16",
+      "transport": "tcp",
+      "exit_code": 0,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "original_dynamic_pgo_status": "inconclusive",
+      "method_blocks": 30
+    },
+    {
+      "arm": "A",
+      "scenario": "Client100x16",
+      "transport": "tcp",
+      "exit_code": 0,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "original_dynamic_pgo_status": "inconclusive",
+      "method_blocks": 30
+    },
+    {
+      "arm": "G2",
+      "scenario": "Server1x16",
+      "transport": "sharedmemory",
+      "exit_code": 0,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "original_dynamic_pgo_status": "inconclusive",
+      "method_blocks": 18
+    },
+    {
+      "arm": "A",
+      "scenario": "Server1x16",
+      "transport": "sharedmemory",
+      "exit_code": 0,
+      "tier": "Tier1",
+      "pgo": "Synthesized PGO",
+      "original_dynamic_pgo_status": "inconclusive",
+      "method_blocks": 18
+    }
+  ],
+  "native": [
+    {
+      "arm": "G2",
+      "published_files": 15,
+      "archive_sha256": "a966077ed3173e31784f54f52b4f9d49cddcebcddf936ccb67500ec6913e32ce",
+      "executable_sha256": "8e18ac39a35131476976372e0d73c90f9778506c135b7c25281dc098af881d59",
+      "compressed_streams_verified": {
+        "symbols.txt.xz": 20466971,
+        "objdump-all.txt.xz": 151285482
+      },
+      "body_review": "pending-independent-compiled-body-review"
+    },
+    {
+      "arm": "A",
+      "published_files": 15,
+      "archive_sha256": "0750754593874db980a35c419ebcc883881797bf74301dc61032217fe0c03f94",
+      "executable_sha256": "dde3dbd0f3a66764fd9ef7b4e09f1dc819235e15080e5b6678c9d22dcb2976af",
+      "compressed_streams_verified": {
+        "symbols.txt.xz": 20466640,
+        "objdump-all.txt.xz": 151297273
+      },
+      "body_review": "pending-independent-compiled-body-review"
+    }
+  ],
+  "reused_safety": {
+    "full_suites": 3,
+    "cases_per_full_suite": 2186,
+    "focused_per_default_arm": 58,
+    "allocation_reports": 2,
+    "allocation_cases_per_report": 4,
+    "lifecycle_rows": [
+      120,
+      120
+    ],
+    "setup_scenarios": 5,
+    "writer_checks": 171,
+    "engineering_guards": [
+      "format",
+      "references",
+      "maintainability"
+    ]
+  },
+  "boundary": "All artifact/source/binary/provenance integrity checks pass. Exact managed root sizes are 256 to 216 and 304 to 264 bytes. Compiled instruction proof is delegated independently. No throughput claim or promotion; original Dynamic-PGO question stays inconclusive and V remains No-Go."
+}
