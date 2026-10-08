@@ -1,0 +1,81 @@
+name: 742 Actual Tier1 PGO Send Path Capture
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-send-validator-jit.yml'
+      - 'eng/preflight-742-send-validator-jit/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 742-send-validator-tier1-capture
+  cancel-in-progress: false
+jobs:
+  diagnostic-code-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.112
+      - name: Verify exact source recipe and parser before diagnostic builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-send-validator-jit/self-tests.py
+          python3 eng/preflight-742-send-validator-jit/capture.py prepare "$RUNNER_TEMP" artifacts/send-validator-jit
+          dotnet --info > artifacts/send-validator-jit/index/dotnet.txt
+          lscpu > artifacts/send-validator-jit/index/cpu.txt
+          python3 - <<'PY'
+          import os
+          available = sorted(os.sched_getaffinity(0))
+          assert len(available) >= 4, 'The original four-CPU capacity is required.'
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CPU_LIST=' + ','.join(map(str, available[:4])) + '\n')
+          PY
+      - name: Build only the original RPC project once per arm and compare retained hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-send-validator-jit/capture.py build "$RUNNER_TEMP" artifacts/send-validator-jit
+      - name: Capture exactly twelve original RPC executions with every JIT tier retained
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-send-validator-jit/capture.py run "$RUNNER_TEMP" artifacts/send-validator-jit --affinity "$CPU_LIST"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-validator-tier1-index-${{ github.sha }}
+          path: artifacts/send-validator-jit/index
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-validator-tier1-D-${{ github.sha }}
+          path: artifacts/send-validator-jit/D
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-validator-tier1-G2-${{ github.sha }}
+          path: artifacts/send-validator-jit/G2
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-validator-tier1-V-${{ github.sha }}
+          path: artifacts/send-validator-jit/V
+          if-no-files-found: warn
+          retention-days: 30
