@@ -41,15 +41,15 @@ internal static class ClientCallShapeEvidenceRunner
         var firstResult = await benchmark.InvokeAsync().ConfigureAwait(false);
         var firstCallUs = Stopwatch.GetElapsedTime(firstStarted).TotalMicroseconds;
         Validate(firstResult, benchmark.ExpectedResult, scenario, "first call");
-        await benchmark.PaceAsync(force: true).ConfigureAwait(false);
+        await benchmark.PaceAsync(true).ConfigureAwait(false);
 
         for (var operation = 0; operation < warmupOperations; operation++)
         {
             var result = await benchmark.InvokeAsync().ConfigureAwait(false);
             Validate(result, benchmark.ExpectedResult, scenario, "warmup");
-            await benchmark.PaceAsync(force: false).ConfigureAwait(false);
+            await benchmark.PaceAsync(false).ConfigureAwait(false);
         }
-        await benchmark.PaceAsync(force: true).ConfigureAwait(false);
+        await benchmark.PaceAsync(true).ConfigureAwait(false);
 
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -78,9 +78,9 @@ internal static class ClientCallShapeEvidenceRunner
             Validate(result, benchmark.ExpectedResult, scenario, "measurement");
             latencies[completed++] = elapsedTicks;
             latencyTicks += elapsedTicks;
-            await benchmark.PaceAsync(force: false).ConfigureAwait(false);
+            await benchmark.PaceAsync(false).ConfigureAwait(false);
         }
-        await benchmark.PaceAsync(force: true).ConfigureAwait(false);
+        await benchmark.PaceAsync(true).ConfigureAwait(false);
 
         var measurementElapsed = Stopwatch.GetElapsedTime(measurementStarted);
         process.Refresh();
