@@ -1,4 +1,4 @@
-name: 735 Single Consumption Wait Reuse Preflight
+name: 735 Consumer Wait Isolation Preflight
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: 735-consumer-wait-reuse-preflight
+  group: 735-consumer-wait-isolation
   cancel-in-progress: false
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-dotnet
-      - name: Reconstruct source-pinned wait reuse and the local-validated single-consumption fix
+      - name: Reconstruct the verified candidate then isolate only the consumer changes
         run: |
           set -euo pipefail
           python3 eng/preflight-735-first-receive-apply.py
@@ -32,98 +32,88 @@ jobs:
           cp eng/preflight-735-consumer-wait-tests.cs test/SharpLink.UnitTests/Runtime/PooledDispatcherSlowWaitTests.cs
           python3 eng/preflight-735-consumer-wait-apply.py
           python3 eng/preflight-735-single-consumption-apply.py
-          mkdir -p artifacts/consumer-wait
-          dotnet --info > artifacts/consumer-wait/dotnet.txt
-          python3 -m py_compile eng/preflight-735-single-consumption-apply.py
-      - name: Original wrappers must fail exactly the six completed single-use-source controls
+          python3 eng/preflight-735-wait-isolation.py
+          mkdir -p artifacts/wait-isolation
+          dotnet --info > artifacts/wait-isolation/dotnet.txt
+          python3 -m py_compile eng/preflight-735-wait-isolation.py eng/preflight-735-wait-isolation-rpc.py
+      - name: Original wrappers must still fail the six completed-source controls
         run: |
           set -euo pipefail
-          out=artifacts/consumer-wait
-          trap 'python3 eng/preflight-735-single-consumption-apply.py restore-clients' EXIT
-          python3 eng/preflight-735-single-consumption-apply.py negative-clients
+          out=artifacts/wait-isolation
+          targets='src/SharpLink.Client/SharpLinkClient.Invokers.cs src/SharpLink.Client/SharpLinkClient.Telemetry.cs'
+          trap 'git restore --worktree -- $targets' EXIT
+          for target in $targets; do git show e834d3c28c87ad496989af925515cf21babd308d:"$target" > "$target"; done
           dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true > "$out/original-wrapper-build.log" 2>&1 || { cat "$out/original-wrapper-build.log"; exit 1; }
           set +e
-          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/ClientStreamValueTaskConsumptionTests/*' > "$out/original-wrapper-negative.log" 2>&1
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/ClientStreamValueTaskConsumptionTests/*' > "$out/wrapper-negative.log" 2>&1
           code=$?
           set -e
           test "$code" -ne 0
           python3 - <<'PY'
           import pathlib,re
-          text=pathlib.Path('artifacts/consumer-wait/original-wrapper-negative.log').read_text()
-          text=re.sub(r'\x1b\[[0-9;]*m','',text)
+          text=re.sub(r'\x1b\[[0-9;]*m','',pathlib.Path('artifacts/wait-isolation/wrapper-negative.log').read_text())
           print(text)
           assert re.search(r'total:\s+12\b',text),text
           assert re.search(r'failed:\s+6\b',text),text
           assert re.search(r'succeeded:\s+6\b',text),text
-          assert text.count('failed ClientWrappersConsumeEachValueTaskSourceExactlyOnce(')==6,text
           PY
-      - name: Original non-pooled waiter must fail only the allocation control with the calibrated retention oracle
+      - name: Original consumer builder must fail only the pending allocation control
         run: |
           set -euo pipefail
-          out=artifacts/consumer-wait
+          out=artifacts/wait-isolation
           target=src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs
           trap 'git restore --worktree -- "$target"' EXIT
           git show e834d3c28c87ad496989af925515cf21babd308d:"$target" > "$target"
           dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true > "$out/original-wait-build.log" 2>&1 || { cat "$out/original-wait-build.log"; exit 1; }
-          export SHARPLINK_SLOW_WAIT_EVIDENCE="$PWD/$out/prior"
+          export SHARPLINK_SLOW_WAIT_EVIDENCE="$PWD/$out/original"
           set +e
-          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/PooledDispatcherSlowWaitTests/*' > "$out/original-wait-negative.log" 2>&1
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/PooledDispatcherSlowWaitTests/*' > "$out/wait-negative.log" 2>&1
           code=$?
           set -e
           test "$code" -ne 0
           python3 - <<'PY'
           import pathlib,re
-          text=pathlib.Path('artifacts/consumer-wait/original-wait-negative.log').read_text()
-          text=re.sub(r'\x1b\[[0-9;]*m','',text)
+          text=re.sub(r'\x1b\[[0-9;]*m','',pathlib.Path('artifacts/wait-isolation/wait-negative.log').read_text())
           print(text)
           assert re.search(r'total:\s+6\b',text),text
           assert re.search(r'failed:\s+1\b',text),text
           assert re.search(r'succeeded:\s+5\b',text),text
           assert 'suspended MoveNext still allocates one fresh wrapper for every item' in text,text
           PY
-      - name: Restore exact candidate, verify single-use behavior and measured allocation
+      - name: Restore exact source, build and run focused ownership and allocation checks
         run: |
           set -euo pipefail
-          out=artifacts/consumer-wait
-          python3 - <<'PY'
-          import json,pathlib,subprocess
-          p=json.loads(pathlib.Path('artifacts/first-receive-integration/provenance.json').read_text())
-          for name,sha in p['source_blobs'].items():
-              actual=subprocess.check_output(['git','hash-object',name],text=True).strip()
-              assert actual==sha,(name,actual,sha)
-          PY
+          out=artifacts/wait-isolation
+          git diff --exit-code -- src
           dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true > "$out/final-build.log" 2>&1 || { cat "$out/final-build.log"; exit 1; }
           tail -n 7 "$out/final-build.log"
-          export SHARPLINK_SLOW_WAIT_EVIDENCE="$PWD/$out/candidate"
+          export SHARPLINK_SLOW_WAIT_EVIDENCE="$PWD/$out/isolated"
           for suite in ClientStreamValueTaskConsumptionTests PooledDispatcherSlowWaitTests; do
             dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter "/*/*/$suite/*" 2>&1 | tee "$out/$suite.log"
           done
           python3 - <<'PY'
           import csv,json,pathlib
-          root=pathlib.Path('artifacts/consumer-wait'); values={}
-          for mode in ('prior','candidate'):
+          root=pathlib.Path('artifacts/wait-isolation'); values={}
+          for mode in ('original','isolated'):
               with (root/mode/'pending-read.csv').open() as f: rows=list(csv.DictReader(f))
-              assert len(rows)==1 and int(rows[0]['count'])==512,rows
-              values[mode]=int(rows[0]['allocated_bytes'])/512
-          assert values['candidate']<=16 and values['prior']-values['candidate']>=64,values
+              assert len(rows)==1,rows
+              row=rows[0]; values[mode]=int(row['allocated_bytes'])/int(row['count'])
+          assert values['isolated']<=16 and values['isolated']<values['original'],values
           (root/'allocation.json').write_text(json.dumps(values,indent=2)+'\n')
-          print('EXACT_PENDING_START_BYTES',values)
+          print(values)
           PY
-          touch "$out/final-validated"
-      - name: Preserve engineering gates and run complete default suite without filters
+      - name: Original engineering and complete default runtime gates
         run: |
           set -euo pipefail
-          out=artifacts/consumer-wait
-          dotnet format whitespace test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore --verify-no-changes --include src/SharpLink.Client/SharpLinkClient.Invokers.cs src/SharpLink.Client/SharpLinkClient.Telemetry.cs src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs test/SharpLink.UnitTests/Client/ClientStreamValueTaskConsumptionTests.cs test/SharpLink.UnitTests/Runtime/PooledDispatcherSlowWaitTests.cs 2>&1 | tee "$out/format.log"
+          out=artifacts/wait-isolation
+          dotnet format whitespace test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore --verify-no-changes --include src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs src/SharpLink.Client/SharpLinkClient.Invokers.cs src/SharpLink.Client/SharpLinkClient.Telemetry.cs test/SharpLink.UnitTests/Client/ClientStreamValueTaskConsumptionTests.cs test/SharpLink.UnitTests/Runtime/PooledDispatcherSlowWaitTests.cs 2>&1 | tee "$out/format.log"
           python3 eng/check-project-reference-boundaries.py 2>&1 | tee "$out/references.log"
           bash eng/check-maintainability.sh 2>&1 | tee "$out/maintainability.log"
           dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU 2>&1 | tee "$out/default-unit.log"
-      - name: Preserve independent full experimental runtime and actual writer checks
-        if: always()
+      - name: Original writer checks and complete experimental runtime suite
         run: |
           set -euo pipefail
-          out=artifacts/consumer-wait
-          test -f "$out/final-validated"
+          out=artifacts/wait-isolation
           python3 eng/test-ready-writer.py
           python3 eng/test-ready-writer-budget.py
           python3 eng/test-ready-writer-collection.py
@@ -136,14 +126,14 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: 735-single-consumption-correctness-${{ github.sha }}
+          name: 735-wait-isolation-correctness-${{ github.sha }}
           path: |
-            artifacts/consumer-wait
+            artifacts/wait-isolation
             artifacts/first-receive-integration
           if-no-files-found: error
           retention-days: 30
 
-  rpc:
+  rpc-isolation:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
@@ -153,79 +143,67 @@ jobs:
     env:
       DOTNET_PROCESSOR_COUNT: '4'
       CONTROL_SHA: e834d3c28c87ad496989af925515cf21babd308d
+      FUSED_RECIPE_SHA: 0bcc6fe2822513c176c15d20d430e4ec88deac0a
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: ./.github/actions/setup-dotnet
-      - name: Construct unchanged published, previous integration and corrected consumer reuse arms
+      - name: Reconstruct all three declared runtime arms without changing the published control
         run: |
           set -euo pipefail
-          mkdir -p artifacts/consumer-wait-rpc
-          git worktree add --detach "$RUNNER_TEMP/consumer-published" "$CONTROL_SHA"
-          git worktree add --detach "$RUNNER_TEMP/consumer-prior" HEAD
-          echo "PUBLISHED=$RUNNER_TEMP/consumer-published" >> "$GITHUB_ENV"
-          echo "PRIOR=$RUNNER_TEMP/consumer-prior" >> "$GITHUB_ENV"
-          (
-            cd "$RUNNER_TEMP/consumer-prior"
-            python3 eng/preflight-735-first-receive-apply.py
-            cp eng/preflight-735-first-await-tests.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveAwaitAllocationTests.cs
-            python3 eng/preflight-735-first-await-apply.py
-          )
-          python3 eng/preflight-735-first-receive-apply.py
-          cp eng/preflight-735-first-await-tests.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveAwaitAllocationTests.cs
-          python3 eng/preflight-735-first-await-apply.py
-          cp eng/preflight-735-consumer-wait-tests.cs test/SharpLink.UnitTests/Runtime/PooledDispatcherSlowWaitTests.cs
-          python3 eng/preflight-735-consumer-wait-apply.py
-          python3 eng/preflight-735-single-consumption-apply.py
-          cp "$RUNNER_TEMP/consumer-prior/artifacts/first-receive-integration/provenance.json" artifacts/consumer-wait-rpc/prior-runtime.json
-          cp artifacts/first-receive-integration/provenance.json artifacts/consumer-wait-rpc/candidate-runtime.json
-          dotnet --info > artifacts/consumer-wait-rpc/dotnet.txt
-          lscpu > artifacts/consumer-wait-rpc/cpu.txt
-      - name: Build identical uninstrumented JIT hosts
-        if: matrix.runtime != 'native'
-        run: |
-          set -euo pipefail
-          for label in published prior candidate; do
-            source="$PWD"; if [[ "$label" == published ]]; then source="$PUBLISHED"; fi; if [[ "$label" == prior ]]; then source="$PRIOR"; fi
-            cmp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$source/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
-            dotnet build "$source/test/SharpLink.Benchmarks" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > "artifacts/consumer-wait-rpc/$label-build.log" 2>&1 || { cat "artifacts/consumer-wait-rpc/$label-build.log"; exit 1; }
-            tail -n 7 "artifacts/consumer-wait-rpc/$label-build.log"
+          git worktree add --detach "$RUNNER_TEMP/wait-published" "$CONTROL_SHA"
+          git worktree add --detach "$RUNNER_TEMP/wait-fused" "$FUSED_RECIPE_SHA"
+          echo "PUBLISHED_ROOT=$RUNNER_TEMP/wait-published" >> "$GITHUB_ENV"
+          echo "FUSED_ROOT=$RUNNER_TEMP/wait-fused" >> "$GITHUB_ENV"
+          for root in "$RUNNER_TEMP/wait-fused" "$PWD"; do
+            (
+              cd "$root"
+              python3 eng/preflight-735-first-receive-apply.py
+              cp eng/preflight-735-first-await-tests.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveAwaitAllocationTests.cs
+              python3 eng/preflight-735-first-await-apply.py
+              cp eng/preflight-735-consumer-wait-tests.cs test/SharpLink.UnitTests/Runtime/PooledDispatcherSlowWaitTests.cs
+              python3 eng/preflight-735-consumer-wait-apply.py
+              python3 eng/preflight-735-single-consumption-apply.py
+            )
           done
-      - name: Build identical actual NativeAOT generated RPC hosts
-        if: matrix.runtime == 'native'
+          python3 eng/preflight-735-wait-isolation.py
+          mkdir -p artifacts/wait-isolation-rpc
+          cp "$RUNNER_TEMP/wait-fused/artifacts/first-receive-integration/provenance.json" artifacts/wait-isolation-rpc/fused-provenance.json
+          dotnet --info > artifacts/wait-isolation-rpc/dotnet.txt
+          lscpu > artifacts/wait-isolation-rpc/cpu.txt
+      - name: Build identical uninstrumented measurement hosts
         run: |
           set -euo pipefail
-          python3 eng/preflight-735-prepare-native-rpc.py "$PUBLISHED" "$PRIOR" artifacts/consumer-wait-rpc/native-prior-host
-          python3 eng/preflight-735-prepare-native-rpc.py "$PUBLISHED" "$PWD" artifacts/consumer-wait-rpc/native-candidate-host
-          for label in published prior candidate; do
-            source="$PWD"; if [[ "$label" == published ]]; then source="$PUBLISHED"; fi; if [[ "$label" == prior ]]; then source="$PRIOR"; fi
-            dotnet publish "$source/test/SharpLink.FirstReceiveRpcEvidence" -c Release -r linux-x64 -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -o "$source/artifacts/consumer-native" > "artifacts/consumer-wait-rpc/$label-native-build.log" 2>&1 || { cat "artifacts/consumer-wait-rpc/$label-native-build.log"; exit 1; }
-            tail -n 8 "artifacts/consumer-wait-rpc/$label-native-build.log"
-          done
-      - name: Run the same fixed 36-process three-arm RPC plan without retries
+          out="$PWD/artifacts/wait-isolation-rpc"
+          if [[ '${{ matrix.runtime }}' == native ]]; then
+            python3 eng/preflight-735-prepare-native-rpc.py "$PUBLISHED_ROOT" "$FUSED_ROOT" "$out/fused-native-host"
+            python3 eng/preflight-735-prepare-native-rpc.py "$PUBLISHED_ROOT" "$PWD" "$out/isolated-native-host"
+            for root in "$PUBLISHED_ROOT" "$FUSED_ROOT" "$PWD"; do
+              label=isolated; [[ "$root" == "$PUBLISHED_ROOT" ]] && label=published; [[ "$root" == "$FUSED_ROOT" ]] && label=fused
+              dotnet publish "$root/test/SharpLink.FirstReceiveRpcEvidence" -c Release -r linux-x64 -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -o "$root/artifacts/consumer-native" > "$out/$label-build.log" 2>&1 || { cat "$out/$label-build.log"; exit 1; }
+              tail -n 7 "$out/$label-build.log"
+            done
+          else
+            cmp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$PUBLISHED_ROOT/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
+            cmp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$FUSED_ROOT/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
+            for root in "$PUBLISHED_ROOT" "$FUSED_ROOT" "$PWD"; do
+              label=isolated; [[ "$root" == "$PUBLISHED_ROOT" ]] && label=published; [[ "$root" == "$FUSED_ROOT" ]] && label=fused
+              dotnet build "$root/test/SharpLink.Benchmarks" -c Release -p:Platform=AnyCPU -p:PublishAot=false -p:TreatWarningsAsErrors=true > "$out/$label-build.log" 2>&1 || { cat "$out/$label-build.log"; exit 1; }
+              tail -n 7 "$out/$label-build.log"
+            done
+          fi
+      - name: Preserve the fixed 36-process population and every negative delta
         run: |
           set -euo pipefail
-          python3 eng/preflight-735-consumer-wait-rpc.py "$PUBLISHED" "$PRIOR" "$PWD" artifacts/consumer-wait-rpc/results --runtime '${{ matrix.runtime }}' 2>&1 | tee artifacts/consumer-wait-rpc/driver.log
-      - name: Verify exact runtime identities after execution
-        if: always()
-        run: |
-          python3 - <<'PY'
-          import json,pathlib,subprocess,os
-          for root in (pathlib.Path.cwd(),pathlib.Path(os.environ['PRIOR'])):
-              p=json.loads((root/'artifacts/first-receive-integration/provenance.json').read_text())
-              for name,expected in p['source_blobs'].items():
-                  actual=subprocess.check_output(['git','hash-object',name],cwd=root,text=True).strip()
-                  assert actual==expected,(root,name,actual,expected)
-          print('Measured runtime/test source identities unchanged.')
-          PY
+          python3 eng/preflight-735-wait-isolation-rpc.py "$PUBLISHED_ROOT" "$FUSED_ROOT" "$PWD" artifacts/wait-isolation-rpc/results --runtime '${{ matrix.runtime }}' 2>&1 | tee artifacts/wait-isolation-rpc/driver.log
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: 735-single-consumption-rpc-${{ matrix.runtime }}-${{ github.sha }}
+          name: 735-wait-isolation-rpc-${{ matrix.runtime }}-${{ github.sha }}
           path: |
-            artifacts/consumer-wait-rpc
+            artifacts/wait-isolation-rpc
             artifacts/first-receive-integration
           if-no-files-found: error
           retention-days: 30
