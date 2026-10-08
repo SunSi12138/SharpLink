@@ -1,0 +1,2 @@
+a3bc636cadfad4c06ae69ef34250c8cfc29a535eeb6108a59687f223bbe62ee6  src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll
+41d3c65174989d30574e81dc88f65aaf1e95c6c423d003b8e5fd4b6450b2c27f  src/SharpLink.Client/bin/Release/net10.0/SharpLink.Client.dll

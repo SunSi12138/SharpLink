@@ -1,0 +1,12 @@
+{
+  "status": "final",
+  "f_constructor_arguments": "        null, Accept, Consume, Terminal,\n        resolveOrAcceptReceiveCredit: ResolveOrAccept);",
+  "setup_probe": {
+    "sha256": {
+      "Program.cs": "41134ddabdbfcd70b942358e18763c4d6415edb8a0439f618c49eab90ccc90bc",
+      "Setup.csproj": "6a044601173f5d969a48f62caf4b74b4a186428adb1cb833b549e0afbc9fd514"
+    },
+    "source": "Author actual RpcSession setup probe; project adds only IsPackable=false."
+  },
+  "f_preamble": "    StreamFlowController.ResolvedReceiveCreditLease ResolveOrAccept(long request, ushort stream, int bytes)\n        => bytes == 0 ? flow.ResolveReceiveCreditLease(request, stream)\n            : flow.AcceptReceivedAndResolveCreditLease(request, stream, bytes);\n"
+}

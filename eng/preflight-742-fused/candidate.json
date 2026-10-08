@@ -1,0 +1,23 @@
+{
+  "label": "F",
+  "parent_tree": "4c5943fec3a85089cefa8a1b6dc8c0f6502567ce",
+  "candidate_tree": "0390a381d0aa692ecc1ddc7625dcfc3c9ce842d7",
+  "patches": [
+    {
+      "file": "candidate.patch",
+      "sha256": "15e446bb39dec4a3a9d807915e5ed36bd32a163915cb061e40b621f3f4065571"
+    }
+  ],
+  "status": "final0390 source independently safety-cleared; same-binary allocation proof attached; hosted correctness/screen pending",
+  "audit_approved": true,
+  "author_allocation_evidence": {
+    "author-evidence/lifecycle-n-legacy.csv": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+    "author-evidence/lifecycle-f-fenced-legacy.csv": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+    "author-evidence/lifecycle-f-fenced-production.csv": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+    "author-evidence/lifecycle-fenced-comparison.json": "fcbdf54a3641a2fe49643ea2d24d36bd6a7ccab502580c19c4f69624e703d16b",
+    "author-evidence/setup-n-final.csv": "460883c6ebada34d805471ca7dde6b6ebe0bd5bda13c5246f6cfc8974066064a",
+    "author-evidence/setup-f-fenced.csv": "f17d92e37997b419cc34ad342a717e500c7e10be19c570445ffdf1faafa4e551",
+    "author-evidence/F-fenced-binary-hashes.txt": "c055d00ab0b46b7db73cde121f41a29515a49cd34e70f34dd35d6396a6b028f7"
+  },
+  "author_runtime_sha256": "a3bc636cadfad4c06ae69ef34250c8cfc29a535eeb6108a59687f223bbe62ee6"
+}

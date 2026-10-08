@@ -1,0 +1,14 @@
+{
+  "legacy": {
+    "rows": 120,
+    "all_equal": true,
+    "max_delta": 0.0,
+    "runtime_sha256": "a3bc636cadfad4c06ae69ef34250c8cfc29a535eeb6108a59687f223bbe62ee6"
+  },
+  "production": {
+    "rows": 120,
+    "all_equal": true,
+    "max_delta": 0.0,
+    "runtime_sha256": "a3bc636cadfad4c06ae69ef34250c8cfc29a535eeb6108a59687f223bbe62ee6"
+  }
+}

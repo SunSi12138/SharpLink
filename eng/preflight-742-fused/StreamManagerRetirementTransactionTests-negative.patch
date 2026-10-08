@@ -1,0 +1,114 @@
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerRetirementTransactionTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerRetirementTransactionTests.cs
+new file mode 100644
+index 00000000..b571763b
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerRetirementTransactionTests.cs
+@@ -0,0 +1,108 @@
++using System.Linq;
++using System.Reflection;
++using System.Reflection.Emit;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public sealed class StreamManagerRetirementTransactionTests
++{
++    [Test]
++    [Arguments((ushort)0)]
++    [Arguments((ushort)7)]
++    public void FinalRouteRemovalMustSealWithinOneMonitorTransaction(ushort streamId)
++    {
++        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
++        var type = typeof(StreamManager).GetNestedType("RequestDispatchers", BindingFlags.NonPublic)!;
++        var request = Activator.CreateInstance(type, nonPublic: true)!;
++        var entry = new StreamManager.DispatcherEntry(new Sink(), default);
++        var reserve = type.GetMethod("TryReserve", flags)!;
++        object?[] reservation = [streamId, entry, false];
++        Require((bool)reserve.Invoke(request, reservation)!, "fixture must reserve a live route");
++        var begin = type.GetMethods(flags).Single(method => method.Name == "TryBeginRetirement" && method.GetParameters().Length == 2);
++        object?[] retirement = [streamId, null];
++        Require((bool)begin.Invoke(request, retirement)!, "fixture must claim the original route");
++        var fused = type.GetMethod("FinishRetirementAndSeal", flags);
++        int gates;
++        bool sealedRequest;
++        if (fused is not null)
++        {
++            gates = MonitorEntries(fused);
++            sealedRequest = (bool)fused.Invoke(request, [streamId, entry])!;
++        }
++        else
++        {
++            // Portable exact-N negative: execute both original operations and inspect
++            // their compiled monitor entries, rather than failing on API absence.
++            var remove = type.GetMethod("FinishRetirement", flags)!;
++            var seal = type.GetMethod("TrySealIfEmpty", flags)!;
++            gates = MonitorEntries(remove) + MonitorEntries(seal);
++            Require((bool)remove.Invoke(request, [streamId, entry])!, "original removal must succeed");
++            sealedRequest = (bool)seal.Invoke(request, null)!;
++        }
++        Require(sealedRequest, "removing the last entry must seal its request container");
++        object?[] replacement = [streamId, new StreamManager.DispatcherEntry(new Sink(), default), false];
++        Require(!(bool)reserve.Invoke(request, replacement)! && (bool)replacement[2]!,
++            "a holder of the old container must retry the outer map, not publish into it");
++        Console.WriteLine($"final registry transaction monitor entries={gates}; stream={streamId}");
++        Require(gates == 1, $"final route removal and sealing use {gates} monitor transactions; expected one");
++    }
++
++    [Test]
++    public async Task TerminalCallbackCanRegisterAnotherRouteWithoutSealingOrRemovingIt()
++    {
++        StreamManager? manager = null;
++        var replacement = new Sink();
++        manager = new StreamManager(new RuntimeConcurrencyOptions(), null, null, (request, stream) =>
++        {
++            if (stream == 0) manager!.Register(request, 7, replacement);
++        });
++        manager.Register(9820, new Sink());
++        manager.Unregister(9820);
++        await manager.DispatchChunkAsync(9820, 7, new ReadOnlySequence<byte>(new byte[] { 1 }));
++        Require(replacement.Dispatches == 1 && manager.ActiveStreamCount == 1,
++            "publication callback registration remains live across old-entry remove-and-seal");
++        manager.Unregister(9820, 7);
++        Require(manager.ActiveStreamCount == 0, "the new route must still have one retirement owner");
++    }
++
++    private static int MonitorEntries(MethodInfo method)
++    {
++        var codes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
++            .Where(field => field.FieldType == typeof(OpCode))
++            .Select(field => (OpCode)field.GetValue(null)!).ToDictionary(code => code.Value);
++        var body = method.GetMethodBody()!.GetILAsByteArray()!;
++        var count = 0;
++        for (var offset = 0; offset < body.Length;)
++        {
++            var first = body[offset++];
++            var value = first == 0xfe ? unchecked((short)(0xfe00 | body[offset++])) : (short)first;
++            var code = codes[value];
++            if (code.OperandType == OperandType.InlineMethod)
++            {
++                var target = method.Module.ResolveMethod(BitConverter.ToInt32(body, offset));
++                if (target?.DeclaringType == typeof(Monitor) && target.Name == "Enter") count++;
++            }
++            offset += code.OperandType switch
++            {
++                OperandType.InlineNone => 0,
++                OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
++                OperandType.InlineVar => 2,
++                OperandType.InlineI8 or OperandType.InlineR => 8,
++                OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(body, offset),
++                _ => 4,
++            };
++        }
++        return count;
++    }
++    private static void Require(bool condition, string message)
++    {
++        if (!condition) throw new InvalidOperationException(message);
++    }
++    private sealed class Sink : IStreamDispatcher
++    {
++        internal int Dispatches;
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) { Dispatches++; return ValueTask.CompletedTask; }
++        public void Complete(bool isError, string? errorMessage) { }
++        public void Complete(Exception? exception) { }
++    }
++}

@@ -1,0 +1,105 @@
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveControlTests.cs b/test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveControlTests.cs
+new file mode 100644
+index 00000000..941c32bc
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveControlTests.cs
+@@ -0,0 +1,99 @@
++using System.IO.Pipelines;
++
++namespace SharpLink.UnitTests.Runtime;
++
++// Portable to exact N: this control uses only its existing session and binding API.
++public sealed class StreamManagerFirstReceiveControlTests
++{
++    [Test]
++    [Arguments((ushort)0)]
++    [Arguments((ushort)7)]
++    public async Task RealSessionFirstDataPublishesTheExactFinalWindowUpdate(ushort streamId)
++    {
++        var input = new Pipe();
++        var output = new Pipe();
++        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
++            "first-receive-wire", input.Reader, output.Writer,
++            RpcSessionTestFixture.ClientOptions(), completeHandshake: false);
++        RpcSessionTestFixture.CompleteHandshake(session, ProtocolV2Capabilities.FlowControl,
++            streamReceiveWindowBytes: 8, connectionReceiveWindowBytes: 8);
++        var sink = new BindingSink();
++        session.StreamManager.Register(9810, streamId, sink);
++        var binding = sink.Binding!;
++        await session.StreamManager.DispatchChunkAsync(9810, streamId, new ReadOnlySequence<byte>(new byte[] { 1 }));
++        if (!binding.ReceiveCreditLease.IsResolved)
++            throw new InvalidOperationException("Actual first DATA must capture its resolved generation.");
++        session.StreamManager.Unregister(9810, streamId);
++        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
++        var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
++        try
++        {
++            var remaining = read.Buffer;
++            if (!ProtocolV2FrameParser.TryReadFrame(ref remaining, session.RuntimeContext.Protocol,
++                    out var header, out var payload) || header.Type != ProtocolV2FrameType.WindowUpdate ||
++                header.RequestId != 9810 || !remaining.IsEmpty)
++                throw new InvalidOperationException("Expected exactly one actual WindowUpdate for the retired route.");
++            var update = ProtocolV2PayloadCodec.ReadWindowUpdate(payload);
++            if (update.StreamId != streamId || update.Credit != 1)
++                throw new InvalidOperationException("Final update must preserve the below-threshold first-DATA credit.");
++        }
++        finally
++        {
++            output.Reader.AdvanceTo(read.Buffer.End);
++            await session.DisposeAsync();
++            await output.Reader.CompleteAsync();
++            await input.Writer.CompleteAsync();
++        }
++    }
++
++    [Test]
++    [Arguments((ushort)0)]
++    [Arguments((ushort)7)]
++    public async Task EmptyDirectRouteMustNotAttachReceiveCreditBeforeItsFirstData(ushort streamId)
++    {
++        var input = new Pipe();
++        var output = new Pipe();
++        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
++            "first-receive-control", input.Reader, output.Writer,
++            RpcSessionTestFixture.ClientOptions(), completeHandshake: false);
++        RpcSessionTestFixture.CompleteHandshake(session, ProtocolV2Capabilities.FlowControl,
++            streamReceiveWindowBytes: 8, connectionReceiveWindowBytes: 8);
++        var sink = new BindingSink();
++        try
++        {
++            session.StreamManager.Register(9800, streamId, sink);
++            var entry = sink.Binding!;
++            if (entry.ReceiveCreditLease.IsResolved || entry.ReceiveCreditInitialized)
++                throw new InvalidOperationException("Empty direct registration eagerly attached receive credit.");
++            session.StreamManager.Unregister(9800, streamId);
++            if (!entry.IsReceiveRetired || sink.Binding is not null || sink.Drained != 1)
++                throw new InvalidOperationException("Empty direct retirement must detach and drain its dispatcher once.");
++        }
++        finally
++        {
++            session.StreamManager.Unregister(9800, streamId);
++            await session.DisposeAsync();
++            await output.Reader.CompleteAsync();
++            await input.Writer.CompleteAsync();
++        }
++    }
++
++    private sealed class BindingSink : IStreamReceiveCreditBoundDispatcher, IStreamDispatchLease
++    {
++        internal StreamManager.DispatcherEntry? Binding;
++        internal int Drained;
++        public void SetReceiveCreditBinding(StreamManager.DispatcherEntry? binding) => Binding = binding;
++        public void BindDispatchState(IStreamDispatchState state) { }
++        public void OnDispatchesDrained() { Drained++; Binding = null; }
++        public ValueTask DispatchAcquiredAsync(ReadOnlySequence<byte> payload, int count)
++            => DispatchAsync(payload, count);
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => DispatchAsync(payload, 1);
++        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload, int count)
++        {
++            Binding?.RecordConsumed(count);
++            return ValueTask.CompletedTask;
++        }
++        public void Complete(bool isError, string? errorMessage) { }
++        public void Complete(Exception? exception) { }
++    }
++}
