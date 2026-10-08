@@ -1,0 +1,92 @@
+name: 742 Redesign Evidence Recovery
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-redesign-recovery.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: 742-redesign-evidence-recovery
+  cancel-in-progress: false
+jobs:
+  verify-original-micro:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [pgo0, pgo1, native]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download exact original complete raw populations
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37757840731
+          name: 742-redesign-${{ matrix.runtime }}-3f4d8eb6326a4abb820e2f6841a29e4e7bbbb8db
+          path: artifacts/original-micro
+      - name: Validate unchanged three sequential and six AB-BA contention repetitions
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-recovery/verify-existing-micro.py artifacts/original-micro '${{ matrix.runtime }}'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-redesign-revalidated-${{ matrix.runtime }}-${{ github.sha }}
+          path: artifacts/original-micro
+          if-no-files-found: error
+          retention-days: 30
+
+  skipped-native-rpc-and-writer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Reconstruct the identical previously tested shipping source
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-redesign/prepare.py "$RUNNER_TEMP/redesign" --include-dev --patches "$PWD"/eng/preflight-742-redesign/{send,receive,tail}.patch
+          mkdir -p artifacts/native-recovery
+          cp "$RUNNER_TEMP/redesign/identities.json" artifacts/native-recovery/
+          dotnet --info > artifacts/native-recovery/dotnet.txt
+          lscpu > artifacts/native-recovery/cpu.txt
+      - name: Build identical actual NativeAOT RPC hosts
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-735-prepare-native-rpc.py "$RUNNER_TEMP/redesign/dev" "$RUNNER_TEMP/redesign/control" artifacts/native-recovery/native-host-dc
+          python3 eng/preflight-735-prepare-native-rpc.py "$RUNNER_TEMP/redesign/control" "$RUNNER_TEMP/redesign/candidate" artifacts/native-recovery/native-host-cn
+          for label in dev control candidate; do
+            root="$RUNNER_TEMP/redesign/$label"
+            dotnet publish "$root/test/SharpLink.FirstReceiveRpcEvidence" -c Release -r linux-x64 -p:PublishAot=true -p:StripSymbols=false -o "$root/artifacts/redesign-native-rpc" > "artifacts/native-recovery/native-rpc-build-$label.log" 2>&1 || { cat "artifacts/native-recovery/native-rpc-build-$label.log"; exit 1; }
+            sha256sum "$root/artifacts/redesign-native-rpc/SharpLink.Benchmarks" >> artifacts/native-recovery/native-binaries.sha256
+            python3 eng/preflight-742-redesign/disassemble.py "$root/artifacts/redesign-native-rpc/SharpLink.Benchmarks" "artifacts/native-recovery/native-code-$label.txt"
+          done
+      - name: Previously skipped predeclared actual NativeAOT short and duplex screen
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-redesign/screen.py "$RUNNER_TEMP/redesign/dev" "$RUNNER_TEMP/redesign/control" "$RUNNER_TEMP/redesign/candidate" artifacts/native-recovery/native-rpc --runtime native
+      - name: Previously skipped original NativeAOT writer correctness
+        run: |
+          set -euo pipefail
+          out="$PWD/artifacts/native-recovery"
+          cd "$RUNNER_TEMP/redesign/candidate"
+          python3 eng/prepare-ready-writer.py --apply
+          dotnet publish test/SharpLink.ReadyWriterAotEvidence -c Release -r linux-x64 -p:PublishAot=true -p:StripSymbols=false -o "$out/ready-native" > "$out/ready-native-build.log" 2>&1 || { cat "$out/ready-native-build.log"; exit 1; }
+          "$out/ready-native/SharpLink.Benchmarks" --ready-writer-self-test 2>&1 | tee "$out/ready-native-checks.log"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-redesign-native-recovery-${{ github.sha }}
+          path: artifacts/native-recovery
+          if-no-files-found: error
+          retention-days: 30
