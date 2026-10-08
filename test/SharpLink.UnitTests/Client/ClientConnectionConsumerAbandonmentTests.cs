@@ -257,7 +257,15 @@ public class ClientConnectionConsumerAbandonmentTests
             "the owner must remain published until the outstanding dispatch actually drains");
 
         dispatcher.ReleaseDispatch();
-        await dispatch.WaitAsync(RaceCoordinationTimeout);
+        try
+        {
+            await dispatch.WaitAsync(RaceCoordinationTimeout);
+        }
+        catch (Exception exception) when (ReferenceEquals(exception, drainFailure))
+        {
+            // The drain continuation can detach before the lease's Release returns,
+            // surfacing this same injected callback failure on the dispatch as well.
+        }
         await dispatcher.DrainFailureRaised.Task.WaitAsync(RaceCoordinationTimeout);
         var disconnected = await WaitForReadinessSnapshotAsync(
             client,
