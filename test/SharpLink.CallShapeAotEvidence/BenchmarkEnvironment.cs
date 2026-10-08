@@ -16,14 +16,17 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
     private readonly ISharpLinkClient _client;
 
     public IBenchmarkRpc Rpc { get; }
+    public BenchmarkRpcService LocalService { get; }
 
     private BenchmarkEnvironment(
         IBenchmarkRpc rpc,
+        BenchmarkRpcService localService,
         CancellationTokenSource shutdown,
         ISharpLinkServer server,
         ISharpLinkClient client)
     {
         Rpc = rpc;
+        LocalService = localService;
         _shutdown = shutdown;
         _server = server;
         _client = client;
@@ -52,6 +55,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
             return new BenchmarkEnvironment(
                 client.Get<IBenchmarkRpc>(),
+                service,
                 shutdown,
                 server,
                 client);
