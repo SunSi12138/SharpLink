@@ -1,0 +1,392 @@
+{
+  "repository": "SunSi12138/SharpLink",
+  "head": "634e6ca9693dbb716d08bad45f26adc30801ad38",
+  "run_id": 37844180672,
+  "run_attempt": 1,
+  "run_conclusion": "failure",
+  "workflow_path": ".github/workflows/742-first-binding-preflight.yml",
+  "artifact": {
+    "id": 11579641223,
+    "name": "742-first-binding-safety-634e6ca9693dbb716d08bad45f26adc30801ad38",
+    "size_in_bytes": 678262,
+    "digest": "sha256:389ba81691be1569a47737eb896a604fd05e64bc1f59be8d79f2b88c09602cfb"
+  },
+  "job_id": 113540793454,
+  "job_name": "safety-and-root-layout",
+  "required_steps": [
+    {
+      "number": 4,
+      "name": "Reconstruct pristine G2 and A plus identical test overlays",
+      "conclusion": "success"
+    },
+    {
+      "number": 5,
+      "name": "Matched complete default suites and unchanged allocation and lifecycle gates",
+      "conclusion": "success"
+    },
+    {
+      "number": 6,
+      "name": "Original 171 writer checks and complete candidate experimental suite",
+      "conclusion": "success"
+    },
+    {
+      "number": 7,
+      "name": "Build original RPC and inspect actual managed byte array root state",
+      "conclusion": "failure"
+    },
+    {
+      "number": 8,
+      "name": "Capture four original RPC executions with exact JIT tier labels",
+      "conclusion": "skipped"
+    },
+    {
+      "number": 9,
+      "name": "Collect actual NativeAOT root wrappers for independent layout inspection",
+      "conclusion": "skipped"
+    }
+  ],
+  "trees": {
+    "G2": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+    "A": "4cb4ce7a13b06c3a6f3213e30215b6769ed49f90",
+    "G2-tests": "1edc4423f5157a8fb92cb7074349a25badc38030",
+    "A-tests": "a7cb5c6ef89222a82ca3b1e7a356345ee7b42902",
+    "A-experimental": "a7cb5c6ef89222a82ca3b1e7a356345ee7b42902"
+  },
+  "files": {
+    "artifact-manifest.json": {
+      "sha256": "2775cd9e0c14b5c5c3c2ce5b3876b4cfd0abe8bf22fa15b904024da7e5ed74aa",
+      "bytes": 389
+    },
+    "default/A-tests-FirstBindingStreamPumpTests-ActualFirstSendHelperShouldReuseItsTaskWithoutConversionAllocation.log": {
+      "sha256": "9099f4b7e8d7f3d18a52713021fcb717a5cefe66b3859e79abe2aac5d1f6fbd9",
+      "bytes": 697
+    },
+    "default/A-tests-FirstBindingStreamPumpTests-AlreadyFailedFirstBindingShouldNotBecomeSuccessOrAggregateException.log": {
+      "sha256": "4ae275f8555564521bb6f988da50b0f57cabf7401bf97483c72c77dc626fc152",
+      "bytes": 697
+    },
+    "default/A-tests-FirstBindingStreamPumpTests-ExpiredDeadlineShouldBeatAlreadyCompletedFirstBindingFaultOrCancellation.log": {
+      "sha256": "19b5a92400fd8af3035f24da0efaca3307cb02540191a6464c00f3f4f9d5cda0",
+      "bytes": 695
+    },
+    "default/A-tests-FirstBindingStreamPumpTests-ExpiredFirstBindingShouldBeatLateFaultOrCancellationAndObserveAbandonedDispose.log": {
+      "sha256": "81b7e2541bd4cb038035740de0d199c12559a827ca883e4d07d175d33c37aaf4",
+      "bytes": 695
+    },
+    "default/A-tests-FirstBindingStreamPumpTests-FirstBindingShouldPublishEachItemOnceAndPreserveEnumeratorConsumption.log": {
+      "sha256": "28856ffaec04eac486a63186f809c866153f8843c7f03b46c8a794d481dd665e",
+      "bytes": 697
+    },
+    "default/A-tests-FirstBindingStreamPumpTests-PendingFirstBindingShouldPreserveFaultOrCancellationAndReleaseOwnership.log": {
+      "sha256": "8d60d6a8e990a07dd23dddca9de36097db336364ae0a9ec41d33d024247c9290",
+      "bytes": 697
+    },
+    "default/A-tests-allocation-build.log": {
+      "sha256": "eab30820db7dfadf0447b42ebc0f59c1d9ca892f84fec632830e98c2806c9146",
+      "bytes": 2593
+    },
+    "default/A-tests-allocation-gate.json": {
+      "sha256": "20ec7d50811442c6f2327f1099a28bd15cc934999c910618f513e0381e5be02c",
+      "bytes": 20941
+    },
+    "default/A-tests-allocation-gate.log": {
+      "sha256": "46e5ce7a706c20813f17c5681456b642a94cf6a0ded6efc8822fea52307448da",
+      "bytes": 572
+    },
+    "default/A-tests-build.log": {
+      "sha256": "9468177061e0bf79c5f18566e5169b26452200ccf9cc89a037cf7a7c21a43091",
+      "bytes": 3734
+    },
+    "default/A-tests-default-binaries.json": {
+      "sha256": "deb23c27d46875cca0970132160b2ec636b69a6c9a56a33b99582c4867577e0e",
+      "bytes": 39975
+    },
+    "default/A-tests-default-unit.log": {
+      "sha256": "7b14bf8ec0d3e397e1224f5334401c534e82c3f025366324a22682d548333247",
+      "bytes": 1524
+    },
+    "default/A-tests-lifecycle.log": {
+      "sha256": "a9ddb0118b1cfbd4d3d3f5a229c5f22fa5ae1065ebcffa709ab526dabce3474a",
+      "bytes": 77
+    },
+    "default/G2-tests-FirstBindingStreamPumpTests-ActualFirstSendHelperShouldReuseItsTaskWithoutConversionAllocation.log": {
+      "sha256": "18efb3a6bc9597c3e1c40f75e93f17c299c1157e41acbbe176f7b4cbbf1687cc",
+      "bytes": 700
+    },
+    "default/G2-tests-FirstBindingStreamPumpTests-AlreadyFailedFirstBindingShouldNotBecomeSuccessOrAggregateException.log": {
+      "sha256": "c8bfb295677d68e6d6fcd7e92f2a9d583a5ea6bdfadcc421afe57cb9fb5b0eb0",
+      "bytes": 700
+    },
+    "default/G2-tests-FirstBindingStreamPumpTests-ExpiredDeadlineShouldBeatAlreadyCompletedFirstBindingFaultOrCancellation.log": {
+      "sha256": "d0b24922c7f5aace41b6ead51ae05770bd3e3c6b345884c5395c7eb61c6a81da",
+      "bytes": 698
+    },
+    "default/G2-tests-FirstBindingStreamPumpTests-ExpiredFirstBindingShouldBeatLateFaultOrCancellationAndObserveAbandonedDispose.log": {
+      "sha256": "a2d87a7fd4ed3acc9dfb6dab3c0e66ddca8c2559459297b8c73a6419aef1184e",
+      "bytes": 698
+    },
+    "default/G2-tests-FirstBindingStreamPumpTests-FirstBindingShouldPublishEachItemOnceAndPreserveEnumeratorConsumption.log": {
+      "sha256": "605a3c689fd0e738915a02f165e6cda96eaa5f729ddc5a75498747d33783158b",
+      "bytes": 700
+    },
+    "default/G2-tests-FirstBindingStreamPumpTests-PendingFirstBindingShouldPreserveFaultOrCancellationAndReleaseOwnership.log": {
+      "sha256": "9ddffa307456b5f5de0b675cab6de2147f082a14e511b03252cb141607a49306",
+      "bytes": 700
+    },
+    "default/G2-tests-allocation-build.log": {
+      "sha256": "42d96007dd3b95d11fc2f6b5e373e981cb9d971d198a35695069581eada40a29",
+      "bytes": 2610
+    },
+    "default/G2-tests-allocation-gate.json": {
+      "sha256": "fb1ea46c28f3490345c4caa7788fed4377d35e2610d7d8def35ab6c8bfe14fd7",
+      "bytes": 20945
+    },
+    "default/G2-tests-allocation-gate.log": {
+      "sha256": "68145f88f7608d11d8288c8cf0ca0668f38eb13420e09bf2aecd2dc857f29dbe",
+      "bytes": 573
+    },
+    "default/G2-tests-build.log": {
+      "sha256": "fca0c83837f980fcc30f2e8c0e00ccc2cfd30e7a85233284c27d6a6c9529bf51",
+      "bytes": 3774
+    },
+    "default/G2-tests-default-binaries.json": {
+      "sha256": "52e0bce631470b05dae21bafcacd742ff6a92867921f25f8e8f3e4929c4b3f02",
+      "bytes": 39975
+    },
+    "default/G2-tests-default-unit.log": {
+      "sha256": "a7bba969a8b4cbd46f09338ecf53530b875104611fb30480beb477916468e3fe",
+      "bytes": 1528
+    },
+    "default/G2-tests-lifecycle.log": {
+      "sha256": "75b08cfe4941c7579955557d5335f7948b63e59804c382a3d11b22d005ed481f",
+      "bytes": 75
+    },
+    "default/actual-setup/0-F.csv": {
+      "sha256": "f17d92e37997b419cc34ad342a717e500c7e10be19c570445ffdf1faafa4e551",
+      "bytes": 412
+    },
+    "default/actual-setup/1-G.csv": {
+      "sha256": "f17d92e37997b419cc34ad342a717e500c7e10be19c570445ffdf1faafa4e551",
+      "bytes": 412
+    },
+    "default/actual-setup/2-G.csv": {
+      "sha256": "f17d92e37997b419cc34ad342a717e500c7e10be19c570445ffdf1faafa4e551",
+      "bytes": 412
+    },
+    "default/actual-setup/3-F.csv": {
+      "sha256": "f17d92e37997b419cc34ad342a717e500c7e10be19c570445ffdf1faafa4e551",
+      "bytes": 412
+    },
+    "default/actual-setup/build-F.log": {
+      "sha256": "a86677fd40aebb8cb0484d334851c3ad63480e085b319b0818fa023cd8595e5d",
+      "bytes": 366
+    },
+    "default/actual-setup/build-G.log": {
+      "sha256": "e9ff6e3fcebce318b30dbbf7a9ef1661039fbdfa75f3c4a2e5d93e86a1c5c450",
+      "bytes": 366
+    },
+    "default/actual-setup/provenance.json": {
+      "sha256": "74d95814a792d90c8eaaa450eaf43b519a6b64ea43661c02d5421c66bb51dcf5",
+      "bytes": 325630
+    },
+    "default/actual-setup/rows.json": {
+      "sha256": "809aca16c4959bb9e3256694b7a4863b9f971994d288b336cb58b8828955a88d",
+      "bytes": 5767
+    },
+    "default/actual-setup/summary.json": {
+      "sha256": "768a9d2f13b0ad54def0b1e60df937c06fa22fbc98c2fa4c0f6a2941b1057c86",
+      "bytes": 1060
+    },
+    "default/actual-setup.log": {
+      "sha256": "1bad2a350c6ac46eecadadb9e8c74f9ddb570ea1869944f67251620e3eca2718",
+      "bytes": 1171
+    },
+    "default/default-safety-result.json": {
+      "sha256": "3073dafeb43bb7f52ff4a3eaa44bc034b9d1b51f2e2157a74d7c69335aae6039",
+      "bytes": 296
+    },
+    "default/format.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "default/lifecycle-build-candidate.log": {
+      "sha256": "0c173f1c64f25a963e7f064389b041d958ca4bc550b2999b9c2345910b8ebcbd",
+      "bytes": 376
+    },
+    "default/lifecycle-candidate.csv": {
+      "sha256": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+      "bytes": 6649
+    },
+    "default/lifecycle-build-control.log": {
+      "sha256": "f1fe2b6013b73b53360c6668d1c89a394d1a115c02352abce06c39a0185f9e8a",
+      "bytes": 372
+    },
+    "default/lifecycle-comparison.json": {
+      "sha256": "f7ba15c0a6e073cc2008b1d89ac9bafa4beb931da609f2aad85c6f8e385c9bf0",
+      "bytes": 20401
+    },
+    "default/lifecycle-control.csv": {
+      "sha256": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+      "bytes": 6649
+    },
+    "default/lifecycle-provenance-candidate.json": {
+      "sha256": "e19cd6114aa2a8fbc62e07e4c20b22814da7ded3e6ff1e642b9dfcb824da9109",
+      "bytes": 159735
+    },
+    "default/lifecycle-provenance-control.json": {
+      "sha256": "166673e023c4fad72a636fd524f79093d6c5610994fa5d3007459516754dad4a",
+      "bytes": 159734
+    },
+    "default/maintainability.log": {
+      "sha256": "e9bac90c24f633109f70b45855a55025cca75f2ba9669af09935ee752a8329bd",
+      "bytes": 186
+    },
+    "default/original-allocation-label-map.json": {
+      "sha256": "0b49058bc377325c852b40ecfea8ea5e2d103af26327d3287dd52284b4c77a25",
+      "bytes": 349
+    },
+    "default/production-lifecycle/F.csv": {
+      "sha256": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+      "bytes": 6649
+    },
+    "default/production-lifecycle/G.csv": {
+      "sha256": "15beb3cbbbd39df04d910ea632cb6eb4d4f58b9d2e0ea5c9f3ace6e68d7d18fe",
+      "bytes": 6649
+    },
+    "default/production-lifecycle/build-F.log": {
+      "sha256": "65c2e25790a27faa9aaa0ff687330b2c9f47303c9c5189e9ef5e580d9195083f",
+      "bytes": 382
+    },
+    "default/production-lifecycle/build-G.log": {
+      "sha256": "4984b8598a466698e3221091131ec35bf69d9632b65629ca0e9b242fe7f8617e",
+      "bytes": 382
+    },
+    "default/production-lifecycle/comparison.json": {
+      "sha256": "0d6cd12e982d068cc69ba8097aea69601a6fc58d479a79f2b5002a12c88f1224",
+      "bytes": 20521
+    },
+    "default/production-lifecycle/provenance.json": {
+      "sha256": "71a69fe5008392254bea6a64c91c3075848d7ad82d1038f7452bcd1cb27377d4",
+      "bytes": 325118
+    },
+    "default/production-lifecycle.log": {
+      "sha256": "c57db602abfb1f4281038e72a798010e8c0828588bfa60ab7cc3a7d0d57803ec",
+      "bytes": 20661
+    },
+    "default/references.log": {
+      "sha256": "4e0a8fb389ca4bb447dd0bd95b50b9a504c7d61c029466423bed3386ffd12b81",
+      "bytes": 104
+    },
+    "env/cpu.txt": {
+      "sha256": "e2df535c811efa12c233d27957938e328c559882432955ed0a31588554b3338b",
+      "bytes": 3339
+    },
+    "env/dotnet.txt": {
+      "sha256": "1fadbc1669cc6edfd7e91a55d0651fe9e4cde49377b9aa4eece6824870d547c7",
+      "bytes": 2884
+    },
+    "env/uname.txt": {
+      "sha256": "13f109c96ec64fefcb66a09f876d5aab3f3352e13e8dc2a576692891bc902aa1",
+      "bytes": 113
+    },
+    "experimental/experimental-binaries.json": {
+      "sha256": "86b1ec7d3af29a68537a769e452faa1ee6782bce607374837fa34509b2ceb86a",
+      "bytes": 39975
+    },
+    "experimental/experimental-build.log": {
+      "sha256": "266f6a5803b2d822e7daf1ff6b6542c4f2286409c9aa3eded311f874f7aefd2e",
+      "bytes": 2938
+    },
+    "experimental/experimental-safety-result.json": {
+      "sha256": "c415e76354b2e8ca118deb66a2de5c9d181b94343264355bf17380d40ef7b76d",
+      "bytes": 164
+    },
+    "experimental/experimental-source.json": {
+      "sha256": "2cc5085d61ef017080504abfadc37e5eaf57a434adaff426496de1ac495d1881",
+      "bytes": 255
+    },
+    "experimental/experimental-source.patch": {
+      "sha256": "c085f946f26b6f6b50acfbc52ec905cfbda3cd9b4d768dbd51f9f061182c757c",
+      "bytes": 4652
+    },
+    "experimental/experimental-unit.log": {
+      "sha256": "a5ccfee22b7703a1f00638d73664aaec68734d9cbda405d68ca586338343eafa",
+      "bytes": 1628
+    },
+    "experimental/test-ready-writer-budget.log": {
+      "sha256": "ddbc5bf15c26bf2c15a86c04aa1c4eb9dbb31a4d245c800b95a5282be426a476",
+      "bytes": 111
+    },
+    "experimental/test-ready-writer-collection.log": {
+      "sha256": "2280a985eaea5c7888e0e22b3b111051e0d07bdd907927204367dd592b277d05",
+      "bytes": 349
+    },
+    "experimental/test-ready-writer-native.log": {
+      "sha256": "d315654798b85ab2f3f1256b903970ae3769671fcc85857dee430e3820988e43",
+      "bytes": 562
+    },
+    "experimental/test-ready-writer.log": {
+      "sha256": "ca3691546a64a4d2c903e70a78b53a9453c2785cda14a3ed2f0c3bde38f8d3dd",
+      "bytes": 116
+    },
+    "experimental/writer-build.log": {
+      "sha256": "61b02a77e70467565cdc6b1fbd5f2587251c32664289a70dc4e76a3f67844cdf",
+      "bytes": 3536
+    },
+    "experimental/writer-checks.log": {
+      "sha256": "a7692b73881adeb8ebacfdd7c2c6be1ad8c07aa2bce6c7be74e6db27c639fbe7",
+      "bytes": 8851
+    },
+    "experimental/writer-prepare.log": {
+      "sha256": "42efa9d1393452ed791c963d747bcc8b7032320dea8f2659c1429602fadbe0a5",
+      "bytes": 52
+    },
+    "packaging-failures.json": {
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "bytes": 3
+    },
+    "source/A-experimental-source.json": {
+      "sha256": "1264002ac418454534a2955fe3005b692367be0753e12dc5dcc67c5a51735284",
+      "bytes": 156506
+    },
+    "source/A-source.json": {
+      "sha256": "50d67fad8685ff58d0074f725a1a414f303f696207d8a5ea2d0fbf2b214fc55d",
+      "bytes": 156378
+    },
+    "source/A-tests-source.json": {
+      "sha256": "9c1602ee858c8424f09499d04e9081535568c8be4967f987ea95e83e5be1613e",
+      "bytes": 156499
+    },
+    "source/G2-source.json": {
+      "sha256": "25916e6ba68bb6edd5bb73d2d05bf8814b4a47d938d94eed6abf2dc4ebb25b4c",
+      "bytes": 156379
+    },
+    "source/G2-tests-source.json": {
+      "sha256": "6d7cb637d3fb30e0a90a1dd72844d1956fa212481eb19d655319bdc16a298f7b",
+      "bytes": 156500
+    },
+    "source/author-manifest.json": {
+      "sha256": "b2abe1a933f6cb01e53f9e05c5514d64f865217a0a2dc99ddb2c5f7a4bf1fc6a",
+      "bytes": 3452
+    },
+    "source/full-g2.patch": {
+      "sha256": "5217ed02fbeb260f68413fba7f4eac21eb197e37bdff31a612fb4973ccf5139b",
+      "bytes": 376165
+    },
+    "source/identities.json": {
+      "sha256": "e9f73d16808caac83d4fbbb3b9b864ecb109b2d3737cf758ecddc8212ea208b8",
+      "bytes": 5169
+    },
+    "source/production.patch": {
+      "sha256": "1dc3031cff439568d3f1c2e86b9e9ab02a246e0e4cc726f676dae8d73f410794",
+      "bytes": 3720
+    },
+    "source/tests.patch": {
+      "sha256": "c7157592ec074b2bf90f7630a7b4d4495989e153a95e34bfa7d13d2911fdaaad",
+      "bytes": 29585
+    }
+  },
+  "file_count": 83,
+  "scope": "Reuse only completed shipping safety gates. Prior overall result stays failure; JIT layout/capture and NativeAOT were not executed.",
+  "sdk_target_source": "https://github.com/dotnet/sdk/blob/v10.0.112/src/Tasks/Microsoft.NET.Build.Tasks/targets/Microsoft.NET.ApiCompat.targets"
+}

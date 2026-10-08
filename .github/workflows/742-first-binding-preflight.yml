@@ -1,4 +1,4 @@
-name: 742 First Binding Safety and Root Layout
+name: 742 First Binding Verified Safety Codegen Resume
 on:
   push:
     branches: ['perf/735-preflight-flags']
@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: 742-first-binding-safety-layout
   cancel-in-progress: false
@@ -28,6 +29,15 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           dotnet-version: 10.0.112
+      - name: Download immutable completed safety evidence as its original ZIP
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37844180672
+          artifact-ids: '11579641223'
+          skip-decompress: true
+          digest-mismatch: error
+          path: artifacts/prior-safety
       - name: Reconstruct pristine G2 and A plus identical test overlays
         shell: bash
         run: |
@@ -52,16 +62,14 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as output:
               output.write('CPU_LIST=' + ','.join(map(str, available[:4])) + '\n')
           PY
-      - name: Matched complete default suites and unchanged allocation and lifecycle gates
+      - name: Verify exact successful safety stages before resuming unfinished codegen
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          python3 eng/preflight-742-first-binding/safety.py default "$RUNNER_TEMP/first-binding" artifacts/first-binding/default
-      - name: Original 171 writer checks and complete candidate experimental suite
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 eng/preflight-742-first-binding/safety.py experimental "$RUNNER_TEMP/first-binding" artifacts/first-binding/experimental
+          python3 eng/preflight-742-first-binding/resume-self-tests.py artifacts/prior-safety "$RUNNER_TEMP/first-binding"
+          python3 eng/preflight-742-first-binding/reuse-safety.py artifacts/prior-safety "$RUNNER_TEMP/first-binding" artifacts/first-binding/env/reused-safety
       - name: Build original RPC and inspect actual managed byte array root state
         shell: bash
         run: |

@@ -55,6 +55,33 @@ The next input changes only that space to a newline plus indentation; test logic
 populations, production and every gate stay unchanged. Both prior runs remain
 historical evidence; the retry must still complete all required gates.
 
+## Bounded resume after diagnostic restore failure
+
+Run `37844180672` at helper `634e6ca9693dbb716d08bad45f26adc30801ad38`
+passed all three 2186-case suites, both 58-case focused populations, writer171,
+both allocation reports, both 120-row lifecycle controls, five setup controls,
+and format/reference/maintainability checks. Its overall conclusion remains
+failure: the standalone RootLayout diagnostic inherited package validation and
+attempted to download a nonexistent RootLayout2.0.0 baseline. No layout probe,
+original RPC build, JIT capture or NativeAOT build executed in that run.
+
+Only RootLayout now opts out of packaging and package-baseline validation. The
+shipping project settings and all production, tests, original gates, workloads,
+and compiler settings stay unchanged. The original complete workflow remains
+available at the immutable helper above.
+
+The current workflow resumes only the unfinished compiled-code stages. It first
+downloads artifact11579641223 from that exact run/attempt using the pinned official
+action, retains its original ZIP, and checks SHA256
+`389ba81691be1569a47737eb896a604fd05e64bc1f59be8d79f2b88c09602cfb`.
+`prior-safety.json` pins every one of its 83 files, exact source/test trees and
+successful safety-step conclusions. `reuse-safety.py` validates those values,
+all retained safety populations and results, and freshly reconstructed matching
+source maps before allowing codegen. Altered evidence or source fails closed.
+The successful safety suites are reused without another execution; the failed
+original run and every raw safety byte remain retained with the resume proof.
+Read-only Actions access is used solely to verify the prior run and artifact.
+
 ## Matched actual JIT roots
 
 Both pristine production arms build the original RPC project once using pinned
