@@ -1,0 +1,149 @@
+name: 742 First Binding Safety and Root Layout
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-first-binding-preflight.yml'
+      - 'eng/preflight-742-first-binding/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 742-first-binding-safety-layout
+  cancel-in-progress: false
+jobs:
+  safety-and-root-layout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.112
+      - name: Reconstruct pristine G2 and A plus identical test overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/first-binding/env
+          python3 eng/preflight-742-first-binding/self-tests.py
+          python3 eng/preflight-742-quiescent/self-tests.py
+          python3 eng/preflight-742-first-binding/prepare.py "$RUNNER_TEMP/first-binding" artifacts/first-binding/source
+          dotnet --info > artifacts/first-binding/env/dotnet.txt
+          uname -a > artifacts/first-binding/env/uname.txt
+          lscpu > artifacts/first-binding/env/cpu.txt
+          python3 - <<'PY'
+          import os, subprocess
+          assert subprocess.check_output(['dotnet', '--version'], text=True).strip() == '10.0.112'
+          runtimes = subprocess.check_output(['dotnet', '--list-runtimes'], text=True)
+          assert any(line.startswith('Microsoft.NETCore.App 10.0.12 ') for line in runtimes.splitlines())
+          net10 = [tuple(map(int, line.split()[1].split('.'))) for line in runtimes.splitlines()
+                   if line.startswith('Microsoft.NETCore.App 10.')]
+          assert max(net10) == (10, 0, 12), 'Unqualified original safety hosts must select runtime10.0.12'
+          available = sorted(os.sched_getaffinity(0))
+          assert len(available) >= 4, 'Original four-CPU capacity required'
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CPU_LIST=' + ','.join(map(str, available[:4])) + '\n')
+          PY
+      - name: Matched complete default suites and unchanged allocation and lifecycle gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-first-binding/safety.py default "$RUNNER_TEMP/first-binding" artifacts/first-binding/default
+      - name: Original 171 writer checks and complete candidate experimental suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-first-binding/safety.py experimental "$RUNNER_TEMP/first-binding" artifacts/first-binding/experimental
+      - name: Build original RPC and inspect actual managed byte array root state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-first-binding/codegen.py build "$RUNNER_TEMP/first-binding" artifacts/first-binding/jit
+      - name: Capture four original RPC executions with exact JIT tier labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-first-binding/codegen.py run "$RUNNER_TEMP/first-binding" artifacts/first-binding/jit --affinity "$CPU_LIST"
+      - name: Collect actual NativeAOT root wrappers for independent layout inspection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-first-binding/native-codegen.py "$RUNNER_TEMP/first-binding" artifacts/first-binding/native
+      - name: Package retained evidence below the per artifact limit
+        id: package
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-first-binding/package.py artifacts/first-binding artifacts/first-binding-upload
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_safety == 'true'
+        with:
+          name: 742-first-binding-safety-${{ github.sha }}
+          path: artifacts/first-binding-upload/safety
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_index == 'true'
+        with:
+          name: 742-first-binding-jit-index-${{ github.sha }}
+          path: artifacts/first-binding-upload/jit-index
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_G2 == 'true'
+        with:
+          name: 742-first-binding-jit-G2-${{ github.sha }}
+          path: artifacts/first-binding-upload/jit-G2
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_jit_A == 'true'
+        with:
+          name: 742-first-binding-jit-A-${{ github.sha }}
+          path: artifacts/first-binding-upload/jit-A
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_index == 'true'
+        with:
+          name: 742-first-binding-native-index-${{ github.sha }}
+          path: artifacts/first-binding-upload/native-index
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_G2_elf == 'true'
+        with:
+          name: 742-first-binding-native-G2-elf-${{ github.sha }}
+          path: artifacts/first-binding-upload/native-G2-elf
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_G2_code == 'true'
+        with:
+          name: 742-first-binding-native-G2-code-${{ github.sha }}
+          path: artifacts/first-binding-upload/native-G2-code
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_A_elf == 'true'
+        with:
+          name: 742-first-binding-native-A-elf-${{ github.sha }}
+          path: artifacts/first-binding-upload/native-A-elf
+          if-no-files-found: warn
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.package.outputs.ready_native_A_code == 'true'
+        with:
+          name: 742-first-binding-native-A-code-${{ github.sha }}
+          path: artifacts/first-binding-upload/native-A-code
+          if-no-files-found: warn
+          retention-days: 30

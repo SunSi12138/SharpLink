@@ -1,0 +1,73 @@
+{
+  "recipe_commit": "06b737df0d9aab66caed9c446a572b3a8ce4efae",
+  "base_tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+  "production_tree": "4cb4ce7a13b06c3a6f3213e30215b6769ed49f90",
+  "candidate_tree": "7d0a713a5602465f7f6e056ab89fc7c38247f693",
+  "baseline_tests_tree": "fb04cb81c0603ac09a04d12d6819db24f10d25ed",
+  "new_test_cases": 58,
+  "original_suite_cases": 2128,
+  "expected_overlay_suite_cases": 2186,
+  "patches": {
+    "production.patch": {
+      "sha256": "1dc3031cff439568d3f1c2e86b9e9ab02a246e0e4cc726f676dae8d73f410794",
+      "bytes": 3720
+    },
+    "tests.patch": {
+      "sha256": "331fdaa63075bdf9da3f475066c53c6ca3e999849d60c018694e1544f52b3852",
+      "bytes": 28111
+    }
+  },
+  "focused_tests": [
+    {
+      "class": "FirstBindingStreamPumpTests",
+      "method": "FirstBindingShouldPublishEachItemOnceAndPreserveEnumeratorConsumption",
+      "count": 12
+    },
+    {
+      "class": "FirstBindingStreamPumpTests",
+      "method": "PendingFirstBindingShouldPreserveFaultOrCancellationAndReleaseOwnership",
+      "count": 12
+    },
+    {
+      "class": "FirstBindingStreamPumpTests",
+      "method": "AlreadyFailedFirstBindingShouldNotBecomeSuccessOrAggregateException",
+      "count": 12
+    },
+    {
+      "class": "FirstBindingStreamPumpTests",
+      "method": "ExpiredDeadlineShouldBeatAlreadyCompletedFirstBindingFaultOrCancellation",
+      "count": 2
+    },
+    {
+      "class": "FirstBindingStreamPumpTests",
+      "method": "ExpiredFirstBindingShouldBeatLateFaultOrCancellationAndObserveAbandonedDispose",
+      "count": 4
+    },
+    {
+      "class": "FirstBindingStreamPumpTests",
+      "method": "ActualFirstSendHelperShouldReuseItsTaskWithoutConversionAllocation",
+      "count": 16
+    }
+  ],
+  "production_files": [
+    "src/SharpLink.Client/ClientConnection.cs",
+    "src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs"
+  ],
+  "test_files": [
+    "test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs"
+  ],
+  "local_dotnet_execution": false,
+  "local_checks": {
+    "reconstruction_and_patch_trees": "passed",
+    "git_diff_check": "passed",
+    "project_reference_boundaries": "blocked: dotnet unavailable",
+    "maintainability": "blocked: dotnet unavailable"
+  },
+  "remote_gates_required": [
+    "Release compilation and deterministic test execution",
+    "exact state-machine field inventories and actual root initialization byte decrease",
+    "actual helper Task backing and zero-byte AsTask conversion allocation",
+    "unchanged lifecycle, writer, ownership, and cleanup safety proofs",
+    "record captured tier and PGO source without relabeling Synthesized as Dynamic"
+  ]
+}

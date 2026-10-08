@@ -1,0 +1,512 @@
+diff --git a/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs b/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs
+new file mode 100644
+index 00000000..9db6a153
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/FirstBindingStreamPumpTests.cs
+@@ -0,0 +1,506 @@
++using System.IO.Pipelines;
++using System.Reflection;
++using System.Runtime.CompilerServices;
++using System.Threading.Tasks.Sources;
++using SharpLink.Client;
++using SharpLink.UnitTests.Client;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public sealed class FirstBindingStreamPumpTests
++{
++    [Test]
++    [Arguments("client", false, false)]
++    [Arguments("client", true, false)]
++    [Arguments("generated", false, false)]
++    [Arguments("generated", true, false)]
++    [Arguments("generated-deadline", false, false)]
++    [Arguments("generated-deadline", true, false)]
++    [Arguments("client", false, true)]
++    [Arguments("client", true, true)]
++    [Arguments("generated", false, true)]
++    [Arguments("generated", true, true)]
++    [Arguments("generated-deadline", false, true)]
++    [Arguments("generated-deadline", true, true)]
++    public async Task FirstBindingShouldPublishEachItemOnceAndPreserveEnumeratorConsumption(
++        string mode, bool sized, bool blocked)
++    {
++        await using var fixture = new Fixture(mode);
++        var codec = new ProbeCodec(sized);
++        var stream = new ProbeStream(itemCount: 2);
++        if (blocked)
++            await fixture.BlockConnectionCreditAsync();
++
++        var pump = fixture.Start(stream, codec);
++        if (blocked)
++        {
++            Ensure(!pump.IsCompleted && stream.MoveCount == 1 && stream.ConsumptionCount == 1,
++                "the first send must suspend after consuming the first MoveNext result once");
++            Ensure(codec.SerializeCount == (sized ? 0 : 1),
++                "the blocked first send must retain sized/unsized serialization order");
++            fixture.ReleaseBlockerCredit();
++        }
++        await pump.WaitAsync(TimeSpan.FromSeconds(5));
++
++        Ensure(stream.MoveCount == 3 && stream.ConsumptionCount == 3 && stream.CurrentCount == 2,
++            "first binding and retained sends must consume each reusable source result and item once");
++        Ensure(stream.DisposeCount == 1 && codec.SerializeCount == 2 && codec.ReleaseCount == (sized ? 2 : 0),
++            "each item, sized snapshot, and enumerator must have one owner");
++        Ensure(fixture.Controller.SendConnectionCredit == 0 && fixture.Session.PreCreditSerializedBytes == 0,
++            "two publications must own exactly eight wire bytes and no serialized budget");
++        Ensure(await fixture.CountDataFramesAsync() == 2, "the writer must receive exactly two DATA frames");
++        Ensure(fixture.Time.ActiveTimerCount == 0, "successful first binding must dispose its deadline timer");
++        fixture.ReturnPublishedCredit(8);
++    }
++
++    [Test]
++    [Arguments("client", false, false)]
++    [Arguments("client", true, false)]
++    [Arguments("generated", false, false)]
++    [Arguments("generated", true, false)]
++    [Arguments("generated-deadline", false, false)]
++    [Arguments("generated-deadline", true, false)]
++    [Arguments("client", false, true)]
++    [Arguments("client", true, true)]
++    [Arguments("generated", false, true)]
++    [Arguments("generated", true, true)]
++    [Arguments("generated-deadline", false, true)]
++    [Arguments("generated-deadline", true, true)]
++    public async Task PendingFirstBindingShouldPreserveFaultOrCancellationAndReleaseOwnership(
++        string mode, bool sized, bool cancel)
++    {
++        await using var fixture = new Fixture(mode);
++        using var cancellation = new CancellationTokenSource();
++        var codec = new ProbeCodec(sized);
++        var stream = new ProbeStream(itemCount: 2);
++        var expected = new InvalidOperationException("first credit wait failed");
++        await fixture.BlockConnectionCreditAsync();
++        var pump = fixture.Start(stream, codec, cancellation.Token);
++        Ensure(!pump.IsCompleted && stream.MoveCount == 1, "the first send must really be waiting for credit");
++
++        if (cancel)
++            cancellation.Cancel();
++        else
++            fixture.Session.CompleteSendStream(fixture.RequestId, 0, expected);
++        var failure = await CaptureFailureAsync(pump);
++        Ensure(cancel
++                ? failure is OperationCanceledException canceled && canceled.CancellationToken == stream.EnumerationToken
++                : ReferenceEquals(failure, expected),
++            "the first-send awaiter must preserve the original fault or producer cancellation token");
++        await fixture.WaitForCleanupAsync(codec, sized);
++        Ensure(stream.MoveCount == 1 && stream.ConsumptionCount == 1 && stream.DisposeCount == 1,
++            "a failed first binding must stop production and dispose once");
++        Ensure(codec.ReleaseCount == (sized ? 1 : 0), "the blocked first snapshot must be released once");
++        Ensure(fixture.Time.ActiveTimerCount == 0, "a failed first binding must dispose its timer");
++        fixture.ReleaseBlockerCredit();
++        Ensure(fixture.Controller.SendConnectionCredit == 8,
++            "late credit must not admit an abandoned first send or perform a duplicate refund");
++        Ensure(await fixture.CountDataFramesAsync() == 0, "a failed first binding must not publish DATA");
++    }
++
++    [Test]
++    [Arguments("client", false, false)]
++    [Arguments("client", true, false)]
++    [Arguments("generated", false, false)]
++    [Arguments("generated", true, false)]
++    [Arguments("generated-deadline", false, false)]
++    [Arguments("generated-deadline", true, false)]
++    [Arguments("client", false, true)]
++    [Arguments("client", true, true)]
++    [Arguments("generated", false, true)]
++    [Arguments("generated", true, true)]
++    [Arguments("generated-deadline", false, true)]
++    [Arguments("generated-deadline", true, true)]
++    public async Task AlreadyFailedFirstBindingShouldNotBecomeSuccessOrAggregateException(
++        string mode, bool sized, bool cancel)
++    {
++        await using var fixture = new Fixture(mode);
++        using var cancellation = new CancellationTokenSource();
++        var expected = new InvalidOperationException("first serialization failed");
++        var codec = new ProbeCodec(sized)
++        {
++            BeforeCredit = cancel && sized ? () => cancellation.Cancel() : null,
++            BeforeSend = () =>
++            {
++                if (cancel)
++                {
++                    if (!sized) cancellation.Cancel();
++                }
++                else throw expected;
++            }
++        };
++        var stream = new ProbeStream(itemCount: 2);
++        var failure = await CaptureFailureAsync(fixture.Start(stream, codec, cancellation.Token));
++        Ensure(cancel
++                ? failure is OperationCanceledException canceled && canceled.CancellationToken == stream.EnumerationToken
++                : ReferenceEquals(failure, expected),
++            "a synchronously completed fault/cancellation must keep its original exception and token");
++        Ensure(stream.MoveCount == 1 && stream.ConsumptionCount == 1 && stream.DisposeCount == 1,
++            "the first failure must not read another item or duplicate disposal");
++        Ensure(fixture.Controller.SendConnectionCredit == 8 && fixture.Session.PreCreditSerializedBytes == 0,
++            "an immediately failed first send must leave no debit or serialized budget");
++        Ensure(codec.ReleaseCount == (sized ? 1 : 0), "immediate failure must release its captured snapshot once");
++        Ensure(await fixture.CountDataFramesAsync() == 0, "immediate failure must not publish DATA");
++    }
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public async Task ExpiredDeadlineShouldBeatAlreadyCompletedFirstBindingFaultOrCancellation(bool cancel)
++    {
++        await using var fixture = new Fixture("generated-deadline");
++        using var cancellation = new CancellationTokenSource();
++        var codec = new ProbeCodec(sized: true)
++        {
++            BeforeCredit = cancel ? () =>
++            {
++                fixture.Time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
++                cancellation.Cancel();
++            } : null,
++            BeforeSend = cancel ? null : () =>
++            {
++                fixture.Time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
++                throw new InvalidOperationException("already completed send fault");
++            }
++        };
++        var stream = new ProbeStream(itemCount: 2);
++        // Exact sizing returns an already faulted/canceled async ValueTask here. The timer
++        // must still arbitrate it, even though no suspension or timer callback is needed.
++        var failure = await CaptureFailureAsync(fixture.Start(stream, codec, cancellation.Token));
++        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
++            "expiry must beat an already completed unsuccessful first-send task");
++        Ensure(stream.MoveCount == 1 && stream.ConsumptionCount == 1 && stream.DisposeCount == 1,
++            "already completed failure must stop first binding and dispose once");
++        Ensure(codec.ReleaseCount == 1 && fixture.Controller.SendConnectionCredit == 8 && fixture.Time.ActiveTimerCount == 0,
++            "deadline arbitration must release the first snapshot and any debit without leaking a timer");
++        Ensure(await fixture.CountDataFramesAsync() == 0, "expired completed failure must not publish DATA");
++    }
++
++    [Test]
++    [Arguments(false, false)]
++    [Arguments(true, false)]
++    [Arguments(false, true)]
++    [Arguments(true, true)]
++    public async Task ExpiredFirstBindingShouldBeatLateFaultOrCancellationAndObserveAbandonedDispose(
++        bool sized, bool cancel)
++    {
++        await using var fixture = new Fixture("generated-deadline");
++        using var cancellation = new CancellationTokenSource();
++        var codec = new ProbeCodec(sized);
++        var disposal = new SingleConsumptionDispose();
++        var stream = new ProbeStream(itemCount: 2) { DeferredDisposal = disposal };
++        await fixture.BlockConnectionCreditAsync();
++        var pump = fixture.Start(stream, codec, cancellation.Token);
++        Ensure(!pump.IsCompleted && fixture.Time.ActiveTimerCount == 1 && stream.MoveCount == 1,
++            "the deadline race must be at the first-send wait, not MoveNext or a retained send");
++
++        // Hold timer callbacks back: the monotonic boundary must still beat the late source
++        // terminal. This deterministically tests arbitration rather than scheduler ordering.
++        fixture.Time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
++        if (cancel)
++            cancellation.Cancel();
++        else
++            fixture.Session.CompleteSendStream(fixture.RequestId, 0, new InvalidOperationException("late send fault"));
++        var failure = await CaptureFailureAsync(pump);
++        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
++            "an expired deadline must retain priority over first-send fault/cancellation");
++        Ensure(stream.DisposeCount == 1 && !disposal.Consumed.Task.IsCompleted,
++            "the deadline terminal must not await a producer's still-pending disposal");
++        disposal.Fail(new InvalidOperationException("late disposal fault"));
++        await disposal.Consumed.Task.WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(disposal.ConsumptionCount == 1,
++            "the detached cleanup observer must consume and observe the faulted disposal exactly once");
++        await fixture.WaitForCleanupAsync(codec, sized);
++        await fixture.Time.WaitForTimersDrainedAsync().WaitAsync(TimeSpan.FromSeconds(5));
++        Ensure(stream.ConsumptionCount == 1 && codec.ReleaseCount == (sized ? 1 : 0),
++            "deadline abandonment must not duplicate first-item or snapshot consumption");
++        fixture.ReleaseBlockerCredit();
++        Ensure(fixture.Controller.SendConnectionCredit == 8 && await fixture.CountDataFramesAsync() == 0,
++            "late credit must leave the abandoned first item unpublished and fully refunded");
++    }
++
++    [Test]
++    [Arguments(false, false, "pending")]
++    [Arguments(false, true, "pending")]
++    [Arguments(true, false, "pending")]
++    [Arguments(true, true, "pending")]
++    [Arguments(false, false, "success")]
++    [Arguments(false, true, "success")]
++    [Arguments(true, false, "success")]
++    [Arguments(true, true, "success")]
++    [Arguments(false, false, "fault")]
++    [Arguments(false, true, "fault")]
++    [Arguments(true, false, "fault")]
++    [Arguments(true, true, "fault")]
++    [Arguments(false, false, "cancel")]
++    [Arguments(false, true, "cancel")]
++    [Arguments(true, false, "cancel")]
++    [Arguments(true, true, "cancel")]
++    public async Task ActualFirstSendHelperShouldReuseItsTaskWithoutConversionAllocation(
++        bool generated, bool sized, string completionBeforeConversion)
++    {
++        await using var fixture = new Fixture(generated ? "generated" : "client");
++        using var cancellation = new CancellationTokenSource();
++        var codec = new ProbeCodec(sized);
++        var expected = new InvalidOperationException("conversion race fault");
++        await fixture.BlockConnectionCreditAsync();
++        var send = fixture.First(codec, cancellation.Token);
++        Ensure(!send.IsCompletedSuccessfully && !send.IsCompleted,
++            "the real first-send helper must take its suspended path before the conversion race");
++        var backing = typeof(ValueTask<StreamFlowController.ResolvedSendCreditLease>)
++            .GetField("_obj", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(send);
++        Ensure(backing is Task<StreamFlowController.ResolvedSendCreditLease>,
++            "this allocation optimization requires the actual helper to wrap a Task, not a reusable source");
++        var backingTask = (Task<StreamFlowController.ResolvedSendCreditLease>)backing!;
++
++        if (completionBeforeConversion != "pending")
++        {
++            if (completionBeforeConversion == "success") fixture.ReleaseBlockerCredit();
++            else if (completionBeforeConversion == "cancel") cancellation.Cancel();
++            else fixture.Session.CompleteSendStream(fixture.RequestId, 0, expected);
++            // Complete after the false check but before AsTask. Inspecting Task completion
++            // does not consume the ValueTask, including a future source-backed regression.
++            await WaitForCompletionAsync(backingTask).WaitAsync(TimeSpan.FromSeconds(5));
++        }
++
++        var warmTask = Task.FromResult(default(StreamFlowController.ResolvedSendCreditLease));
++        _ = ConvertOnce(new ValueTask<StreamFlowController.ResolvedSendCreditLease>(warmTask));
++        var before = GC.GetAllocatedBytesForCurrentThread();
++        var converted = ConvertOnce(send);
++        var conversionBytes = GC.GetAllocatedBytesForCurrentThread() - before;
++        Ensure(ReferenceEquals(converted, backingTask), "AsTask must return the helper's existing Task");
++        Ensure(conversionBytes == 0, $"first-binding conversion allocated {conversionBytes} bytes");
++        if (completionBeforeConversion == "pending") fixture.ReleaseBlockerCredit();
++        var failure = await CaptureFailureAsync(converted);
++        Ensure(completionBeforeConversion switch
++        {
++            "fault" => ReferenceEquals(failure, expected),
++            "cancel" => failure is OperationCanceledException canceled && canceled.CancellationToken == cancellation.Token,
++            _ => failure is null
++        }, "conversion must preserve the completion that raced the status check");
++        await fixture.WaitForCleanupAsync(codec, sized);
++        if (failure is null)
++        {
++            var lease = converted.GetAwaiter().GetResult();
++            Ensure(lease.IsResolved && fixture.Controller.SendConnectionCredit == 4,
++                "the task's successful result must carry the one published binding");
++            fixture.ReturnPublishedCredit(4);
++        }
++        else
++        {
++            fixture.ReleaseBlockerCredit();
++            Ensure(fixture.Controller.SendConnectionCredit == 8, "failed conversion must not retain send credit");
++        }
++    }
++
++    [MethodImpl(MethodImplOptions.NoInlining)]
++    private static Task<StreamFlowController.ResolvedSendCreditLease> ConvertOnce(
++        ValueTask<StreamFlowController.ResolvedSendCreditLease> send) => send.AsTask();
++
++    private static async Task WaitForCompletionAsync(Task task)
++    {
++        while (!task.IsCompleted) await Task.Yield();
++    }
++
++    private static async Task<Exception?> CaptureFailureAsync(Task task)
++    {
++        try { await task.WaitAsync(TimeSpan.FromSeconds(5)); return null; }
++        catch (Exception exception) when (exception is not TimeoutException) { return exception; }
++    }
++
++    private static void Ensure(bool condition, string message)
++    {
++        if (!condition) throw new InvalidOperationException(message);
++    }
++
++    private sealed class ProbeCodec(bool sized) : IRpcCodec<int>, IRpcSizedCodec<int>
++    {
++        internal Action? BeforeCredit { get; init; }
++        internal Action? BeforeSend { get; init; }
++        internal int SerializeCount { get; private set; }
++        internal int ReleaseCount { get; private set; }
++        internal TaskCompletionSource FirstSnapshotReleased { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
++        public bool CanExactSize => sized;
++        public void Serialize(in int value, IBufferWriter<byte> buffer)
++        {
++            BeforeSend?.Invoke();
++            SerializeCount++;
++            BitConverter.TryWriteBytes(buffer.GetSpan(sizeof(int)), value);
++            buffer.Advance(sizeof(int));
++        }
++        public int Deserialize(in ReadOnlySequence<byte> buffer) => BitConverter.ToInt32(buffer.FirstSpan);
++        public bool TryGetEncodedSize(in int value, out int size) { size = sizeof(int); return sized; }
++        public bool TryGetEncodedSize(in int value, out int size, out IRpcSizedCodecSnapshot? snapshot)
++        {
++            size = sizeof(int);
++            snapshot = new Snapshot();
++            BeforeCredit?.Invoke();
++            return sized;
++        }
++        public void SerializeSized(in int value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
++        {
++            Ensure(snapshot is Snapshot { Released: false } && size == sizeof(int), "serialization needs a live snapshot");
++            Serialize(in value, buffer);
++        }
++        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
++        {
++            Ensure(snapshot is Snapshot { Released: false }, "a snapshot may only be released once");
++            ((Snapshot)snapshot!).Released = true;
++            ReleaseCount++;
++            FirstSnapshotReleased.TrySetResult();
++        }
++        private sealed class Snapshot : IRpcSizedCodecSnapshot { internal bool Released; }
++    }
++
++    private sealed class ProbeStream(int itemCount) : IAsyncEnumerable<int>, IAsyncEnumerator<int>, IValueTaskSource<bool>
++    {
++        private ManualResetValueTaskSourceCore<bool> _move = new();
++        internal SingleConsumptionDispose? DeferredDisposal { get; init; }
++        internal int MoveCount { get; private set; }
++        internal int ConsumptionCount { get; private set; }
++        internal int CurrentCount { get; private set; }
++        internal int DisposeCount { get; private set; }
++        internal CancellationToken EnumerationToken { get; private set; }
++        public int Current { get { CurrentCount++; return MoveCount; } }
++        public IAsyncEnumerator<int> GetAsyncEnumerator(CancellationToken cancellationToken = default)
++        {
++            EnumerationToken = cancellationToken;
++            return this;
++        }
++        public ValueTask<bool> MoveNextAsync()
++        {
++            Ensure(MoveCount == ConsumptionCount, "the previous reusable MoveNext source must be consumed first");
++            MoveCount++;
++            _move.SetResult(MoveCount <= itemCount);
++            return new ValueTask<bool>(this, _move.Version);
++        }
++        public bool GetResult(short token)
++        {
++            var result = _move.GetResult(token);
++            ConsumptionCount++;
++            _move.Reset(); // Invalidate the consumed token so a second GetResult is a real failure.
++            return result;
++        }
++        public ValueTaskSourceStatus GetStatus(short token) => _move.GetStatus(token);
++        public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
++            => _move.OnCompleted(continuation, state, token, flags);
++        public ValueTask DisposeAsync()
++        {
++            DisposeCount++;
++            return DeferredDisposal is null ? ValueTask.CompletedTask : DeferredDisposal.Value;
++        }
++    }
++
++    private sealed class SingleConsumptionDispose : IValueTaskSource
++    {
++        private ManualResetValueTaskSourceCore<bool> _core = new() { RunContinuationsAsynchronously = true };
++        internal TaskCompletionSource Consumed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
++        internal int ConsumptionCount { get; private set; }
++        internal ValueTask Value => new(this, _core.Version);
++        internal void Fail(Exception exception) => _core.SetException(exception);
++        public void GetResult(short token)
++        {
++            try { _core.GetResult(token); }
++            finally
++            {
++                ConsumptionCount++;
++                _core.Reset();
++                Consumed.TrySetResult();
++            }
++        }
++        public ValueTaskSourceStatus GetStatus(short token) => _core.GetStatus(token);
++        public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags)
++            => _core.OnCompleted(continuation, state, token, flags);
++    }
++
++    private sealed class Fixture : IAsyncDisposable
++    {
++        private const long BlockerRequestId = 900;
++        private readonly string _mode;
++        private readonly SharpLinkClient _owner;
++        private readonly ClientConnection _connection;
++        private readonly CancellationTokenSource _lifetime = new();
++        private readonly Pipe _input = new();
++        private readonly Pipe _output = new();
++        internal ManualTimeProvider Time { get; } = new();
++        internal RpcSession Session { get; }
++        internal long RequestId { get; }
++        internal StreamFlowController Controller =>
++            ((RpcSessionProtocolState)typeof(RpcSession).GetField("_protocolState", BindingFlags.Instance | BindingFlags.NonPublic)!
++                .GetValue(Session)!).FlowController!;
++        internal Fixture(string mode)
++        {
++            _mode = mode;
++            _owner = ClientBuilderTestHelper.Build(new TestClientTransportFactory(), builder =>
++                builder.UseTimeProvider(Time).UseRuntime(options => options.FlowControl.MaxPreCreditSerializedBytes = 8));
++            var context = (SharpLinkRuntimeContext)_owner.RuntimeContext;
++            Session = RpcSessionTestFixture.CreateSessionOverTestTransport(
++                "first-binding-awaiter", _input.Reader, _output.Writer,
++                mode == "client" ? RpcSessionTestFixture.ClientOptions(context) : RpcSessionTestFixture.ServerOptions(context),
++                completeHandshake: false);
++            RpcSessionTestFixture.CompleteHandshake(Session, ProtocolV2Capabilities.FlowControl,
++                streamReceiveWindowBytes: 8, connectionReceiveWindowBytes: 8);
++            _connection = new ClientConnection(_owner, Session, _lifetime, 8, context);
++            _ = _connection.PendingCalls.Rent(context.Codecs.GetCodec<int>(), PendingCallKind.ClientStreaming,
++                default, CancellationToken.None, out var requestId, hasResponsePayload: true, responseNullable: false);
++            RequestId = requestId;
++        }
++        internal ValueTask BlockConnectionCreditAsync()
++            => Session.AcquireStreamSendCreditAsync(BlockerRequestId, 0, 8, CancellationToken.None);
++        internal void ReleaseBlockerCredit() => Session.ApplyWindowUpdate(BlockerRequestId, new ProtocolV2WindowUpdate(0, 8));
++        internal void ReturnPublishedCredit(int bytes)
++            => Session.ApplyWindowUpdate(RequestId, new ProtocolV2WindowUpdate(0, checked((uint)bytes)));
++        internal Task Start(ProbeStream stream, ProbeCodec codec, CancellationToken cancellationToken = default)
++        {
++            if (_mode == "client") return _connection.SendClientStreamAsync(RequestId, 0, stream, codec, cancellationToken);
++            using var scope = SharpLinkCallContext.Push(new SharpLinkCallContextSnapshot(
++                Session.Id, authentication: null,
++                _mode == "generated-deadline" ? RpcDeadline.Create(TimeSpan.FromSeconds(1), Time) : default, Time));
++            return Session.PumpGeneratedOutboundStreamAsync(RequestId, 0, stream, codec,
++                payloadNullable: false, cancellationToken).AsTask();
++        }
++        internal ValueTask<StreamFlowController.ResolvedSendCreditLease> First(ProbeCodec codec, CancellationToken token)
++        {
++            if (_mode == "client")
++                return Session.SendClientStreamChunkWithCreditLeaseAsync(RequestId, 0, 1, codec,
++                    codec.CanExactSize ? codec : null, default, Time, token, default);
++            var method = typeof(RpcSession).GetMethod("SendGeneratedStreamChunkAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
++                .MakeGenericMethod(typeof(int));
++            return (ValueTask<StreamFlowController.ResolvedSendCreditLease>)method.Invoke(Session,
++                [RequestId, (ushort)0, 1, codec, codec.CanExactSize ? codec : null,
++                    default(RpcDeadline), Time, token, default(StreamFlowController.ResolvedSendCreditLease)])!;
++        }
++        internal async Task WaitForCleanupAsync(ProbeCodec codec, bool sized)
++        {
++            await WaitForBudgetAsync().WaitAsync(TimeSpan.FromSeconds(5));
++            if (sized) await codec.FirstSnapshotReleased.Task.WaitAsync(TimeSpan.FromSeconds(5));
++        }
++        private async Task WaitForBudgetAsync()
++        {
++            while (Session.PreCreditSerializedBytes != 0 || Session.PreCreditSerializedWaiterCount != 0)
++                await Task.Yield();
++        }
++        internal async Task<int> CountDataFramesAsync()
++        {
++            // A marker makes the zero-DATA cases readable without waiting for a nonexistent frame.
++            Session.SendRpcErrorAsync(999, new SharpLinkException(SharpLinkErrorCode.Internal, "marker"));
++            await Session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++            var read = await _output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
++            var remaining = read.Buffer;
++            var count = 0;
++            while (ProtocolV2FrameParser.TryReadFrame(ref remaining, Session.RuntimeContext.Protocol, out var header, out _))
++                if (header.Type == ProtocolV2FrameType.StreamData) count++;
++            Ensure(remaining.IsEmpty, "all output frames must be complete");
++            _output.Reader.AdvanceTo(read.Buffer.End);
++            return count;
++        }
++        public async ValueTask DisposeAsync()
++        {
++            // ClientConnection owns both its Session and connection lifetime source.
++            await _connection.DisposeAsync();
++            await _output.Reader.CompleteAsync();
++            await _input.Writer.CompleteAsync();
++            await _owner.DisposeAsync();
++        }
++    }
++}

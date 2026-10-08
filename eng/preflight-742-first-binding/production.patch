@@ -1,0 +1,59 @@
+diff --git a/src/SharpLink.Client/ClientConnection.cs b/src/SharpLink.Client/ClientConnection.cs
+index 1912f2c0..7fbb8dd0 100644
+--- a/src/SharpLink.Client/ClientConnection.cs
++++ b/src/SharpLink.Client/ClientConnection.cs
+@@ -385,9 +385,14 @@ internal sealed class ClientConnection :
+ 
+                     if (!sendCreditLeaseBound)
+                     {
+-                        sendCreditLease = await Session.SendClientStreamChunkWithCreditLeaseAsync(
++                        var send = Session.SendClientStreamChunkWithCreditLeaseAsync(
+                             requestId, streamId, enumerator.Current, codec, exactSizeCodec,
+-                            deadline, _timeProvider, cancellationToken, sendCreditLease).ConfigureAwait(false);
++                            deadline, _timeProvider, cancellationToken, sendCreditLease);
++                        // First-send helpers return a direct result or an ordinary task-backed
++                        // ValueTask. Keep the lease-sized ValueTask awaiter out of this producer.
++                        sendCreditLease = send.IsCompletedSuccessfully
++                            ? send.Result
++                            : await send.AsTask().ConfigureAwait(false);
+                         sendCreditLeaseBound = true;
+                     }
+                     else
+diff --git a/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs b/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
+index bd431a31..f7267326 100644
+--- a/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
++++ b/src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs
+@@ -101,14 +101,21 @@ internal sealed partial class RpcSession
+                         deadlineTimeProvider,
+                         lifetimeCancellation.Token,
+                         sendCreditLease);
+-                    if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
++                    if (send.IsCompletedSuccessfully)
+                     {
+-                        sendCreditLease = await send.ConfigureAwait(false);
++                        sendCreditLease = send.Result;
+                     }
+                     else
+                     {
++                        // First-send helpers use the ordinary ValueTask builder, so this
++                        // consumes the ValueTask once and reuses its task, including races
++                        // to completion. Never convert the direct successful result.
+                         Task sendTask = send.AsTask();
+-                        if (!await SharpLinkTimer.WaitAsync(
++                        if (!deadline.HasValue || deadlineTimeProvider is null)
++                        {
++                            await sendTask.ConfigureAwait(false);
++                        }
++                        else if (!await SharpLinkTimer.WaitAsync(
+                                 sendTask,
+                                 deadline,
+                                 deadlineTimeProvider,
+@@ -119,7 +126,7 @@ internal sealed partial class RpcSession
+                             _ = ObserveAbandonedGeneratedSendAsync(sendTask);
+                             throw CreateGeneratedStreamDeadlineExceededException();
+                         }
+-                        // A true timer result has already observed successful task completion.
++                        // The await or true timer result has observed successful completion.
+                         // Read the first binding without another async result/awaiter field.
+                         sendCreditLease = ((Task<StreamFlowController.ResolvedSendCreditLease>)sendTask)
+                             .GetAwaiter().GetResult();
