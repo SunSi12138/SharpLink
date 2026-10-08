@@ -1,0 +1,132 @@
+name: 742 Existing Validator Evidence Repack
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-validator-evidence-repack.yml'
+      - 'eng/preflight-742-artifact-review/**'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  repack-existing-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download the exact completed evidence, without rerunning work
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37823636416
+          name: 742-send-validator-safety-codegen-815c1ac1ec1ec4141f38cfe06814d8d0caf4b257
+          path: artifacts/original
+      - name: Check source metadata and copy every file into bounded artifacts
+        id: repack
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 eng/preflight-742-artifact-review/repack.py
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: 742-validator-evidence-index-${{ github.sha }}
+          path: artifacts/review/manifest.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part0 == 'true'
+        with:
+          name: 742-validator-evidence-part-00-${{ github.sha }}
+          path: artifacts/review/part-00
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part1 == 'true'
+        with:
+          name: 742-validator-evidence-part-01-${{ github.sha }}
+          path: artifacts/review/part-01
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part2 == 'true'
+        with:
+          name: 742-validator-evidence-part-02-${{ github.sha }}
+          path: artifacts/review/part-02
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part3 == 'true'
+        with:
+          name: 742-validator-evidence-part-03-${{ github.sha }}
+          path: artifacts/review/part-03
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part4 == 'true'
+        with:
+          name: 742-validator-evidence-part-04-${{ github.sha }}
+          path: artifacts/review/part-04
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part5 == 'true'
+        with:
+          name: 742-validator-evidence-part-05-${{ github.sha }}
+          path: artifacts/review/part-05
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part6 == 'true'
+        with:
+          name: 742-validator-evidence-part-06-${{ github.sha }}
+          path: artifacts/review/part-06
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part7 == 'true'
+        with:
+          name: 742-validator-evidence-part-07-${{ github.sha }}
+          path: artifacts/review/part-07
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part8 == 'true'
+        with:
+          name: 742-validator-evidence-part-08-${{ github.sha }}
+          path: artifacts/review/part-08
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part9 == 'true'
+        with:
+          name: 742-validator-evidence-part-09-${{ github.sha }}
+          path: artifacts/review/part-09
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part10 == 'true'
+        with:
+          name: 742-validator-evidence-part-10-${{ github.sha }}
+          path: artifacts/review/part-10
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: steps.repack.outputs.part11 == 'true'
+        with:
+          name: 742-validator-evidence-part-11-${{ github.sha }}
+          path: artifacts/review/part-11
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
