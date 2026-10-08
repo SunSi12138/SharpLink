@@ -1,0 +1,31 @@
+{
+  "shipping_tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+  "shipping_patch_sha256": "5217ed02fbeb260f68413fba7f4eac21eb197e37bdff31a612fb4973ccf5139b",
+  "diagnostic_tree": "7a9f9f313526f926755da2fcd2119303b86f7a1f",
+  "adapter_patch": "adapter.patch",
+  "adapter_patch_sha256": "cec7837c6c6c70819bcfc729f13acd91ce325ae63bfd86bf16290d823bcea02f",
+  "flag_name": "SHARPLINK_DIAGNOSTIC_QUIESCENT",
+  "on_value": "1",
+  "off_value": "0",
+  "audit_approved": true,
+  "status": "source independently cleared; final six-process generated-RPC proof pinned; diagnostic only; no shipping candidate",
+  "route_counter_tree": "f6c0f3b283ffda5fc85f104f40e6ba9d213a3b85",
+  "route_counter_patch_sha256": "9f2c6538d7ec7f56777401678cd7ab9bed9485d9f8c536317c491b5963aa9b81",
+  "disassembly_source_sha256": {
+    "normalize-disassembly.py": "76b3049744dbb7c00e3756216bb5b8f561d598ed1c5836f62b0701804980c11d",
+    "Shape.csproj": "170372c1fb028864edb78379c983eca60998f8c7120e1a14063abfee92da1afd",
+    "Program.cs": "f19a679142e39f68aaadc83dd1e6c6c4c4608b537ec61b896678dde84662e0d9"
+  },
+  "author_route_proof_sha256": {
+    "author-route-proof/mode-1-run-2.json": "7f87143ebae9b41ef259cc6aa5c8ae89b057cca6af4d47e750a15b1f2e3ee9b2",
+    "author-route-proof/manifest.json": "81151ac9e83ec98f19c5570fb10138bb1aba1293892f7e285343cbe06e7cedc3",
+    "author-route-proof/REPORT.md": "0debf44e15e30d9a386ba7fba9ef3f0f04636b0aad887253ab6b0d6ece62bfb9",
+    "author-route-proof/mode-0-run-3.json": "e063f677aa8d08a08fd696706f7d1f7037b87cbde3aa286853efcb49f1a12962",
+    "author-route-proof/mode-0-run-2.json": "60ed6aa9b54ba4ed5f52319ef127f4b28867c71a7493842039a3828e662ed9b7",
+    "author-route-proof/binary-sha256-before.txt": "38edc8ebdf186e80eb1e3c2154a351502fcf5a3a465f729f69b1a8ec78b115f9",
+    "author-route-proof/binary-sha256-after.txt": "38edc8ebdf186e80eb1e3c2154a351502fcf5a3a465f729f69b1a8ec78b115f9",
+    "author-route-proof/mode-1-run-1.json": "7f87143ebae9b41ef259cc6aa5c8ae89b057cca6af4d47e750a15b1f2e3ee9b2",
+    "author-route-proof/mode-0-run-1.json": "e063f677aa8d08a08fd696706f7d1f7037b87cbde3aa286853efcb49f1a12962",
+    "author-route-proof/mode-1-run-3.json": "7f87143ebae9b41ef259cc6aa5c8ae89b057cca6af4d47e750a15b1f2e3ee9b2"
+  }
+}

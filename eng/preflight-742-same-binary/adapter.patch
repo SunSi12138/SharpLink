@@ -1,0 +1,110 @@
+diff --git a/src/SharpLink.Runtime/Codec/RpcWirePlatform.cs b/src/SharpLink.Runtime/Codec/RpcWirePlatform.cs
+index 14b1e129..ecfe37bd 100644
+--- a/src/SharpLink.Runtime/Codec/RpcWirePlatform.cs
++++ b/src/SharpLink.Runtime/Codec/RpcWirePlatform.cs
+@@ -5,7 +5,10 @@ internal static class RpcWirePlatform
+ #pragma warning disable CA2255 // Intentional process-wide wire ABI guard for this runtime library.
+     [System.Runtime.CompilerServices.ModuleInitializer]
+     internal static void Initialize()
+-        => EnsureSupported(BitConverter.IsLittleEndian);
++    {
++        EnsureSupported(BitConverter.IsLittleEndian);
++        QuiescentCompletionDiagnostic.InitializeForProcess();
++    }
+ #pragma warning restore CA2255
+ 
+     internal static bool IsSupported(bool isLittleEndian)
+diff --git a/src/SharpLink.Runtime/QuiescentCompletionDiagnostic.cs b/src/SharpLink.Runtime/QuiescentCompletionDiagnostic.cs
+new file mode 100644
+index 00000000..376bec62
+--- /dev/null
++++ b/src/SharpLink.Runtime/QuiescentCompletionDiagnostic.cs
+@@ -0,0 +1,26 @@
++namespace SharpLink.Runtime;
++
++// Disposable experiment adapter only. This file is never part of shipping F/G2.
++internal static class QuiescentCompletionDiagnostic
++{
++    internal const string EnvironmentVariable = "SHARPLINK_DIAGNOSTIC_QUIESCENT";
++    private static int s_initialized;
++    // Deliberately not readonly: the JIT must load the same field in both process modes.
++    private static int s_enabled;
++
++    internal static void InitializeForProcess()
++    {
++        if (Interlocked.CompareExchange(ref s_initialized, 1, 0) != 0)
++            throw new InvalidOperationException("The diagnostic mode is fixed at process module initialization.");
++        var mode = Environment.GetEnvironmentVariable(EnvironmentVariable);
++        Volatile.Write(ref s_enabled, mode switch
++        {
++            null or "1" => 1,
++            "0" => 0,
++            _ => throw new InvalidOperationException("SHARPLINK_DIAGNOSTIC_QUIESCENT must be 0 or 1.")
++        });
++    }
++
++    [MethodImpl(MethodImplOptions.NoInlining)]
++    internal static bool IsEnabled() => Volatile.Read(ref s_enabled) != 0;
++}
+diff --git a/src/SharpLink.Runtime/StreamManager.cs b/src/SharpLink.Runtime/StreamManager.cs
+index 925af4b4..6d6b3d29 100644
+--- a/src/SharpLink.Runtime/StreamManager.cs
++++ b/src/SharpLink.Runtime/StreamManager.cs
+@@ -232,15 +232,18 @@ internal sealed partial class StreamManager
+             return;
+         }
+ 
+-        if (requestDispatchers.TryBeginQuiescentDirectCompletion(streamId, out var quiescentEntry))
++        if (QuiescentCompletionDiagnostic.IsEnabled())
+         {
+-            CompleteQuiescentDirectStream(quiescentEntry, exception);
+-            return;
+-        }
+-        if (quiescentEntry is not null)
+-        {
+-            CompleteCapturedDirectStream(requestDispatchers, streamId, quiescentEntry, exception);
+-            return;
++            if (requestDispatchers.TryBeginQuiescentDirectCompletion(streamId, out var quiescentEntry))
++            {
++                CompleteQuiescentDirectStream(quiescentEntry, exception);
++                return;
++            }
++            if (quiescentEntry is not null)
++            {
++                CompleteCapturedDirectStream(requestDispatchers, streamId, quiescentEntry, exception);
++                return;
++            }
+         }
+ 
+         if (requestDispatchers.TryCompleteRetainedRoute(streamId, exception, out var capturedEntry) ||
+diff --git a/test/SharpLink.UnitTests/Runtime/QuiescentDiagnosticModeTests.cs b/test/SharpLink.UnitTests/Runtime/QuiescentDiagnosticModeTests.cs
+new file mode 100644
+index 00000000..564744ab
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/QuiescentDiagnosticModeTests.cs
+@@ -0,0 +1,25 @@
++namespace SharpLink.UnitTests.Runtime;
++
++[NotInParallel("quiescent-diagnostic-environment")]
++public sealed class QuiescentDiagnosticModeTests
++{
++    [Test]
++    public void ModeMustBeFixedAtModuleInitializationAndCannotBeReconfigured()
++    {
++        var initial = QuiescentCompletionDiagnostic.IsEnabled();
++        var key = QuiescentCompletionDiagnostic.EnvironmentVariable;
++        var previous = Environment.GetEnvironmentVariable(key);
++        try
++        {
++            Environment.SetEnvironmentVariable(key, initial ? "0" : "1");
++            if (QuiescentCompletionDiagnostic.IsEnabled() != initial)
++                throw new InvalidOperationException("The process diagnostic mode changed after module initialization.");
++            Exception? actual = null;
++            try { QuiescentCompletionDiagnostic.InitializeForProcess(); }
++            catch (Exception error) { actual = error; }
++            if (actual is not InvalidOperationException || QuiescentCompletionDiagnostic.IsEnabled() != initial)
++                throw new InvalidOperationException("The diagnostic adapter allowed reconfiguration.");
++        }
++        finally { Environment.SetEnvironmentVariable(key, previous); }
++    }
++}

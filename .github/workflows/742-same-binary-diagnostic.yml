@@ -1,0 +1,109 @@
+name: 742 Same Binary Quiescent Diagnostic
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-same-binary-diagnostic.yml'
+      - 'eng/preflight-742-same-binary/**'
+permissions:
+  contents: read
+concurrency:
+  group: 742-same-binary-diagnostic
+  cancel-in-progress: false
+jobs:
+  untraced-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Reconstruct untouched G2 and one exact diagnostic source
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-same-binary/self-tests.py
+          python3 eng/preflight-742-same-binary/prepare.py "$RUNNER_TEMP/same-binary"
+          mkdir -p artifacts/same-binary
+          cp "$RUNNER_TEMP/same-binary/identities.json" artifacts/same-binary/
+          cp -a "$RUNNER_TEMP/same-binary/shipping/artifacts/first-receive-integration" artifacts/same-binary/shipping-source
+          cp -a "$RUNNER_TEMP/same-binary/diagnostic/artifacts/first-receive-integration" artifacts/same-binary/diagnostic-source
+          dotnet --info > artifacts/same-binary/dotnet.txt
+          lscpu > artifacts/same-binary/cpu.txt
+          python3 - <<'PY'
+          import os
+          available = sorted(os.sched_getaffinity(0))
+          assert len(available) >= 4, 'The fixed diagnostic requires four available CPUs.'
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CPU_LIST=' + ','.join(map(str, available[:4])) + '\n')
+          PY
+      - name: Build each host once with identical normal settings
+        run: |
+          set -euo pipefail
+          for label in shipping diagnostic; do
+            for project in SharpLink.Benchmarks SharpLink.StreamLoadTest; do
+              dotnet build "$RUNNER_TEMP/same-binary/$label/test/$project" -c Release -p:PublishAot=false -m:1 /nodeReuse:false -p:UseSharedCompilation=false > "artifacts/same-binary/build-$label-$project.log" 2>&1 || { cat "artifacts/same-binary/build-$label-$project.log"; exit 1; }
+            done
+          done
+      - name: Original-tiered72 plus separate non-tiered24 with shared ON and OFF binaries
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-same-binary/run.py "$RUNNER_TEMP/same-binary/shipping" "$RUNNER_TEMP/same-binary/diagnostic" artifacts/same-binary/raw --affinity "$CPU_LIST"
+      - name: Untimed non-tiered selected-method disassembly using timed Runtime bytes
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-same-binary/disassembly.py "$RUNNER_TEMP/same-binary/diagnostic" artifacts/same-binary/untimed-disassembly
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-same-binary-diagnostic-${{ github.sha }}
+          path: artifacts/same-binary
+          if-no-files-found: error
+          retention-days: 30
+
+  adapter-correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Reconstruct exact diagnostic and build one test binary
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-same-binary/prepare.py "$RUNNER_TEMP/same-binary"
+          mkdir -p artifacts/same-binary-correctness
+          cp "$RUNNER_TEMP/same-binary/identities.json" artifacts/same-binary-correctness/
+          dotnet build "$RUNNER_TEMP/same-binary/diagnostic/test/SharpLink.UnitTests" -c Release -p:Platform=AnyCPU -p:TreatWarningsAsErrors=true -m:1 /nodeReuse:false -p:UseSharedCompilation=false > artifacts/same-binary-correctness/build.log 2>&1 || { cat artifacts/same-binary-correctness/build.log; exit 1; }
+      - name: Both modes retain immutable startup configuration and all fourteen quiescent cases
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/same-binary/diagnostic"
+          binary="$root/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll"
+          sha256sum "$binary" "$root/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.Runtime.dll" > artifacts/same-binary-correctness/before.sha256
+          for mode in 1 0; do
+            env SHARPLINK_DIAGNOSTIC_QUIESCENT="$mode" dotnet "$binary" --treenode-filter '/*/*/QuiescentDiagnosticModeTests/*' --minimum-expected-tests 1 > "artifacts/same-binary-correctness/mode-$mode-config.log" 2>&1
+            env SHARPLINK_DIAGNOSTIC_QUIESCENT="$mode" dotnet "$binary" --treenode-filter '/*/*/StreamManagerQuiescent*/*' --minimum-expected-tests 14 > "artifacts/same-binary-correctness/mode-$mode-semantics.log" 2>&1
+          done
+          sha256sum --check artifacts/same-binary-correctness/before.sha256
+          git -C "$root" diff --exit-code -- src test
+      - name: Separate generated RPC route counter build with six fresh processes
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-same-binary/route-proof.py "$RUNNER_TEMP/same-binary/diagnostic" artifacts/same-binary-correctness/route-proof
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-same-binary-correctness-${{ github.sha }}
+          path: artifacts/same-binary-correctness
+          if-no-files-found: error
+          retention-days: 30

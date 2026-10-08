@@ -1,0 +1,1689 @@
+{
+  "diagnosticOnly": true,
+  "timingClaims": false,
+  "mode": "OFF",
+  "transport": "paired in-memory System.IO.Pipelines; no OS sockets or pipes",
+  "proxyType": "SharpLink.Generated.__SharpLinkGeneratedAssemblyManifest_51f6c23ae4b3d125\u002B__Proxy_87E95AFF73B3FF31",
+  "warmupCalls": 8,
+  "measuredCalls": 64,
+  "stages": [
+    {
+      "stage": "connected",
+      "calls": 0,
+      "delta": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "cumulative": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "frameDelta": {
+        "Client": {
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1
+        },
+        "Server": {
+          "Ping": 1
+        }
+      },
+      "frames": {
+        "Client": {
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1
+        },
+        "Server": {
+          "Ping": 1
+        }
+      },
+      "states": {
+        "Client": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        },
+        "Server": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        }
+      },
+      "clientFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 2,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatSendLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "ProcessRequestLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          }
+        ]
+      },
+      "serverFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 1,
+        "ExternallyObservedTasks": 1,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatCheckLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "AcceptedConnectionSession",
+            "ObservationMode": 1,
+            "Status": 1
+          }
+        ]
+      },
+      "clientPendingCalls": 0,
+      "clientActiveCalls": 0,
+      "serverActiveCalls": 0,
+      "pooledIntDispatchers": 0
+    },
+    {
+      "stage": "unary.warmup",
+      "calls": 8,
+      "delta": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "cumulative": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "frameDelta": {
+        "Client": {
+          "Response": 8,
+          "HandshakeResponse": 0,
+          "Pong": 0,
+          "ContractManifest": 0
+        },
+        "Server": {
+          "Request": 8,
+          "Ping": 0
+        }
+      },
+      "frames": {
+        "Client": {
+          "Response": 8,
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1
+        },
+        "Server": {
+          "Request": 8,
+          "Ping": 1
+        }
+      },
+      "states": {
+        "Client": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        },
+        "Server": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        }
+      },
+      "clientFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 2,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatSendLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "ProcessRequestLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          }
+        ]
+      },
+      "serverFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 1,
+        "ExternallyObservedTasks": 1,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatCheckLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "AcceptedConnectionSession",
+            "ObservationMode": 1,
+            "Status": 1
+          }
+        ]
+      },
+      "clientPendingCalls": 0,
+      "clientActiveCalls": 0,
+      "serverActiveCalls": 0,
+      "pooledIntDispatchers": 0
+    },
+    {
+      "stage": "unary.measured",
+      "calls": 64,
+      "delta": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "cumulative": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "frameDelta": {
+        "Client": {
+          "Response": 64,
+          "HandshakeResponse": 0,
+          "Pong": 0,
+          "ContractManifest": 0
+        },
+        "Server": {
+          "Request": 64,
+          "Ping": 0
+        }
+      },
+      "frames": {
+        "Client": {
+          "Response": 72,
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1
+        },
+        "Server": {
+          "Request": 72,
+          "Ping": 1
+        }
+      },
+      "states": {
+        "Client": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        },
+        "Server": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        }
+      },
+      "clientFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 2,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatSendLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "ProcessRequestLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          }
+        ]
+      },
+      "serverFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 1,
+        "ExternallyObservedTasks": 1,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatCheckLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "AcceptedConnectionSession",
+            "ObservationMode": 1,
+            "Status": 1
+          }
+        ]
+      },
+      "clientPendingCalls": 0,
+      "clientActiveCalls": 0,
+      "serverActiveCalls": 0,
+      "pooledIntDispatchers": 0
+    },
+    {
+      "stage": "server1.warmup",
+      "calls": 8,
+      "delta": {
+        "Client": {
+          "RegisterCore": 8,
+          "DispatchChunk": 8,
+          "CompleteStream": 8,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 8,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "cumulative": {
+        "Client": {
+          "RegisterCore": 8,
+          "DispatchChunk": 8,
+          "CompleteStream": 8,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 8,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "frameDelta": {
+        "Client": {
+          "StreamComplete": 8,
+          "Response": 8,
+          "HandshakeResponse": 0,
+          "Pong": 0,
+          "ContractManifest": 0,
+          "StreamData": 8
+        },
+        "Server": {
+          "Request": 8,
+          "Ping": 0,
+          "WindowUpdate": 8
+        }
+      },
+      "frames": {
+        "Client": {
+          "StreamComplete": 8,
+          "Response": 80,
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1,
+          "StreamData": 8
+        },
+        "Server": {
+          "Request": 80,
+          "Ping": 1,
+          "WindowUpdate": 8
+        }
+      },
+      "states": {
+        "Client": {
+          "activeStreams": 0,
+          "totalEntries": 8,
+          "retiredEntries": 8,
+          "detachedEntries": 8,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        },
+        "Server": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        }
+      },
+      "clientFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 11,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 2,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatSendLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "ProcessRequestLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          }
+        ]
+      },
+      "serverFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 1,
+        "ExternallyObservedTasks": 1,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatCheckLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "AcceptedConnectionSession",
+            "ObservationMode": 1,
+            "Status": 1
+          }
+        ]
+      },
+      "clientPendingCalls": 0,
+      "clientActiveCalls": 0,
+      "serverActiveCalls": 0,
+      "pooledIntDispatchers": 1
+    },
+    {
+      "stage": "server1.measured",
+      "calls": 64,
+      "delta": {
+        "Client": {
+          "RegisterCore": 64,
+          "DispatchChunk": 64,
+          "CompleteStream": 64,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 64,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "cumulative": {
+        "Client": {
+          "RegisterCore": 72,
+          "DispatchChunk": 72,
+          "CompleteStream": 72,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 72,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "frameDelta": {
+        "Client": {
+          "StreamComplete": 64,
+          "Response": 64,
+          "HandshakeResponse": 0,
+          "Pong": 0,
+          "ContractManifest": 0,
+          "StreamData": 64
+        },
+        "Server": {
+          "Request": 64,
+          "Ping": 0,
+          "WindowUpdate": 64
+        }
+      },
+      "frames": {
+        "Client": {
+          "StreamComplete": 72,
+          "Response": 144,
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1,
+          "StreamData": 72
+        },
+        "Server": {
+          "Request": 144,
+          "Ping": 1,
+          "WindowUpdate": 72
+        }
+      },
+      "states": {
+        "Client": {
+          "activeStreams": 0,
+          "totalEntries": 72,
+          "retiredEntries": 72,
+          "detachedEntries": 72,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        },
+        "Server": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        }
+      },
+      "clientFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 75,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 2,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatSendLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "ProcessRequestLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          }
+        ]
+      },
+      "serverFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 1,
+        "ExternallyObservedTasks": 1,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatCheckLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "AcceptedConnectionSession",
+            "ObservationMode": 1,
+            "Status": 1
+          }
+        ]
+      },
+      "clientPendingCalls": 0,
+      "clientActiveCalls": 0,
+      "serverActiveCalls": 0,
+      "pooledIntDispatchers": 1
+    },
+    {
+      "stage": "post-stream.unary-fence",
+      "calls": 1,
+      "delta": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "cumulative": {
+        "Client": {
+          "RegisterCore": 72,
+          "DispatchChunk": 72,
+          "CompleteStream": 72,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 72,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "frameDelta": {
+        "Client": {
+          "StreamComplete": 0,
+          "Response": 1,
+          "HandshakeResponse": 0,
+          "Pong": 0,
+          "ContractManifest": 0,
+          "StreamData": 0
+        },
+        "Server": {
+          "Request": 1,
+          "Ping": 0,
+          "WindowUpdate": 0
+        }
+      },
+      "frames": {
+        "Client": {
+          "StreamComplete": 72,
+          "Response": 145,
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1,
+          "StreamData": 72
+        },
+        "Server": {
+          "Request": 145,
+          "Ping": 1,
+          "WindowUpdate": 72
+        }
+      },
+      "states": {
+        "Client": {
+          "activeStreams": 0,
+          "totalEntries": 72,
+          "retiredEntries": 72,
+          "detachedEntries": 72,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        },
+        "Server": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        }
+      },
+      "clientFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 75,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 2,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatSendLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "ProcessRequestLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          }
+        ]
+      },
+      "serverFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 1,
+        "ExternallyObservedTasks": 1,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatCheckLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "AcceptedConnectionSession",
+            "ObservationMode": 1,
+            "Status": 1
+          }
+        ]
+      },
+      "clientPendingCalls": 0,
+      "clientActiveCalls": 0,
+      "serverActiveCalls": 0,
+      "pooledIntDispatchers": 1
+    },
+    {
+      "stage": "pre-teardown",
+      "calls": 0,
+      "delta": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "cumulative": {
+        "Client": {
+          "RegisterCore": 72,
+          "DispatchChunk": 72,
+          "CompleteStream": 72,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 72,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 0,
+          "CompleteAll.Repeated": 0,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "frameDelta": {
+        "Client": {
+          "StreamComplete": 0,
+          "Response": 0,
+          "HandshakeResponse": 0,
+          "Pong": 0,
+          "ContractManifest": 0,
+          "StreamData": 0
+        },
+        "Server": {
+          "Request": 0,
+          "Ping": 0,
+          "WindowUpdate": 0
+        }
+      },
+      "frames": {
+        "Client": {
+          "StreamComplete": 72,
+          "Response": 145,
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1,
+          "StreamData": 72
+        },
+        "Server": {
+          "Request": 145,
+          "Ping": 1,
+          "WindowUpdate": 72
+        }
+      },
+      "states": {
+        "Client": {
+          "activeStreams": 0,
+          "totalEntries": 72,
+          "retiredEntries": 72,
+          "detachedEntries": 72,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        },
+        "Server": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        }
+      },
+      "clientFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 75,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 2,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatSendLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "ProcessRequestLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          }
+        ]
+      },
+      "serverFrameworkTasks": {
+        "IsSealed": false,
+        "IsDrained": false,
+        "TotalTracked": 3,
+        "ActiveTasks": 2,
+        "FrameworkOwnedTasks": 1,
+        "ExternallyObservedTasks": 1,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": [
+          {
+            "Operation": "HeartbeatCheckLoop",
+            "ObservationMode": 0,
+            "Status": 1
+          },
+          {
+            "Operation": "AcceptedConnectionSession",
+            "ObservationMode": 1,
+            "Status": 1
+          }
+        ]
+      },
+      "clientPendingCalls": 0,
+      "clientActiveCalls": 0,
+      "serverActiveCalls": 0,
+      "pooledIntDispatchers": 1
+    },
+    {
+      "stage": "teardown",
+      "calls": 0,
+      "delta": {
+        "Client": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 2,
+          "CompleteAll.Repeated": 1,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 2,
+          "CompleteAll.Repeated": 1,
+          "CompleteAll.NullMap": 1,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "cumulative": {
+        "Client": {
+          "RegisterCore": 72,
+          "DispatchChunk": 72,
+          "CompleteStream": 72,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 72,
+          "CompleteAll": 2,
+          "CompleteAll.Repeated": 1,
+          "CompleteAll.NullMap": 0,
+          "CompleteAll.DrainedEntries": 0
+        },
+        "Server": {
+          "RegisterCore": 0,
+          "DispatchChunk": 0,
+          "CompleteStream": 0,
+          "CompleteStream.NullMap": 0,
+          "CompleteStream.LookupMiss": 0,
+          "TryBeginQuiescentDirectCompletion": 0,
+          "QuiescentClaimSucceeded": 0,
+          "QuiescentCompletionSucceeded": 0,
+          "CompleteRequestStreams": 0,
+          "CompleteRequestStreams.NullMap": 0,
+          "CompleteRequestStreams.LookupMiss": 0,
+          "CompleteRequestStreams.EmptyDrain": 0,
+          "CompleteRequestStreams.DrainedEntries": 0,
+          "CompleteRequestStreamsAfterDispatches": 0,
+          "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+          "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+          "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+          "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+          "DispatchesDrainedNotification": 0,
+          "CompleteAll": 2,
+          "CompleteAll.Repeated": 1,
+          "CompleteAll.NullMap": 1,
+          "CompleteAll.DrainedEntries": 0
+        }
+      },
+      "frameDelta": {
+        "Client": {
+          "StreamComplete": 0,
+          "Response": 0,
+          "HandshakeResponse": 0,
+          "Pong": 0,
+          "ContractManifest": 0,
+          "StreamData": 0
+        },
+        "Server": {
+          "Request": 0,
+          "Ping": 0,
+          "WindowUpdate": 0
+        }
+      },
+      "frames": {
+        "Client": {
+          "StreamComplete": 72,
+          "Response": 145,
+          "HandshakeResponse": 1,
+          "Pong": 1,
+          "ContractManifest": 1,
+          "StreamData": 72
+        },
+        "Server": {
+          "Request": 145,
+          "Ping": 1,
+          "WindowUpdate": 72
+        }
+      },
+      "states": {
+        "Client": {
+          "activeStreams": 0,
+          "totalEntries": 72,
+          "retiredEntries": 72,
+          "detachedEntries": 72,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        },
+        "Server": {
+          "activeStreams": 0,
+          "totalEntries": 0,
+          "retiredEntries": 0,
+          "detachedEntries": 0,
+          "busyEntries": 0,
+          "pooledDispatcherReferencesClean": true
+        }
+      },
+      "clientFrameworkTasks": {
+        "IsSealed": true,
+        "IsDrained": true,
+        "TotalTracked": 75,
+        "ActiveTasks": 0,
+        "FrameworkOwnedTasks": 0,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": []
+      },
+      "serverFrameworkTasks": {
+        "IsSealed": true,
+        "IsDrained": true,
+        "TotalTracked": 3,
+        "ActiveTasks": 0,
+        "FrameworkOwnedTasks": 0,
+        "ExternallyObservedTasks": 0,
+        "RetainedFailures": 0,
+        "DroppedFailures": 0,
+        "SuppressedShutdownFailures": 0,
+        "LateRegistrations": 0,
+        "RejectedRegistrations": 0,
+        "TruncatedOperations": 0,
+        "Operations": []
+      },
+      "clientPendingCalls": 0,
+      "clientActiveCalls": 0,
+      "serverActiveCalls": 0,
+      "pooledIntDispatchers": 1
+    }
+  ],
+  "totals": {
+    "RegisterCore": 72,
+    "DispatchChunk": 72,
+    "CompleteStream": 72,
+    "CompleteStream.NullMap": 0,
+    "CompleteStream.LookupMiss": 0,
+    "TryBeginQuiescentDirectCompletion": 0,
+    "QuiescentClaimSucceeded": 0,
+    "QuiescentCompletionSucceeded": 0,
+    "CompleteRequestStreams": 0,
+    "CompleteRequestStreams.NullMap": 0,
+    "CompleteRequestStreams.LookupMiss": 0,
+    "CompleteRequestStreams.EmptyDrain": 0,
+    "CompleteRequestStreams.DrainedEntries": 0,
+    "CompleteRequestStreamsAfterDispatches": 0,
+    "CompleteRequestStreamsAfterDispatches.NullMap": 0,
+    "CompleteRequestStreamsAfterDispatches.LookupMiss": 0,
+    "CompleteRequestStreamsAfterDispatches.EmptyDrain": 0,
+    "CompleteRequestStreamsAfterDispatches.DrainedEntries": 0,
+    "DispatchesDrainedNotification": 72,
+    "CompleteAll": 4,
+    "CompleteAll.Repeated": 2,
+    "CompleteAll.NullMap": 1,
+    "CompleteAll.DrainedEntries": 0
+  },
+  "passed": true
+}

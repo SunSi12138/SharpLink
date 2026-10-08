@@ -1,0 +1,747 @@
+diff --git a/src/SharpLink.Client/SharpLinkClient.Lifecycle.cs b/src/SharpLink.Client/SharpLinkClient.Lifecycle.cs
+index 49117a5..2d5cfd7 100644
+--- a/src/SharpLink.Client/SharpLinkClient.Lifecycle.cs
++++ b/src/SharpLink.Client/SharpLinkClient.Lifecycle.cs
+@@ -408,6 +408,7 @@ internal sealed partial class SharpLinkClient
+                            ref buffer, _protocolOptions, out var header, out var payload))
+                 {
+                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
++                    session.StreamManager.RouteCounts.Frame(header.Type, header.Flags);
+                     session.EnsureInboundFrameAllowed(header.Type);
+                     try
+                     {
+@@ -522,6 +523,7 @@ internal sealed partial class SharpLinkClient
+                        session.TryReadInboundFrame(ref buffer, _protocolOptions, out var header, out var payload))
+                 {
+                     SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
++                    session.StreamManager.RouteCounts.Frame(header.Type, header.Flags);
+                     session.MarkActive();
+                     session.EnsureInboundFrameAllowed(header.Type);
+                     IRpcByteBufferWriter? decodedOwner = null;
+diff --git a/src/SharpLink.Runtime/RpcSession.cs b/src/SharpLink.Runtime/RpcSession.cs
+index 7fcc104..0548cc7 100644
+--- a/src/SharpLink.Runtime/RpcSession.cs
++++ b/src/SharpLink.Runtime/RpcSession.cs
+@@ -103,6 +103,7 @@ internal sealed partial class RpcSession
+             AcceptReceivedStreamBytes,
+             OnStreamBytesConsumed,
+             OnReceiveStreamCompleted, ResolveOrAcceptReceivedStreamBytes);
++        RouteDiagnosticCounters.Managers.TryAdd(creationOptions.Role.ToString(), StreamManager);
+         _flushOptions = creationOptions.FlushOptions;
+         _telemetrySide = creationOptions.TelemetrySide;
+     }
+diff --git a/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs b/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs
+index 1809bbe..3f3c99e 100644
+--- a/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs
++++ b/src/SharpLink.Runtime/StreamManager.EntryRetirement.cs
+@@ -206,7 +206,10 @@ internal sealed partial class StreamManager
+                 try
+                 {
+                     if (Dispatcher is IStreamDispatchLease lease)
++                    {
++                        _owner?.RouteCounts.Hit("DispatchesDrainedNotification");
+                         lease.OnDispatchesDrained();
++                    }
+                 }
+                 catch (Exception exception)
+                 {
+diff --git a/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs b/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs
+index d4a6c28..ef292dd 100644
+--- a/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs
++++ b/src/SharpLink.Runtime/StreamManager.QuiescentCompletion.cs
+@@ -8,6 +8,7 @@ internal sealed partial class StreamManager
+         Interlocked.Decrement(ref _activeStreamCount);
+         try { CompleteDispatcher(entry, exception); }
+         finally { RetireQuiescentDirectStream(entry); }
++        RouteCounts.Hit("QuiescentCompletionSucceeded");
+     }
+ 
+     private void CompleteCapturedDirectStream(RequestDispatchers request, ushort streamId,
+@@ -60,6 +61,7 @@ internal sealed partial class StreamManager
+     {
+         public bool TryBeginQuiescentDirectCompletion(ushort streamId, out DispatcherEntry entry)
+         {
++            _routeCounts.Hit("TryBeginQuiescentDirectCompletion");
+             entry = null!;
+             if (streamId != 0) return false;
+             var candidate = Volatile.Read(ref _defaultDispatcher);
+diff --git a/src/SharpLink.Runtime/StreamManager.Registration.cs b/src/SharpLink.Runtime/StreamManager.Registration.cs
+index 8120d05..3ca6a35 100644
+--- a/src/SharpLink.Runtime/StreamManager.Registration.cs
++++ b/src/SharpLink.Runtime/StreamManager.Registration.cs
+@@ -4,6 +4,7 @@ internal sealed partial class StreamManager
+ {
+     private void RegisterCore(long requestId, ushort streamId, IStreamDispatcher dispatcher, bool ignoreExisting)
+     {
++        RouteCounts.Hit("RegisterCore");
+         ArgumentNullException.ThrowIfNull(dispatcher);
+         var termination = Volatile.Read(ref _termination);
+         if (termination is not null)
+@@ -13,7 +14,7 @@ internal sealed partial class StreamManager
+         }
+ 
+         var routes = GetOrCreateDispatchersByRequestId();
+-        var request = routes.GetOrAdd(requestId, static _ => new RequestDispatchers());
++        var request = routes.GetOrAdd(requestId, _ => new RequestDispatchers(RouteCounts));
+         if (dispatcher is not DiscardingStreamDispatcher &&
+             request.TryAttachPreAdmission(streamId, dispatcher, out var alreadyCompleted, out var attachedEntry))
+         {
+@@ -44,6 +45,7 @@ internal sealed partial class StreamManager
+         {
+             // Bind first: a rejected second binding must never mutate the original owner.
+             entry = new DispatcherEntry(dispatcher, this, requestId, streamId);
++            RouteCounts.Entries.Enqueue(entry);
+             while (!request.TryReserve(streamId, entry, out var sealedRequest))
+             {
+                 if (!sealedRequest)
+@@ -54,7 +56,7 @@ internal sealed partial class StreamManager
+                 // Empty containers are sealed before unlinking. A holder of an old reference
+                 // must retry against the map, never publish into a detached container.
+                 routes.TryRemove(requestId, request);
+-                request = routes.GetOrAdd(requestId, static _ => new RequestDispatchers());
++                request = routes.GetOrAdd(requestId, _ => new RequestDispatchers(RouteCounts));
+             }
+             reserved = true;
+             if (_receiveCreditResolver is Func<long, ushort, int, StreamFlowController.ResolvedReceiveCreditLease> &&
+diff --git a/src/SharpLink.Runtime/StreamManager.RouteDiagnostics.cs b/src/SharpLink.Runtime/StreamManager.RouteDiagnostics.cs
+new file mode 100644
+index 0000000..781fdcd
+--- /dev/null
++++ b/src/SharpLink.Runtime/StreamManager.RouteDiagnostics.cs
+@@ -0,0 +1,55 @@
++namespace SharpLink.Runtime;
++
++// Counter-only local route proof. This file and every hit are excluded from timed binaries.
++internal sealed partial class StreamManager
++{
++    internal readonly RouteDiagnosticCounters RouteCounts = new();
++}
++
++internal sealed class RouteDiagnosticCounters
++{
++    internal static readonly ConcurrentDictionary<string, StreamManager> Managers = new();
++    private static readonly string[] Names =
++    [
++        "RegisterCore",
++        "DispatchChunk",
++        "CompleteStream",
++        "CompleteStream.NullMap",
++        "CompleteStream.LookupMiss",
++        "TryBeginQuiescentDirectCompletion",
++        "QuiescentClaimSucceeded",
++        "QuiescentCompletionSucceeded",
++        "CompleteRequestStreams",
++        "CompleteRequestStreams.NullMap",
++        "CompleteRequestStreams.LookupMiss",
++        "CompleteRequestStreams.EmptyDrain",
++        "CompleteRequestStreams.DrainedEntries",
++        "CompleteRequestStreamsAfterDispatches",
++        "CompleteRequestStreamsAfterDispatches.NullMap",
++        "CompleteRequestStreamsAfterDispatches.LookupMiss",
++        "CompleteRequestStreamsAfterDispatches.EmptyDrain",
++        "CompleteRequestStreamsAfterDispatches.DrainedEntries",
++        "DispatchesDrainedNotification",
++        "CompleteAll",
++        "CompleteAll.Repeated",
++        "CompleteAll.NullMap",
++        "CompleteAll.DrainedEntries"
++    ];
++    private readonly long[] _counts = new long[Names.Length];
++    internal readonly ConcurrentQueue<StreamManager.DispatcherEntry> Entries = new();
++    private readonly ConcurrentDictionary<string, long> _frames = new();
++    internal void Frame(ProtocolV2FrameType type, ProtocolV2FrameFlags flags)
++    {
++        _frames.AddOrUpdate(type.ToString(), 1, static (_, count) => count + 1);
++        if ((flags & ProtocolV2FrameFlags.Error) != 0)
++            _frames.AddOrUpdate("ErrorFlag", 1, static (_, count) => count + 1);
++    }
++    internal Dictionary<string, long> FrameSnapshot() => new(_frames);
++    internal void Hit(string name, long amount = 1) => Interlocked.Add(ref _counts[Array.IndexOf(Names, name)], amount);
++    internal Dictionary<string, long> Snapshot()
++    {
++        var result = new Dictionary<string, long>();
++        for (var i = 0; i < Names.Length; i++) result.Add(Names[i], Volatile.Read(ref _counts[i]));
++        return result;
++    }
++}
+diff --git a/src/SharpLink.Runtime/StreamManager.Routing.cs b/src/SharpLink.Runtime/StreamManager.Routing.cs
+index 32e5253..7318d14 100644
+--- a/src/SharpLink.Runtime/StreamManager.Routing.cs
++++ b/src/SharpLink.Runtime/StreamManager.Routing.cs
+@@ -6,6 +6,8 @@ internal sealed partial class StreamManager
+ 
+     private sealed partial class RequestDispatchers
+     {
++        private readonly RouteDiagnosticCounters _routeCounts;
++        internal RequestDispatchers(RouteDiagnosticCounters routeCounts) => _routeCounts = routeCounts;
+         private DispatcherEntry? _defaultDispatcher;
+         // Default-only requests use the inline slot; allocate the named map only
+         // when a nonzero stream is actually published under the same registry lock.
+diff --git a/src/SharpLink.Runtime/StreamManager.cs b/src/SharpLink.Runtime/StreamManager.cs
+index 6d6b3d2..4095326 100644
+--- a/src/SharpLink.Runtime/StreamManager.cs
++++ b/src/SharpLink.Runtime/StreamManager.cs
+@@ -127,6 +127,7 @@ internal sealed partial class StreamManager
+     /// <inheritdoc />
+     internal ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
+     {
++        RouteCounts.Hit("DispatchChunk");
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is not null &&
+             dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers) &&
+@@ -225,10 +226,12 @@ internal sealed partial class StreamManager
+     /// <inheritdoc />
+     internal void CompleteStream(long requestId, ushort streamId, Exception? exception)
+     {
++        RouteCounts.Hit("CompleteStream");
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null ||
+             !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
+         {
++            RouteCounts.Hit(dispatchersByRequestId is null ? "CompleteStream.NullMap" : "CompleteStream.LookupMiss");
+             return;
+         }
+ 
+@@ -236,6 +239,7 @@ internal sealed partial class StreamManager
+         {
+             if (requestDispatchers.TryBeginQuiescentDirectCompletion(streamId, out var quiescentEntry))
+             {
++                RouteCounts.Hit("QuiescentClaimSucceeded");
+                 CompleteQuiescentDirectStream(quiescentEntry, exception);
+                 return;
+             }
+@@ -347,18 +351,26 @@ internal sealed partial class StreamManager
+     /// <inheritdoc />
+     internal void CompleteAll(Exception? exception)
+     {
++        RouteCounts.Hit("CompleteAll");
+         var termination = new Termination(exception);
+         if (Interlocked.CompareExchange(ref _termination, termination, null) is not null)
++        {
++            RouteCounts.Hit("CompleteAll.Repeated");
+             return;
++        }
+ 
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null)
++        {
++            RouteCounts.Hit("CompleteAll.NullMap");
+             return;
++        }
+ 
+         List<Exception>? failures = null;
+         var completed = 0;
+         foreach (var requestDispatchers in dispatchersByRequestId.DrainValues())
+             completed += requestDispatchers.CompleteAll(exception, ref failures);
++        RouteCounts.Hit("CompleteAll.DrainedEntries", completed);
+         SharpLinkTelemetry.AddActiveStreams(-completed);
+         Interlocked.Add(ref _activeStreamCount, -completed);
+         ThrowCompletionFailures(failures);
+@@ -366,16 +378,20 @@ internal sealed partial class StreamManager
+ 
+     internal void CompleteRequestStreams(long requestId, Exception? exception)
+     {
++        RouteCounts.Hit("CompleteRequestStreams");
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null ||
+             !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
+         {
++            RouteCounts.Hit(dispatchersByRequestId is null ? "CompleteRequestStreams.NullMap" : "CompleteRequestStreams.LookupMiss");
+             return;
+         }
+ 
+         var entries = requestDispatchers.BeginDrain();
++        RouteCounts.Hit("CompleteRequestStreams.DrainedEntries", entries.Length);
+         if (entries.Length == 0)
+         {
++            RouteCounts.Hit("CompleteRequestStreams.EmptyDrain");
+             RemoveEmptyRequest(requestId, requestDispatchers);
+             return;
+         }
+@@ -402,14 +418,20 @@ internal sealed partial class StreamManager
+     /// </summary>
+     internal ValueTask CompleteRequestStreamsAfterDispatchesAsync(long requestId, Exception? exception)
+     {
++        RouteCounts.Hit("CompleteRequestStreamsAfterDispatches");
+         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
+         if (dispatchersByRequestId is null ||
+             !dispatchersByRequestId.TryGetValue(requestId, out var requestDispatchers))
++        {
++            RouteCounts.Hit(dispatchersByRequestId is null ? "CompleteRequestStreamsAfterDispatches.NullMap" : "CompleteRequestStreamsAfterDispatches.LookupMiss");
+             return ValueTask.CompletedTask;
++        }
+ 
+         var entries = requestDispatchers.BeginDrain(out var alreadyRetiring);
++        RouteCounts.Hit("CompleteRequestStreamsAfterDispatches.DrainedEntries", entries.Length);
+         if (entries.Length == 0)
+         {
++            RouteCounts.Hit("CompleteRequestStreamsAfterDispatches.EmptyDrain");
+             RemoveEmptyRequest(requestId, requestDispatchers);
+             return alreadyRetiring.Length == 0 ? ValueTask.CompletedTask :
+                 AwaitRequestRetirementsAsync(alreadyRetiring, [], null);
+diff --git a/src/SharpLink.Server/SharpLinkServer.RequestLoop.cs b/src/SharpLink.Server/SharpLinkServer.RequestLoop.cs
+index 109effe..5260fe6 100644
+--- a/src/SharpLink.Server/SharpLinkServer.RequestLoop.cs
++++ b/src/SharpLink.Server/SharpLinkServer.RequestLoop.cs
+@@ -78,6 +78,7 @@ internal sealed partial class SharpLinkServer
+                                ref buffer, _protocolOptions, out var header, out var payload))
+                     {
+                         SharpLinkTelemetry.RecordReceivedBytes(ProtocolV2Constants.HeaderBytes + payload.Length);
++                        session.StreamManager.RouteCounts.Frame(header.Type, header.Flags);
+                         session.MarkActive();
+                         session.EnsureInboundFrameAllowed(
+                             header.Type,
+diff --git a/test/SharpLink.RouteCountProbe/Program.cs b/test/SharpLink.RouteCountProbe/Program.cs
+new file mode 100644
+index 0000000..934488c
+--- /dev/null
++++ b/test/SharpLink.RouteCountProbe/Program.cs
+@@ -0,0 +1,244 @@
++using System.Diagnostics;
++using System.IO.Pipelines;
++using System.Net;
++using System.Text.Json;
++using SharpLink.Abstractions;
++using SharpLink.Client;
++using SharpLink.Runtime;
++using SharpLink.Server;
++using SharpLink.StreamLoadTest;
++
++namespace SharpLink.RouteCountProbe;
++
++internal static class Program
++{
++    private const int WarmupCalls = 8;
++    private const int MeasuredCalls = 64;
++    private static readonly List<object> Stages = [];
++    private static Dictionary<string, Dictionary<string, long>> _previous = [];
++    private static Dictionary<string, Dictionary<string, long>> _previousFrames = [];
++
++    private static async Task Main()
++    {
++        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
++        var toServer = new Pipe();
++        var toClient = new Pipe();
++        var clientConnection = new MemoryConnection("client", toClient.Reader, toServer.Writer);
++        var serverConnection = new MemoryConnection("server", toServer.Reader, toClient.Writer);
++        using var serverCts = new CancellationTokenSource();
++        var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
++            .UseTransport(new MemoryListener(serverConnection))
++            .UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2)).Build();
++        var serverTask = ((ISharpLinkServer)server).RunUntilStoppedAsync(serverCts.Token).AsTask();
++        var client = (SharpLinkClient)SharpClientBuilder.Create().DisableRequestTimeout()
++            .UseTransport(new MemoryFactory(clientConnection))
++            .UseConnectionPool(options => { options.MinConnections = 1; options.MaxConnections = 1; })
++            .UseHeartbeat(TimeSpan.FromHours(1), TimeSpan.FromHours(2)).Build();
++        await client.ConnectAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
++        var service = client.Get<IStreamLoadService>();
++        Require(service.GetType().FullName!.Contains("Proxy", StringComparison.Ordinal), "real generated client proxy");
++        Snapshot("connected", 0, client, server);
++
++        await Unary("unary.warmup", WarmupCalls);
++        await Unary("unary.measured", MeasuredCalls);
++        Require(RouteDiagnosticCounters.Managers.Values.All(m => m.RouteCounts.Snapshot().Values.All(value => value == 0)),
++            "pure successful unary must not enter any instrumented stream route method before any stream exists");
++        Require(PooledAsyncStreamDispatcher<int>.RetainedCountForTests == 0, "pure unary must not rent a stream dispatcher");
++        await Server1("server1.warmup", WarmupCalls);
++        await Server1("server1.measured", MeasuredCalls);
++        await Unary("post-stream.unary-fence", 1);
++        await Drain(client, server);
++        Snapshot("pre-teardown", 0, client, server);
++
++        await client.DisposeAsync();
++        await serverCts.CancelAsync();
++        await server.DisposeAsync();
++        try { await serverTask.WaitAsync(TimeSpan.FromSeconds(10)); }
++        catch (OperationCanceledException) { }
++        Snapshot("teardown", 0, client, server);
++        Require(client.FrameworkTaskSnapshotForDiagnostics.IsDrained &&
++                server.FrameworkTaskSnapshotForDiagnostics.IsDrained &&
++                client.FrameworkTaskSnapshotForDiagnostics.RetainedFailures == 0 &&
++                server.FrameworkTaskSnapshotForDiagnostics.RetainedFailures == 0,
++                "client and server framework tasks fully drained without retained failure");
++        var clientFrames = RouteDiagnosticCounters.Managers["Client"].RouteCounts.FrameSnapshot();
++        var serverFrames = RouteDiagnosticCounters.Managers["Server"].RouteCounts.FrameSnapshot();
++        Require(clientFrames.GetValueOrDefault("Response") == 2 * (WarmupCalls + MeasuredCalls) + 1,
++                "one response frame per successful RPC, including streaming acknowledgements and the separated unary fence");
++        Require(clientFrames.GetValueOrDefault("StreamData") == WarmupCalls + MeasuredCalls &&
++                clientFrames.GetValueOrDefault("StreamComplete") == WarmupCalls + MeasuredCalls,
++                "one data and one terminal frame per server1 operation");
++        Require(serverFrames.GetValueOrDefault("Request") == 2 * (WarmupCalls + MeasuredCalls) + 1,
++                "one server-received request frame per generated RPC");
++        Require(clientFrames.GetValueOrDefault("ErrorFlag") == 0 && serverFrames.GetValueOrDefault("ErrorFlag") == 0 &&
++                clientFrames.GetValueOrDefault("Cancel") == 0 && serverFrames.GetValueOrDefault("Cancel") == 0,
++                "no error or cancel frames");
++        var counters = RouteDiagnosticCounters.Managers.ToDictionary(pair => pair.Key, pair => pair.Value.RouteCounts.Snapshot());
++        var enabled = QuiescentCompletionDiagnostic.IsEnabled();
++        var totals = counters.Values.SelectMany(x => x).GroupBy(x => x.Key).ToDictionary(g => g.Key, g => g.Sum(x => x.Value));
++        Require(totals.GetValueOrDefault("RegisterCore") == WarmupCalls + MeasuredCalls, "one route per server stream");
++        Require(totals.GetValueOrDefault("DispatchChunk") == WarmupCalls + MeasuredCalls, "one StreamData dispatch per server stream");
++        Require(totals.GetValueOrDefault("CompleteStream") == WarmupCalls + MeasuredCalls, "one CompleteStream per server stream");
++        Require(totals.GetValueOrDefault("TryBeginQuiescentDirectCompletion") == (enabled ? WarmupCalls + MeasuredCalls : 0), "mode-specific helper entry count");
++        Require(totals.GetValueOrDefault("QuiescentClaimSucceeded") == (enabled ? WarmupCalls + MeasuredCalls : 0), "mode-specific successful claims");
++        Require(totals.GetValueOrDefault("QuiescentCompletionSucceeded") == (enabled ? WarmupCalls + MeasuredCalls : 0), "mode-specific successful completions");
++        Require(totals.GetValueOrDefault("DispatchesDrainedNotification") == WarmupCalls + MeasuredCalls, "one drain notification per entry");
++        Console.WriteLine(JsonSerializer.Serialize(new
++        {
++            diagnosticOnly = true,
++            timingClaims = false,
++            mode = enabled ? "ON" : "OFF",
++            transport = "paired in-memory System.IO.Pipelines; no OS sockets or pipes",
++            proxyType = service.GetType().FullName,
++            warmupCalls = WarmupCalls,
++            measuredCalls = MeasuredCalls,
++            stages = Stages,
++            totals,
++            passed = true
++        }, new JsonSerializerOptions { WriteIndented = true }));
++
++        async Task Unary(string name, int count)
++        {
++            for (var i = 0; i < count; i++) Require(await service.AddAsync(7, 9) == 16, "AddAsync(7,9) == 16");
++            await Drain(client, server);
++            Snapshot(name, count, client, server);
++        }
++        async Task Server1(string name, int count)
++        {
++            for (var i = 0; i < count; i++)
++            {
++                var values = new List<int>();
++                await foreach (var value in service.DownloadAsync(1)) values.Add(value);
++                Require(values.SequenceEqual([0]), "DownloadAsync(1) yields exactly [0]");
++                // Quiesce each operation so snapshots and retained dispatcher reuse are exact.
++                await Drain(client, server);
++            }
++            Snapshot(name, count, client, server);
++        }
++    }
++
++    private static async Task Drain(SharpLinkClient client, SharpLinkServer server)
++    {
++        var timeout = Stopwatch.StartNew();
++        while (client.PendingCallCount != 0 || client.ActiveClientCallCount != 0 ||
++               server.ActiveCallCountForDiagnostics != 0 ||
++               RouteDiagnosticCounters.Managers.Values.Any(m => !m.RouteCounts.Entries.IsEmpty) &&
++                   PooledAsyncStreamDispatcher<int>.RetainedCountForTests != 1 ||
++               RouteDiagnosticCounters.Managers.Values.Any(m => m.ActiveStreamCount != 0 ||
++                   m.RouteCounts.Entries.Any(e => !e.IsReceiveRetired || !e.IsDetached || e.HasActiveDispatches ||
++                       e.Dispatcher is PooledAsyncStreamDispatcher<int> d && RetainedRpcReferences(d).Length != 0)))
++        {
++            if (timeout.Elapsed > TimeSpan.FromSeconds(10))
++            {
++                Snapshot("timeout", 0, client, server);
++                Console.Error.WriteLine(JsonSerializer.Serialize(Stages, new JsonSerializerOptions { WriteIndented = true }));
++                throw new TimeoutException("RPC route and pool drain did not finish");
++            }
++            await Task.Delay(1);
++        }
++    }
++
++    private static void Snapshot(string stage, int calls, SharpLinkClient client, SharpLinkServer server)
++    {
++        var current = RouteDiagnosticCounters.Managers.ToDictionary(pair => pair.Key, pair => pair.Value.RouteCounts.Snapshot());
++        var delta = current.ToDictionary(pair => pair.Key, pair => pair.Value.ToDictionary(
++            item => item.Key, item => item.Value - (_previous.GetValueOrDefault(pair.Key)?.GetValueOrDefault(item.Key) ?? 0)));
++        var frames = RouteDiagnosticCounters.Managers.ToDictionary(pair => pair.Key, pair => pair.Value.RouteCounts.FrameSnapshot());
++        var frameDelta = frames.ToDictionary(pair => pair.Key, pair => pair.Value.ToDictionary(
++            item => item.Key, item => item.Value - (_previousFrames.GetValueOrDefault(pair.Key)?.GetValueOrDefault(item.Key) ?? 0)));
++        var states = RouteDiagnosticCounters.Managers.ToDictionary(pair => pair.Key, pair => new
++        {
++            activeStreams = pair.Value.ActiveStreamCount,
++            totalEntries = pair.Value.RouteCounts.Entries.Count,
++            retiredEntries = pair.Value.RouteCounts.Entries.Count(e => e.IsReceiveRetired),
++            detachedEntries = pair.Value.RouteCounts.Entries.Count(e => e.IsDetached),
++            busyEntries = pair.Value.RouteCounts.Entries.Count(e => e.HasActiveDispatches),
++            pooledDispatcherReferencesClean = pair.Value.RouteCounts.Entries.All(e =>
++                e.Dispatcher is not PooledAsyncStreamDispatcher<int> d || RetainedRpcReferences(d).Length == 0)
++        });
++        Stages.Add(new { stage, calls, delta, cumulative = current, frameDelta, frames, states,
++            clientFrameworkTasks = client.FrameworkTaskSnapshotForDiagnostics,
++            serverFrameworkTasks = server.FrameworkTaskSnapshotForDiagnostics,
++            clientPendingCalls = client.PendingCallCount, clientActiveCalls = client.ActiveClientCallCount,
++            serverActiveCalls = server.ActiveCallCountForDiagnostics,
++            pooledIntDispatchers = PooledAsyncStreamDispatcher<int>.RetainedCountForTests });
++        _previous = current;
++        _previousFrames = frames;
++    }
++
++    private static string[] RetainedRpcReferences(PooledAsyncStreamDispatcher<int> dispatcher)
++    {
++        // The existing HasRetainedReferencesForTests predicate unconditionally tests
++        // `_current is not null`, which is always true for int. Inspect the same RPC
++        // reference/token fields directly. int data slots cannot retain object graphs.
++        string[] names = ["_codec", "_error", "_dispatchState", "_receiveCreditBinding",
++            "_localAbortReceiveCreditBinding", "_consumerAbandoned", "_consumerAbandonedAsync",
++            "_disposeCompletion", "_remoteTerminalPublication",
++            "_beforeConcurrentDisposeCompletionInstallForTests",
++            "_beforeRemoteTerminalPublicationPublishForTests",
++            "_beforeRemoteTerminalPublicationCompletionInstallForTests",
++            "_afterRemoteTerminalPublicationCompletionInstallForTests",
++            "_beforeProducerOperationAcquireForTests", "_beforeConsumerWaitOwnerAcquireForTests",
++            "_afterConsumerWaitResultForTests", "_beforeReturnTransitionForTests", "_afterReturnTransitionForTests"];
++        var type = dispatcher.GetType();
++        object? Read(string name) => (type.GetField(name,
++            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
++            ?? throw new InvalidOperationException("Missing reference-check field " + name)).GetValue(dispatcher);
++        var retained = names.Where(name => Read(name) is not null).ToList();
++        foreach (var name in new[] { "_enumerationToken", "_additionalEnumerationToken" })
++            if (((CancellationToken)Read(name)!).CanBeCanceled) retained.Add(name);
++        foreach (var name in new[] { "_enumerationCancellationRegistration", "_additionalEnumerationCancellationRegistration" })
++            if (!((CancellationTokenRegistration)Read(name)!).Equals(default(CancellationTokenRegistration))) retained.Add(name);
++        return retained.ToArray();
++    }
++
++    private static void Require(bool condition, string reason)
++    {
++        if (!condition)
++        {
++            Console.Error.WriteLine(JsonSerializer.Serialize(Stages, new JsonSerializerOptions { WriteIndented = true }));
++            throw new InvalidOperationException("Proof failed: " + reason);
++        }
++    }
++}
++
++internal sealed class MemoryConnection(string id, PipeReader input, PipeWriter output) : ITransportConnection
++{
++    private int _disposed;
++    public string Id => id;
++    public PipeReader Input => input;
++    public PipeWriter Output => output;
++    public EndPoint? LocalEndPoint => null;
++    public EndPoint? RemoteEndPoint => null;
++    public async ValueTask DisposeAsync()
++    {
++        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
++        await Output.CompleteAsync();
++        await Input.CompleteAsync();
++    }
++}
++
++internal sealed class MemoryListener(ITransportConnection connection) : IServerTransportListener
++{
++    private int _accepted;
++    public EndPoint? LocalEndPoint => null;
++    public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
++    {
++        if (Interlocked.Exchange(ref _accepted, 1) == 0) return connection;
++        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
++        throw new UnreachableException();
++    }
++    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
++}
++
++internal sealed class MemoryFactory(ITransportConnection connection) : IClientTransportFactory
++{
++    private int _connected;
++    public ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
++    {
++        cancellationToken.ThrowIfCancellationRequested();
++        if (Interlocked.Exchange(ref _connected, 1) != 0) throw new InvalidOperationException("Only one in-memory connection is available");
++        return ValueTask.FromResult(connection);
++    }
++    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
++}
+diff --git a/test/SharpLink.RouteCountProbe/README.md b/test/SharpLink.RouteCountProbe/README.md
+new file mode 100644
+index 0000000..eb2d9e6
+--- /dev/null
++++ b/test/SharpLink.RouteCountProbe/README.md
+@@ -0,0 +1,36 @@
++# Generated RPC route-count proof (diagnostic only)
++
++This standalone friend-assembly executable uses the exact `IStreamLoadService` and
++`StreamLoadService` declarations copied from `SharpLink.StreamLoadTest/Program.cs`.
++The normal generator emits its proxy and server stub; the normal client/server
++builders run them over a paired in-memory `System.IO.Pipelines` transport. No OS
++socket or named/anonymous OS pipe is opened by the probe.
++
++Activate the repository's normal .NET SDK, then run `./test/SharpLink.RouteCountProbe/run-proof.sh`.
++The script builds once and runs three fresh processes per OFF/ON mode, preserving
++JSON results, stderr, build output, and before/after DLL hashes in `evidence/`.
++`SHARPLINK_DIAGNOSTIC_QUIESCENT=0|1` is read by the existing module-initialized adapter.
++
++Each process performs, in order:
++
++1. Connect and capture a baseline.
++2. 8 warmup and 64 measured `AddAsync(7, 9)` calls, each returning 16, before any stream.
++3. 8 warmup and 64 measured `DownloadAsync(1)` calls, each yielding exactly `[0]`.
++4. One separately reported generated unary fence after streaming, then a pre-teardown snapshot.
++5. Client/server disposal and a separate teardown snapshot, including framework-task drain checks.
++
++Counters cover all core `CompleteStream` entries (before lookup), null-map/miss
++classification, actual helper entry, successful fast claim/completion, registration,
++DATA dispatch, both request-retirement entry points, and `CompleteAll` separately.
++Every side has an explicit zero-filled counter schema. Wire-frame counts are separate.
++The snapshots include live route/pending-call counts, all captured entry retirement
++states, pool count, and selected RPC reference/token cleanup checks.
++
++The repository's `HasRetainedReferencesForTests` includes `_current is not null`,
++which is always true for `int`; the probe therefore checks its reference/token
++fields directly. It does not alter the existing predicate or any shipping cleanup.
++Diagnostic captures intentionally retain entry objects, so this is not a GC-retention
++or allocation test. These counter additions must never enter a timing binary.
++In-memory transport counts establish routing, not performance equivalence to TCP,
++UDS, shared memory, or any other transport. Healthy successful RPCs are tested;
++error-cleanup call sites are documented separately, not exercised by failure injection.
+diff --git a/test/SharpLink.RouteCountProbe/ServerLifecycleTestExtensions.cs b/test/SharpLink.RouteCountProbe/ServerLifecycleTestExtensions.cs
+new file mode 100644
+index 0000000..40ffcfe
+--- /dev/null
++++ b/test/SharpLink.RouteCountProbe/ServerLifecycleTestExtensions.cs
+@@ -0,0 +1,36 @@
++namespace SharpLink.StreamLoadTest;
++
++internal static class ServerLifecycleTestExtensions
++{
++    internal static System.Threading.Tasks.ValueTask RunUntilStoppedAsync(
++        this SharpLink.Abstractions.ISharpLinkServer server,
++        System.Threading.CancellationToken cancellationToken = default)
++        => new(RunUntilStoppedCoreAsync(server, cancellationToken));
++
++    private static async System.Threading.Tasks.Task RunUntilStoppedCoreAsync(
++        SharpLink.Abstractions.ISharpLinkServer server,
++        System.Threading.CancellationToken cancellationToken)
++    {
++        await server.StartAsync(cancellationToken).ConfigureAwait(false);
++        var terminal = server.WaitForShutdownAsync();
++        if (!cancellationToken.CanBeCanceled)
++        {
++            await terminal.ConfigureAwait(false);
++            return;
++        }
++
++        var cancellation = System.Threading.Tasks.Task.Delay(
++            System.Threading.Timeout.InfiniteTimeSpan,
++            cancellationToken);
++        if (ReferenceEquals(
++                await System.Threading.Tasks.Task.WhenAny(terminal, cancellation).ConfigureAwait(false),
++                terminal))
++        {
++            await terminal.ConfigureAwait(false);
++            return;
++        }
++
++        await server.StopAsync(System.TimeSpan.Zero).ConfigureAwait(false);
++        await terminal.ConfigureAwait(false);
++    }
++}
+diff --git a/test/SharpLink.RouteCountProbe/SharpLink.RouteCountProbe.csproj b/test/SharpLink.RouteCountProbe/SharpLink.RouteCountProbe.csproj
+new file mode 100644
+index 0000000..e992431
+--- /dev/null
++++ b/test/SharpLink.RouteCountProbe/SharpLink.RouteCountProbe.csproj
+@@ -0,0 +1,19 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <OutputType>Exe</OutputType>
++    <AssemblyName>SharpLink.UnitTests</AssemblyName>
++    <IsPackable>false</IsPackable>
++    <ImplicitUsings>enable</ImplicitUsings>
++    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
++    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)Generated</CompilerGeneratedFilesOutputPath>
++  </PropertyGroup>
++  <ItemGroup>
++    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
++    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
++    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
++    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
++    <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
++    <ProjectReference Include="../../src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
++    <ProjectReference Include="../../src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
++  </ItemGroup>
++</Project>
+diff --git a/test/SharpLink.RouteCountProbe/StreamLoadContract.cs b/test/SharpLink.RouteCountProbe/StreamLoadContract.cs
+new file mode 100644
+index 0000000..0686bbc
+--- /dev/null
++++ b/test/SharpLink.RouteCountProbe/StreamLoadContract.cs
+@@ -0,0 +1,65 @@
++using SharpLink.Abstractions;
++using SharpLink.Sdk;
++[assembly: RpcCodecAdapter(typeof(ValueTuple<long, byte[]>), typeof(SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter))]
++
++namespace SharpLink.StreamLoadTest;
++
++[RpcContract]
++public interface IStreamLoadService : IService
++{
++    [NonCancellable]
++    ValueTask<int> AddAsync(int left, int right);
++    [NonCancellable]
++    ValueTask<long> UploadAsync(IAsyncEnumerable<int> values);
++    [NonCancellable]
++    IAsyncEnumerable<int> DownloadAsync(int count);
++    [NonCancellable]
++    IAsyncEnumerable<int> DuplexAsync(IAsyncEnumerable<int> values);
++    [NonCancellable]
++    IAsyncEnumerable<(long OperationId, byte[] Payload)> DuplexEquivalentAsync(
++        long operationId,
++        IAsyncEnumerable<byte[]> payloads);
++}
++
++[RpcService]
++public class StreamLoadService : IStreamLoadService
++{
++    public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
++
++    public async ValueTask<long> UploadAsync(IAsyncEnumerable<int> values)
++    {
++        long sum = 0;
++        await foreach (var value in values)
++            sum += value;
++        return sum;
++    }
++
++    public async IAsyncEnumerable<int> DownloadAsync(int count)
++    {
++        for (var i = 0; i < count; i++)
++        {
++            yield return i;
++            await Task.CompletedTask;
++        }
++    }
++
++    public async IAsyncEnumerable<int> DuplexAsync(IAsyncEnumerable<int> values)
++    {
++        await foreach (var value in values)
++        {
++            yield return value + 1;
++            await Task.CompletedTask;
++        }
++    }
++
++    public async IAsyncEnumerable<(long OperationId, byte[] Payload)> DuplexEquivalentAsync(
++        long operationId,
++        IAsyncEnumerable<byte[]> payloads)
++    {
++        await foreach (var payload in payloads)
++        {
++            yield return (operationId, payload);
++            await Task.CompletedTask;
++        }
++    }
++}
+diff --git a/test/SharpLink.RouteCountProbe/run-proof.sh b/test/SharpLink.RouteCountProbe/run-proof.sh
+new file mode 100755
+index 0000000..838e7a6
+--- /dev/null
++++ b/test/SharpLink.RouteCountProbe/run-proof.sh
+@@ -0,0 +1,18 @@
++#!/usr/bin/env bash
++# Diagnostic counts only. Invoke after activating the normal .NET SDK.
++set -euo pipefail
++root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
++cd "$root"
++out=${1:-evidence}
++mkdir -p "$out"
++dotnet build test/SharpLink.RouteCountProbe/SharpLink.RouteCountProbe.csproj -c Release -m:1 -v minimal > "$out/build-final.log" 2>&1
++bin=test/SharpLink.RouteCountProbe/bin/Release/net10.0
++sha256sum "$bin"/SharpLink*.dll > "$out/binary-sha256-before.txt"
++for round in 1 2 3; do
++  for mode in 0 1; do
++    SHARPLINK_DIAGNOSTIC_QUIESCENT=$mode dotnet "$bin/SharpLink.UnitTests.dll" \
++      > "$out/mode-$mode-run-$round.json" 2> "$out/mode-$mode-run-$round.err"
++  done
++done
++sha256sum "$bin"/SharpLink*.dll > "$out/binary-sha256-after.txt"
++diff -u "$out/binary-sha256-before.txt" "$out/binary-sha256-after.txt"

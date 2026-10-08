@@ -1,0 +1,54 @@
+{
+  "baseAdapterTree": "7a9f9f313526f926755da2fcd2119303b86f7a1f",
+  "diagnosticSourceTree": "f6c0f3b283ffda5fc85f104f40e6ba9d213a3b85",
+  "replayTreeMatches": true,
+  "patch": {
+    "path": "evidence/generated-rpc-route-count.patch",
+    "sha256": "9f2c6538d7ec7f56777401678cd7ab9bed9485d9f8c536317c491b5963aa9b81"
+  },
+  "contractAndServiceSuffixExactCopy": true,
+  "frozenG2Tree": "398d484fb5b8ab8adb75a74db7d577d929d2dc77",
+  "modeAdapterPatchSha256": "cec7837c6c6c70819bcfc729f13acd91ce325ae63bfd86bf16290d823bcea02f",
+  "runs": [
+    {
+      "path": "evidence/mode-0-run-1.json",
+      "sha256": "e063f677aa8d08a08fd696706f7d1f7037b87cbde3aa286853efcb49f1a12962",
+      "mode": "OFF",
+      "passed": true
+    },
+    {
+      "path": "evidence/mode-0-run-2.json",
+      "sha256": "60ed6aa9b54ba4ed5f52319ef127f4b28867c71a7493842039a3828e662ed9b7",
+      "mode": "OFF",
+      "passed": true
+    },
+    {
+      "path": "evidence/mode-0-run-3.json",
+      "sha256": "e063f677aa8d08a08fd696706f7d1f7037b87cbde3aa286853efcb49f1a12962",
+      "mode": "OFF",
+      "passed": true
+    },
+    {
+      "path": "evidence/mode-1-run-1.json",
+      "sha256": "7f87143ebae9b41ef259cc6aa5c8ae89b057cca6af4d47e750a15b1f2e3ee9b2",
+      "mode": "ON",
+      "passed": true
+    },
+    {
+      "path": "evidence/mode-1-run-2.json",
+      "sha256": "7f87143ebae9b41ef259cc6aa5c8ae89b057cca6af4d47e750a15b1f2e3ee9b2",
+      "mode": "ON",
+      "passed": true
+    },
+    {
+      "path": "evidence/mode-1-run-3.json",
+      "sha256": "7f87143ebae9b41ef259cc6aa5c8ae89b057cca6af4d47e750a15b1f2e3ee9b2",
+      "mode": "ON",
+      "passed": true
+    }
+  ],
+  "sameBinaryBeforeAfter": true,
+  "transport": "in-memory System.IO.Pipelines only",
+  "timingClaims": false,
+  "blockers": []
+}

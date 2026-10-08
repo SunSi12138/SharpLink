@@ -1,0 +1,7 @@
+893654aa8c2bbfc650c6a38dd4ce5371ea825c81eac2cffb466ef786da659656  test/SharpLink.RouteCountProbe/bin/Release/net10.0/SharpLink.Abstractions.dll
+39abee5dafb8ece8ac381316d8a5c29261ca303880e906e08abb8f0922277b2d  test/SharpLink.RouteCountProbe/bin/Release/net10.0/SharpLink.Client.dll
+eb4e2fc99ae31e1a197aeea292897d5f451942bd271841616c1e9ef8494c3452  test/SharpLink.RouteCountProbe/bin/Release/net10.0/SharpLink.Runtime.dll
+9c068333593d1a0a41772d98716f6de3592422892685afd592b53941531bef88  test/SharpLink.RouteCountProbe/bin/Release/net10.0/SharpLink.Sdk.dll
+0c83220465a68d9ae4bd9c908d8d5fea6b9d621d17b4a39e5b68f7fa458e31e8  test/SharpLink.RouteCountProbe/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll
+f63c633b58226e251c558d0eb74ebfa8a310ea4315f5261e310e6ff2ed1a1048  test/SharpLink.RouteCountProbe/bin/Release/net10.0/SharpLink.Server.dll
+14687ebcd03a9df7910279c693448bc83a786d7b28104e34498432d1c33a54b0  test/SharpLink.RouteCountProbe/bin/Release/net10.0/SharpLink.UnitTests.dll
