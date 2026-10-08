@@ -1,0 +1,110 @@
+name: 742 Matched Lifecycle Diagnostic Profiles
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths: ['.github/workflows/742-matched-profile.yml', 'eng/profile-742/**']
+permissions:
+  contents: read
+concurrency:
+  group: 742-matched-profile
+  cancel-in-progress: false
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: [short-shm, long-tcp, long-shm]
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Materialize exact three runtime revisions
+        run: |
+          set -euo pipefail
+          out="$PWD/artifacts/profile742"
+          mkdir -p "$out"
+          git worktree add --detach "$RUNNER_TEMP/profile-dev" 0fe26024b114bb6e78411a9b86276086c045d03d
+          git worktree add --detach "$RUNNER_TEMP/profile-published" e834d3c28c87ad496989af925515cf21babd308d
+          git worktree add --detach "$RUNNER_TEMP/profile-candidate" 40c30552f8a099ecda55525163e0b163adbd2357
+          (
+            cd "$RUNNER_TEMP/profile-candidate"
+            python3 eng/preflight-735-first-receive-apply.py
+            cp eng/preflight-735-first-await-tests.cs test/SharpLink.UnitTests/Runtime/StreamManagerFirstReceiveAwaitAllocationTests.cs
+            python3 eng/preflight-735-first-await-apply.py
+            cp eng/preflight-735-consumer-wait-tests.cs test/SharpLink.UnitTests/Runtime/PooledDispatcherSlowWaitTests.cs
+            python3 eng/preflight-735-consumer-wait-apply.py
+            python3 eng/preflight-735-single-consumption-apply.py
+            python3 eng/preflight-735-wait-isolation.py
+            python3 eng/preflight-735-hint-apply.py
+            test "$(git write-tree)" = 65bcb96eb293372cf78feeb238998febec941e96
+          )
+          echo "DEV=$RUNNER_TEMP/profile-dev" >> "$GITHUB_ENV"
+          echo "PUBLISHED=$RUNNER_TEMP/profile-published" >> "$GITHUB_ENV"
+          echo "CANDIDATE=$RUNNER_TEMP/profile-candidate" >> "$GITHUB_ENV"
+          cp "$RUNNER_TEMP/profile-candidate/artifacts/first-receive-integration/provenance.json" "$out/candidate-provenance.json"
+          dotnet --info > "$out/dotnet.txt"
+          lscpu > "$out/cpu.txt"
+          python3 -m py_compile eng/profile-742/prepare.py eng/profile-742/run.py
+      - name: Build pinned diagnostic tools and calibration
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/profile-tools"
+          out="$PWD/artifacts/profile742"
+          mkdir -p "$tools/parser" "$tools/calibration"
+          cp eng/profile-742/ProfileParser.csproj "$tools/parser/"
+          cp eng/profile-742/Parser.cs "$tools/parser/Program.cs"
+          cp eng/profile-742/Calibration.csproj "$tools/calibration/"
+          cp eng/profile-742/Calibration.cs "$tools/calibration/Program.cs"
+          cp eng/profile-742/ProfileWindow742.cs "$tools/"
+          dotnet build "$tools/parser" -c Release > "$out/parser-build.log" 2>&1 || { cat "$out/parser-build.log"; exit 1; }
+          dotnet build "$tools/calibration" -c Release > "$out/calibration-build.log" 2>&1 || { cat "$out/calibration-build.log"; exit 1; }
+          dotnet tool install dotnet-trace --version 10.0.745401 --tool-path "$tools/bin" > "$out/tool-install.log" 2>&1 || { cat "$out/tool-install.log"; exit 1; }
+          "$tools/bin/dotnet-trace" --version | tee "$out/tool-version.txt"
+          "$tools/bin/dotnet-trace" collect --help > "$out/tool-help.txt"
+          sha256sum "$tools/parser/bin/Release/net10.0/ProfileParser.dll" "$tools/calibration/bin/Release/net10.0/Calibration.dll" eng/profile-742/* > "$out/tool-source-hashes.txt"
+          echo "TRACE=$tools/bin/dotnet-trace" >> "$GITHUB_ENV"
+          echo "PARSER=$tools/parser/bin/Release/net10.0/ProfileParser.dll" >> "$GITHUB_ENV"
+          echo "CALIBRATION=$tools/calibration/bin/Release/net10.0/Calibration.dll" >> "$GITHUB_ENV"
+      - name: Calibrate window exclusion and both lock mechanisms before attribution
+        run: |
+          set -euo pipefail
+          out="$PWD/artifacts/profile742/calibration"
+          mkdir -p "$out"
+          dotnet "$PARSER" --self-test | tee "$out/parser-self-tests.log"
+          "$TRACE" collect --providers 'Microsoft-DotNETCore-SampleProfiler:0:4,Microsoft-Windows-DotNETRuntime:0x40034019:5,SharpLink-742-ProfileWindow:0xffff:4' --buffersize 256 --output "$out/calibration.nettrace" -- dotnet "$CALIBRATION" "$out/report.json" > "$out/collect.log" 2>&1 || { cat "$out/collect.log"; exit 1; }
+          dotnet "$PARSER" "$out/calibration.nettrace" "$out/report.json" "$out/profile.json" --calibration | tee "$out/parse.log"
+      - name: Prepare identical boundary-only diagnostic harnesses
+        run: |
+          set -euo pipefail
+          python3 eng/profile-742/prepare.py "$DEV" "$PUBLISHED" "$CANDIDATE" eng/profile-742 artifacts/profile742
+          for root in "$DEV" "$PUBLISHED" "$CANDIDATE"; do
+            label=dev; [[ "$root" == "$PUBLISHED" ]] && label=published; [[ "$root" == "$CANDIDATE" ]] && label=candidate
+            if [[ '${{ matrix.workload }}' == short-shm ]]; then project=SharpLink.Benchmarks; else project=SharpLink.StreamLoadTest; fi
+            dotnet build "$root/test/$project" -c Release -p:PublishAot=false -p:TreatWarningsAsErrors=true > "artifacts/profile742/$label-build.log" 2>&1 || { cat "artifacts/profile742/$label-build.log"; exit 1; }
+            tail -n 7 "artifacts/profile742/$label-build.log"
+          done
+      - name: Fixed profiled and unprofiled diagnostic population
+        run: |
+          set -euo pipefail
+          python3 eng/profile-742/run.py "$DEV" "$PUBLISHED" "$CANDIDATE" artifacts/profile742/results "$TRACE" "$PARSER" --workload '${{ matrix.workload }}' 2>&1 | tee artifacts/profile742/driver.log
+      - name: Confirm shipping runtime source was not changed by diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          git -C "$DEV" diff --exit-code -- src
+          git -C "$PUBLISHED" diff --exit-code -- src
+          git -C "$CANDIDATE" diff --exit-code -- src
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: 742-profile-${{ matrix.workload }}-${{ github.sha }}
+          path: artifacts/profile742
+          if-no-files-found: error
+          retention-days: 30
