@@ -1,0 +1,240 @@
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs
+new file mode 100644
+index 00000000..b93dd1b2
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs
+@@ -0,0 +1,234 @@
++using System.Reflection;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public class StreamFlowControllerDirectionalGateTests
++{
++    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public void OppositeDirectionShouldProgressWhileGateHeld(bool holdSend)
++    {
++        var controller = new StreamFlowController(4, 8, 1024);
++        RunWhileGateHeld(Gate(controller, holdSend), () =>
++        {
++            if (holdSend)
++            {
++                controller.AcceptReceived(1001, 0, 2);
++                Ensure(controller.RecordConsumed(1001, 0, 2) == 2, "receive credit must return");
++                Ensure(controller.FlushConsumed(1001, 0) == 0, "receive state must retire");
++            }
++            else
++            {
++                Ensure(controller.TryAcquireSendCredit(1001, 0, 2), "send must acquire credit");
++                controller.ReturnUnsentCredit(1001, 0, 2);
++                controller.CompleteSendStream(1001, 0);
++                Ensure(controller.SendConnectionCredit == 8, "send credit must return");
++            }
++        });
++    }
++
++    [Test]
++    public void FirstAdmissionCapacityCancellationAndStaleLeaseShouldIgnoreReceiveGate()
++    {
++        var controller = new StreamFlowController(2, 4, 1024, maxConcurrentStreams: 1);
++        RunWhileGateHeld(Gate(controller, send: false), () =>
++        {
++            Ensure(controller.TryAcquireSendCreditLease(1002, 0, 2, out var stale), "first debit");
++            controller.CompleteSendStream(1002, 0);
++            using var cancellation = new CancellationTokenSource();
++            var canceled = controller.AcquireSendCreditLeaseAsync(1003, 0, 1, cancellation.Token);
++            Ensure(!canceled.IsCompleted, "tombstone must keep first admission pending");
++            Ensure(!controller.ResolveSendCreditLease(1003, 0).IsResolved, "no premature state");
++            ExpectCode(() => controller.AcquireSendCreditLeaseAsync(1004, 0, 1, CancellationToken.None),
++                SharpLinkErrorCode.ResourceExhausted);
++            cancellation.Cancel();
++            try
++            {
++                canceled.AsTask().WaitAsync(TestTimeout).GetAwaiter().GetResult();
++                throw new InvalidOperationException("pending admission was not canceled");
++            }
++            catch (OperationCanceledException error)
++            {
++                Ensure(error.CancellationToken == cancellation.Token, "preserve cancellation token");
++            }
++
++            var pending = controller.AcquireSendCreditLeaseAsync(1004, 0, 1, CancellationToken.None);
++            Ensure(!pending.IsCompleted, "cancellation must free the one pending-capacity slot");
++            controller.ApplyWindowUpdate(1002, 0, 2);
++            var admitted = pending.AsTask().WaitAsync(TestTimeout).GetAwaiter().GetResult();
++            var current = controller.ResolveSendCreditLease(1004, 0);
++            Ensure(ReferenceEquals(stale.State, admitted.State), "must exercise pooled state reuse");
++            Ensure(admitted.Generation == current.Generation && admitted.Generation != stale.Generation,
++                "first admission must capture the generation that reserved credit");
++            ExpectCode(() => controller.TryAcquireSendCredit(in stale, 1), SharpLinkErrorCode.ConnectionClosed);
++            controller.ReturnUnsentCredit(in stale, 2);
++            Ensure(controller.SendConnectionCredit == 3, "stale return cannot refund the new debit");
++            controller.ReturnUnsentCredit(in admitted, 1);
++            controller.CompleteSendStream(1004, 0);
++            Ensure(controller.SendConnectionCredit == 4 && controller.RetainedSendStreamCount == 0,
++                "both lifecycles must balance their own credit");
++        });
++    }
++
++    [Test]
++    public void ReceiveLeaseReuseAndConnectionFlushShouldIgnoreSendGate()
++    {
++        var controller = new StreamFlowController(4, 4, 1024);
++        RunWhileGateHeld(Gate(controller, send: true), () =>
++        {
++            var stale = controller.ResolveReceiveCreditLease(1005, 0);
++            controller.AcceptReceived(in stale, 1);
++            Ensure(controller.RecordConsumed(in stale, 1) == 0, "below both thresholds");
++            var second = controller.ResolveReceiveCreditLease(1006, 0);
++            controller.AcceptReceived(in second, 1);
++            Ensure(controller.RecordConsumed(in second, 1) == 1, "connection threshold must flush");
++            Ensure(controller.TryTakeConsumedCreditUpdate(out var key, out var stream, out var credit) &&
++                key == 1005 && stream == 0 && credit == 1, "cross-stream update identity must survive");
++            Ensure(!controller.TryTakeConsumedCreditUpdate(out _, out _, out _), "no duplicate update");
++            Ensure(controller.FlushConsumed(in stale) == 0, "retire first lifecycle");
++            var current = controller.ResolveReceiveCreditLease(1005, 0);
++            Ensure(ReferenceEquals(stale.State, current.State) && stale.Generation != current.Generation,
++                "receive lease must detect same-key object reuse");
++            ExpectCode(() => controller.AcceptReceived(in stale, 1), SharpLinkErrorCode.ConnectionClosed);
++            Ensure(controller.RecordConsumed(in stale, 1) == 0 && controller.FlushConsumed(in stale) == 0,
++                "stale receive lease must not credit or complete replacement");
++            controller.AcceptReceived(in current, 2);
++            Ensure(controller.RecordConsumed(in current, 2) == 2, "replacement owns its own credit");
++            controller.FlushConsumed(in current);
++            controller.FlushConsumed(in second);
++        });
++    }
++
++    [Test]
++    public void TerminationShouldOwnBothDomainsBeforePublishingFirstException()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        Ensure(controller.TryAcquireSendCreditLease(1007, 0, 2, out var send), "initial send debit");
++        var receive = controller.ResolveReceiveCreditLease(1007, 0);
++        controller.AcceptReceived(in receive, 1);
++        var pending = controller.AcquireSendCreditLeaseAsync(1007, 0, 1, CancellationToken.None);
++        var first = new InvalidOperationException("first terminal");
++        var second = new InvalidOperationException("second terminal");
++        var sendGate = Gate(controller, send: true);
++        using var firstStarted = new ManualResetEventSlim();
++        using var firstFinished = new ManualResetEventSlim();
++        using var secondFinished = new ManualResetEventSlim();
++        Exception? threadFailure = null;
++        var firstThread = new Thread(() =>
++        {
++            firstStarted.Set();
++            try { controller.Complete(first); }
++            catch (Exception error) { threadFailure = error; }
++            finally { firstFinished.Set(); }
++        }) { IsBackground = true };
++        var secondThread = new Thread(() =>
++        {
++            try { controller.Complete(second); }
++            catch (Exception error) { threadFailure = error; }
++            finally { secondFinished.Set(); }
++        }) { IsBackground = true };
++        try
++        {
++            using (Gate(controller, send: false).EnterScope())
++            {
++                firstThread.Start();
++                Ensure(firstStarted.Wait(TestTimeout), "termination thread must start");
++                Ensure(SpinWait.SpinUntil(() =>
++                {
++                    if (!sendGate.TryEnter())
++                        return true;
++                    sendGate.Exit();
++                    return false;
++                }, TestTimeout), "termination must enter send before waiting for receive");
++                Ensure(Field(controller, "_terminalException") is null,
++                    "terminal publication must wait until both gates are owned");
++                Ensure((bool)Field(send.State!, "Attached")! && (bool)Field(receive.State!, "Attached")!,
++                    "neither domain may detach before both gates are owned");
++                Ensure(!pending.IsCompleted && !firstFinished.IsSet,
++                    "waiters cannot finish before atomic termination");
++                controller.AcceptReceived(in receive, 1);
++                Ensure(controller.RecordConsumed(in receive, 2) == 2,
++                    "an in-flight receive transition may finish before terminal publication");
++                secondThread.Start();
++                Ensure(!secondFinished.IsSet, "the second terminal cannot overtake the send owner");
++            }
++        }
++        finally
++        {
++            Ensure(firstThread.Join(TestTimeout), "first termination must finish after receive release");
++            if ((secondThread.ThreadState & ThreadState.Unstarted) == 0)
++                Ensure(secondThread.Join(TestTimeout), "second termination must finish");
++        }
++        if (threadFailure is not null)
++            throw new InvalidOperationException("termination worker failed", threadFailure);
++        Ensure(ReferenceEquals(Field(controller, "_terminalException"), first), "first terminal wins");
++        ExpectSame(() => pending.AsTask().WaitAsync(TestTimeout).GetAwaiter().GetResult(), first);
++        ExpectSame(() => controller.TryAcquireSendCredit(in send, 1), first);
++        ExpectSame(() => controller.AcceptReceived(in receive, 1), first);
++        Ensure(!(bool)Field(send.State!, "Attached")! && !(bool)Field(receive.State!, "Attached")!,
++            "both domains must detach before completion returns");
++        Ensure(controller.ActiveSendStreamCount == 0 && controller.RetainedSendStreamCount == 0,
++            "termination must clear send capacity");
++        Ensure(controller.RecordConsumed(in receive, 1) == 0 && controller.FlushConsumed(in receive) == 0,
++            "late receive cleanup is inert");
++        controller.ReturnUnsentCredit(in send, 2);
++        Ensure(!controller.TryTakeConsumedCreditUpdate(out _, out _, out _), "no terminal update remains");
++    }
++
++    private static void RunWhileGateHeld(Lock heldGate, Action operation)
++    {
++        using var started = new ManualResetEventSlim();
++        using var finished = new ManualResetEventSlim();
++        Exception? failure = null;
++        var worker = new Thread(() =>
++        {
++            started.Set();
++            try { operation(); }
++            catch (Exception error) { failure = error; }
++            finally { finished.Set(); }
++        }) { IsBackground = true };
++        bool progressed;
++        using (heldGate.EnterScope())
++        {
++            worker.Start();
++            Ensure(started.Wait(TestTimeout), "directional worker must start");
++            progressed = finished.Wait(TestTimeout);
++        }
++        Ensure(worker.Join(TestTimeout), "worker must finish after releasing held gate");
++        if (failure is not null)
++            throw new InvalidOperationException("directional worker failed", failure);
++        Ensure(progressed, "the unrelated direction was blocked by the held gate");
++    }
++
++    // Fallback is for the unchanged one-gate negative control. Keep the value typed as
++    // System.Threading.Lock: lock(object) would test an unrelated object monitor.
++    private static Lock Gate(StreamFlowController controller, bool send)
++        => (Lock)(Field(controller, send ? "_sendGate" : "_receiveGate") ?? Field(controller, "_gate")!);
++
++    private static object? Field(object owner, string name)
++        => owner.GetType().GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
++            ?.GetValue(owner);
++
++    private static void ExpectCode(Action action, SharpLinkErrorCode code)
++    {
++        try { action(); }
++        catch (SharpLinkException error) when (error.Code == code) { return; }
++        throw new InvalidOperationException($"expected {code}");
++    }
++
++    private static void ExpectSame(Action action, Exception expected)
++    {
++        try { action(); }
++        catch (Exception error) when (ReferenceEquals(error, expected)) { return; }
++        throw new InvalidOperationException("expected original terminal exception");
++    }
++
++    private static void Ensure(bool condition, string message)
++    {
++        if (!condition)
++            throw new InvalidOperationException(message);
++    }
++}

@@ -1,0 +1,644 @@
+diff --git a/doc/adr/0002-directional-flow-control-gates.md b/doc/adr/0002-directional-flow-control-gates.md
+new file mode 100644
+index 00000000..9726dedb
+--- /dev/null
++++ b/doc/adr/0002-directional-flow-control-gates.md
+@@ -0,0 +1,76 @@
++# ADR 0002: Directional flow-control gates
++
++- Status: Proposed
++- Date: 2026-10-08
++- Related: #742, #735
++
++## Context
++
++The flow controller owns independent send and receive byte windows but serializes
++both under one connection-wide gate. Opposite-direction operations therefore
++compete for that gate even when they share no mutable credit arithmetic. Removing
++that coupling is a bounded architecture experiment; it is not evidence that a
++particular RPC throughput, CPU or allocation regression has been resolved.
++
++## Decision
++
++Keep the existing single send map and single receive map, with their current
++leases, pooling limits, credit windows, pending-capacity bound and admission rules.
++Assign each direction its own `System.Threading.Lock`:
++
++- Send owns its states and pooled list, generation counter, connection credit,
++  active and pending-capacity counts, and all waiter admission/cancellation fields.
++  First-admission lease capture belongs to this same domain.
++- Receive owns its states and pooled list, generation counter, connection credit,
++  pending-consumed aggregate and queued cross-stream updates.
++- Window and limit configuration is immutable and shared. The existing volatile
++  empty-queue probe is advisory; queue access remains under the receive gate.
++- The terminal exception is the only mutable shared lifecycle field. `Complete`
++  acquires send then receive, and only then publishes the first exception and
++  clears both domains. Readers hold either domain, so they observe the transition
++  before or after publication. No other controller path nests the gates.
++- Waiter completions, cancellation registration and continuations stay outside
++  controller-owned gate scopes. Admission already committed before terminal
++  publication can still complete successfully, as in the single-gate version.
++
++## Consequences
++
++Independent directions can make progress concurrently. Same-direction operations
++still serialize. Termination takes two gates and may hold send while waiting for
++an in-flight receive transition. Future changes must not acquire send while
++holding receive, or perform cross-direction arithmetic under only one gate.
++
++Every controller allocates one additional fixed-size `Lock` and stores one extra
++reference. Runtime object layout determines the exact per-connection byte cost.
++This is an intentional fixed-memory increase; it is not a zero-allocation-change
++claim for connection creation. No per-item allocation saving is inferred from the
++source change. Contended runtime lock machinery can also allocate independently
++of the application-level credit state.
++
++The wire protocol and public API do not change. Tests and opt-in diagnostics that
++reflect the private send gate must use `_sendGate` and retain its `Lock` type;
++locking its boxed/object-typed value would exercise a different monitor.
++
++## Alternatives considered
++
++- Retain the one gate: simplest terminal coordination, but keeps unrelated
++  directional operations serialized.
++- Per-stream gates or a second lookup map: substantially broader ownership and
++  ordering changes than this experiment requires.
++- Change batching, windows or fairness: changes the comparison and existing
++  backpressure contract instead of isolating directional serialization.
++
++## Validation
++
++`StreamFlowControllerDirectionalGateTests` forces cross-thread progress while the
++other direction is held, send/receive pooled-state reuse, first-admission capacity
++and cancellation, and a terminal transition blocked between its two acquisitions.
++The original first-admission, stale-lease, waiter, allocation and transport tests
++remain required. The cross-direction progress cases are portable negative controls
++against the unchanged single-gate source.
++
++The original full dev-versus-final performance acceptance, CPU and allocation
++checks, NativeAOT evidence and exact final-source CI remain necessary. A small
++pure-controller mixed-direction diagnostic establishes mechanism only. Follow the
++canonical [Fast checks](../pr-fast.md) and
++[maintainability policy](../../eng/maintainability.md); do not relax their budgets.
+diff --git a/eng/maintainability/baseline.json b/eng/maintainability/baseline.json
+index 38d84f6b..8d1887b6 100644
+--- a/eng/maintainability/baseline.json
++++ b/eng/maintainability/baseline.json
+@@ -86,7 +86,7 @@
+       "domain": "source",
+       "path": "src/SharpLink.Runtime/StreamFlowController.cs",
+       "maxLoc": 1326,
+-      "reason": "Issue #735 adds keyed-to-resolved flow-state leases while deliberately retaining one gate, one send map, one receive map, waiter fairness, tombstones, and ABA generation checks in the same invariant owner. Splitting the paired keyed/resolved credit transitions solely for LOC would fragment review of byte-accounting safety; broader controller decomposition remains tracked by issue #350."
++      "reason": "Issue #735 adds keyed-to-resolved flow-state leases with one send map, one receive map, waiter fairness, tombstones, and ABA generation checks in the same invariant owner. PR #742 tests independent directional gates with atomic dual-gate termination (ADR 0002), without increasing this allowance. Splitting paired keyed/resolved transitions solely for LOC would fragment byte-accounting review; broader decomposition remains tracked by issue #350."
+     },
+     {
+       "domain": "source",
+diff --git a/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs b/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
+index f66b8d48..ee3e2905 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.FirstAdmission.cs
+@@ -15,7 +15,7 @@ internal sealed partial class StreamFlowController
+         ValidateEncodedBytes(encodedBytes);
+         var key = new StreamKey(requestId, streamId);
+         lease = default;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out var state))
+@@ -56,7 +56,7 @@ internal sealed partial class StreamFlowController
+         var key = new StreamKey(requestId, streamId);
+         CreditWaiter waiter;
+         ReadyWaiterBatch ready;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out var state))
+@@ -140,7 +140,7 @@ internal sealed partial class StreamFlowController
+     internal ResolvedSendCreditLease ResolveSendCreditLease(long requestId, ushort streamId)
+     {
+         var key = new StreamKey(requestId, streamId);
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out var state) ||
+diff --git a/src/SharpLink.Runtime/StreamFlowController.cs b/src/SharpLink.Runtime/StreamFlowController.cs
+index 068fd8e8..6514c13b 100644
+--- a/src/SharpLink.Runtime/StreamFlowController.cs
++++ b/src/SharpLink.Runtime/StreamFlowController.cs
+@@ -9,7 +9,10 @@ internal sealed partial class StreamFlowController
+     private const int MaxPendingSendStateWaiters = 1;
+     private const int MaxPooledReceiveStates = 128;
+     private const int MaxPooledSendStates = 128;
+-    private readonly Lock _gate = new();
++    // Send and receive accounting are independent; only Complete owns both gates.
++    // Complete always enters send then receive; no other path nests these gates.
++    private readonly Lock _sendGate = new();
++    private readonly Lock _receiveGate = new();
+     private readonly int _streamWindow;
+     private readonly int _connectionWindow;
+     private readonly int _maxFramePayloadBytes;
+@@ -42,6 +45,7 @@ internal sealed partial class StreamFlowController
+     private long _sendConnectionCredit;
+     private long _receiveConnectionCredit;
+     private long _pendingConnectionConsumed;
++    // Read under either domain; written only while holding both gates.
+     private Exception? _terminalException;
+ 
+     public StreamFlowController(
+@@ -126,7 +130,7 @@ internal sealed partial class StreamFlowController
+         ValidateEncodedBytes(encodedBytes);
+         var key = new StreamKey(requestId, streamId);
+         SendState? state;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out state))
+@@ -168,7 +172,7 @@ internal sealed partial class StreamFlowController
+         int encodedBytes)
+     {
+         ValidateEncodedBytes(encodedBytes);
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             var state = ValidateSendLease(lease);
+@@ -192,7 +196,7 @@ internal sealed partial class StreamFlowController
+         ValidateEncodedBytes(encodedBytes);
+         cancellationToken.ThrowIfCancellationRequested();
+ 
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             var state = ValidateSendLease(lease);
+@@ -219,7 +223,7 @@ internal sealed partial class StreamFlowController
+         cancellationToken.ThrowIfCancellationRequested();
+         CreditWaiter waiter;
+         ReadyWaiterBatch ready;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             var state = ValidateSendLease(lease);
+@@ -256,7 +260,7 @@ internal sealed partial class StreamFlowController
+         var key = new StreamKey(requestId, streamId);
+         SendState? state;
+         long expectedLease;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             if (!_sendStates.TryGetValue(key, out state))
+@@ -304,7 +308,7 @@ internal sealed partial class StreamFlowController
+         cancellationToken.ThrowIfCancellationRequested();
+         CreditWaiter waiter;
+         ReadyWaiterBatch ready;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             SendState? state = null;
+@@ -363,7 +367,7 @@ internal sealed partial class StreamFlowController
+     {
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+         ReadyWaiterBatch ready = default;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             ThrowIfTerminated();
+             var key = new StreamKey(requestId, streamId);
+@@ -400,7 +404,7 @@ internal sealed partial class StreamFlowController
+     {
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+         ReadyWaiterBatch ready;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             if (_terminalException is not null)
+                 return;
+@@ -429,7 +433,7 @@ internal sealed partial class StreamFlowController
+     {
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+         ReadyWaiterBatch ready;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             if (_terminalException is not null)
+                 return;
+@@ -459,7 +463,7 @@ internal sealed partial class StreamFlowController
+     {
+         List<CreditWaiter>? rejected = null;
+         ReadyWaiterBatch ready;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             var key = new StreamKey(requestId, streamId);
+             if (_sendStates.TryGetValue(key, out var state))
+@@ -511,7 +515,7 @@ internal sealed partial class StreamFlowController
+         List<StreamKey>? removedKeys = null;
+         ReadyWaiterBatch rejected = default;
+         ReadyWaiterBatch ready;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             foreach (var pair in _sendStates)
+             {
+@@ -557,7 +561,7 @@ internal sealed partial class StreamFlowController
+     internal ResolvedReceiveCreditLease ResolveReceiveCreditLease(long requestId, ushort streamId)
+     {
+         var key = new StreamKey(requestId, streamId);
+-        lock (_gate)
++        lock (_receiveGate)
+         {
+             ThrowIfTerminated();
+             if (!_receiveStates.TryGetValue(key, out var state))
+@@ -583,7 +587,7 @@ internal sealed partial class StreamFlowController
+     internal void AcceptReceived(in ResolvedReceiveCreditLease lease, int encodedBytes)
+     {
+         ValidateEncodedBytes(encodedBytes);
+-        lock (_gate)
++        lock (_receiveGate)
+         {
+             ThrowIfTerminated();
+             var state = ValidateReceiveLease(lease);
+@@ -599,7 +603,7 @@ internal sealed partial class StreamFlowController
+     public void AcceptReceived(long requestId, ushort streamId, int encodedBytes)
+     {
+         ValidateEncodedBytes(encodedBytes);
+-        lock (_gate)
++        lock (_receiveGate)
+         {
+             ThrowIfTerminated();
+             var key = new StreamKey(requestId, streamId);
+@@ -623,7 +627,7 @@ internal sealed partial class StreamFlowController
+     internal int RecordConsumed(in ResolvedReceiveCreditLease lease, int encodedBytes)
+     {
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedBytes);
+-        lock (_gate)
++        lock (_receiveGate)
+         {
+             if (_terminalException is not null)
+                 return 0;
+@@ -664,7 +668,7 @@ internal sealed partial class StreamFlowController
+     public int RecordConsumed(long requestId, ushort streamId, int encodedBytes)
+     {
+         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedBytes);
+-        lock (_gate)
++        lock (_receiveGate)
+         {
+             if (_terminalException is not null)
+                 return 0;
+@@ -715,7 +719,7 @@ internal sealed partial class StreamFlowController
+             return false;
+         }
+ 
+-        lock (_gate)
++        lock (_receiveGate)
+         {
+             var updates = _consumedCreditUpdates;
+             if (updates is null || !updates.TryDequeue(out var update))
+@@ -738,7 +742,7 @@ internal sealed partial class StreamFlowController
+ 
+     internal int FlushConsumed(in ResolvedReceiveCreditLease lease)
+     {
+-        lock (_gate)
++        lock (_receiveGate)
+         {
+             if (_terminalException is not null || GetValidReceiveState(lease) is not { } state)
+                 return 0;
+@@ -752,7 +756,7 @@ internal sealed partial class StreamFlowController
+ 
+     public int FlushConsumed(long requestId, ushort streamId)
+     {
+-        lock (_gate)
++        lock (_receiveGate)
+         {
+             var key = new StreamKey(requestId, streamId);
+             if (_terminalException is not null ||
+@@ -772,8 +776,10 @@ internal sealed partial class StreamFlowController
+     {
+         ArgumentNullException.ThrowIfNull(exception);
+         CreditWaiter[] waiters;
+-        lock (_gate)
++        lock (_sendGate)
++        lock (_receiveGate)
+         {
++            // Publish first-terminal state and detach both domains as one transition.
+             if (_terminalException is not null)
+                 return;
+             _terminalException = exception;
+@@ -806,7 +812,7 @@ internal sealed partial class StreamFlowController
+     {
+         get
+         {
+-            lock (_gate)
++            lock (_sendGate)
+                 return _sendConnectionCredit;
+         }
+     }
+@@ -815,7 +821,7 @@ internal sealed partial class StreamFlowController
+     {
+         get
+         {
+-            lock (_gate)
++            lock (_sendGate)
+                 return _activeSendStreamCount;
+         }
+     }
+@@ -824,7 +830,7 @@ internal sealed partial class StreamFlowController
+     {
+         get
+         {
+-            lock (_gate)
++            lock (_sendGate)
+                 return _sendStates.Count;
+         }
+     }
+@@ -1170,7 +1176,7 @@ internal sealed partial class StreamFlowController
+     private void CancelWaiter(CreditWaiter waiter, CancellationToken cancellationToken)
+     {
+         ReadyWaiterBatch ready;
+-        lock (_gate)
++        lock (_sendGate)
+         {
+             if (waiter.Node is null)
+                 return;
+diff --git a/test/SharpLink.Benchmarks/ReadyWriterStallDiagnostics.cs b/test/SharpLink.Benchmarks/ReadyWriterStallDiagnostics.cs
+index d8cdfe0b..260d7138 100644
+--- a/test/SharpLink.Benchmarks/ReadyWriterStallDiagnostics.cs
++++ b/test/SharpLink.Benchmarks/ReadyWriterStallDiagnostics.cs
+@@ -45,7 +45,7 @@ namespace SharpLink.Benchmarks
+         private void DumpStandaloneCredit()
+         {
+             if (_phaseA is null) return;
+-            var gate = (Lock)DiagnosticField(_phaseA, "_gate")!;
++            var gate = (Lock)DiagnosticField(_phaseA, "_sendGate")!;
+             if (!gate.TryEnter())
+             {
+                 Console.Error.WriteLine("STANDALONE-A gate-busy; snapshot skipped, no blocking or retry");
+@@ -117,7 +117,7 @@ namespace SharpLink.Benchmarks
+             if (_reference is null) return;
+             const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+             object? Field(string name) => typeof(StreamFlowController).GetField(name, flags)?.GetValue(_reference);
+-            var gate = (Lock)Field("_gate")!;
++            var gate = (Lock)Field("_sendGate")!;
+             lock (gate)
+             {
+                 var waiters = Field("_waiters");
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs
+new file mode 100644
+index 00000000..b93dd1b2
+--- /dev/null
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerDirectionalGateTests.cs
+@@ -0,0 +1,234 @@
++using System.Reflection;
++
++namespace SharpLink.UnitTests.Runtime;
++
++public class StreamFlowControllerDirectionalGateTests
++{
++    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(5);
++
++    [Test]
++    [Arguments(false)]
++    [Arguments(true)]
++    public void OppositeDirectionShouldProgressWhileGateHeld(bool holdSend)
++    {
++        var controller = new StreamFlowController(4, 8, 1024);
++        RunWhileGateHeld(Gate(controller, holdSend), () =>
++        {
++            if (holdSend)
++            {
++                controller.AcceptReceived(1001, 0, 2);
++                Ensure(controller.RecordConsumed(1001, 0, 2) == 2, "receive credit must return");
++                Ensure(controller.FlushConsumed(1001, 0) == 0, "receive state must retire");
++            }
++            else
++            {
++                Ensure(controller.TryAcquireSendCredit(1001, 0, 2), "send must acquire credit");
++                controller.ReturnUnsentCredit(1001, 0, 2);
++                controller.CompleteSendStream(1001, 0);
++                Ensure(controller.SendConnectionCredit == 8, "send credit must return");
++            }
++        });
++    }
++
++    [Test]
++    public void FirstAdmissionCapacityCancellationAndStaleLeaseShouldIgnoreReceiveGate()
++    {
++        var controller = new StreamFlowController(2, 4, 1024, maxConcurrentStreams: 1);
++        RunWhileGateHeld(Gate(controller, send: false), () =>
++        {
++            Ensure(controller.TryAcquireSendCreditLease(1002, 0, 2, out var stale), "first debit");
++            controller.CompleteSendStream(1002, 0);
++            using var cancellation = new CancellationTokenSource();
++            var canceled = controller.AcquireSendCreditLeaseAsync(1003, 0, 1, cancellation.Token);
++            Ensure(!canceled.IsCompleted, "tombstone must keep first admission pending");
++            Ensure(!controller.ResolveSendCreditLease(1003, 0).IsResolved, "no premature state");
++            ExpectCode(() => controller.AcquireSendCreditLeaseAsync(1004, 0, 1, CancellationToken.None),
++                SharpLinkErrorCode.ResourceExhausted);
++            cancellation.Cancel();
++            try
++            {
++                canceled.AsTask().WaitAsync(TestTimeout).GetAwaiter().GetResult();
++                throw new InvalidOperationException("pending admission was not canceled");
++            }
++            catch (OperationCanceledException error)
++            {
++                Ensure(error.CancellationToken == cancellation.Token, "preserve cancellation token");
++            }
++
++            var pending = controller.AcquireSendCreditLeaseAsync(1004, 0, 1, CancellationToken.None);
++            Ensure(!pending.IsCompleted, "cancellation must free the one pending-capacity slot");
++            controller.ApplyWindowUpdate(1002, 0, 2);
++            var admitted = pending.AsTask().WaitAsync(TestTimeout).GetAwaiter().GetResult();
++            var current = controller.ResolveSendCreditLease(1004, 0);
++            Ensure(ReferenceEquals(stale.State, admitted.State), "must exercise pooled state reuse");
++            Ensure(admitted.Generation == current.Generation && admitted.Generation != stale.Generation,
++                "first admission must capture the generation that reserved credit");
++            ExpectCode(() => controller.TryAcquireSendCredit(in stale, 1), SharpLinkErrorCode.ConnectionClosed);
++            controller.ReturnUnsentCredit(in stale, 2);
++            Ensure(controller.SendConnectionCredit == 3, "stale return cannot refund the new debit");
++            controller.ReturnUnsentCredit(in admitted, 1);
++            controller.CompleteSendStream(1004, 0);
++            Ensure(controller.SendConnectionCredit == 4 && controller.RetainedSendStreamCount == 0,
++                "both lifecycles must balance their own credit");
++        });
++    }
++
++    [Test]
++    public void ReceiveLeaseReuseAndConnectionFlushShouldIgnoreSendGate()
++    {
++        var controller = new StreamFlowController(4, 4, 1024);
++        RunWhileGateHeld(Gate(controller, send: true), () =>
++        {
++            var stale = controller.ResolveReceiveCreditLease(1005, 0);
++            controller.AcceptReceived(in stale, 1);
++            Ensure(controller.RecordConsumed(in stale, 1) == 0, "below both thresholds");
++            var second = controller.ResolveReceiveCreditLease(1006, 0);
++            controller.AcceptReceived(in second, 1);
++            Ensure(controller.RecordConsumed(in second, 1) == 1, "connection threshold must flush");
++            Ensure(controller.TryTakeConsumedCreditUpdate(out var key, out var stream, out var credit) &&
++                key == 1005 && stream == 0 && credit == 1, "cross-stream update identity must survive");
++            Ensure(!controller.TryTakeConsumedCreditUpdate(out _, out _, out _), "no duplicate update");
++            Ensure(controller.FlushConsumed(in stale) == 0, "retire first lifecycle");
++            var current = controller.ResolveReceiveCreditLease(1005, 0);
++            Ensure(ReferenceEquals(stale.State, current.State) && stale.Generation != current.Generation,
++                "receive lease must detect same-key object reuse");
++            ExpectCode(() => controller.AcceptReceived(in stale, 1), SharpLinkErrorCode.ConnectionClosed);
++            Ensure(controller.RecordConsumed(in stale, 1) == 0 && controller.FlushConsumed(in stale) == 0,
++                "stale receive lease must not credit or complete replacement");
++            controller.AcceptReceived(in current, 2);
++            Ensure(controller.RecordConsumed(in current, 2) == 2, "replacement owns its own credit");
++            controller.FlushConsumed(in current);
++            controller.FlushConsumed(in second);
++        });
++    }
++
++    [Test]
++    public void TerminationShouldOwnBothDomainsBeforePublishingFirstException()
++    {
++        var controller = new StreamFlowController(2, 4, 1024);
++        Ensure(controller.TryAcquireSendCreditLease(1007, 0, 2, out var send), "initial send debit");
++        var receive = controller.ResolveReceiveCreditLease(1007, 0);
++        controller.AcceptReceived(in receive, 1);
++        var pending = controller.AcquireSendCreditLeaseAsync(1007, 0, 1, CancellationToken.None);
++        var first = new InvalidOperationException("first terminal");
++        var second = new InvalidOperationException("second terminal");
++        var sendGate = Gate(controller, send: true);
++        using var firstStarted = new ManualResetEventSlim();
++        using var firstFinished = new ManualResetEventSlim();
++        using var secondFinished = new ManualResetEventSlim();
++        Exception? threadFailure = null;
++        var firstThread = new Thread(() =>
++        {
++            firstStarted.Set();
++            try { controller.Complete(first); }
++            catch (Exception error) { threadFailure = error; }
++            finally { firstFinished.Set(); }
++        }) { IsBackground = true };
++        var secondThread = new Thread(() =>
++        {
++            try { controller.Complete(second); }
++            catch (Exception error) { threadFailure = error; }
++            finally { secondFinished.Set(); }
++        }) { IsBackground = true };
++        try
++        {
++            using (Gate(controller, send: false).EnterScope())
++            {
++                firstThread.Start();
++                Ensure(firstStarted.Wait(TestTimeout), "termination thread must start");
++                Ensure(SpinWait.SpinUntil(() =>
++                {
++                    if (!sendGate.TryEnter())
++                        return true;
++                    sendGate.Exit();
++                    return false;
++                }, TestTimeout), "termination must enter send before waiting for receive");
++                Ensure(Field(controller, "_terminalException") is null,
++                    "terminal publication must wait until both gates are owned");
++                Ensure((bool)Field(send.State!, "Attached")! && (bool)Field(receive.State!, "Attached")!,
++                    "neither domain may detach before both gates are owned");
++                Ensure(!pending.IsCompleted && !firstFinished.IsSet,
++                    "waiters cannot finish before atomic termination");
++                controller.AcceptReceived(in receive, 1);
++                Ensure(controller.RecordConsumed(in receive, 2) == 2,
++                    "an in-flight receive transition may finish before terminal publication");
++                secondThread.Start();
++                Ensure(!secondFinished.IsSet, "the second terminal cannot overtake the send owner");
++            }
++        }
++        finally
++        {
++            Ensure(firstThread.Join(TestTimeout), "first termination must finish after receive release");
++            if ((secondThread.ThreadState & ThreadState.Unstarted) == 0)
++                Ensure(secondThread.Join(TestTimeout), "second termination must finish");
++        }
++        if (threadFailure is not null)
++            throw new InvalidOperationException("termination worker failed", threadFailure);
++        Ensure(ReferenceEquals(Field(controller, "_terminalException"), first), "first terminal wins");
++        ExpectSame(() => pending.AsTask().WaitAsync(TestTimeout).GetAwaiter().GetResult(), first);
++        ExpectSame(() => controller.TryAcquireSendCredit(in send, 1), first);
++        ExpectSame(() => controller.AcceptReceived(in receive, 1), first);
++        Ensure(!(bool)Field(send.State!, "Attached")! && !(bool)Field(receive.State!, "Attached")!,
++            "both domains must detach before completion returns");
++        Ensure(controller.ActiveSendStreamCount == 0 && controller.RetainedSendStreamCount == 0,
++            "termination must clear send capacity");
++        Ensure(controller.RecordConsumed(in receive, 1) == 0 && controller.FlushConsumed(in receive) == 0,
++            "late receive cleanup is inert");
++        controller.ReturnUnsentCredit(in send, 2);
++        Ensure(!controller.TryTakeConsumedCreditUpdate(out _, out _, out _), "no terminal update remains");
++    }
++
++    private static void RunWhileGateHeld(Lock heldGate, Action operation)
++    {
++        using var started = new ManualResetEventSlim();
++        using var finished = new ManualResetEventSlim();
++        Exception? failure = null;
++        var worker = new Thread(() =>
++        {
++            started.Set();
++            try { operation(); }
++            catch (Exception error) { failure = error; }
++            finally { finished.Set(); }
++        }) { IsBackground = true };
++        bool progressed;
++        using (heldGate.EnterScope())
++        {
++            worker.Start();
++            Ensure(started.Wait(TestTimeout), "directional worker must start");
++            progressed = finished.Wait(TestTimeout);
++        }
++        Ensure(worker.Join(TestTimeout), "worker must finish after releasing held gate");
++        if (failure is not null)
++            throw new InvalidOperationException("directional worker failed", failure);
++        Ensure(progressed, "the unrelated direction was blocked by the held gate");
++    }
++
++    // Fallback is for the unchanged one-gate negative control. Keep the value typed as
++    // System.Threading.Lock: lock(object) would test an unrelated object monitor.
++    private static Lock Gate(StreamFlowController controller, bool send)
++        => (Lock)(Field(controller, send ? "_sendGate" : "_receiveGate") ?? Field(controller, "_gate")!);
++
++    private static object? Field(object owner, string name)
++        => owner.GetType().GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
++            ?.GetValue(owner);
++
++    private static void ExpectCode(Action action, SharpLinkErrorCode code)
++    {
++        try { action(); }
++        catch (SharpLinkException error) when (error.Code == code) { return; }
++        throw new InvalidOperationException($"expected {code}");
++    }
++
++    private static void ExpectSame(Action action, Exception expected)
++    {
++        try { action(); }
++        catch (Exception error) when (ReferenceEquals(error, expected)) { return; }
++        throw new InvalidOperationException("expected original terminal exception");
++    }
++
++    private static void Ensure(bool condition, string message)
++    {
++        if (!condition)
++            throw new InvalidOperationException(message);
++    }
++}
+diff --git a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.FirstAdmissionLease.cs b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.FirstAdmissionLease.cs
+index 17f978bc..fba8369b 100644
+--- a/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.FirstAdmissionLease.cs
++++ b/test/SharpLink.UnitTests/Runtime/StreamFlowControllerTests.FirstAdmissionLease.cs
+@@ -34,7 +34,7 @@ public partial class StreamFlowControllerTests
+         // Grant and retire the original admission while its continuation cannot resolve a
+         // key under this gate. Reuse both the key and pooled object before releasing it.
+         // No sleeps, retries or thread-pool configuration are needed for this interleaving.
+-        var gate = GetPrivateField<Lock>(controller, "_gate");
++        var gate = GetPrivateField<Lock>(controller, "_sendGate");
+         lock (gate)
+         {
+             controller.ApplyWindowUpdate(801, 1, 1);

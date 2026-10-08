@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>SharpLink.Benchmarks</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="SharpLink.Runtime"><HintPath>$(ArmPath)/src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll</HintPath></Reference>
+    <Reference Include="SharpLink.Abstractions"><HintPath>$(ArmPath)/src/SharpLink.Abstractions/bin/Release/net10.0/SharpLink.Abstractions.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>
