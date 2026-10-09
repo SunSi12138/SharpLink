@@ -530,6 +530,79 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         }
     }
 
+    /// <summary>
+    /// Research-only #737 resolved producer-progress handle. The lease retains the stable slot
+    /// array/index and the full request ID, but never a pooled PendingCall reference. Reuse of the
+    /// same physical PendingCall object for another request therefore remains rejected by ID.
+    /// </summary>
+    internal bool TryResolveProducerProgress(
+        long id,
+        out ProducerProgressLease lease,
+        out RpcDeadline deadline)
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+        {
+            lease = default;
+            deadline = default;
+            return false;
+        }
+
+        var index = (int)(id & _indexMask);
+        var current = Volatile.Read(ref slots[index]);
+        if (current is null || current.Id != id ||
+            current.Kind is not (PendingCallKind.OneWayClientStreaming or
+                                 PendingCallKind.ClientStreaming or
+                                 PendingCallKind.DuplexStreaming))
+        {
+            lease = default;
+            deadline = default;
+            return false;
+        }
+
+        lock (current.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id ||
+                current.Kind is not (PendingCallKind.OneWayClientStreaming or
+                                     PendingCallKind.ClientStreaming or
+                                     PendingCallKind.DuplexStreaming))
+            {
+                lease = default;
+                deadline = default;
+                return false;
+            }
+
+            deadline = current.Deadline;
+            lease = new ProducerProgressLease(slots, index, id);
+            return true;
+        }
+    }
+
+    internal readonly struct ProducerProgressLease
+    {
+        private readonly PendingCall?[]? _slots;
+        private readonly int _index;
+        private readonly long _id;
+
+        internal ProducerProgressLease(PendingCall?[] slots, int index, long id)
+        {
+            _slots = slots;
+            _index = index;
+            _id = id;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool IsActive()
+        {
+            var slots = _slots;
+            if (slots is null)
+                return false;
+
+            var current = Volatile.Read(ref slots[_index]);
+            return current is not null && current.Id == _id;
+        }
+    }
+
     public long AllocateRequestId()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
