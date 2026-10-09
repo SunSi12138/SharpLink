@@ -1,0 +1,64 @@
+diff --git a/src/SharpLink.Server/SharpLinkServer.Interceptors.cs b/src/SharpLink.Server/SharpLinkServer.Interceptors.cs
+index ee24574..be8e91e 100644
+--- a/src/SharpLink.Server/SharpLinkServer.Interceptors.cs
++++ b/src/SharpLink.Server/SharpLinkServer.Interceptors.cs
+@@ -36,7 +36,7 @@ internal sealed partial class SharpLinkServer
+         RpcMethodDescriptor? methodDescriptor = null;
+         if (registration.HasModule)
+         {
+-            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
++            var descriptor = GetInvocationMethodDescriptor(registration.Stub, methodId, context);
+             methodDescriptor = descriptor;
+             isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
+                 RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+@@ -77,7 +77,7 @@ internal sealed partial class SharpLinkServer
+         catch (Exception exception)
+         {
+             var failedTelemetry = StartServerTelemetryCall(
+-                methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
++                methodDescriptor ?? GetInvocationMethodDescriptor(registration.Stub, methodId, context), requestId);
+             failedTelemetry.Complete(exception);
+             return CompleteDynamicSingletonInvocationAsync(
+                 ValueTask.FromException(exception),
+@@ -99,7 +99,7 @@ internal sealed partial class SharpLinkServer
+         catch (Exception exception)
+         {
+             var failedTelemetry = StartServerTelemetryCall(
+-                methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
++                methodDescriptor ?? GetInvocationMethodDescriptor(registration.Stub, methodId, context), requestId);
+             failedTelemetry.Complete(exception);
+             throw;
+         }
+@@ -136,6 +136,14 @@ internal sealed partial class SharpLinkServer
+             methodDescriptor);
+     }
+ 
++    private static RpcMethodDescriptor GetInvocationMethodDescriptor(
++        IRpcStub stub,
++        long methodId,
++        SharpLinkCallContextSnapshot context)
++        => context is SharpLinkServerInvocationContext invocationContext
++            ? invocationContext.Method
++            : GetMethodDescriptor(stub, methodId);
++
+     private static async ValueTask CompleteDynamicSingletonInvocationAsync(
+         ValueTask invocation,
+         SharpLinkDynamicModuleLease moduleLease,
+@@ -243,7 +251,7 @@ internal sealed partial class SharpLinkServer
+         catch (Exception exception)
+         {
+             var failedTelemetry = StartServerTelemetryCall(
+-                methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
++                methodDescriptor ?? GetInvocationMethodDescriptor(stub, methodId, context), requestId);
+             failedTelemetry.Complete(exception);
+             throw;
+         }
+@@ -277,7 +285,7 @@ internal sealed partial class SharpLinkServer
+         RpcMethodDescriptor? methodDescriptor = null)
+     {
+         var telemetry = StartServerTelemetryCall(
+-            methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
++            methodDescriptor ?? GetInvocationMethodDescriptor(stub, methodId, context), requestId);
+         try
+         {
+             var invocation = InvokeServiceCoreAsync(

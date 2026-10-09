@@ -1,0 +1,45 @@
+name: Method Facts Investigation
+on:
+  push:
+    branches: ['validation/732-method-facts']
+    paths:
+      - 'eng/perf/method-facts/**'
+      - 'test/SharpLink.MethodFactsEvidence/**'
+      - 'test/SharpLink.MethodFactsRpcEvidence/**'
+      - '.github/workflows/method-facts-investigation.yml'
+permissions:
+  contents: read
+jobs:
+  bounded-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.112'
+      - name: Count, benchmark and validate bounded descriptor reuse
+        run: python3 eng/perf/method-facts/run.py
+      - name: Package evidence without executables or worktrees
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,zipfile
+          root=pathlib.Path('artifacts/method-facts');dest=pathlib.Path('artifacts/method-facts-evidence.zip')
+          with zipfile.ZipFile(dest,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
+              for f in sorted(root.glob('*')):
+                  if f.is_file() and f.suffix in ('.txt','.log','.json','.jsonl','.asm'):
+                      assert f.stat().st_size < 12*1024*1024
+                      z.write(f,f.name)
+          assert dest.stat().st_size<=16*1024*1024
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: method-facts-evidence
+          path: artifacts/method-facts-evidence.zip
+          retention-days: 30
+          if-no-files-found: error
