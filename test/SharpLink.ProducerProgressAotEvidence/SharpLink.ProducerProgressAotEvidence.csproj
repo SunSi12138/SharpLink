@@ -29,6 +29,9 @@
                       GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishAot;PublishSingleFile" />
   </ItemGroup>
   <ItemGroup>
+    <Using Include="System" />
+    <Using Include="System.Threading" />
+    <Using Include="System.Threading.Tasks" />
     <PackageReference Include="SharpPack" />
   </ItemGroup>
 </Project>
