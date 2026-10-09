@@ -211,12 +211,16 @@ internal static class ProducerProgressEvidenceRunner
                 {
                     ready.Signal();
                     start.Wait();
-                    long localSuccesses = 0;
-                    for (var iteration = 0; iteration < iterations; iteration++)
+                    long localSuccesses = variant switch
                     {
-                        if (fixture.Check(variant, workerIndex))
-                            localSuccesses++;
-                    }
+                        ProducerProgressVariant.A0Locked =>
+                            RunChecks(iterations, () => fixture.CheckA0(workerIndex)),
+                        ProducerProgressVariant.A1Contains =>
+                            RunChecks(iterations, () => fixture.CheckA1(workerIndex)),
+                        ProducerProgressVariant.A2Resolved =>
+                            RunChecks(iterations, () => fixture.CheckA2(workerIndex)),
+                        _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, null)
+                    };
                     Interlocked.Add(ref successfulChecks, localSuccesses);
                 }
                 catch (Exception exception)
@@ -279,6 +283,18 @@ internal static class ProducerProgressEvidenceRunner
             LockContentions = contentionAfter - contentionBefore,
             AllocatedBytesPerCheck = (allocatedAfter - allocatedBefore) / (double)expected
         };
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static long RunChecks(int iterations, Func<bool> check)
+    {
+        long successful = 0;
+        for (var iteration = 0; iteration < iterations; iteration++)
+        {
+            if (check())
+                successful++;
+        }
+        return successful;
     }
 
     private enum ProducerProgressVariant
@@ -345,26 +361,25 @@ internal static class ProducerProgressEvidenceRunner
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal bool Check(ProducerProgressVariant variant, int index)
-            => variant switch
-            {
-                ProducerProgressVariant.A0Locked =>
-                    _pending.TryAcceptProducerProgress(_requestIds[index]),
-                ProducerProgressVariant.A1Contains =>
-                    ProducerProgressBenchmarks.TryAcceptContains(
-                        _pending,
-                        _requestIds[index],
-                        _deadlines[index],
-                        _timeProvider),
-                ProducerProgressVariant.A2Resolved =>
-                    ProducerProgressBenchmarks.TryAcceptResolved(
-                        _pending,
-                        _leases[index],
-                        _requestIds[index],
-                        _deadlines[index],
-                        _timeProvider),
-                _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, null)
-            };
+        internal bool CheckA0(int index)
+            => _pending.TryAcceptProducerProgress(_requestIds[index]);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool CheckA1(int index)
+            => ProducerProgressBenchmarks.TryAcceptContains(
+                _pending,
+                _requestIds[index],
+                _deadlines[index],
+                _timeProvider);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool CheckA2(int index)
+            => ProducerProgressBenchmarks.TryAcceptResolved(
+                _pending,
+                _leases[index],
+                _requestIds[index],
+                _deadlines[index],
+                _timeProvider);
 
         public void Dispose()
         {
