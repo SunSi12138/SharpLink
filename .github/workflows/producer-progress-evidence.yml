@@ -6,6 +6,7 @@ on:
       - dev
     paths:
       - 'src/SharpLink.Client/PendingRequestTable.cs'
+      - 'src/SharpLink.Client/PendingRequestTable.ProducerProgressResearch.cs'
       - 'test/SharpLink.Benchmarks/ProducerProgressBenchmarks.cs'
       - 'test/SharpLink.Benchmarks/Program.cs'
       - 'test/SharpLink.UnitTests/Runtime/PendingProducerProgressLeaseTests.cs'
