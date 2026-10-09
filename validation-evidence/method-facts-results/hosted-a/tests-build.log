@@ -1,0 +1,49 @@
+  Determining projects to restore...
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj (in 123 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj (in 66 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.StaticCodecOwnerTest.Contracts/SharpLink.StaticCodecOwnerTest.Contracts.csproj (in 219 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Server/SharpLink.Server.csproj (in 22 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Sdk/SharpLink.Sdk.csproj (in 3 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj (in 605 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Runtime/SharpLink.Runtime.csproj (in 2 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Hosting/SharpLink.Hosting.csproj (in 589 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj (in 1.26 sec).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Client/SharpLink.Client.csproj (in 4 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Abstractions/SharpLink.Abstractions.csproj (in 2 ms).
+  Retrying 'FindPackagesByIdAsync' for source 'https://api.nuget.org/v3-flatcontainer/sharplink.compression.zstd/index.json'.
+  An error occurred while sending the request.
+    Unable to read data from the transport connection: Connection reset by peer.
+    Connection reset by peer
+  Retrying 'FindPackagesByIdAsync' for source 'https://api.nuget.org/v3-flatcontainer/sharplink.compression.zstd/index.json'.
+  An error occurred while sending the request.
+    Unable to read data from the transport connection: Connection reset by peer.
+    Connection reset by peer
+  Retrying 'FindPackagesByIdAsync' for source 'https://api.nuget.org/v3-flatcontainer/sharplink.compression.zstd/index.json'.
+  An error occurred while sending the request.
+    Unable to read data from the transport connection: Connection reset by peer.
+    Connection reset by peer
+  Retrying 'FindPackagesByIdAsync' for source 'https://api.nuget.org/v3-flatcontainer/sharplink.compression.zstd/index.json'.
+  An error occurred while sending the request.
+    Unable to read data from the transport connection: Connection reset by peer.
+    Connection reset by peer
+  Retrying 'FindPackagesByIdAsync' for source 'https://api.nuget.org/v3-flatcontainer/sharplink.compression.zstd/index.json'.
+  An error occurred while sending the request.
+    Unable to read data from the transport connection: Connection reset by peer.
+    Connection reset by peer
+/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj : error NU1301: Failed to retrieve information about 'SharpLink.Compression.Zstd' from remote source 'https://api.nuget.org/v3-flatcontainer/sharplink.compression.zstd/index.json'. [/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj]
+/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj : error NU1301:   An error occurred while sending the request. [/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj]
+/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj : error NU1301:   Unable to read data from the transport connection: Connection reset by peer. [/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj]
+/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj : error NU1301:   Connection reset by peer [/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj]
+  Failed to restore /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj (in 11.25 sec).
+  1 of 13 projects are up-to-date for restore.
+
+Build FAILED.
+
+/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj : error NU1301: Failed to retrieve information about 'SharpLink.Compression.Zstd' from remote source 'https://api.nuget.org/v3-flatcontainer/sharplink.compression.zstd/index.json'. [/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj]
+/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj : error NU1301:   An error occurred while sending the request. [/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj]
+/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj : error NU1301:   Unable to read data from the transport connection: Connection reset by peer. [/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj]
+/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj : error NU1301:   Connection reset by peer [/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj]
+    0 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:14.05

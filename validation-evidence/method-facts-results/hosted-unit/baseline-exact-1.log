@@ -1,0 +1,10 @@
+
+  In process file artifacts produced:
+    - /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-baseline/test/SharpLink.UnitTests/bin/Release/net10.0/TestResults/SharpLink.UnitTests-linux-net10.0-report.html
+
+[32mTest run summary: Passed![90m - [m/home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-baseline/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64)
+[m  total: 1
+  failed: 0
+[32m  succeeded: 1
+[m  skipped: 0
+  duration: 330ms

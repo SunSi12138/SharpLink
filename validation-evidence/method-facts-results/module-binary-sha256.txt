@@ -1,0 +1,3 @@
+2123dab108cddb67629b7e33a8b9127c907fe7e943804cc7d20bef33053df6a8  issue732-evidence/module/SharpLink.Benchmarks.dll
+ba1c75252b53adc4f379e178b6b87ede46be91a9b4d4a4b99644965d49b22e45  issue732-evidence/module/SharpLink.Server.dll
+11ba22214d78785e5cc3560626c168ddcc190354d61ee67448619ce743fe5a3f  issue732-evidence/aot-module/SharpLink.Benchmarks

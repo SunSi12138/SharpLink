@@ -1,0 +1,33 @@
+  Determining projects to restore...
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/test/SharpLink.RollbackPlugin/SharpLink.RollbackPlugin.csproj (in 140 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/test/SharpLink.StaticCodecOwnerTest.Contracts/SharpLink.StaticCodecOwnerTest.Contracts.csproj (in 236 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj (in 69 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj (in 10 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Server/SharpLink.Server.csproj (in 12 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Sdk/SharpLink.Sdk.csproj (in 2 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Runtime/SharpLink.Runtime.csproj (in 1 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Hosting/SharpLink.Hosting.csproj (in 12 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj (in 52 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj (in 2 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Client/SharpLink.Client.csproj (in 1 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Abstractions/SharpLink.Abstractions.csproj (in 1 ms).
+  Restored /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Generator/SharpLink.Generator.csproj (in 30 ms).
+  SharpLink.Abstractions -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Abstractions/bin/Release/net10.0/SharpLink.Abstractions.dll
+  SharpLink.Runtime -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll
+  SharpLink.Client -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Client/bin/Release/net10.0/SharpLink.Client.dll
+  SharpLink.Server -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Server/bin/Release/net10.0/SharpLink.Server.dll
+  SharpLink.Hosting -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Hosting/bin/Release/net10.0/SharpLink.Hosting.dll
+  SharpLink.Compression.Zstd -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Compression.Zstd/bin/Release/net10.0/SharpLink.Compression.Zstd.dll
+  SharpLink.Generator -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll
+  SharpLink.Sdk -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Sdk/bin/Release/net10.0/SharpLink.Sdk.dll
+  SharpLink.Serializer.SharpPack -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/src/SharpLink.Serializer.SharpPack/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll
+  SharpLink.MultiClusterTest.Contracts -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/test/SharpLink.MultiClusterTest.Contracts/bin/Release/net10.0/SharpLink.MultiClusterTest.Contracts.dll
+  SharpLink.RollbackPlugin -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/test/SharpLink.RollbackPlugin/bin/Release/net10.0/SharpLink.RollbackPlugin.dll
+  SharpLink.StaticCodecOwnerTest.Contracts -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/test/SharpLink.StaticCodecOwnerTest.Contracts/bin/Release/net10.0/SharpLink.StaticCodecOwnerTest.Contracts.dll
+  SharpLink.UnitTests -> /home/runner/work/SharpLink/SharpLink/artifacts/method-facts-unit/work-candidate/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:01:02.23

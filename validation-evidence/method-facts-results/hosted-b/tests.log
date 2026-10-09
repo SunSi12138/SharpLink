@@ -1,0 +1,15 @@
+[31mfailed[m EarlyDisposeShouldNotPoolWhileProducerIsDecoding [90m(3s 003ms)[m
+[31m  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] Exception: producer must enter decode
+[m[90m    at SharpLink.UnitTests.Runtime.PooledAsyncStreamDispatcherTests.Ensure(Boolean condition, String message) in /_/test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs:1704[90m
+    at SharpLink.UnitTests.Runtime.PooledAsyncStreamDispatcherTests.EarlyDisposeShouldNotPoolWhileProducerIsDecoding() in /_/test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs:943[90m
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+[m
+  In process file artifacts produced:
+    - /home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/bin/Release/net10.0/TestResults/SharpLink.UnitTests-linux-net10.0-report.html
+
+[31mTest run summary: Failed![90m - [m/home/runner/work/SharpLink/SharpLink/artifacts/method-facts/work-candidate/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64)
+[m  total: 1902
+[31m  failed: 1
+[m  succeeded: 1901
+  skipped: 0
+  duration: 43s 282ms

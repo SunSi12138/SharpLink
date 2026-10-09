@@ -1,0 +1,2 @@
+320 exact success-path descriptor/cancellation/invocation assertions passed
+160 exact edge-path descriptor/cancellation/invocation assertions passed

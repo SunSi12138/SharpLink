@@ -1,0 +1,8 @@
+InvokeServiceAsync IL=498
+InvokeServiceTrackedAsync IL=123
+GetInvocationMethodDescriptor IL=25
+GetMethodDescriptor IL=43
+InvokeServiceAfterAcquisitionAsync IL=160 MoveNextIL=427 stateSize=280 fields=17
+InvokeServiceWithLeaseAsync IL=160 MoveNextIL=610 stateSize=216 fields=17
+DispatchRpcAsync IL=1488
+DispatchOneWayRpc IL=2209

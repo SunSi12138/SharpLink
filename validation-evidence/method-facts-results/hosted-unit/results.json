@@ -1,0 +1,57 @@
+[
+  {
+    "name": "environment",
+    "exit": 0,
+    "seconds": 4.926042002000003
+  },
+  {
+    "name": "baseline-build",
+    "exit": 0,
+    "seconds": 76.362686456
+  },
+  {
+    "name": "baseline-full",
+    "exit": 0,
+    "seconds": 38.637217423999985
+  },
+  {
+    "name": "baseline-exact-0",
+    "exit": 0,
+    "seconds": 0.6654202910000038
+  },
+  {
+    "name": "baseline-exact-1",
+    "exit": 0,
+    "seconds": 0.6655881650000026
+  },
+  {
+    "name": "baseline-exact-2",
+    "exit": 0,
+    "seconds": 0.6654078349999963
+  },
+  {
+    "name": "candidate-build",
+    "exit": 0,
+    "seconds": 62.446718420999986
+  },
+  {
+    "name": "candidate-full",
+    "exit": 0,
+    "seconds": 38.10721100799998
+  },
+  {
+    "name": "candidate-exact-0",
+    "exit": 0,
+    "seconds": 0.665431151000007
+  },
+  {
+    "name": "candidate-exact-1",
+    "exit": 0,
+    "seconds": 0.6654108899999756
+  },
+  {
+    "name": "candidate-exact-2",
+    "exit": 0,
+    "seconds": 0.6654968990000043
+  }
+]
