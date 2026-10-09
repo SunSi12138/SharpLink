@@ -1,0 +1,165 @@
+name: Producer Progress RPC Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'src/SharpLink.Client/ClientConnection.cs'
+      - 'src/SharpLink.Client/PendingRequestTable.ProducerProgress.cs'
+      - 'test/SharpLink.UnitTests/Runtime/PendingProducerProgressFastPathTests.cs'
+      - 'test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs'
+      - '.github/workflows/producer-progress-rpc-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  same-machine-ab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/performance/producer-progress-rpc
+          git rev-parse HEAD > artifacts/performance/producer-progress-rpc/candidate.txt
+          echo '${{ github.event.pull_request.base.sha }}' > artifacts/performance/producer-progress-rpc/base.txt
+          dotnet --info > artifacts/performance/producer-progress-rpc/dotnet-info.txt
+          lscpu > artifacts/performance/producer-progress-rpc/cpu.txt
+
+      - name: Prepare exact base worktree with identical evidence harness
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          BASE_WORKTREE="$RUNNER_TEMP/sharplink-producer-progress-base"
+          git worktree add --detach "$BASE_WORKTREE" "$BASE_SHA"
+          cp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$BASE_WORKTREE/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
+          echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
+
+      - name: Build exact base and candidate benchmark harnesses
+        shell: bash
+        run: |
+          dotnet restore "$BASE_WORKTREE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+          dotnet build "$BASE_WORKTREE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release --no-restore -v minimal
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+          dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -v minimal --treenode-filter '/*/*/PendingProducerProgressFastPathTests/*|/*/*/ClientStreamProducerDeadlineTests/*'
+
+      - name: Run paired TCP and SharedMemory streaming A/B
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/artifacts/performance/producer-progress-rpc/raw"
+          mkdir -p "$ROOT"
+          scenarios=(Client100x16 Client100x4096 ClientMulti2x100x4 Duplex100x16 Duplex100x4096)
+          transports=(tcp sharedmemory)
+          for rep in 0 1 2; do
+            if (( rep % 2 == 0 )); then revisions=(base candidate); else revisions=(candidate base); fi
+            for transport in "${transports[@]}"; do
+              for scenario in "${scenarios[@]}"; do
+                for revision in "${revisions[@]}"; do
+                  if [[ "$revision" == base ]]; then
+                    project="$BASE_WORKTREE/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+                    sha="$BASE_SHA"
+                  else
+                    project="test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+                    sha="$CANDIDATE_SHA"
+                  fi
+                  out="$ROOT/${transport}-${scenario}-${revision}-r${rep}.json"
+                  SHARPLINK_BENCHMARK_SHA="$sha" SHARPLINK_STREAMING_TRANSPORT="$transport" dotnet run -c Release --no-build --project "$project" -- --generated-abi-streaming-evidence "$scenario" 50 2 200000 "$out"
+                done
+              done
+            done
+          done
+
+      - name: Summarize paired A/B
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import statistics
+          from pathlib import Path
+
+          root = Path('artifacts/performance/producer-progress-rpc/raw')
+          docs = {}
+          for path in root.glob('*.json'):
+              stem = path.stem
+              transport, scenario, revision, rep = stem.rsplit('-', 3)
+              docs[(transport, scenario, revision, rep)] = json.loads(path.read_text())
+
+          scenarios = sorted({(transport, scenario) for transport, scenario, _, _ in docs})
+          lines = [
+              '# Issue #737 production-shaped streaming A/B',
+              '',
+              'Three paired repetitions with alternating base/candidate execution order.',
+              '',
+              '| Transport | Scenario | Throughput Δ | CPU/op Δ | Alloc/op Δ | P99 Δ | Base ops/s | Candidate ops/s |',
+              '|---|---|---:|---:|---:|---:|---:|---:|'
+          ]
+
+          def pct(candidate, base):
+              return 0.0 if base == 0 else (candidate - base) * 100.0 / base
+
+          raw_pairs = []
+          for transport, scenario in scenarios:
+              qps_deltas = []
+              cpu_deltas = []
+              alloc_deltas = []
+              p99_deltas = []
+              base_qps = []
+              candidate_qps = []
+              for rep in ('r0', 'r1', 'r2'):
+                  base = docs[(transport, scenario, 'base', rep)]
+                  candidate = docs[(transport, scenario, 'candidate', rep)]
+                  if base['validationFailures'] != 0 or candidate['validationFailures'] != 0:
+                      raise SystemExit(f'validation failure in {(transport, scenario, rep)}')
+                  qps_deltas.append(pct(candidate['throughputOperationsPerSecond'], base['throughputOperationsPerSecond']))
+                  cpu_deltas.append(pct(candidate['cpuUsPerOperation'], base['cpuUsPerOperation']))
+                  alloc_deltas.append(candidate['allocatedBytesPerOperation'] - base['allocatedBytesPerOperation'])
+                  p99_deltas.append(pct(candidate['p99Us'], base['p99Us']))
+                  base_qps.append(base['throughputOperationsPerSecond'])
+                  candidate_qps.append(candidate['throughputOperationsPerSecond'])
+                  raw_pairs.append({
+                      'transport': transport, 'scenario': scenario, 'rep': rep,
+                      'throughputDeltaPct': qps_deltas[-1],
+                      'cpuDeltaPct': cpu_deltas[-1],
+                      'allocationDeltaBytesPerOperation': alloc_deltas[-1],
+                      'p99DeltaPct': p99_deltas[-1]
+                  })
+              lines.append(
+                  f'| {transport} | {scenario} | {statistics.median(qps_deltas):+.2f}% | '
+                  f'{statistics.median(cpu_deltas):+.2f}% | {statistics.median(alloc_deltas):+.2f} B | '
+                  f'{statistics.median(p99_deltas):+.2f}% | {statistics.median(base_qps):.1f} | '
+                  f'{statistics.median(candidate_qps):.1f} |')
+
+          summary = Path('artifacts/performance/producer-progress-rpc/summary.md')
+          summary.write_text('\n'.join(lines) + '\n')
+          Path('artifacts/performance/producer-progress-rpc/paired.json').write_text(
+              json.dumps(raw_pairs, indent=2) + '\n')
+          print(summary.read_text())
+          PY
+          cat artifacts/performance/producer-progress-rpc/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload RPC evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: producer-progress-rpc-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/performance/producer-progress-rpc/**
+          if-no-files-found: warn
+          retention-days: 30
