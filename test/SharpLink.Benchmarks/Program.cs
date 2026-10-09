@@ -230,6 +230,12 @@ public static class Program
             await PendingRequestSegmentationEvidenceRunner.RunAsync(args[1..]);
             return;
         }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--producer-progress-evidence", StringComparison.Ordinal))
+        {
+            ProducerProgressEvidenceRunner.Run(args[1..]);
+            return;
+        }
         BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
     }
 }
