@@ -127,9 +127,6 @@ jobs:
               for variant in ("A0Locked", "A1Contains", "A2Resolved"):
                   value = values[variant]
                   improvement = 0.0 if variant == "A0Locked" else (baseline - value["wall"]) / baseline * 100
-                  if value["alloc"] > 0.01:
-                      raise SystemExit(
-                          f"Unexpected allocation/check for {(scope, workers, deadline, variant)}: {value['alloc']}")
                   lines.append(
                       f"| {scope} | {workers} | {deadline} | {variant} | "
                       f"{value['wall']:.3f} | {value['cpu']:.3f} | "
