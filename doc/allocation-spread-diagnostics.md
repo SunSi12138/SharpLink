@@ -1,6 +1,6 @@
 # Unary allocation-spread diagnosis (#387)
 
-This temporary, diagnostic-only workflow investigates the c1/c8 spread failures. It is not a production fix or a replacement allocation certificate. The source under measurement is fixed at `e91f82118bb4d67997bc76b8a579d51460a28c1b`; the workflow records its own validation commit and hashes the protected source/build/budget files. It rejects changes to those paths. The selected build SDK must be exactly 10.0.102 before compilation; a newer SDK allowed by repository roll-forward fails this diagnostic explicitly. The runtime is explicitly pinned to .NET 10.0.12.
+This temporary, diagnostic-only workflow investigates the c1/c8 spread failures. It is not a production fix or a replacement allocation certificate. The source under measurement is fixed at `e91f82118bb4d67997bc76b8a579d51460a28c1b`; the workflow records its own validation commit and hashes the protected source/build/budget files. It rejects changes to those paths. SDKs are installed into a job-private directory so a hosted image’s preinstalled 10.0.1xx patches cannot win `latestPatch` selection. The selected build SDK must be exactly 10.0.102 before compilation; a newer SDK allowed by repository roll-forward fails this diagnostic explicitly. The runtime is explicitly pinned to .NET 10.0.12.
 
 ## Fixed pass
 
