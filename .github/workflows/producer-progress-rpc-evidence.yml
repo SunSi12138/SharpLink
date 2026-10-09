@@ -43,6 +43,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           BASE_WORKTREE="$RUNNER_TEMP/sharplink-producer-progress-base"
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
           git worktree add --detach "$BASE_WORKTREE" "$BASE_SHA"
           cp test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs "$BASE_WORKTREE/test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs"
           echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
