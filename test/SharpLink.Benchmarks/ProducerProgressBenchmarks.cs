@@ -394,27 +394,6 @@ internal static class ProducerProgressEvidenceRunner
             return successful;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal bool CheckA0(int index)
-            => _pending.TryAcceptProducerProgress(_requestIds[index]);
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal bool CheckA1(int index)
-            => ProducerProgressBenchmarks.TryAcceptContains(
-                _pending,
-                _requestIds[index],
-                _deadlines[index],
-                _timeProvider);
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal bool CheckA2(int index)
-            => ProducerProgressBenchmarks.TryAcceptResolved(
-                _pending,
-                _leases[index],
-                _requestIds[index],
-                _deadlines[index],
-                _timeProvider);
-
         public void Dispose()
         {
             for (var index = 0; index < _requestIds.Length; index++)
