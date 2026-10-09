@@ -1,0 +1,101 @@
+name: Server Call Admission Benchmark Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'test/SharpLink.Benchmarks/ServerCallAdmissionHotPathBenchmarks.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - '.github/workflows/server-call-admission-benchmark-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record exact revision and environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/performance/server-call-admission
+          git rev-parse HEAD > artifacts/performance/server-call-admission/commit.txt
+          dotnet --info > artifacts/performance/server-call-admission/dotnet-info.txt
+          lscpu > artifacts/performance/server-call-admission/cpu.txt
+
+      - name: Build benchmark harness (Release)
+        shell: bash
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+
+      - name: Run full call admission BenchmarkDotNet measurement
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
+            -c Release --no-build -- \
+            --filter '*ServerCallAdmissionHotPathBenchmarks*' --exporters json \
+            2>&1 | tee artifacts/performance/server-call-admission/benchmark.log
+
+      - name: Verify ns/op and allocation evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import math
+          from pathlib import Path
+
+          results = Path("BenchmarkDotNet.Artifacts/results")
+          reports = list(results.glob("*ServerCallAdmissionHotPathBenchmarks*-report-full.json"))
+          if not reports:
+              raise SystemExit("BenchmarkDotNet full JSON report is missing")
+
+          lines = ["# Server call admission BenchmarkDotNet evidence", ""]
+          for report in reports:
+              payload = json.loads(report.read_text())
+              benchmarks = [
+                  row for row in payload.get("Benchmarks", [])
+                  if row.get("Method") == "AcquireAndRelease"
+              ]
+              if not benchmarks:
+                  raise SystemExit(f"No AcquireAndRelease measurements in {report}")
+              for row in benchmarks:
+                  stats = row.get("Statistics") or {}
+                  memory = row.get("Memory") or {}
+                  mean_ns = stats.get("Mean")
+                  allocated_b = memory.get("BytesAllocatedPerOperation")
+                  if not isinstance(mean_ns, (int, float)) or not math.isfinite(mean_ns):
+                      raise SystemExit(f"Missing valid ns/op in {report}")
+                  if not isinstance(allocated_b, (int, float)) or not math.isfinite(allocated_b):
+                      raise SystemExit(f"Missing valid B/op in {report}")
+                  line = f"- AcquireAndRelease: {mean_ns:.2f} ns/op; {allocated_b:.2f} B/op"
+                  lines.append(line)
+                  print(line)
+
+          summary = Path("artifacts/performance/server-call-admission/summary.md")
+          summary.write_text("\n".join(lines) + "\n")
+          PY
+          cat artifacts/performance/server-call-admission/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: server-call-admission-bdn-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/performance/server-call-admission/**
+            BenchmarkDotNet.Artifacts/**
+          if-no-files-found: warn
+          retention-days: 30
