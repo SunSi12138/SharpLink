@@ -9,7 +9,7 @@ internal static class __SharpLinkContractManifest
   ""format"": ""SharpLink.Contracts"",
   ""version"": 2,
   ""generatorVersion"": ""3.0.0"",
-  ""schemaFingerprint"": ""c934ee51424a1aad0cffcd93496e35934e08f87d8969caab1152eaf5062dbe9f"",
+  ""schemaFingerprint"": ""506004ce2ed82845b61b3f5121779676e17da27f42f136ec2caa54838480ffe9"",
   ""contracts"": [
     {
       ""name"": ""IFixtureService"",

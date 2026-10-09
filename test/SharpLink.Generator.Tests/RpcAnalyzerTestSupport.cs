@@ -263,7 +263,7 @@ namespace SharpLink.Abstractions
         var start = manifest.IndexOf(marker, StringComparison.Ordinal);
         if (start < 0)
             throw new Exception("Expected generated method descriptor.");
-        var end = manifest.IndexOf("),", start, StringComparison.Ordinal);
+        var end = manifest.IndexOf("\"),", start, StringComparison.Ordinal);
         if (end < 0)
             throw new Exception("Expected generated method descriptor terminator.");
         var quotedLines = manifest[start..end]
