@@ -274,6 +274,7 @@ internal enum GeneratedAbiStreamingScenario
     Client100x4096,
     ClientMulti2x100x4,
     ClientMulti2x1024x4Gated,
+    ClientMulti2x1024x4ConcurrentGated,
     Duplex100x16,
     Duplex100x4096
 }
@@ -326,14 +327,14 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
         try
         {
             var (shape, itemCount, itemBytes) = GetDimensions(scenario);
-            if (shape is "ClientMultiStream" or "ClientMultiStreamGated")
+            if (shape is "ClientMultiStream" or "ClientMultiStreamGated" or "ClientMultiStreamConcurrent")
             {
                 var left = Enumerable.Range(0, itemCount / 2).ToArray();
                 var right = Enumerable.Range(itemCount / 2, itemCount / 2).ToArray();
                 var expected = left.Sum(static value => (long)value) +
                                right.Sum(static value => (long)value);
                 Func<ValueTask<long>> invokeMulti;
-                if (shape == "ClientMultiStreamGated")
+                if (shape is "ClientMultiStreamGated" or "ClientMultiStreamConcurrent")
                 {
                     // A fast synchronous iterator can run its first stream to completion before
                     // the generated Task.WhenAll writer even starts the second stream. Gate only
@@ -342,9 +343,13 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
                     invokeMulti = async () =>
                     {
                         var gate = new TwoProducerStartGate();
-                        return await environment.Rpc.MergeStreamsAsync(
-                            ToGatedStream(left, gate),
-                            ToGatedStream(right, gate)).ConfigureAwait(false);
+                        var leftSource = ToGatedStream(left, gate);
+                        var rightSource = ToGatedStream(right, gate);
+                        return shape == "ClientMultiStreamConcurrent"
+                            ? await environment.Rpc.MergeConcurrentStreamsAsync(
+                                leftSource, rightSource).ConfigureAwait(false)
+                            : await environment.Rpc.MergeStreamsAsync(
+                                leftSource, rightSource).ConfigureAwait(false);
                     };
                 }
                 else
@@ -461,6 +466,7 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
             GeneratedAbiStreamingScenario.Client100x4096 => ("ClientStreaming", 100, 4096),
             GeneratedAbiStreamingScenario.ClientMulti2x100x4 => ("ClientMultiStream", 200, 4),
             GeneratedAbiStreamingScenario.ClientMulti2x1024x4Gated => ("ClientMultiStreamGated", 2 * 1024, 4),
+            GeneratedAbiStreamingScenario.ClientMulti2x1024x4ConcurrentGated => ("ClientMultiStreamConcurrent", 2 * 1024, 4),
             GeneratedAbiStreamingScenario.Duplex100x16 => ("Duplex", 100, 16),
             GeneratedAbiStreamingScenario.Duplex100x4096 => ("Duplex", 100, 4096),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario), scenario, null)

@@ -23,7 +23,7 @@ internal static class Program
     {
         if (args.Length != 6)
             throw new ArgumentException(
-                "Usage: <tcp|sharedmemory> <Client100x16|ClientMulti2x100x4|ClientMulti2x1024x4Gated> " +
+                "Usage: <tcp|sharedmemory> <Client100x16|ClientMulti2x100x4|ClientMulti2x1024x4Gated|ClientMulti2x1024x4ConcurrentGated> " +
                 "<warmup-ops> <measured-ops> <revision-sha> <output-file>");
 
         var transport = args[0];
@@ -126,7 +126,7 @@ internal static class Program
                 BenchmarkEnvironment.ToStream(values)).ConfigureAwait(false), expected);
         }
 
-        if (scenario is "ClientMulti2x100x4" or "ClientMulti2x1024x4Gated")
+        if (scenario is "ClientMulti2x100x4" or "ClientMulti2x1024x4Gated" or "ClientMulti2x1024x4ConcurrentGated")
         {
             var size = scenario == "ClientMulti2x100x4" ? 100 : 1_024;
             var left = Enumerable.Range(0, size).ToArray();
@@ -142,9 +142,13 @@ internal static class Program
             return (async () =>
             {
                 var gate = new TwoProducerStartGate();
-                return await rpc.MergeStreamsAsync(
-                    ToGatedStream(left, gate),
-                    ToGatedStream(right, gate)).ConfigureAwait(false);
+                var leftSource = ToGatedStream(left, gate);
+                var rightSource = ToGatedStream(right, gate);
+                return scenario == "ClientMulti2x1024x4ConcurrentGated"
+                    ? await rpc.MergeConcurrentStreamsAsync(
+                        leftSource, rightSource).ConfigureAwait(false)
+                    : await rpc.MergeStreamsAsync(
+                        leftSource, rightSource).ConfigureAwait(false);
             }, expected);
         }
         throw new ArgumentException("Unknown scenario: " + scenario);

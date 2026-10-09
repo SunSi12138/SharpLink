@@ -40,6 +40,8 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           git worktree add --detach "$BASE_WORKTREE" "$BASE_SHA"
           cp -a test/SharpLink.ProducerProgressAotEvidence "$BASE_WORKTREE/test/"
+          cp test/SharpLink.Benchmarks/BenchmarkContracts.cs "$BASE_WORKTREE/test/SharpLink.Benchmarks/BenchmarkContracts.cs"
+          cp test/SharpLink.Benchmarks/BenchmarkService.cs "$BASE_WORKTREE/test/SharpLink.Benchmarks/BenchmarkService.cs"
           echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
       - name: Publish JIT and NativeAOT with the same probe source
         shell: bash
@@ -73,7 +75,7 @@ jobs:
             for rep in 0 1 2 3; do
               if (( rep % 2 == 0 )); then order="base candidate"; else order="candidate base"; fi
               for transport in tcp sharedmemory; do
-                for scenario in Client100x16 ClientMulti2x100x4 ClientMulti2x1024x4Gated; do
+                for scenario in Client100x16 ClientMulti2x100x4 ClientMulti2x1024x4Gated ClientMulti2x1024x4ConcurrentGated; do
                   for revision in $order; do
                     if [[ "$revision" == base ]]; then sha="$BASE_SHA"; else sha="$HEAD_SHA"; fi
                     output="$ROOT/raw/$mode-$transport-$scenario-$revision-r$rep.txt"
@@ -113,8 +115,8 @@ jobs:
               assert d['transport']==transport and d['scenario']==scenario,path
               assert int(d['measuredOperations'])==300,path
               docs[(mode,transport,scenario,revision,rep)]=d
-          if len(docs)!=128:
-              raise SystemExit(f'expected 128 exact-work reports, got {len(docs)}')
+          if len(docs)!=160:
+              raise SystemExit(f'expected 160 exact-work reports, got {len(docs)}')
           by_group=defaultdict(dict)
           for (mode,tr,scenario,rev,rep),d in docs.items():
               by_group[mode,tr,scenario,rep][rev]=d
