@@ -129,6 +129,9 @@ public class ReadOwnershipPipeReaderDispatchTests
         var inner = new ControlledReader();
         var reader = new ReadOwnershipPipeReader(inner) { RunContinuationsAsynchronously = !late };
         using var done = new ManualResetEventSlim();
+        // Fast warmup waits can all finish while spinning. Force this fixture's lazy blocking
+        // lock to initialize before measurement, rather than charge its first 24 bytes to a read.
+        Ensure(!done.Wait(TimeSpan.FromMilliseconds(1)), "the unused fixture signal must remain unsignaled");
         ValueTask<ReadResult> read = default;
         Exception? error = null;
         var consumed = 0;
