@@ -513,7 +513,147 @@ internal sealed partial class SharpLinkClient
             TaskScheduler.Default);
     }
 
-    private async ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>(
+    private ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>(
+        RpcMethodDescriptor method,
+        TRequest request,
+        IRpcCodec<TRequest> requestCodec,
+        TStreams streams,
+        ResolvedCallControl control,
+        CancellationToken cancellationToken)
+        where TStreams : struct, IRpcClientStreamWriter
+        => method.HasClientStreams
+            ? InvokeOneWayStreamingCoreAsync(method, request, requestCodec, streams, control, cancellationToken)
+            : InvokeOneWayPlainCoreAsync(method, request, requestCodec, control, cancellationToken);
+
+    private async ValueTask InvokeOneWayPlainCoreAsync<TRequest>(
+        RpcMethodDescriptor method,
+        TRequest request,
+        IRpcCodec<TRequest> requestCodec,
+        ResolvedCallControl control,
+        CancellationToken cancellationToken)
+    {
+        var outcome = _endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(this, method);
+        if (outcome is null)
+            SharpLinkTelemetry.RecordClientAttempt();
+
+        ClientConnection? connection = null;
+        var reservationOwned = false;
+        try
+        {
+            EnsureLogicalCallProgress(control);
+            connection = GetReadyConnection(method, retrySelection: null, outcome);
+            reservationOwned = true;
+            EnsureLogicalCallProgress(control);
+        }
+        catch (Exception exception)
+        {
+            if (reservationOwned)
+                connection!.ReleaseCallAdmissionReservation();
+            exception = ArbitrateLogicalCallFailure(control, exception);
+            outcome?.CompleteLocalFailure(exception);
+            throw exception;
+        }
+
+        var flags = ProtocolV2FrameFlags.OneWay;
+        if (control.Deadline.HasValue)
+            flags |= ProtocolV2FrameFlags.Cancellable;
+
+        long requestId;
+        try
+        {
+            EnsureLogicalCallProgress(control);
+            requestId = connection!.PendingCalls.AllocateRequestId();
+        }
+        catch (Exception exception)
+        {
+            if (reservationOwned)
+            {
+                connection!.ReleaseCallAdmissionReservation();
+                reservationOwned = false;
+            }
+            exception = ArbitrateLogicalCallFailure(control, exception);
+            outcome?.CompleteLocalFailure(exception);
+            throw exception;
+        }
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            EnsureLogicalCallProgress(control);
+        }
+        catch
+        {
+            if (reservationOwned)
+            {
+                connection!.ReleaseCallAdmissionReservation();
+                reservationOwned = false;
+            }
+            throw;
+        }
+
+        var began = connection!.TryBeginUntrackedCall();
+        reservationOwned = false;
+        if (!began)
+        {
+            Exception exception = new SharpLinkException(
+                SharpLinkErrorCode.Unavailable,
+                "The selected connection is draining.");
+            exception = ArbitrateLogicalCallFailure(control, exception);
+            outcome?.CompleteWithoutPending(
+                exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+                    ? PendingCallCompletionReason.DeadlineExceeded
+                    : PendingCallCompletionReason.ConnectionClosed,
+                exception);
+            throw exception;
+        }
+
+        try
+        {
+            try
+            {
+                var emission = SendRpcCall(
+                    connection.Session,
+                    method.ContractId,
+                    method.MethodId,
+                    requestId,
+                    flags,
+                    request,
+                    requestCodec,
+                    control.Deadline,
+                    control.Metadata,
+                    observeEmission: control.Deadline.HasValue,
+                    cancellationToken: CancellationToken.None,
+                    publicationTable: null);
+                if (control.Deadline.HasValue)
+                {
+                    // Plain OneWay has no pending owner to enforce an emission deadline.
+                    await AwaitPlainOneWayEmissionOrDeadlineAsync(
+                        emission, connection, requestId, control).ConfigureAwait(false);
+                }
+                else
+                {
+                    await emission.ConfigureAwait(false);
+                }
+                outcome?.CompleteWithoutPending(PendingCallCompletionReason.LocalStreamComplete);
+            }
+            catch (Exception exception)
+            {
+                exception = ArbitrateLogicalCallFailure(control, exception);
+                outcome?.CompleteWithoutPending(
+                    exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+                        ? PendingCallCompletionReason.DeadlineExceeded
+                        : PendingCallCompletionReason.SendFailure,
+                    exception);
+                throw exception;
+            }
+        }
+        finally
+        {
+            connection.EndUntrackedCall();
+        }
+    }
+
+    private async ValueTask InvokeOneWayStreamingCoreAsync<TRequest, TStreams>(
         RpcMethodDescriptor method,
         TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -545,27 +685,18 @@ internal sealed partial class SharpLinkClient
         }
 
         var flags = ProtocolV2FrameFlags.OneWay;
-        if (control.Deadline.HasValue || (method.HasClientStreams && cancellationToken.CanBeCanceled))
+        if (control.Deadline.HasValue || cancellationToken.CanBeCanceled)
             flags |= ProtocolV2FrameFlags.Cancellable;
 
-        PendingRequestLease<RpcEmptyRequest> oneWayStreamLease = default;
+        PendingRequestLease<RpcEmptyRequest> oneWayStreamLease;
         long requestId;
         try
         {
             EnsureLogicalCallProgress(control);
-            if (method.HasClientStreams)
-            {
-                oneWayStreamLease = connection!.PendingCalls.RegisterOneWayClientStream(
-                    control.Deadline,
-                    cancellationToken,
-                    outcome);
-                reservationOwned = false;
-                requestId = oneWayStreamLease.Id;
-            }
-            else
-            {
-                requestId = connection!.PendingCalls.AllocateRequestId();
-            }
+            oneWayStreamLease = connection!.PendingCalls.RegisterOneWayClientStream(
+                control.Deadline, cancellationToken, outcome);
+            reservationOwned = false;
+            requestId = oneWayStreamLease.Id;
         }
         catch (Exception exception)
         {
@@ -579,10 +710,8 @@ internal sealed partial class SharpLinkClient
             throw exception;
         }
 
-        var streamCancellationToken = method.HasClientStreams
-            ? connection!.PendingCalls.GetProducerCancellationToken(requestId)
-            : CancellationToken.None;
-        if (method.HasClientStreams && !connection!.PendingCalls.Contains(requestId))
+        var streamCancellationToken = connection!.PendingCalls.GetProducerCancellationToken(requestId);
+        if (!connection.PendingCalls.Contains(requestId))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var exception = CreateDeadlineExceededException();
@@ -590,134 +719,34 @@ internal sealed partial class SharpLinkClient
             outcome?.CompleteLocalFailure(exception);
             throw exception;
         }
-        if (!method.HasClientStreams)
-        {
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                EnsureLogicalCallProgress(control);
-            }
-            catch
-            {
-                if (reservationOwned)
-                {
-                    connection!.ReleaseCallAdmissionReservation();
-                    reservationOwned = false;
-                }
-                throw;
-            }
-        }
-        if (!method.HasClientStreams)
-        {
-            var began = connection!.TryBeginUntrackedCall();
-            reservationOwned = false;
-            if (!began)
-            {
-                Exception exception = new SharpLinkException(
-                    SharpLinkErrorCode.Unavailable,
-                    "The selected connection is draining.");
-                exception = ArbitrateLogicalCallFailure(control, exception);
-                outcome?.CompleteWithoutPending(
-                    exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
-                        ? PendingCallCompletionReason.DeadlineExceeded
-                        : PendingCallCompletionReason.ConnectionClosed,
-                    exception);
-                throw exception;
-            }
-        }
 
         try
         {
-            try
-            {
-                var emission = SendRpcCall(
-                    connection!.Session,
-                    method.ContractId,
-                    method.MethodId,
-                    requestId,
-                    flags,
-                    request,
-                    requestCodec,
-                    control.Deadline,
-                    control.Metadata,
-                    observeEmission: control.Deadline.HasValue,
-                    // The owned producer token, not the bare caller token: a deadline, a caller
-                    // cancellation or a closed connection all end this call by completing its
-                    // pending entry, and that entry is what cancels this token. Waiting for
-                    // emission on the caller token alone would leave the invocation blocked in
-                    // the send path after the call already reached its terminal reason.
-                    cancellationToken: method.HasClientStreams ? streamCancellationToken : CancellationToken.None,
-                    publicationTable: method.HasClientStreams ? connection.PendingCalls : null);
-                if (!method.HasClientStreams && control.Deadline.HasValue)
-                {
-                    // A plain OneWay owns no pending entry, so nothing else enforces the caller's
-                    // deadline while the pump holds the frame, and nothing else can tell the peer to
-                    // stop. The Request is already ahead of that cancel in the same normal queue, so
-                    // the peer either sees the cancel after the Request or discards it for a request
-                    // it already ran.
-                    await AwaitPlainOneWayEmissionOrDeadlineAsync(
-                        emission,
-                        connection!,
-                        requestId,
-                        control).ConfigureAwait(false);
-                }
-                else
-                {
-                    await emission.ConfigureAwait(false);
-                }
-                if (method.HasClientStreams)
-                {
-                    await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
-                    connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
-                }
-                else
-                {
-                    outcome?.CompleteWithoutPending(PendingCallCompletionReason.LocalStreamComplete);
-                }
-            }
-            catch (Exception exception)
-            {
-                if (method.HasClientStreams)
-                {
-                    // Publish the local send/producer failure and let the pending table arbitrate.
-                    // The table holds the completion gate, so a deadline that expired, a caller
-                    // cancellation, or a closed connection that already claimed the call stays
-                    // authoritative; this call is then a no-op. Throwing the local exception here
-                    // would replace that terminal reason and skip observing the lease operation,
-                    // which is also what returns it to the pool.
-                    connection!.PendingCalls.TryComplete(
-                        requestId,
-                        PendingCallCompletionReason.SendFailure,
-                        exception);
-                }
-                else
-                {
-                    exception = ArbitrateLogicalCallFailure(control, exception);
-                    outcome?.CompleteWithoutPending(
-                        exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
-                            ? PendingCallCompletionReason.DeadlineExceeded
-                            : PendingCallCompletionReason.SendFailure,
-                        exception);
-                    throw exception;
-                }
-            }
-
-            if (method.HasClientStreams)
-            {
-                // The client-stream oneway lease operation owns the terminal result for this shape
-                // and is single-observation and pooled: observe it exactly once on every path. The
-                // await rethrows whichever terminal won - local stream completion, the local
-                // send/producer failure, a deadline, a caller cancellation, or a closed connection -
-                // and returns the operation to the pool. Awaiting it a second time (or not at all)
-                // is what previously hung the invocation or leaked the pooled operation.
-                _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
-            }
+            var emission = SendRpcCall(
+                connection.Session,
+                method.ContractId,
+                method.MethodId,
+                requestId,
+                flags,
+                request,
+                requestCodec,
+                control.Deadline,
+                control.Metadata,
+                observeEmission: control.Deadline.HasValue,
+                // The pending call owns producer cancellation and request publication.
+                cancellationToken: streamCancellationToken,
+                publicationTable: connection.PendingCalls);
+            await emission.ConfigureAwait(false);
+            await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
+            connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
         }
-        finally
+        catch (Exception exception)
         {
-            if (!method.HasClientStreams)
-                connection!.EndUntrackedCall();
+            // Preserve the pending owner's terminal arbitration and observe its lease once.
+            connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
         }
+
+        _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
     }
 
     private async ValueTask<TResponse> InvokeClientStreamingCoreAsync<TRequest, TResponse, TStreams>(
