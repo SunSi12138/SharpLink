@@ -1,10 +1,8 @@
 {
   "baseline": "072a3a13fca0aa9186d2db44e38e5fc846969b07",
-  "prior": "d33136386d569cfe1db4ae649f5f4f2f4bc8279d",
-  "safe": "8e602aa70bd765d2581090020a6661e18391186d",
+  "safe": "ac903d63c541d972f4268bb404b3c09ce63776e4",
+  "normalized": "1a24cc07036dd2c36f269d8df66cd81f85c14f08",
   "rounds": 6,
   "warmupSeconds": 2,
-  "durationSeconds": 6,
-  "microIterations": 1000000,
-  "dispatchIterations": 10000
+  "durationSeconds": 6
 }
