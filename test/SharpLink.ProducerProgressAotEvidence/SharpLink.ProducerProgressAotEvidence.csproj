@@ -12,6 +12,7 @@
        BenchmarkDotNet or its reflection-heavy runtime measurement infrastructure. -->
   <ItemGroup>
     <Compile Include="../SharpLink.Benchmarks/BenchmarkEnvironment.cs" Link="BenchmarkEnvironment.cs" />
+    <Compile Include="../SharpLink.Benchmarks/AllocationReadProbe.cs" Link="AllocationReadProbe.cs" />
     <Compile Include="../SharpLink.Benchmarks/BenchmarkContracts.cs" Link="BenchmarkContracts.cs" />
     <Compile Include="../SharpLink.Benchmarks/BenchmarkService.cs" Link="BenchmarkService.cs" />
   </ItemGroup>
