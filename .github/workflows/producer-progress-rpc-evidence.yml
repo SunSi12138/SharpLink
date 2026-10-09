@@ -18,7 +18,7 @@ permissions:
 jobs:
   same-machine-ab:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,7 +70,7 @@ jobs:
           mkdir -p "$ROOT"
           scenarios=(Client100x16 Client100x4096 ClientMulti2x100x4 Duplex100x16 Duplex100x4096)
           transports=(tcp sharedmemory)
-          for rep in 0 1 2; do
+          for rep in 0 1 2 3 4 5; do
             if (( rep % 2 == 0 )); then revisions=(base candidate); else revisions=(candidate base); fi
             for transport in "${transports[@]}"; do
               for scenario in "${scenarios[@]}"; do
@@ -104,11 +104,24 @@ jobs:
               transport, scenario, revision, rep = stem.rsplit('-', 3)
               docs[(transport, scenario, revision, rep)] = json.loads(path.read_text())
 
+          base_sha = Path('artifacts/performance/producer-progress-rpc/base.txt').read_text().strip()
+          candidate_sha = Path('artifacts/performance/producer-progress-rpc/candidate.txt').read_text().strip()
+          if len(docs) != 120:
+              raise SystemExit(f'Expected exactly 120 paired result documents, got {len(docs)}')
+          for (transport, scenario, revision, rep), doc in docs.items():
+              expected_sha = base_sha if revision == 'base' else candidate_sha
+              if doc.get('commit') != expected_sha:
+                  raise SystemExit(f'SHA mismatch for {(transport, scenario, revision, rep)}')
+              if doc.get('scenario') != scenario or doc.get('transport') != transport:
+                  raise SystemExit(f'Dimension mismatch for {(transport, scenario, revision, rep)}')
+              if doc.get('operations', 0) <= 0 or doc.get('validationFailures', 0) != 0:
+                  raise SystemExit(f'Invalid completed work for {(transport, scenario, revision, rep)}')
+
           scenarios = sorted({(transport, scenario) for transport, scenario, _, _ in docs})
           lines = [
               '# Issue #737 production-shaped streaming A/B',
               '',
-              'Three paired repetitions with alternating base/candidate execution order.',
+              'Six paired repetitions with balanced AB/BA execution order.',
               '',
               '| Transport | Scenario | Throughput Δ | CPU/op Δ | Alloc/op Δ | P99 Δ | Base ops/s | Candidate ops/s |',
               '|---|---|---:|---:|---:|---:|---:|---:|'
@@ -125,7 +138,7 @@ jobs:
               p99_deltas = []
               base_qps = []
               candidate_qps = []
-              for rep in ('r0', 'r1', 'r2'):
+              for rep in ('r0', 'r1', 'r2', 'r3', 'r4', 'r5'):
                   base = docs[(transport, scenario, 'base', rep)]
                   candidate = docs[(transport, scenario, 'candidate', rep)]
                   if base['validationFailures'] != 0 or candidate['validationFailures'] != 0:
