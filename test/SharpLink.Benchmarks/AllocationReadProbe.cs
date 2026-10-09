@@ -28,7 +28,11 @@ internal sealed class AllocationReadProbe
         public async ValueTask<ITransportConnection> AcceptAsync(CancellationToken cancellationToken = default)
         {
             var connection = await inner.AcceptAsync(cancellationToken).ConfigureAwait(false);
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+            var reader = new ObservedReader(AllocationPathObservation.Unwrap(connection.Input));
+#else
             var reader = new ObservedReader((SharedMemoryPipeReader)connection.Input);
+#endif
             Volatile.Write(ref probe._reader, reader);
             return new ObservedConnection(connection, reader);
         }
@@ -66,7 +70,11 @@ internal sealed class AllocationReadProbe
 
         public override ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default)
         {
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+            var read = AllocationPathObservation.Read(inner, cancellationToken, AllocationPathObservation.Path.ServerRead);
+#else
             var read = inner.ReadAsync(cancellationToken);
+#endif
             lock (_gate)
                 _lastRead = read;
             return read;

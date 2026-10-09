@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup Condition="'$(AllocationPathObservation)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHARPLINK_ALLOCATION_PATH_OBSERVATION</DefineConstants>
+  </PropertyGroup>
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>

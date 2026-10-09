@@ -1,0 +1,166 @@
+name: Allocation Path Counts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['validation/387-allocation-path-counts']
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout reviewed validation revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install pinned build SDK and diagnostic runtime
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/allocation-dotnet
+        with:
+          dotnet-version: |
+            10.0.102
+            10.0.401
+
+      - name: Verify exact build SDK before compilation
+        run: |
+          mkdir -p artifacts/allocation-path-setup
+          dotnet --version | tee artifacts/allocation-path-setup/sdk-version.txt
+          test "$(cat artifacts/allocation-path-setup/sdk-version.txt)" = '10.0.102'
+
+      - name: Build original source and diagnostic-only derivative
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        run: |
+          git clone --no-hardlinks . "$RUNNER_TEMP/allocation-path-baseline"
+          git -C "$RUNNER_TEMP/allocation-path-baseline" switch --detach e91f82118bb4d67997bc76b8a579d51460a28c1b
+          dotnet build "$RUNNER_TEMP/allocation-path-baseline/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" -c Release -v minimal
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -v minimal
+          dotnet exec --fx-version 10.0.12 test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --allocation-gate-self-test --output artifacts/allocation-path-setup/normal-self-test.json
+          python3 -c 'from pathlib import Path; import json; r=Path("test/SharpLink.Benchmarks/bin/Release/net10.0"); assert b"AllocationPathObservation" not in (r/"SharpLink.Runtime.dll").read_bytes(); assert b"AllocationPathCalibration" not in (r/"SharpLink.Benchmarks.dll").read_bytes(); p=json.loads(Path("artifacts/allocation-path-setup/normal-self-test.json").read_text()); assert p["passed"] and "observationCompiled" not in p'
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -p:AllocationPathObservation=true -v minimal
+          python3 -m unittest discover -s eng/allocation-path-counts -p 'tests.py'
+
+      - name: Run fixed forced-path controls and observer contrast
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        run: >-
+          python3 eng/allocation-path-counts/run.py
+          --baseline "$RUNNER_TEMP/allocation-path-baseline"
+          --output artifacts/allocation-path-counts
+
+      - name: Package complete evidence into bounded parts
+        if: always() && hashFiles('artifacts/allocation-path-counts/summary.json') != ''
+        run: >-
+          python3 eng/allocation-spread-diagnostics/package.py
+          --source artifacts/allocation-path-counts
+          --output artifacts/allocation-path-parts
+
+      - name: Preserve evidence index and conclusions
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-meta-${{ github.sha }}
+          path: |
+            artifacts/allocation-path-setup/*
+            artifacts/allocation-path-parts/*.json
+            artifacts/allocation-path-parts/overflow.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 00
+        if: always() && hashFiles('artifacts/allocation-path-parts/part-00.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-part-00-${{ github.sha }}
+          path: artifacts/allocation-path-parts/part-00.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 01
+        if: always() && hashFiles('artifacts/allocation-path-parts/part-01.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-part-01-${{ github.sha }}
+          path: artifacts/allocation-path-parts/part-01.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 02
+        if: always() && hashFiles('artifacts/allocation-path-parts/part-02.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-part-02-${{ github.sha }}
+          path: artifacts/allocation-path-parts/part-02.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 03
+        if: always() && hashFiles('artifacts/allocation-path-parts/part-03.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-part-03-${{ github.sha }}
+          path: artifacts/allocation-path-parts/part-03.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 04
+        if: always() && hashFiles('artifacts/allocation-path-parts/part-04.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-part-04-${{ github.sha }}
+          path: artifacts/allocation-path-parts/part-04.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 05
+        if: always() && hashFiles('artifacts/allocation-path-parts/part-05.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-part-05-${{ github.sha }}
+          path: artifacts/allocation-path-parts/part-05.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 06
+        if: always() && hashFiles('artifacts/allocation-path-parts/part-06.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-part-06-${{ github.sha }}
+          path: artifacts/allocation-path-parts/part-06.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 07
+        if: always() && hashFiles('artifacts/allocation-path-parts/part-07.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-part-07-${{ github.sha }}
+          path: artifacts/allocation-path-parts/part-07.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve full overflow archive without discarding evidence
+        if: always() && hashFiles('artifacts/allocation-path-parts/overflow.txt') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-path-overflow-${{ github.sha }}
+          path: artifacts/allocation-path-parts/evidence.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30

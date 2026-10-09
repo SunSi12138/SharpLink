@@ -8,6 +8,18 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+        if (args.Length > 0 && args[0] == "--allocation-path-calibration")
+        {
+            await AllocationPathCalibration.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--allocation-path-self-test")
+        {
+            AllocationPathCalibration.RunSelfTests(args[1..]);
+            return;
+        }
+#endif
         if (args.Length > 0 && string.Equals(
             args[0], "--zstd-evidence", StringComparison.Ordinal))
         {

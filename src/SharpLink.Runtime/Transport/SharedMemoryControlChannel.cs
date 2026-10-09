@@ -137,7 +137,11 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
         {
             while (true)
             {
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+                var read = await AllocationPathObservation.ReadControl(_stream, signal).ConfigureAwait(false);
+#else
                 var read = await _stream.ReadAsync(signal).ConfigureAwait(false);
+#endif
                 if (read == 0)
                     break;
                 var received = signal[0];

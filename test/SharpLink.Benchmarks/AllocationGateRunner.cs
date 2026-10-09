@@ -7,6 +7,9 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+using SharpLink.Runtime;
+#endif
 
 namespace SharpLink.Benchmarks;
 
@@ -117,6 +120,9 @@ internal static class AllocationGateRunner
     private static AllocationGateReport CreateReport(GateOptions options, string mode) => new()
     {
         SchemaVersion = SchemaVersion,
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+        ObservationCompiled = true,
+#endif
         Mode = mode,
         RuntimeVersion = Environment.Version.ToString(),
         RuntimeMajor = Environment.Version.Major,
@@ -282,6 +288,9 @@ internal static class AllocationGateRunner
             operations, concurrency, start.Task, operation, injectedBytesPerOperation, counter);
         var completion = Task.WhenAll(workers);
 
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+        counter.PathsBefore = AllocationPathObservation.Capture();
+#endif
         // Capture scheduling context outside the process-wide allocation window.
         counter.DiagnosticsBefore = AllocationSampleDiagnostics.Capture();
         var before = GC.GetTotalAllocatedBytes(precise: true);
@@ -289,6 +298,9 @@ internal static class AllocationGateRunner
         await completion.ConfigureAwait(false);
         var after = GC.GetTotalAllocatedBytes(precise: true);
         counter.DiagnosticsAfter = AllocationSampleDiagnostics.Capture();
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+        counter.PathsAfter = AllocationPathObservation.Capture();
+#endif
         var completed = Volatile.Read(ref counter.Completed);
         if (completed != operations)
         {
@@ -300,6 +312,10 @@ internal static class AllocationGateRunner
         return new AllocationSampleReport
         {
             Index = sampleIndex,
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+            PathsBefore = counter.PathsBefore,
+            PathsAfter = counter.PathsAfter,
+#endif
             DiagnosticsBefore = counter.DiagnosticsBefore,
             DiagnosticsAfter = counter.DiagnosticsAfter,
             ElapsedMilliseconds = Stopwatch.GetElapsedTime(counter.DiagnosticsBefore.Timestamp, counter.DiagnosticsAfter.Timestamp).TotalMilliseconds,
@@ -356,7 +372,11 @@ internal static class AllocationGateRunner
         await start.ConfigureAwait(false);
         for (var index = 0; index < operations; index++)
         {
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+            await AllocationPathObservation.StartRpc(operation).ConfigureAwait(false);
+#else
             await operation().ConfigureAwait(false);
+#endif
             if (injectedBytesPerOperation > 0)
             {
                 var injected = new byte[injectedBytesPerOperation];
@@ -569,6 +589,10 @@ internal static class AllocationGateRunner
     private sealed class CompletionCounter
     {
         internal int Completed;
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+        internal AllocationPathObservation.Snapshot? PathsBefore;
+        internal AllocationPathObservation.Snapshot? PathsAfter;
+#endif
         // The counter already crosses the await. Store snapshots here so diagnostics do
         // not enlarge the MeasureAsync state-machine box allocated during measurement.
         internal AllocationSampleDiagnostics DiagnosticsBefore;
@@ -643,6 +667,9 @@ internal static class AllocationGateRunner
 
     private sealed class AllocationGateReport
     {
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+        public bool ObservationCompiled { get; set; }
+#endif
         public int SchemaVersion { get; set; }
         public bool Passed { get; set; }
         public string Mode { get; set; } = string.Empty;
@@ -683,6 +710,10 @@ internal static class AllocationGateRunner
     private sealed class AllocationSampleReport
     {
         public int Index { get; set; }
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+        public AllocationPathObservation.Snapshot? PathsBefore { get; set; }
+        public AllocationPathObservation.Snapshot? PathsAfter { get; set; }
+#endif
         public AllocationSampleDiagnostics DiagnosticsBefore { get; set; }
         public AllocationSampleDiagnostics DiagnosticsAfter { get; set; }
         public double ElapsedMilliseconds { get; set; }

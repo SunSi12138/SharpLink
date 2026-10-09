@@ -1,0 +1,23 @@
+# Bounded async allocation-path experiment (#387)
+
+The first calibrated trace pass did not reproduce a failure. It observed ordinary read/wait async state-machine allocations, but cannot establish which caused the historical c1/c8 spread. Thread-pool growth also occurred in passing samples. This follow-on experiment tests a narrower mechanism; it is not a production repair.
+
+## Source and intervention
+
+The uninstrumented baseline is fixed at `e91f82118bb4d67997bc76b8a579d51460a28c1b`. The later #794 merge only changes a separate TimedBatch test; it is not silently substituted into this experiment. The diagnostic build enables `AllocationPathObservation=true`. All observation code and hooks are behind `SHARPLINK_ALLOCATION_PATH_OBSERVATION`; ordinary builds contain no observer or new CLI modes. Source overlays, both source populations and build configuration are separately hashed/recorded.
+
+Synchronous call boundaries measure `GC.GetAllocatedBytesForCurrentThread()` around client RPC start, client/server SharedMemory reads, and control-channel named-pipe reads. They return the original ValueTask without awaiting, converting, consuming, or pooling it. Thread-local nesting prevents double counting: only the outer boundary records bytes; nested calls retain counts but their allocation remains in the outer bucket. A returned completed ValueTask does not prove the method never suspended internally, because completion can race its return. The byte delta is measured directly rather than inferred from that completion flag.
+
+These are deliberately partial counters. They miss allocation after an async suspension and work on other threads. Counter snapshots are taken outside, and therefore slightly wider than, the original process allocation window. Active boundaries, changing snapshots and first observer use on new threads are exposed. Negative residuals and unstable samples are retained and marked, never clamped or silently removed. First-use thread-static/runtime storage, CPU overhead and altered scheduling are potential observer effects even when the warmed empty helper itself allocates zero.
+
+## Fixed sequence and predictions
+
+1. A local/hosted counter self-test allocates two 128-byte payloads per operation inside nested scopes. The disjoint total must equal independent same-thread allocation accounting exactly; nested scopes must not double count. Empty warmed scopes must allocate zero. Original ValueTask identity/single consumption and synchronous exceptions must be preserved. Original/candidate async state-machine field shapes for reads and gate workers/measurement must match.
+2. A real SharedMemory connection forces two read paths with identical payload (8 bytes), warmup (512), and operation count (4000). Write-before-read must return synchronously with zero read-call setup allocation. Read-on-empty-ring must return incomplete before the write, then complete with the same payload and show higher read-call allocation. No timing sleep selects the path. A fixed cancellation deadline bounds failed calibration.
+3. One plain c1/c8 process is compared with one observed c1/c8 process on the same host, then one observed +512-byte allocation negative control. Original gate warmup, workload, all five complete samples, median/spread policy and budgets are untouched. Both negative-control cases must fail their median budget.
+
+Every sample reports original process bytes, disjoint observed setup bytes and the signed unattributed residual. The low/high contrast is the spread across all five samples, not a selected passing subset. Plain/observed medians and spreads quantify population differences without claiming that different-process scheduling is perfectly matched. The injected gate payload is outside the observed RPC-start boundary; its cost must not be relabeled as transport setup.
+
+If forced-path calibration fails, stop before the contrast. If the observed variation is insufficient, counter boundaries are unstable, or residual allocations cannot be explained, keep the result inconclusive. A correspondence between counters and bytes is a mechanism lead, not sufficient proof of the historical flake or permission to change production pooling/lifetimes. Do not repeat until green, expand budgets, remove samples, or call c1/c8 fixed from this diagnostic. The workflow retains an uninstrumented gate failure regardless of observed results.
+
+The exact validation branch starts one fixed pass after review. Evidence uses the previously reviewed bounded-part packaging, including full overflow retention. Neither workflow merges code or changes repository permissions.

@@ -418,7 +418,11 @@ internal sealed class SharedMemoryTransportConnection : ITransportConnection
         return new SharedMemoryTransportConnection(
             mapping,
             control,
+#if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+            AllocationPathObservation.Wrap(input, isClient),
+#else
             input,
+#endif
             output);
     }
 
