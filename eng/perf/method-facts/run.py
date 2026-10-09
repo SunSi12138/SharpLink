@@ -8,7 +8,13 @@ os.environ.update(DOTNET_CLI_TELEMETRY_OPTOUT='1',DOTNET_CLI_USE_MSBUILD_SERVER=
 
 def call(cmd,log,cwd=None,env=None):
  start=time.monotonic()
- with (out/log).open('w') as f:subprocess.run(list(map(str,cmd)),cwd=cwd,stdout=f,stderr=subprocess.STDOUT,check=True,env=env)
+ with (out/log).open('w') as f:
+  result=subprocess.run(list(map(str,cmd)),cwd=cwd,stdout=f,stderr=subprocess.STDOUT,env=env)
+  f.flush()
+  if result.returncode and 'NU1301' in (out/log).read_text() and 'Connection reset by peer' in (out/log).read_text():
+   f.write('\nRetrying one transient NuGet connection reset after 30 seconds.\n');f.flush();time.sleep(30)
+   result=subprocess.run(list(map(str,cmd)),cwd=cwd,stdout=f,stderr=subprocess.STDOUT,env=env)
+  result.check_returncode()
  with (out/'build-times.txt').open('a') as f:f.write(f'{log}: {time.monotonic()-start:.3f} seconds\n')
 
 def row(cmd,path,**metadata):
@@ -34,9 +40,6 @@ for arm in ('baseline','candidate'):
   call([dotnet,'build',path,*common],f'{prefix}build-{arm}.log')
   shutil.copytree(path/'bin/Release/net10.0',out/(prefix+arm),dirs_exist_ok=True)
   call([dotnet,'publish',path,*common,'-r','linux-x64','-p:PublishAot=true','-p:StripSymbols=false','-o',out/(prefix+'aot-'+arm)],f'{prefix}aot-{arm}.log')
- if arm=='candidate':
-  call([dotnet,'build',work/'test/SharpLink.UnitTests','-c','Release','-m:1','-nr:false','-p:UseSharedCompilation=false'],'tests-build.log')
-  call([dotnet,work/'test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll'],'tests.log')
  with (out/'source-sha256.txt').open('a') as f:
   source=work/'src/SharpLink.Server/SharpLinkServer.Interceptors.cs'
   f.write(f'{arm} {hashlib.sha256(source.read_bytes()).hexdigest()}\n')
@@ -74,3 +77,8 @@ call(['python3',repo/'eng/perf/method-facts/summarize.py',out/'rows.jsonl'],'sum
 for arm in ('baseline','candidate'):
  subprocess.run(['nm','-S','--size-sort',str(out/('aot-'+arm)/'SharpLink.Benchmarks')],stdout=(out/f'symbols-{arm}.txt').open('w'),check=True)
  with (out/'image-sizes.txt').open('a') as f:f.write(f'{arm} {(out/("aot-"+arm)/"SharpLink.Benchmarks").stat().st_size}\n')
+
+# Preserve independent timing/regression evidence even if a later test restore is unavailable.
+work=out/'work-candidate'
+call([dotnet,'build',work/'test/SharpLink.UnitTests','-c','Release','-m:1','-nr:false','-p:UseSharedCompilation=false'],'tests-build.log')
+call([dotnet,work/'test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll'],'tests.log')

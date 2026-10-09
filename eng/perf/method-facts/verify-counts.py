@@ -7,7 +7,7 @@ for r in rows:
  assert key not in keys,key
  keys.add(key)
  d=(2 if r['kind']=='OneWay' else 1+int(r['admission']))
- if r['arm']=='baseline':d+=int(r['intercepted'])
+ if r['arm']=='baseline' or not r['dynamic']:d+=int(r['intercepted'])
  assert r['Descriptors']==d,r
  assert r['Cancellations']==int(r['dynamic'] or r['cancellable']),r
  assert r['Invocations']==1,r
@@ -18,7 +18,7 @@ if len(sys.argv)>2:
  seen=set()
  for r in edges:
   key=tuple(r[k] for k in ('arm','profile','edge','oneWay','intercepted'));assert key not in seen,key;seen.add(key)
-  e=r['edge'];w=int(r['oneWay']);i=int(r['intercepted']);candidate=r['arm']=='candidate'
+  e=r['edge'];w=int(r['oneWay']);i=int(r['intercepted']);candidate=False  # Edge fixtures are static except early stale-module rejection.
   if e=='missing-service':d=0;v=0
   elif e in ('stale-module','expired-deadline'):d=w;v=0
   elif e=='admission-rejected':d=1;v=0

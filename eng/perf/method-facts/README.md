@@ -3,8 +3,9 @@
 Frozen base: `ca993a1aa89864755e10d1e35030a612b43d6069` (`dev`, includes #796; excludes unmerged #797).
 
 This validation branch does not apply a production change. `candidate.patch` is the smallest
-candidate: reuse the immutable descriptor already held by `SharpLinkServerInvocationContext`
-for module classification and telemetry. It leaves generated invocation dispatch, cancellation
+Candidate B: reuse the immutable descriptor already held by `SharpLinkServerInvocationContext`
+only inside the existing dynamic-module classification branch. The existing nullable descriptor
+then flows to telemetry exactly as at baseline. Static/plain tracked invocations are untouched. It leaves generated invocation dispatch, cancellation
 queries, admission resumes, registration ownership, unknown-method handling and stream error
 mapping intact. It adds no fields, generated/public entry points, or method registry.
 
@@ -43,18 +44,18 @@ configurations. No result grants merge approval.
 - `RpcMethodDescriptor` is 32 bytes and its nullable wrapper is 40 bytes on the measured x64
   runtime. This candidate avoids carrying a new wrapper through queue/decode/await state.
 
-## Characterization at the frozen base
+## Characterization at the frozen base (B)
 
 D = descriptor lookups; I = 0/1 for no/server interceptor. C is counted separately.
 
-| Successful path | Baseline D | Candidate D |
-| --- | ---: | ---: |
-| Unary / two-way stream, no admission | 1 + I | 1 |
-| Unary / two-way stream, immediate or queued admission | 2 + I | 2 |
-| OneWay, no or immediate admission | 2 + I | 2 |
-| OneWay, queued admission resume | 3 + I | 3 |
+| Successful path | Baseline D | B static D | B dynamic D |
+| --- | ---: | ---: | ---: |
+| Unary / two-way stream, no admission | 1 + I | 1 + I | 1 |
+| Unary / two-way stream, immediate or queued admission | 2 + I | 2 + I | 2 |
+| OneWay, no or immediate admission | 2 + I | 2 + I | 2 |
+| OneWay, queued admission resume | 3 + I | 3 + I | 3 |
 
-Static/dynamic registration and telemetry listeners do not change these D counts. C = 1 if
+Telemetry listeners do not change these D counts. B changes only dynamic intercepted classification. C = 1 if
 wire Cancellable or dynamic module, otherwise 0, on paths reaching invocation setup.
 
 Admission rejection/selector failure uses D=1, C=0 and invokes nothing. Early expired/draining
@@ -81,3 +82,13 @@ The V2 `unknown-method` counting row is specifically a custom stub's missing des
 conservative fallback (and a controlled generic failure for two-way), not a check of a generated
 unknown method's exact wire `Unimplemented` payload. Generated dispatch and exact unknown-method
 wire semantics remain covered by the repository protocol/early-rejection tests.
+
+## B is the final bounded fallback
+
+Candidate A's wider context helper is preserved independently on
+`validation/732-method-facts`; do not combine A and B measurements. A removed static-interceptor
+queries too, but its local controls exposed added common-path work and did not establish a
+reliable net win. B changes one existing dynamic-only resolution statement (three lines instead
+of one), with no new helper, fields, generated ABI, cache, or registration table. New paired B
+measurements and static/dynamic controls decide adoption. If this bounded fallback does not
+show repeatable useful gains, stop without a production optimization.

@@ -14,7 +14,7 @@ public partial class SharpLinkServerInvocationTests
     [Arguments(RpcMethodKind.ServerStreaming, false)]
     [Arguments(RpcMethodKind.DuplexStreaming, false)]
     [Arguments(RpcMethodKind.Unary, true)]
-    public async Task InvocationShouldReuseCapturedContextDescriptor(RpcMethodKind kind, bool missing)
+    public async Task StaticInvocationShouldKeepExistingDescriptorQueries(RpcMethodKind kind, bool missing)
     {
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -39,8 +39,8 @@ public partial class SharpLinkServerInvocationTests
                 typeof(object), stub, new object(), ownsService: false);
             await InvokeWithDescriptorContext(server, registration, connection, context);
 
-            Ensure(stub.LookupCount == 1,
-                "invocation telemetry must reuse the context descriptor, including conservative fallback");
+            Ensure(stub.LookupCount == 2,
+                "static invocation metadata queries must remain unchanged, including conservative fallback");
             Ensure(context.Method == (missing ? descriptor with { Kind = RpcMethodKind.Unary } : descriptor),
                 "invocation must keep the exact immutable context descriptor");
             Ensure(context.Status == SharpLinkInvocationStatus.Succeeded,

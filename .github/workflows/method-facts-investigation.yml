@@ -1,7 +1,7 @@
-name: Method Facts Investigation
+name: Method Facts Dynamic-only Investigation
 on:
   push:
-    branches: ['validation/732-method-facts']
+    branches: ['validation/732-module-method-facts']
     paths:
       - 'eng/perf/method-facts/**'
       - 'test/SharpLink.MethodFactsEvidence/**'
@@ -39,7 +39,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: method-facts-evidence
+          name: method-facts-module-evidence
           path: artifacts/method-facts-evidence.zip
           retention-days: 30
           if-no-files-found: error
