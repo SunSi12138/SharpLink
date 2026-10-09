@@ -86,13 +86,15 @@ jobs:
                     fi
                   done
                 done
-                for slot in baseA baseB; do
-                  output="$ROOT/raw/$mode-$transport-ClientMulti2x1024x4Gated-$slot-r$rep.txt"
-                  if [[ "$mode" == native ]]; then
-                    "$ROOT/builds/native-base/SharpLink.Benchmarks" "$transport" ClientMulti2x1024x4Gated 40 300 "$BASE_SHA" "$output" >> "$ROOT/probe.log"
-                  else
-                    dotnet "$ROOT/builds/jit-base/SharpLink.Benchmarks.dll" "$transport" ClientMulti2x1024x4Gated 40 300 "$BASE_SHA" "$output" >> "$ROOT/probe.log"
-                  fi
+                for aaScenario in ClientMulti2x1024x4Gated ClientMulti2x1024x4ConcurrentGated; do
+                  for slot in baseA baseB; do
+                    output="$ROOT/raw/$mode-$transport-$aaScenario-$slot-r$rep.txt"
+                    if [[ "$mode" == native ]]; then
+                      "$ROOT/builds/native-base/SharpLink.Benchmarks" "$transport" "$aaScenario" 40 300 "$BASE_SHA" "$output" >> "$ROOT/probe.log"
+                    else
+                      dotnet "$ROOT/builds/jit-base/SharpLink.Benchmarks.dll" "$transport" "$aaScenario" 40 300 "$BASE_SHA" "$output" >> "$ROOT/probe.log"
+                    fi
+                  done
                 done
               done
             done
@@ -115,20 +117,24 @@ jobs:
               assert d['transport']==transport and d['scenario']==scenario,path
               assert int(d['measuredOperations'])==300,path
               docs[(mode,transport,scenario,revision,rep)]=d
-          if len(docs)!=160:
-              raise SystemExit(f'expected 160 exact-work reports, got {len(docs)}')
+          if len(docs)!=192:
+              raise SystemExit(f'expected 192 exact-work reports, got {len(docs)}')
           by_group=defaultdict(dict)
           for (mode,tr,scenario,rev,rep),d in docs.items():
               by_group[mode,tr,scenario,rep][rev]=d
           rows=[]
           for (mode,tr,sc,rep),group in sorted(by_group.items()):
-              kind='A/B' if 'base' in group else 'A/A'
-              a,b=(group['base'],group['candidate']) if kind=='A/B' else (group['baseA'],group['baseB'])
-              pct=lambda field:100*(float(b[field])/float(a[field])-1)
-              rows.append((mode,tr,sc,kind,rep,pct('throughputOperationsPerSecond'),
-                           pct('cpuMicrosecondsPerOperation'),
-                           float(b['allocationBytesPerOperation'])-float(a['allocationBytesPerOperation']),
-                           pct('p99Microseconds')))
+              for kind,first,second in (('A/B','base','candidate'),('A/A','baseA','baseB')):
+                  if first not in group and second not in group:
+                      continue
+                  if first not in group or second not in group:
+                      raise SystemExit(f'Incomplete pair {mode}/{tr}/{sc}/{rep}/{kind}')
+                  a,b=group[first],group[second]
+                  pct=lambda field:100*(float(b[field])/float(a[field])-1)
+                  rows.append((mode,tr,sc,kind,rep,pct('throughputOperationsPerSecond'),
+                               pct('cpuMicrosecondsPerOperation'),
+                               float(b['allocationBytesPerOperation'])-float(a['allocationBytesPerOperation']),
+                               pct('p99Microseconds')))
           lines=['# #737 equal-work JIT / NativeAOT evidence','',
                  '40 warmup and exactly 300 measured streams per process; 4 balanced AB/BA repeats.',
                  'A/A controls replay identical base binary to estimate run-to-run noise.',
