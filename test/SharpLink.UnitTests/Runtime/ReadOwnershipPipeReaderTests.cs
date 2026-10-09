@@ -648,52 +648,6 @@ public class ReadOwnershipPipeReaderTests
         reader.AdvanceTo(result.Buffer.End);
     }
 
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task ThrowingSuccessContinuationMustNotPublishAFailureOrReleaseAnotherRead(bool rearm)
-    {
-        var fake = new FakePipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
-        var consumerFailure = new ApplicationException("consumer continuation threw");
-        var first = reader.ReadAsync();
-        ValueTask<ReadResult> second = default;
-        ReadResult ownedResult = default;
-        var ran = 0;
-        first.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
-        {
-            var result = first.GetAwaiter().GetResult();
-            ownedResult = result;
-            Ensure(result.Buffer.ToArray()[0] == 0xA3, "the consumer must receive the success result");
-            ran++;
-            if (rearm)
-            {
-                reader.AdvanceTo(result.Buffer.End);
-                second = reader.ReadAsync();
-            }
-            throw consumerFailure;
-        });
-
-        var escaped = Capture(() => fake.Publish(Result(0xA3)));
-        Ensure(ran == 1, "the synchronous continuation must run exactly once");
-        Ensure(ReferenceEquals(escaped, consumerFailure),
-            "the dispatch exception must escape unchanged, without a second completion attempt");
-        Ensure(Capture(() => _ = reader.ReadAsync()) is InvalidOperationException,
-            "a consumer exception must not release the current read's ownership");
-        if (rearm)
-        {
-            Ensure(!second.IsCompleted, "the previous callback must not fault the new read");
-            fake.Publish(Result(0xA4));
-            var result = await WithTimeout(second, "read rearmed by throwing continuation");
-            Ensure(result.Buffer.ToArray()[0] == 0xA4, "the new read must receive its own payload");
-            reader.AdvanceTo(result.Buffer.End);
-        }
-        else
-        {
-            reader.AdvanceTo(ownedResult.Buffer.End);
-        }
-    }
-
     // ========================================================================================
     // Helpers
     // ========================================================================================

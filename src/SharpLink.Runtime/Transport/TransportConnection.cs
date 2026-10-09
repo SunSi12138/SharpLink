@@ -101,7 +101,7 @@ internal class StreamTransportConnection : ITransportConnection
 /// <summary>
 /// Issue #740 <b>Variant D</b> - LOCAL RESEARCH ONLY, never shipped.
 /// <para>
-/// Semantics are intended to be identical to the production
+/// Ownership and result semantics match the production
 /// <c>ReadOwnershipPipeReader</c>: a <see cref="ReadResult"/> must be released before
 /// <see cref="PipeReader.CompleteAsync(Exception?)"/> is allowed to complete the inner reader,
 /// and a suspended read that faults or cancels must release ownership exactly once.
@@ -115,13 +115,15 @@ internal class StreamTransportConnection : ITransportConnection
 /// compiler-generated state-machine box (measured: exactly one 248-byte object). Variant D
 /// instead makes this reader its own <see cref="IValueTaskSource{T}"/>, reusing one
 /// <see cref="ManualResetValueTaskSourceCore{T}"/> notification per reader and forwarding the
-/// inner completion through a single cached delegate, so a successful suspension allocates nothing.
+/// inner completion through a single cached delegate. Successful default-context await does not
+/// allocate per read; explicit context/scheduler registrations and raw queued-callback backlog
+/// use separately measured BCL storage. Per-reader setup allocations are reported separately.
 /// Both success and failure state are cleared by their single GetResult observation, which
 /// invalidates that arm's token even when no later read suspends. Successful buffer ownership
 /// remains active until AdvanceTo independently of the consumed source state.
 /// </para>
 /// </summary>
-internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<ReadResult>
+internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<ReadResult>, IThreadPoolWorkItem
 {
     private const int ReadStatusMask = 3;
     private const int ReadSourceActiveMask = 4;
@@ -135,7 +137,10 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
     private static readonly ContextCallback CompleteReadInContext =
         static state => ((ReadOwnershipPipeReader)state!).CompleteInnerRead();
 
-    // The core carries notification only, never the buffer or exception. Under _gate, completion
+    // Ordinary await reuses this notification. Explicit context/scheduler registrations use a
+    // BCL Task notification, whose separately measured allocation is outside the zero-allocation
+    // ordinary-await path. Neither notification carries the read buffer or read exception.
+    // Under _gate, completion
     // detaches it by value before dispatching outside the gate. A reentrant consumer can therefore
     // arm another read without resetting a core whose SetResult/continuation is still on the stack.
     private ManualResetValueTaskSourceCore<bool> _readNotification;
@@ -146,6 +151,12 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
     private int _readState;
     private short _readVersion;
     private bool _readContinuationRegistered;
+    private bool _readRunContinuationsAsynchronously;
+    private TaskCompletionSource? _readTaskNotification;
+    private readonly LateReadNotification _lateNotification = new();
+    private ExecutionContext? _queuedPublicationContext;
+    private static readonly ContextCallback PublishQueuedInContext =
+        static state => ((ReadOwnershipPipeReader)state!).PublishQueuedRead();
 
     private ValueTaskSourceStatus ReadStatus => (ValueTaskSourceStatus)(_readState & ReadStatusMask);
     private bool ReadSourceActive => (_readState & ReadSourceActiveMask) != 0;
@@ -165,8 +176,8 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _onInnerCompleted = OnInnerReadCompleted;
 #if SHARPLINK_ISSUE740_VARIANT_D_ASYNC_CONTINUATIONS
-        // Match the production wrapper's Task-like scheduling instead of resuming the consumer
-        // inline on whichever thread completed the inner read.
+        // Research-only dispatch policy: queue pending notifications even where the production
+        // Task-backed wrapper could inline. Measure this separately from the default policy.
         RunContinuationsAsynchronously = true;
 #endif
     }
@@ -249,7 +260,7 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         // ownership; no second gate is needed. Initialize everything before publishing Pending.
         var version = unchecked(++_readVersion);
         _readContinuationRegistered = false;
-        _readNotification.RunContinuationsAsynchronously = RunContinuationsAsynchronously;
+        _readRunContinuationsAsynchronously = RunContinuationsAsynchronously;
         _pendingInner = read;
         // The production async wrapper resumes its state machine under the read caller's
         // context, even when a consumer uses UnsafeOnCompleted. Capture has no per-read
@@ -294,8 +305,8 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
     }
 
     /// <summary>
-    /// Forwards the inner completion to the reused source. Runs on whichever thread completed the
-    /// inner read, exactly like the continuation of the production wrapper's <c>await</c>.
+    /// Consumes the inner completion under the read caller's ExecutionContext, then publishes
+    /// through the selected notification policy without running consumer code under the gate.
     /// </summary>
     private void OnInnerReadCompleted()
     {
@@ -335,28 +346,87 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         PublishRead(result, null);
     }
 
-    private void PublishRead(ReadResult result, ExceptionDispatchInfo? error)
+    private void PublishRead(ReadResult result, ExceptionDispatchInfo? error, bool fromQueue = false)
     {
-        ManualResetValueTaskSourceCore<bool> notification;
+        ManualResetValueTaskSourceCore<bool> notification = default;
+        TaskCompletionSource? taskNotification = null;
+        var queuePublication = false;
         lock (_gate)
         {
             _readResult = result;
             _readError = error;
-            var status = error is null ? ValueTaskSourceStatus.Succeeded
-                : error.SourceException is OperationCanceledException ? ValueTaskSourceStatus.Canceled
-                : ValueTaskSourceStatus.Faulted;
-            Volatile.Write(ref _readState,
-                ((ushort)_readVersion << ReadVersionShift) | ReadSourceActiveMask | (int)status);
-            // An observer-free signal has no continuation/context to detach or notify. A later
-            // registration observes the completed status and uses its own local completed core.
-            if (!_readContinuationRegistered)
-                return;
-            notification = _readNotification;
-            _readNotification = default;
+            if (_readContinuationRegistered && _readTaskNotification is null && !fromQueue &&
+                (_readRunContinuationsAsynchronously || Task.CurrentId is not null ||
+                 SynchronizationContext.Current is { } context && context.GetType() != typeof(SynchronizationContext) ||
+                 !System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack()))
+            {
+                // Keep the source Pending until this reusable work item dequeues. Consequently
+                // GetResult cannot enable a new arm while these fields still belong to the queue.
+                _queuedPublicationContext = ExecutionContext.Capture();
+                queuePublication = true;
+            }
+            else
+            {
+                var status = error is null ? ValueTaskSourceStatus.Succeeded
+                    : error.SourceException is OperationCanceledException ? ValueTaskSourceStatus.Canceled
+                    : ValueTaskSourceStatus.Faulted;
+                Volatile.Write(ref _readState,
+                    ((ushort)_readVersion << ReadVersionShift) | ReadSourceActiveMask | (int)status);
+                if (!_readContinuationRegistered)
+                    return;
+                taskNotification = _readTaskNotification;
+                _readTaskNotification = null;
+                notification = _readNotification;
+                _readNotification = default;
+            }
         }
-        // Only this detached value is completed. It cannot be reused or retain a consumer's
-        // continuation/context on the reader after dispatch, even if that consumer throws.
-        notification.SetResult(true);
+        if (queuePublication)
+            ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
+        else if (taskNotification is not null)
+            taskNotification.SetResult();
+        else
+            DispatchNotification(ref notification);
+    }
+
+    void IThreadPoolWorkItem.Execute()
+    {
+        var context = _queuedPublicationContext;
+        _queuedPublicationContext = null;
+        if (context is null)
+            PublishQueuedRead();
+        else
+            ExecutionContext.Run(context, PublishQueuedInContext, this);
+    }
+
+    private void PublishQueuedRead()
+    {
+        ReadResult result;
+        ExceptionDispatchInfo? error;
+        lock (_gate)
+        {
+            result = _readResult;
+            error = _readError;
+            _readResult = default;
+            _readError = null;
+        }
+        // The queued payload/context is detached before completed status enables consumption.
+        // No reader field is touched after a consumer can advance and rearm.
+        PublishRead(result, error, fromQueue: true);
+    }
+
+    private static void DispatchNotification(ref ManualResetValueTaskSourceCore<bool> notification)
+    {
+        try
+        {
+            notification.SetResult(true);
+        }
+        catch (Exception exception)
+        {
+            // This is a consumer/scheduling error, never an inner read failure. Reporting is
+            // deliberately outside the reader and cannot release or overwrite a reentrant arm.
+            var error = ExceptionDispatchInfo.Capture(exception);
+            ThreadPool.QueueUserWorkItem(static captured => captured.Throw(), error, preferLocal: false);
+        }
     }
 
     ReadResult IValueTaskSource<ReadResult>.GetResult(short token)
@@ -401,6 +471,7 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         ValueTaskSourceOnCompletedFlags flags)
     {
         ArgumentNullException.ThrowIfNull(continuation);
+        var useTaskNotification = RequiresTaskNotification(flags);
         lock (_gate)
         {
             ValidateReadToken(token);
@@ -409,18 +480,77 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
             _readContinuationRegistered = true;
             if (ReadStatus == ValueTaskSourceStatus.Pending)
             {
-                // Completion cannot detach this pending core while the gate is held, so this
-                // only registers; it never invokes arbitrary consumer code under the gate.
-                _readNotification.OnCompleted(continuation, state, _readNotification.Version, flags);
+                if (useTaskNotification)
+                {
+                    var options = _readRunContinuationsAsynchronously
+                        ? TaskCreationOptions.RunContinuationsAsynchronously : TaskCreationOptions.None;
+                    _readTaskNotification = new TaskCompletionSource(options);
+                    RegisterTaskNotification(_readTaskNotification.Task, continuation, state, flags);
+                }
+                else
+                {
+                    // Publication cannot detach this pending core under the gate. Its async
+                    // policy is implemented by our reusable publication work item, not a second
+                    // allocating queue operation in the core.
+                    _readNotification.OnCompleted(continuation, state, _readNotification.Version, flags);
+                }
                 return;
             }
         }
 
-        // Preserve the BCL's queued late-registration behavior and context/scheduler handling.
-        // This local completed signal cannot retain its continuation on the long-lived reader.
-        var completed = new ManualResetValueTaskSourceCore<bool>();
-        completed.SetResult(true);
-        completed.OnCompleted(continuation, state, completed.Version, flags);
+        if (useTaskNotification || !_lateNotification.TryQueue(continuation, state, flags))
+        {
+            // Normal await releases the cached slot before it can consume/rearm. A raw consumer
+            // may instead poll GetResult while a notification remains queued; preserve every
+            // such callback with independent BCL storage rather than overwrite a bounded slot.
+            RegisterTaskNotification(Task.CompletedTask, continuation, state, flags);
+        }
+    }
+
+    private static bool RequiresTaskNotification(ValueTaskSourceOnCompletedFlags flags)
+        => (flags & ValueTaskSourceOnCompletedFlags.FlowExecutionContext) != 0 ||
+            (flags & ValueTaskSourceOnCompletedFlags.UseSchedulingContext) != 0 &&
+            (SynchronizationContext.Current is { } context && context.GetType() != typeof(SynchronizationContext) ||
+             TaskScheduler.Current != TaskScheduler.Default);
+
+    private static void RegisterTaskNotification(
+        Task task, Action<object?> continuation, object? state, ValueTaskSourceOnCompletedFlags flags)
+    {
+        // Keep this capturing adapter in a cold helper: ordinary await must not allocate a
+        // display class. The BCL owns scheduler dispatch, context flow and callback containment.
+        Action callback = () => continuation(state);
+        var awaiter = task.ConfigureAwait((flags & ValueTaskSourceOnCompletedFlags.UseSchedulingContext) != 0)
+            .GetAwaiter();
+        if ((flags & ValueTaskSourceOnCompletedFlags.FlowExecutionContext) != 0)
+            awaiter.OnCompleted(callback);
+        else
+            awaiter.UnsafeOnCompleted(callback);
+    }
+
+    private sealed class LateReadNotification : IThreadPoolWorkItem
+    {
+        private ManualResetValueTaskSourceCore<bool> _notification;
+        private int _queued;
+
+        internal bool TryQueue(
+            Action<object?> continuation, object? state, ValueTaskSourceOnCompletedFlags flags)
+        {
+            if (Interlocked.CompareExchange(ref _queued, 1, 0) != 0)
+                return false;
+            _notification.OnCompleted(continuation, state, _notification.Version, flags);
+            ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
+            return true;
+        }
+
+        public void Execute()
+        {
+            var notification = _notification;
+            _notification = default;
+            Volatile.Write(ref _queued, 0);
+            // Release the slot before arbitrary code; an inline rearm can safely reuse it while
+            // this detached notification is still on the stack. No slot writes follow dispatch.
+            DispatchNotification(ref notification);
+        }
     }
 
     private void ValidateReadToken(short token)
