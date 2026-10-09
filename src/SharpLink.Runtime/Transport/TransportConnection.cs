@@ -471,7 +471,6 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         ValueTaskSourceOnCompletedFlags flags)
     {
         ArgumentNullException.ThrowIfNull(continuation);
-        var useTaskNotification = RequiresTaskNotification(flags);
         lock (_gate)
         {
             ValidateReadToken(token);
@@ -480,7 +479,9 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
             _readContinuationRegistered = true;
             if (ReadStatus == ValueTaskSourceStatus.Pending)
             {
-                if (useTaskNotification)
+                // A contended gate can pump STA messages before it is acquired. Classify the
+                // current context here, not before Enter, and avoid scanning known defaults twice.
+                if (RequiresTaskNotification(flags))
                 {
                     var options = _readRunContinuationsAsynchronously
                         ? TaskCreationOptions.RunContinuationsAsynchronously : TaskCreationOptions.None;
@@ -492,13 +493,16 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
                     // Publication cannot detach this pending core under the gate. Its async
                     // policy is implemented by our reusable publication work item, not a second
                     // allocating queue operation in the core.
-                    _readNotification.OnCompleted(continuation, state, _readNotification.Version, flags);
+                    _readNotification.OnCompleted(continuation, state, _readNotification.Version,
+                        ValueTaskSourceOnCompletedFlags.None);
                 }
                 return;
             }
         }
 
-        if (useTaskNotification || !_lateNotification.TryQueue(continuation, state, flags))
+        // Reclassify after releasing the gate on the late path. Only a proven ordinary core
+        // drops the redundant context scan; every BCL route retains the caller's original flags.
+        if (RequiresTaskNotification(flags) || !_lateNotification.TryQueue(continuation, state))
         {
             // Normal await releases the cached slot before it can consume/rearm. A raw consumer
             // may instead poll GetResult while a notification remains queued; preserve every
@@ -532,12 +536,12 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         private ManualResetValueTaskSourceCore<bool> _notification;
         private int _queued;
 
-        internal bool TryQueue(
-            Action<object?> continuation, object? state, ValueTaskSourceOnCompletedFlags flags)
+        internal bool TryQueue(Action<object?> continuation, object? state)
         {
             if (Interlocked.CompareExchange(ref _queued, 1, 0) != 0)
                 return false;
-            _notification.OnCompleted(continuation, state, _notification.Version, flags);
+            _notification.OnCompleted(continuation, state, _notification.Version,
+                ValueTaskSourceOnCompletedFlags.None);
             ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
             return true;
         }

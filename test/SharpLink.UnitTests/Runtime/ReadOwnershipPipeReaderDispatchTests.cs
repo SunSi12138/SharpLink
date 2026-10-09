@@ -102,16 +102,19 @@ public class ReadOwnershipPipeReaderDispatchTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task OrdinaryQueuedRegistrationMustNotAllocateOnTheRegisteringThread(bool late)
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task OrdinaryQueuedRegistrationMustNotAllocateOnTheRegisteringThread(
+        bool late, bool useSchedulingContext)
     {
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ThreadPool.UnsafeQueueUserWorkItem(_ =>
         {
             try
             {
-                MeasureQueuedRegistration(late);
+                MeasureQueuedRegistration(late, useSchedulingContext);
                 completed.SetResult();
             }
             catch (Exception error)
@@ -122,7 +125,115 @@ public class ReadOwnershipPipeReaderDispatchTests
         await completed.Task.WaitAsync(Timeout);
     }
 
-    private static void MeasureQueuedRegistration(bool late)
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task BaseSynchronizationContextMustRemainAnOrdinaryRegistration(bool late)
+    {
+        var inner = new ControlledReader();
+        var reader = new ReadOwnershipPipeReader(inner);
+        var read = reader.ReadAsync();
+        if (late) inner.Publish();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var previousContext = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(new SynchronizationContext());
+            // Plain await requests scheduling-context capture, but the exact base context is
+            // a default, not a user dispatcher. Both pending and late ordinary cores ignore it.
+            read.GetAwaiter().UnsafeOnCompleted(() =>
+            {
+                try
+                {
+                    Ensure(SynchronizationContext.Current is null,
+                        "the base synchronization context must not be captured as a dispatcher");
+                    var result = read.GetAwaiter().GetResult();
+                    reader.AdvanceTo(result.Buffer.End);
+                    completed.SetResult();
+                }
+                catch (Exception error)
+                {
+                    completed.SetException(error);
+                }
+            });
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+        if (!late) inner.Publish();
+        await completed.Task.WaitAsync(Timeout);
+    }
+
+    [Test]
+    public async Task RegistrationMustClassifyContextAfterAContendedGate()
+    {
+        var inner = new ControlledReader();
+        var reader = new ReadOwnershipPipeReader(inner);
+        var read = reader.ReadAsync();
+        var fields = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var gate = (Lock)typeof(ReadOwnershipPipeReader).GetField("_gate", fields)!.GetValue(reader)!;
+        var taskNotification = typeof(ReadOwnershipPipeReader).GetField("_readTaskNotification", fields)!;
+        using var held = new ManualResetEvent(false);
+        using var release = new ManualResetEvent(false);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Exception? holderError = null;
+        var holder = new Thread(() =>
+        {
+            try
+            {
+                lock (gate)
+                {
+                    held.Set();
+                    Ensure(release.WaitOne(Timeout), "the intercepted wait must release the gate holder");
+                }
+            }
+            catch (Exception error)
+            {
+                holderError = error;
+            }
+        })
+        { IsBackground = true };
+        holder.Start();
+        var previousContext = SynchronizationContext.Current;
+        var context = new ContextChangingWait(release, gate);
+        try
+        {
+            Ensure(held.WaitOne(Timeout), "the gate must be held before registration");
+            SynchronizationContext.SetSynchronizationContext(context);
+            read.GetAwaiter().UnsafeOnCompleted(() =>
+            {
+                try
+                {
+                    var result = read.GetAwaiter().GetResult();
+                    reader.AdvanceTo(result.Buffer.End);
+                    completed.SetResult();
+                }
+                catch (Exception error)
+                {
+                    completed.SetException(error);
+                }
+            });
+            Ensure(context.ChangedBeforeAcquisition && context.Calls > 0,
+                "the contended Enter must actually execute context-changing user code");
+            Ensure(SynchronizationContext.Current is null, "the wait must leave an ordinary context");
+            // A stale pre-gate predicate would choose allocating Task storage for the custom
+            // entry context. The ordinary route must instead reflect the context after waiting.
+            Ensure(taskNotification.GetValue(reader) is null,
+                "notification selection must use the context after acquiring the gate");
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+            release.Set();
+            Ensure(holder.Join(Timeout), "the gate holder must exit");
+        }
+        Ensure(holderError is null, $"the gate holder failed: {holderError}");
+        inner.Publish();
+        await completed.Task.WaitAsync(Timeout);
+    }
+
+    private static void MeasureQueuedRegistration(bool late, bool useSchedulingContext)
     {
         Ensure(Task.CurrentId is null && SynchronizationContext.Current is null,
             "the measurement requires an ordinary pool callback, not a producer Task or custom context");
@@ -167,7 +278,7 @@ public class ReadOwnershipPipeReaderDispatchTests
             done.Reset();
             read = reader.ReadAsync();
             if (late) inner.Publish();
-            read.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(continuation);
+            read.ConfigureAwait(useSchedulingContext).GetAwaiter().UnsafeOnCompleted(continuation);
             if (!late) inner.Publish();
             Ensure(done.Wait(Timeout), "queued registration must dispatch without a lost wakeup");
         }
@@ -176,6 +287,31 @@ public class ReadOwnershipPipeReaderDispatchTests
     private static void Ensure(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private sealed class ContextChangingWait : SynchronizationContext
+    {
+        private readonly ManualResetEvent _release;
+        private readonly Lock _gate;
+
+        internal ContextChangingWait(ManualResetEvent release, Lock gate)
+        {
+            _release = release;
+            _gate = gate;
+            SetWaitNotificationRequired();
+        }
+
+        internal int Calls { get; private set; }
+        internal bool ChangedBeforeAcquisition { get; private set; }
+
+        public override int Wait(IntPtr[] waitHandles, bool waitAll, int millisecondsTimeout)
+        {
+            Calls++;
+            ChangedBeforeAcquisition |= !_gate.IsHeldByCurrentThread;
+            SetSynchronizationContext(null);
+            _release.Set();
+            return base.Wait(waitHandles, waitAll, millisecondsTimeout);
+        }
     }
 
     private sealed class ControlledReader : PipeReader, IValueTaskSource<ReadResult>
