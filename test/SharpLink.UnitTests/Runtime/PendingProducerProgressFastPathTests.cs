@@ -192,6 +192,47 @@ public class PendingProducerProgressFastPathTests
             "terminal cleanup must release the pending capacity exactly once");
     }
 
+    [Test]
+    public void NoDeadlineProducerProgressMustNotAllocate()
+    {
+        using var table = PendingRequestTableTestFixture.Create(capacity: 1);
+        var operation = table.Rent(
+            Int32Codec.Instance,
+            PendingCallKind.ClientStreaming,
+            default,
+            CancellationToken.None,
+            out var requestId,
+            hasResponsePayload: true,
+            responseNullable: false);
+        Ensure(table.TryGetProducerDeadline(requestId, out var deadline) && !deadline.HasValue,
+            "this allocation control must use the actual no-deadline producer path");
+
+        for (var i = 0; i < 10_000; i++)
+            Ensure(table.TryAcceptProducerProgress(requestId, deadline),
+                "warmup must keep accepting the live producer");
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var accepted = 0;
+        for (var i = 0; i < 100_000; i++)
+        {
+            if (table.TryAcceptProducerProgress(requestId, deadline))
+                accepted++;
+        }
+        var bytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        Ensure(accepted == 100_000, "every no-deadline producer check must succeed");
+        Ensure(bytes == 0, $"no-deadline fast-path checks allocated {bytes} bytes");
+
+        Ensure(table.TryComplete(requestId, PendingCallCompletionReason.ConnectionClosed),
+            "the allocation control must release its only slot");
+        try
+        {
+            _ = operation.AsValueTask().GetAwaiter().GetResult();
+        }
+        catch (SharpLinkException)
+        {
+        }
+    }
+
     private sealed class BlockingCompletionOwner : IPendingCallOwner, IDisposable
     {
         internal readonly ManualResetEventSlim Entered = new();
