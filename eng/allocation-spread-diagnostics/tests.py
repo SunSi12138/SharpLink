@@ -140,6 +140,16 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual(original["cases"][0]["spreadBytesPerOperation"], 51)
 
 
+class WorkflowTests(unittest.TestCase):
+    def test_runner_directory_is_resolved_only_in_setup_step(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/allocation-spread-diagnostics.yml").read_text()
+        before_steps = workflow.split("    steps:", 1)[0]
+        self.assertNotIn("runner.", before_steps)
+        setup = workflow.split("      - name: Install pinned build SDK and diagnostic runtime", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("        env:\n          DOTNET_INSTALL_DIR: ${{ runner.temp }}/allocation-dotnet", setup)
+        self.assertIn("test \"$(cat artifacts/allocation-spread-setup/sdk-version.txt)\" = '10.0.102'", workflow)
+
+
 class PackagingTests(unittest.TestCase):
     def test_roundtrip_hashes_and_part_bounds(self):
         with tempfile.TemporaryDirectory() as temporary:
