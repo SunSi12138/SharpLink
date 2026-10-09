@@ -1,0 +1,160 @@
+name: Allocation Spread Diagnostics
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['validation/387-allocation-spread-diagnostics']
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout reviewed validation revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install pinned build SDK and diagnostic runtime
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            10.0.102
+            10.0.401
+
+      - name: Verify exact build SDK before compilation
+        run: |
+          mkdir -p artifacts/allocation-spread-setup
+          dotnet --version | tee artifacts/allocation-spread-setup/sdk-version.txt
+          test "$(cat artifacts/allocation-spread-setup/sdk-version.txt)" = '10.0.102'
+
+      - name: Build unchanged gate and diagnostic probe
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        run: |
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -v minimal
+          dotnet build eng/allocation-spread-diagnostics/TraceProbe.csproj -c Release -v minimal
+          dotnet tool install dotnet-trace --version 10.0.745401 --tool-path "$RUNNER_TEMP/allocation-trace"
+          python3 -m unittest discover -s eng/allocation-spread-diagnostics -p 'tests.py'
+
+      - name: Collect one fixed diagnostic pass
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        run: >-
+          python3 eng/allocation-spread-diagnostics/run.py
+          --trace "$RUNNER_TEMP/allocation-trace/dotnet-trace"
+          --output artifacts/allocation-spread-diagnostics
+
+      - name: Package complete evidence into bounded parts
+        if: always() && hashFiles('artifacts/allocation-spread-diagnostics/summary.json') != ''
+        run: >-
+          python3 eng/allocation-spread-diagnostics/package.py
+          --source artifacts/allocation-spread-diagnostics
+          --output artifacts/allocation-spread-parts
+
+      - name: Preserve evidence index and conclusions
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-meta-${{ github.sha }}
+          path: |
+            artifacts/allocation-spread-setup/sdk-version.txt
+            artifacts/allocation-spread-parts/*.json
+            artifacts/allocation-spread-parts/overflow.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 00
+        if: always() && hashFiles('artifacts/allocation-spread-parts/part-00.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-part-00-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/part-00.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 01
+        if: always() && hashFiles('artifacts/allocation-spread-parts/part-01.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-part-01-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/part-01.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 02
+        if: always() && hashFiles('artifacts/allocation-spread-parts/part-02.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-part-02-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/part-02.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 03
+        if: always() && hashFiles('artifacts/allocation-spread-parts/part-03.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-part-03-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/part-03.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 04
+        if: always() && hashFiles('artifacts/allocation-spread-parts/part-04.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-part-04-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/part-04.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 05
+        if: always() && hashFiles('artifacts/allocation-spread-parts/part-05.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-part-05-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/part-05.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 06
+        if: always() && hashFiles('artifacts/allocation-spread-parts/part-06.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-part-06-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/part-06.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve evidence part 07
+        if: always() && hashFiles('artifacts/allocation-spread-parts/part-07.bin') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-part-07-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/part-07.bin
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve full overflow archive without discarding evidence
+        if: always() && hashFiles('artifacts/allocation-spread-parts/overflow.txt') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-spread-overflow-${{ github.sha }}
+          path: artifacts/allocation-spread-parts/evidence.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
