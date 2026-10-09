@@ -103,6 +103,9 @@ internal class StreamTransportConnection : ITransportConnection
 /// <c>ReadOwnershipPipeReader</c>: a <see cref="ReadResult"/> must be released before
 /// <see cref="PipeReader.CompleteAsync(Exception?)"/> is allowed to complete the inner reader,
 /// and a suspended read that faults or cancels must release ownership exactly once.
+/// A failed suspended read retains a separate source lease until its result is observed, so a
+/// new read cannot invalidate an unpublished or unobserved failure. This lease does not delay
+/// transport completion and does not require <see cref="PipeReader.AdvanceTo(SequencePosition)"/>.
 /// </para>
 /// <para>
 /// The difference is <i>how</i> a suspended read is represented. Production returns the result of
@@ -129,6 +132,7 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
     private TaskCompletionSource? _readReleased;
     private Task? _completionTask;
     private bool _readActive;
+    private bool _readFaultPending;
     private int _completionRequested;
 
     internal ReadOwnershipPipeReader(PipeReader inner)
@@ -141,6 +145,9 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         _readSource.RunContinuationsAsynchronously = true;
 #endif
     }
+
+    // Deterministic test seam for the ownership-release / source-publication boundary.
+    internal Action? BeforeReadFailurePublication { get; set; }
 
     internal bool CompletionRequested => Volatile.Read(ref _completionRequested) != 0;
 
@@ -218,11 +225,8 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         if (read.IsCompletedSuccessfully)
             return read;
 
-        // Arm the reusable completion owner. TryAcquireRead guarantees no other arm is outstanding,
-        // so Reset() here cannot invalidate a live continuation. The version is captured before the
-        // inner continuation is registered: if the inner read has already completed by the time
-        // UnsafeOnCompleted runs it invokes OnInnerReadCompleted inline, and a consumer that
-        // observes that inline completion may legally re-arm this reader before ReadAsync returns.
+        // TryAcquireRead excludes both active buffer ownership and an unobserved fault.
+        // Capture the version before subscribing: the inner source may complete inline.
         _readSource.Reset();
         var version = _readSource.Version;
         _pendingInner = read;
@@ -263,19 +267,49 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         var inner = _pendingInner;
         _pendingInner = default;
 
+        ReadResult result;
         try
         {
-            _readSource.SetResult(inner.GetAwaiter().GetResult());
+            result = inner.GetAwaiter().GetResult();
         }
         catch (Exception exception)
         {
-            // Same ordering as production: ownership is released before the failure is published.
+            // Transport completion may proceed after the inner failure, but the reusable source
+            // still belongs to this read until its consumer observes the fault. In particular,
+            // another ReadAsync must not Reset it between ReleaseRead and SetException.
+            lock (_gate)
+                _readFaultPending = true;
             ReleaseRead();
+            BeforeReadFailurePublication?.Invoke();
             _readSource.SetException(exception);
+            return;
         }
+
+        // SetResult can invoke user code inline. A consumer exception is not an inner-read
+        // failure, and a consumer may already have advanced and armed the next read.
+        _readSource.SetResult(result);
     }
 
-    ReadResult IValueTaskSource<ReadResult>.GetResult(short token) => _readSource.GetResult(token);
+    ReadResult IValueTaskSource<ReadResult>.GetResult(short token)
+    {
+        lock (_gate)
+        {
+            // Validate the token before changing ownership. A pending or stale observation
+            // must not release the source lease of the current operation.
+            var status = _readSource.GetStatus(token);
+            if (status is not (ValueTaskSourceStatus.Faulted or ValueTaskSourceStatus.Canceled))
+                return _readSource.GetResult(token);
+
+            try
+            {
+                return _readSource.GetResult(token);
+            }
+            finally
+            {
+                _readFaultPending = false;
+            }
+        }
+    }
 
     ValueTaskSourceStatus IValueTaskSource<ReadResult>.GetStatus(short token) => _readSource.GetStatus(token);
 
@@ -292,7 +326,7 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         {
             if (_completionTask is not null)
                 return false;
-            if (_readActive)
+            if (_readActive || _readFaultPending)
                 throw new InvalidOperationException("Concurrent PipeReader reads are not supported.");
             _readActive = true;
             return true;

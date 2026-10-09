@@ -300,13 +300,17 @@ public class ReadOwnershipPipeReaderTests
         var result = read.GetAwaiter().GetResult();
         Ensure(result.IsCanceled, "the canceled result must be delivered as canceled");
 
-        await CaptureAsync(async () =>
-        {
-            var blocked = reader.CompleteAsync();
-            await WithTimeout(blocked, "completion must stay blocked while a canceled read is owned");
-        });
+        var completion = reader.CompleteAsync().AsTask();
+        var observed = await Task.WhenAny(completion, Task.Delay(Timeout)).ConfigureAwait(false);
+        Ensure(!ReferenceEquals(observed, completion),
+            "completion must stay blocked while a canceled read is owned");
+        Ensure(fake.CompleteAsyncCount == 0,
+            "the inner reader must not complete before the canceled result is released");
 
         reader.AdvanceTo(result.Buffer.End);
+        await WithTimeout(new ValueTask(completion), "completion after canceled-result release");
+        Ensure(fake.CompleteAsyncCount == 1,
+            "the inner reader must complete exactly once after AdvanceTo");
     }
 
     [Test]
@@ -426,6 +430,187 @@ public class ReadOwnershipPipeReaderTests
         }
 
         await WithTimeout(new ValueTask(Task.WhenAll(tasks)), "concurrent readers");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task FailurePublicationShouldExcludeRearmingAfterOwnershipRelease(bool canceled)
+    {
+        Exception failure = canceled ? new OperationCanceledException("canceled") : new IOException("faulted");
+        var fake = new FakePipeReader();
+        var reader = new ReadOwnershipPipeReader(fake);
+        using var released = new ManualResetEventSlim();
+        using var publish = new ManualResetEventSlim();
+        reader.BeforeReadFailurePublication = () =>
+        {
+            released.Set();
+            Ensure(publish.Wait(Timeout), "the test must release the publication barrier");
+        };
+
+        var read = reader.ReadAsync();
+        var publication = Task.Run(() => fake.PublishFault(failure));
+        try
+        {
+            Ensure(released.Wait(Timeout), "the fault must reach the release/publication boundary");
+            Ensure(!read.IsCompleted, "the previous arm must still be pending at the barrier");
+            Ensure(Capture(() => _ = reader.ReadAsync()) is InvalidOperationException,
+                "rearming must be rejected even though transport ownership has been released");
+            Ensure(Capture(() => reader.TryRead(out _)) is InvalidOperationException,
+                "TryRead must not bypass the unobserved fault's source lease");
+            Ensure(Capture(() => read.GetAwaiter().GetResult()) is InvalidOperationException,
+                "an early GetResult must not consume the pending fault's lease");
+            Ensure(Capture(() => _ = reader.ReadAsync()) is InvalidOperationException,
+                "an early GetResult must not permit rearming");
+        }
+        finally
+        {
+            publish.Set();
+            await WithTimeout(new ValueTask(publication), "fault publication");
+        }
+
+        Ensure(canceled ? read.IsCanceled : read.IsFaulted, "the original arm must receive its own failure");
+        Ensure(Capture(() => _ = reader.ReadAsync()) is InvalidOperationException,
+            "a published but unobserved fault must retain its source lease");
+        Ensure(ReferenceEquals(Capture(() => read.GetAwaiter().GetResult()), failure),
+            "the consumer must observe the original exception before the source is reused");
+
+        reader.BeforeReadFailurePublication = null;
+        var next = reader.ReadAsync();
+        Ensure(!next.IsCompleted, "the next arm must remain pending until its own publication");
+        fake.Publish(Result(0xA1));
+        var result = next.GetAwaiter().GetResult();
+        Ensure(result.Buffer.ToArray()[0] == 0xA1, "the next read must receive its own result");
+        reader.AdvanceTo(result.Buffer.End);
+    }
+
+    [Test]
+    public async Task UnobservedFaultShouldNotDelayTransportCompletion()
+    {
+        var fake = new FakePipeReader();
+        var reader = new ReadOwnershipPipeReader(fake);
+        using var released = new ManualResetEventSlim();
+        using var publish = new ManualResetEventSlim();
+        reader.BeforeReadFailurePublication = () =>
+        {
+            released.Set();
+            Ensure(publish.Wait(Timeout), "the test must release the publication barrier");
+        };
+        var failure = new IOException("faulted");
+        var read = reader.ReadAsync();
+        var completion = reader.CompleteAsync();
+        var publication = Task.Run(() => fake.PublishFault(failure));
+        try
+        {
+            Ensure(released.Wait(Timeout), "the fault must reach the release/publication boundary");
+            await WithTimeout(completion, "completion with an unobserved fault");
+            Ensure(fake.CompleteAsyncCount == 1, "transport ownership must already be released");
+            Ensure(!read.IsCompleted, "transport completion must not consume or publish the pending fault");
+        }
+        finally
+        {
+            publish.Set();
+            await WithTimeout(new ValueTask(publication), "fault publication after transport completion");
+        }
+        Ensure(ReferenceEquals(Capture(() => read.GetAwaiter().GetResult()), failure),
+            "transport completion must preserve the original fault");
+    }
+
+    [Test]
+    public async Task StaleFaultObservationMustNotReleaseANewerFaultLease()
+    {
+        var fake = new FakePipeReader();
+        var reader = new ReadOwnershipPipeReader(fake);
+        var first = reader.ReadAsync();
+        var firstFailure = new IOException("first fault");
+        fake.PublishFault(firstFailure);
+        Ensure(ReferenceEquals(Capture(() => first.GetAwaiter().GetResult()), firstFailure),
+            "the first fault must be consumed before rearming");
+
+        var second = reader.ReadAsync();
+        var secondFailure = new IOException("second fault");
+        fake.PublishFault(secondFailure);
+        Ensure(Capture(() => first.GetAwaiter().GetResult()) is InvalidOperationException,
+            "the previous arm's token must be rejected");
+        Ensure(Capture(() => _ = reader.ReadAsync()) is InvalidOperationException,
+            "a stale token must not release the second fault's source lease");
+        Ensure(ReferenceEquals(Capture(() => second.GetAwaiter().GetResult()), secondFailure),
+            "the second fault must still be available to its own consumer");
+        await WithTimeout(reader.CompleteAsync(), "completion after two faults");
+    }
+
+    [Test]
+    public async Task FaultContinuationShouldBeAbleToObserveAndRearmInline()
+    {
+        var fake = new FakePipeReader();
+        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var failure = new IOException("faulted");
+        var first = reader.ReadAsync();
+        ValueTask<ReadResult> second = default;
+        var ran = 0;
+        first.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
+        {
+            Ensure(ReferenceEquals(Capture(() => first.GetAwaiter().GetResult()), failure),
+                "the inline consumer must observe the original fault");
+            second = reader.ReadAsync();
+            ran++;
+        });
+
+        fake.PublishFault(failure);
+        Ensure(ran == 1, "the failure continuation must run inline exactly once");
+        Ensure(!second.IsCompleted, "the old callback must not complete the newly armed source");
+        Ensure(Capture(() => first.GetAwaiter().GetResult()) is InvalidOperationException,
+            "a stale fault token must be rejected without releasing the next operation");
+        Ensure(Capture(() => _ = reader.ReadAsync()) is InvalidOperationException,
+            "a stale observation must not release the next read's ownership");
+        fake.Publish(Result(0xA2));
+        var result = await WithTimeout(second, "read rearmed by fault continuation");
+        reader.AdvanceTo(result.Buffer.End);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ThrowingSuccessContinuationMustNotPublishAFailureOrReleaseAnotherRead(bool rearm)
+    {
+        var fake = new FakePipeReader();
+        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var consumerFailure = new ApplicationException("consumer continuation threw");
+        var first = reader.ReadAsync();
+        ValueTask<ReadResult> second = default;
+        var ran = 0;
+        first.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
+        {
+            var result = first.GetAwaiter().GetResult();
+            Ensure(result.Buffer.ToArray()[0] == 0xA3, "the consumer must receive the success result");
+            ran++;
+            if (rearm)
+            {
+                reader.AdvanceTo(result.Buffer.End);
+                second = reader.ReadAsync();
+            }
+            throw consumerFailure;
+        });
+
+        var escaped = Capture(() => fake.Publish(Result(0xA3)));
+        Ensure(ran == 1, "the synchronous continuation must run exactly once");
+        Ensure(ReferenceEquals(escaped, consumerFailure),
+            "the dispatch exception must escape unchanged, without a second completion attempt");
+        Ensure(Capture(() => _ = reader.ReadAsync()) is InvalidOperationException,
+            "a consumer exception must not release the current read's ownership");
+        if (rearm)
+        {
+            Ensure(!second.IsCompleted, "the previous callback must not fault the new read");
+            fake.Publish(Result(0xA4));
+            var result = await WithTimeout(second, "read rearmed by throwing continuation");
+            Ensure(result.Buffer.ToArray()[0] == 0xA4, "the new read must receive its own payload");
+            reader.AdvanceTo(result.Buffer.End);
+        }
+        else
+        {
+            Ensure(first.IsCompletedSuccessfully, "the source must remain successfully completed");
+            reader.AdvanceTo(first.GetAwaiter().GetResult().Buffer.End);
+        }
     }
 
     // ========================================================================================
