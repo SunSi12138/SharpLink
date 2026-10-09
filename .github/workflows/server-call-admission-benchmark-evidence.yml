@@ -58,7 +58,7 @@ jobs:
           from pathlib import Path
 
           results = Path("BenchmarkDotNet.Artifacts/results")
-          reports = list(results.glob("*ServerCallAdmissionHotPathBenchmarks*-report-full.json"))
+          reports = list(results.glob("*ServerCallAdmissionHotPathBenchmarks*-report-full*.json"))
           if not reports:
               raise SystemExit("BenchmarkDotNet full JSON report is missing")
 
