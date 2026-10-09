@@ -9,6 +9,11 @@ public static class Program
     public static async Task Main(string[] args)
     {
 #if SHARPLINK_ALLOCATION_PATH_OBSERVATION
+        if (args.Length > 0 && args[0] == "--control-pipe-allocation-calibration")
+        {
+            await ControlPipeAllocationCalibration.RunAsync(args[1..]);
+            return;
+        }
         if (args.Length > 0 && args[0] == "--allocation-path-calibration")
         {
             await AllocationPathCalibration.RunAsync(args[1..]);
