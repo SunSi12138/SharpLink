@@ -565,8 +565,7 @@ internal sealed partial class SharpLinkServer
         var invocationContext = callContext as SharpLinkServerInvocationContext ??
             CreateServerInvocationContext(
                 session,
-                stub,
-                methodId,
+                GetMethodDescriptor(stub, methodId),
                 requestId,
                 callContext.Authentication,
                 callContext.LocalRpcDeadline,
