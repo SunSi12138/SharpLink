@@ -263,16 +263,15 @@ namespace SharpLink.Abstractions
         var start = manifest.IndexOf(marker, StringComparison.Ordinal);
         if (start < 0)
             throw new Exception("Expected generated method descriptor.");
-        var quotedLines = new System.Collections.Generic.List<string>();
-        foreach (var rawLine in manifest[start..].Split('\n'))
-        {
-            var line = rawLine.Trim();
-            if (line.StartsWith("}),", StringComparison.Ordinal))
-                break;
-            if (line.StartsWith("\"", StringComparison.Ordinal))
-                quotedLines.Add(line);
-        }
-        if (quotedLines.Count < 4)
+        var end = manifest.IndexOf("),", start, StringComparison.Ordinal);
+        if (end < 0)
+            throw new Exception("Expected generated method descriptor terminator.");
+        var quotedLines = manifest[start..end]
+            .Split('\n')
+            .Select(static line => line.Trim())
+            .Where(static line => line.StartsWith("\"", StringComparison.Ordinal))
+            .ToArray();
+        if (quotedLines.Length < 4)
             throw new Exception("Expected generated method fingerprint line.");
         return quotedLines[^1].TrimEnd(',').Trim('"');
     }
@@ -344,7 +343,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 5, 2, "3.0.0-test", "sharplink-3.0-api5-rpcchannel-codec-provider-v1")]
 
 namespace SharpLink.Generated
 {

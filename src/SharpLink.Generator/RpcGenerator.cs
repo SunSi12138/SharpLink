@@ -264,11 +264,13 @@ public partial class RpcGenerator : IIncrementalGenerator
             }
         });
 
-        context.RegisterSourceOutput(boundInterfaces, (spc, model) =>
+        context.RegisterSourceOutput(boundInterfaces.Combine(generatedCodecs), static (spc, value) =>
         {
-            var proxyHelpers = GenerateProxyHelpers(model!);
+            var model = value.Left!;
+            var concreteCodecTypes = CreateConcreteCodecTypeMap(value.Right.Codecs, value.Right.ContractCodecs);
+            var proxyHelpers = GenerateProxyHelpers(model, concreteCodecTypes);
             if (!string.IsNullOrEmpty(proxyHelpers))
-                spc.AddSource(GetProxyHintName(model!), SourceText.From(proxyHelpers, Encoding.UTF8));
+                spc.AddSource(GetProxyHintName(model), SourceText.From(proxyHelpers, Encoding.UTF8));
         });
 
         context.RegisterSourceOutput(generatedCodecs, static (spc, result) =>
@@ -316,10 +318,9 @@ public partial class RpcGenerator : IIncrementalGenerator
 
             if (!result.Codecs.IsDefaultOrEmpty || !result.ContractCodecs.IsDefaultOrEmpty)
             {
-                var codecs = result.Codecs.AddRange(result.ContractCodecs);
                 spc.AddSource(
                     "SharpLink.GeneratedCodecs.g.cs",
-                    SourceText.From(GenerateCodecs(codecs, result.DtoAnalysis), Encoding.UTF8));
+                    SourceText.From(GenerateCodecs(result.Codecs, result.ContractCodecs, result.DtoAnalysis), Encoding.UTF8));
             }
 
             if (!result.UnsafeBlitRequirements.IsDefaultOrEmpty)
@@ -378,14 +379,15 @@ public partial class RpcGenerator : IIncrementalGenerator
                     "SharpLink.GeneratedAssemblyManifest.g.cs",
                     SourceText.From(code, Encoding.UTF8));
 
+                var concreteCodecTypes = CreateConcreteCodecTypeMap(value.Right.Codecs, value.Right.ContractCodecs);
                 foreach (var contract in contracts)
                 {
-                    var proxy = GenerateProxy(manifestTypeName, contract);
+                    var proxy = GenerateProxy(manifestTypeName, contract, concreteCodecTypes);
                     spc.AddSource(
                         GetProxyArtifactHintName(contract),
                         SourceText.From(proxy, Encoding.UTF8));
 
-                    var stub = GenerateStub(manifestTypeName, contract);
+                    var stub = GenerateStub(manifestTypeName, contract, concreteCodecTypes);
                     spc.AddSource(
                         GetStubHintName(contract),
                         SourceText.From(stub, Encoding.UTF8));

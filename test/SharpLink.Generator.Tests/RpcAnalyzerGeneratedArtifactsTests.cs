@@ -42,7 +42,7 @@ public partial class RpcAnalyzerTests
     }
 
     [Test]
-    public Task GeneratedApi4ShouldUseLiteralManifestStampAndAbstractionsOnlyServerBridge()
+    public Task GeneratedApi5ShouldUseLiteralManifestStampAndAbstractionsOnlyServerBridge()
     {
         var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
@@ -80,17 +80,17 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             text.Contains("ISharpLinkGeneratedAssemblyManifest", StringComparison.Ordinal));
         var allGenerated = string.Join("\n", generated);
 
-        Ensure(manifest.Contains("public int ApiVersion => 4;", StringComparison.Ordinal) &&
+        Ensure(manifest.Contains("public int ApiVersion => 5;", StringComparison.Ordinal) &&
                manifest.Contains("public int ProtocolVersion => 2;", StringComparison.Ordinal),
-            "the Generator must own literal API 4 / Protocol 2 stamps");
+            "the Generator must own literal API 5 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
-               manifest.Contains(", 4, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-2.0-api4-rpcchannel-codec-provider-v1", StringComparison.Ordinal),
+               manifest.Contains(", 5, 2,", StringComparison.Ordinal) &&
+               manifest.Contains("sharplink-3.0-api5-rpcchannel-codec-provider-v1", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
         Ensure(stub.Contains("IRpcGeneratedServerBridge bridge", StringComparison.Ordinal),
-            "API 4 stubs must depend on the whole-stream server bridge");
+            "API 5 stubs must depend on the whole-stream server bridge");
         Ensure(stub.Contains("IBufferWriter<byte> output", StringComparison.Ordinal),
             "response payload output must be narrowed to IBufferWriter<byte>");
         Ensure(stub.Contains("internal __Stub_", StringComparison.Ordinal) &&
@@ -106,12 +106,12 @@ public interface IAbi4Service : SharpLink.Sdk.IService
                  })
         {
             Ensure(!stub.Contains(forbidden, StringComparison.Ordinal),
-                $"API 4 Stub leaked forbidden Runtime ABI token '{forbidden}'");
+                $"API 5 Stub leaked forbidden Runtime ABI token '{forbidden}'");
         }
         Ensure(!proxy.Contains("using SharpLink.Runtime;", StringComparison.Ordinal),
-            "API 4 Proxy must not acquire a Runtime AssemblyRef through an unused import");
+            "API 5 Proxy must not acquire a Runtime AssemblyRef through an unused import");
         Ensure(!allGenerated.Contains("SharpLink.Runtime", StringComparison.Ordinal),
-            "no generated API 4 source may reference SharpLink.Runtime");
+            "no generated API 5 source may reference SharpLink.Runtime");
         return Task.CompletedTask;
     }
 
@@ -222,7 +222,7 @@ public sealed class HelloService : IHelloService
         Ensure(proxy.Contains("InvokeServerStreamingAsync"), "ServerStreaming invoker");
         Ensure(proxy.Contains("InvokeDuplexStreamingAsync"), "DuplexStreaming invoker");
         Ensure(allGenerated.Contains("readonly struct __IHelloService_SharpLinkRequest_"), "Generated request struct");
-        Ensure(proxy.Contains("IRpcCodec<global::__IHelloService_SharpLinkRequest_"), "Generated request codec");
+        Ensure(proxy.Contains("private readonly global::__IHelloService_SharpLinkRequestCodec_"), "Generated request codec");
         Ensure(allGenerated.Contains("Span<byte> tmp_"), "Segmented fixed-width arguments must use stack scratch");
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");

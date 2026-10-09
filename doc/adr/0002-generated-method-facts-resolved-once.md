@@ -50,10 +50,10 @@ switch），而且两个默认实现语义相反：`TryGetMethodDescriptor` 默�
 - 3.x 破坏性变更：`IRpcStub` 成员变更、`RpcMethodDescriptor` 失去 `init` 访问器、
   `SharpLinkGeneratedMethodDescriptor` 以 shape 取代 `Kind`/`SupportsCancellation`、
   `SharpLinkServerInvocationContext` 新增 `Shape`。
-- **generated ABI 版本必须在 3.0 发布边界上从 API 4 提升到 API 5**（`SharpLinkGeneratedManifestVersions.Api`
+- **generated ABI 版本在此 3.0 发布边界上从 API 4 提升到 API 5**（`SharpLinkGeneratedManifestVersions.Api`
   与 `AbiIdentity`、generator 的 `ApiVersion`/`GeneratedAbiIdentity`、`eng/release-versions.json`），
   否则 2.0 生成的程序集会被 3.0 runtime 接受并按保守默认值运行（OneWay 直接断连、streaming 不预留
-  stream），而不是被拒绝。该提升与公共 API baseline 的重建属于发布边界动作，不在本 ADR 的实现范围内。
+  stream），而不是被拒绝。该提升及 3.0 公共 API baseline 的重建随此变更一并完成。
 - `RpcMethodShape` 是定宽值；未来新增事实应使用保留位，而不是新增成员。
 - 四个 `Invoke*` 入口与线协议保持不变；调用入口的去折叠属于独立议题。
 - 如果后续需要进一步压低解析成本，把 `ResolveMethodShape` 的返回类型从 4 字节结构改为

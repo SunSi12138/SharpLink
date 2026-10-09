@@ -13,10 +13,21 @@ on:
       - '.github/actions/verify-packages/**'
       - '.github/workflows/pr-package-smoke.yml'
       - 'eng/run-quickstart-package-smoke.sh'
+      - 'eng/verify-packages.sh'
+      - 'eng/run-project-reference-trim-smoke.sh'
+      - 'eng/run-shared-memory-aot-process-smoke.sh'
+      - 'src/SharpLink.Runtime/**'
+      - 'src/SharpLink.Shared/**'
+      - 'src/SharpLink.Generator/**'
       - 'src/SharpLink.Sdk/**'
       - 'src/SharpLink.Abstractions/**'
       - 'src/SharpLink.Client/**'
       - 'src/SharpLink.Server/**'
+      - 'test/SharpLink.PackageSmoke/**'
+      - 'test/SharpLink.PackageAotSmoke/**'
+      - 'test/SharpLink.PackageTrimSmoke/**'
+      - 'test/SharpLink.PackagePartialTrimSmoke/**'
+      - 'test/SharpLink.PackageLateTrimSmoke/**'
       - 'Directory.Build.props'
       - 'Directory.Packages.props'
       - 'Sharplink.slnx'
@@ -29,7 +40,7 @@ concurrency:
 jobs:
   package-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
     steps:
@@ -44,6 +55,17 @@ jobs:
 
       - name: Build Release
         run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Run ProjectReference trim-only UnsafeBlit smoke
+        env:
+          SHARPLINK_TRIM_RID: linux-x64
+        run: bash ./eng/run-project-reference-trim-smoke.sh
+
+      - name: Run isolated NativeAOT smoke before packaging
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/pr-package-aot-smoke
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
 
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal

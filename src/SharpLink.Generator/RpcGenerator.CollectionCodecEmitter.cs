@@ -2,18 +2,21 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private static void AppendCollectionCodec(StringBuilder sb, GeneratedCodecModel model)
+    private static void AppendCollectionCodec(
+        StringBuilder sb,
+        GeneratedCodecModel model,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         sb.AppendLine($"internal sealed class {model.CodecName} : IRpcCodec<{model.TypeName}>");
         sb.AppendLine("{");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine($"    private readonly IRpcCodec<{model.KeyType}> __keyCodec;");
-            sb.AppendLine($"    private readonly IRpcCodec<{model.ValueType}> __valueCodec;");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(model.KeyType!, model.KeyType!, concreteCodecTypes)} __keyCodec;");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(model.ValueType!, model.ValueType!, concreteCodecTypes)} __valueCodec;");
         }
         else
         {
-            sb.AppendLine($"    private readonly IRpcCodec<{model.ElementType}> __elementCodec;");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(model.ElementType!, model.ElementType!, concreteCodecTypes)} __elementCodec;");
         }
         sb.AppendLine();
         sb.AppendLine($"    internal {model.CodecName}(IRpcCodecProvider provider)");
@@ -21,12 +24,12 @@ public partial class RpcGenerator
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(provider);");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine($"        __keyCodec = provider.GetCodec<{model.KeyType}>();");
-            sb.AppendLine($"        __valueCodec = provider.GetCodec<{model.ValueType}>();");
+            sb.AppendLine($"        __keyCodec = {GetCodecResolveExpression("provider", model.KeyType!, model.KeyType!, concreteCodecTypes)};");
+            sb.AppendLine($"        __valueCodec = {GetCodecResolveExpression("provider", model.ValueType!, model.ValueType!, concreteCodecTypes)};");
         }
         else
         {
-            sb.AppendLine($"        __elementCodec = provider.GetCodec<{model.ElementType}>();");
+            sb.AppendLine($"        __elementCodec = {GetCodecResolveExpression("provider", model.ElementType!, model.ElementType!, concreteCodecTypes)};");
         }
         sb.AppendLine("    }");
         sb.AppendLine();

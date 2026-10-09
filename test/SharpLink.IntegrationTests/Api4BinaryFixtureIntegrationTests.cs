@@ -43,10 +43,10 @@ public sealed class Api4BinaryFixtureIntegrationTests
             "the pre-#287 development API4 binary must not be positively identified as the current API4 ABI");
         Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
             $"the API4 ABI collision sentinel should fail as IncompatibleManifest: {result.Error}");
-        Ensure(result.Error!.Message.Contains("API 4/4", StringComparison.Ordinal) &&
-               result.Error.Message.Contains("<missing: pre-current ABI locator>", StringComparison.Ordinal) &&
+        Ensure(result.Error!.Message.Contains("API 4/5", StringComparison.Ordinal) &&
+               result.Error.Message.Contains("<unknown>", StringComparison.Ordinal) &&
                result.Error.Message.Contains(SharpLinkGeneratedManifestVersions.AbiIdentity, StringComparison.Ordinal),
-            "the rejection must distinguish two incompatible API4 shapes by exact ABI identity");
+            "the rejection must distinguish API4 artifacts from the incompatible API5 runtime before materialization");
 
         assembly = null!;
         loadContext.Unload();

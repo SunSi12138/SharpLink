@@ -163,6 +163,8 @@ namespace SharpLink.Abstractions
         void UpdateRetryPolicy(SharpLink.Abstractions.ISharpLinkRetryPolicy policy, SharpLink.Abstractions.ISharpLinkRetryOptions limits);
         System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkClientReadinessSnapshot> WaitForReadinessAsync(int minimumReadyEndpoints, System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.ValueTask WaitForReadyAsync(System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask WaitForRemoteContractAsync(long contractId, SharpLink.Abstractions.RpcHash128 rpcAssemblyHash, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask WaitForRemoteContractAsync(long contractId, SharpLink.Abstractions.RpcHash128 rpcAssemblyHash, SharpLink.Abstractions.RpcHash128 previousRpcAssemblyHash, System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.Task WaitForShutdownAsync(System.Threading.CancellationToken cancellationToken = default);
     }
     public interface ISharpLinkClientAuthenticator
@@ -229,6 +231,8 @@ namespace SharpLink.Abstractions
         System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Reflection.Assembly assembly, System.TimeSpan gracefulTimeout, System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.ValueTask WaitForReadyAsync(System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.ValueTask WaitForReadyAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask WaitForRemoteContractAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, long contractId, SharpLink.Abstractions.RpcHash128 rpcAssemblyHash, System.Threading.CancellationToken cancellationToken = default);
+        System.Threading.Tasks.ValueTask WaitForRemoteContractAsync(SharpLink.Abstractions.SharpLinkClusterKey cluster, long contractId, SharpLink.Abstractions.RpcHash128 rpcAssemblyHash, SharpLink.Abstractions.RpcHash128 previousRpcAssemblyHash, System.Threading.CancellationToken cancellationToken = default);
         System.Threading.Tasks.Task WaitForShutdownAsync(System.Threading.CancellationToken cancellationToken = default);
     }
     public interface ISharpLinkReferencedCodecDependencyManifest

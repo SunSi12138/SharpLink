@@ -2,7 +2,10 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private static void AppendDtoCodec(StringBuilder sb, DtoCodecAnalysisModel model)
+    private static void AppendDtoCodec(
+        StringBuilder sb,
+        DtoCodecAnalysisModel model,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         var complexMembers = model.Members
             .Where(static member => member.Kind == GeneratedMemberKind.Complex)
@@ -31,20 +34,30 @@ public partial class RpcGenerator
         sb.AppendLine("    }");
         sb.AppendLine();
         for (var index = 0; index < complexMembers.Length; index++)
-            sb.AppendLine($"    private readonly IRpcCodec<{complexMembers[index].TypeName}> __codec_{index};");
+        {
+            var member = complexMembers[index];
+            sb.AppendLine(
+                $"    private readonly {GetCodecStorageType(member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)} __codec_{index};");
+            sb.AppendLine(
+                $"    private readonly IRpcSizedCodec<{member.TypeName}>? __sizedCodec_{index};");
+        }
         sb.AppendLine("    private readonly bool __canExactSize;");
         sb.AppendLine();
         sb.AppendLine($"    internal {model.CodecName}(IRpcCodecProvider provider)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(provider);");
         for (var index = 0; index < complexMembers.Length; index++)
-            sb.AppendLine($"        __codec_{index} = provider.GetCodec<{complexMembers[index].TypeName}>();");
+        {
+            var member = complexMembers[index];
+            sb.AppendLine(
+                $"        __codec_{index} = {GetCodecResolveExpression("provider", member.TypeName, member.CodecLookupTypeName, concreteCodecTypes)};");
+            sb.AppendLine(
+                $"        __sizedCodec_{index} = (object)__codec_{index} as IRpcSizedCodec<{member.TypeName}>;");
+        }
         sb.AppendLine("        __canExactSize = true;");
         for (var index = 0; index < complexMembers.Length; index++)
         {
-            sb.AppendLine(
-                $"        if (__codec_{index} is not IRpcSizedCodec<{complexMembers[index].TypeName}> __sizedCodec_{index} ||");
-            sb.AppendLine($"            !__sizedCodec_{index}.CanExactSize)");
+            sb.AppendLine($"        if (__sizedCodec_{index} is null || !__sizedCodec_{index}.CanExactSize)");
             sb.AppendLine("            __canExactSize = false;");
         }
         sb.AppendLine("    }");

@@ -695,7 +695,7 @@ public sealed class FakeAdapter : SharpLink.Abstractions.IRpcCodecAdapter
             "a selected Adapter must win for an unmanaged user-defined struct");
         Ensure(generated.Contains("__codec_value = codecs.GetCodec<global::Point>();", StringComparison.Ordinal),
             "an unmanaged request must resolve the selected Adapter Codec");
-        Ensure(generated.Contains("__codec_value.Serialize(value.value, writer);", StringComparison.Ordinal),
+        Ensure(generated.Contains("__codec_value.Serialize(value.value!, writer);", StringComparison.Ordinal),
             "an unmanaged request must be length-delimited through the selected Adapter Codec");
         return Task.CompletedTask;
     }

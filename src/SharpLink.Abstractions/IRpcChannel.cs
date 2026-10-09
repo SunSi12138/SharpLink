@@ -36,10 +36,12 @@ public readonly record struct RpcMethodDescriptor
     private const byte HasMethodTimeoutFlag = 1 << 2;
     private const byte IsIdempotentFlag = 1 << 3;
     private const byte ResponseNullableFlag = 1 << 4;
+    private const byte HasMethodTimeoutValueFlag = 1 << 5;
 
     private readonly long _contractId;
     private readonly long _methodId;
-    private readonly TimeSpan? _methodTimeout;
+    // Declared before the 4-byte/1-byte fields to keep sequential layout at 32 bytes.
+    private readonly long _methodTimeoutTicks;
     private readonly int _clientStreamCount;
     private readonly RpcMethodKind _kind;
     private readonly byte _flags;
@@ -70,14 +72,15 @@ public readonly record struct RpcMethodDescriptor
         _contractId = ContractId;
         _methodId = MethodId;
         _kind = Kind;
-        _methodTimeout = MethodTimeout;
+        _methodTimeoutTicks = MethodTimeout.GetValueOrDefault().Ticks;
         _clientStreamCount = ClientStreamCount;
         _flags = (byte)(
             (HasResponsePayload ? HasResponsePayloadFlag : 0) |
             (HasClientStreams ? HasClientStreamsFlag : 0) |
             (HasMethodTimeout ? HasMethodTimeoutFlag : 0) |
             (IsIdempotent ? IsIdempotentFlag : 0) |
-            (ResponseNullable ? ResponseNullableFlag : 0));
+            (ResponseNullable ? ResponseNullableFlag : 0) |
+            (MethodTimeout.HasValue ? HasMethodTimeoutValueFlag : 0));
     }
 
     /// <summary>
@@ -98,14 +101,15 @@ public readonly record struct RpcMethodDescriptor
         _contractId = contractId;
         _methodId = methodId;
         _kind = shape.Kind;
-        _methodTimeout = methodTimeout;
+        _methodTimeoutTicks = methodTimeout.GetValueOrDefault().Ticks;
         _clientStreamCount = shape.HasKnownClientStreamCount ? shape.ClientStreamCount : 0;
         _flags = (byte)(
             (shape.HasResponsePayload ? HasResponsePayloadFlag : 0) |
             (shape.HasKnownClientStreamCount && shape.HasClientStreams ? HasClientStreamsFlag : 0) |
             (shape.HasMethodTimeout ? HasMethodTimeoutFlag : 0) |
             (shape.IsIdempotent ? IsIdempotentFlag : 0) |
-            (shape.ResponseNullable ? ResponseNullableFlag : 0));
+            (shape.ResponseNullable ? ResponseNullableFlag : 0) |
+            (methodTimeout.HasValue ? HasMethodTimeoutValueFlag : 0));
     }
 
     /// <summary>Projects one already-resolved packed shape into its descriptor form.</summary>
@@ -127,7 +131,9 @@ public readonly record struct RpcMethodDescriptor
     /// <summary>Gets the stable generated method identifier.</summary>
     public long MethodId => _methodId;
     /// <summary>Gets the explicit method timeout, or <see langword="null"/> to use the client default.</summary>
-    public TimeSpan? MethodTimeout => _methodTimeout;
+    public TimeSpan? MethodTimeout => (_flags & HasMethodTimeoutValueFlag) != 0
+        ? TimeSpan.FromTicks(_methodTimeoutTicks)
+        : null;
     /// <summary>Gets the number of client-stream parameters owned by the request.</summary>
     public int ClientStreamCount => _clientStreamCount;
     /// <summary>Gets the generated invocation shape.</summary>
@@ -170,7 +176,7 @@ public readonly record struct RpcMethodDescriptor
         HasResponsePayload = this.HasResponsePayload;
         HasClientStreams = this.HasClientStreams;
         HasMethodTimeout = this.HasMethodTimeout;
-        MethodTimeout = _methodTimeout;
+        MethodTimeout = this.MethodTimeout;
         IsIdempotent = this.IsIdempotent;
         ClientStreamCount = _clientStreamCount;
     }

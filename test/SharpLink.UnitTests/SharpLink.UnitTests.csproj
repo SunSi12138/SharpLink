@@ -22,6 +22,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../SharpLink.Benchmarks/AllocationReadProbe.cs" Link="BenchmarkFixtures/AllocationReadProbe.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" />
   </ItemGroup>
 </Project>

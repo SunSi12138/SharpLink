@@ -55,14 +55,16 @@ public interface ITaskPayloadContract : SharpLink.Sdk.IService
                generated.AsSpan(proxyStart, proxyEnd - proxyStart).Contains(".AsTask();", StringComparison.Ordinal),
             "Task<T> Proxy emission must convert the channel ValueTask using outer Task semantics");
         Ensure(generated.Contains(
-                "__SerializeResponse(pending.GetAwaiter().GetResult(), false, __responseCodec_",
-                StringComparison.Ordinal),
+                "var result = pending.GetAwaiter().GetResult();",
+                StringComparison.Ordinal) &&
+               generated.Contains("__responseCodec_", StringComparison.Ordinal) &&
+               generated.Contains(".Serialize(result!, output);", StringComparison.Ordinal),
             "Task<T> Stub emission must use Task result semantics even when T contains 'ValueTask'");
         Ensure(generated.Contains(
-                "return __AwaitTaskResultAsync(pending, false, __responseCodec_",
+                "return __AwaitTaskResultAsync_",
                 StringComparison.Ordinal),
-            "Task<T> Stub emission must await the outer Task type");
-        Ensure(!generated.Contains("Serialize(pending.Result, output)", StringComparison.Ordinal),
+            "Task<T> Stub emission must await the outer Task type through the generated method-specific helper");
+        Ensure(!generated.Contains("var result = pending.Result;", StringComparison.Ordinal),
             "Task<T> must not use the ValueTask-only Result path");
         return Task.CompletedTask;
     }

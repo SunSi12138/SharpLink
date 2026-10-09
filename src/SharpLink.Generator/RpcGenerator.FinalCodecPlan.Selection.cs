@@ -248,7 +248,11 @@ public partial class RpcGenerator
                 null,
                 string.Empty,
                 GetAssemblyDependencies([type]),
-                type.Locations.FirstOrDefault());
+                type.Locations.FirstOrDefault())
+            {
+                CustomCodecSupportsConcreteDispatch =
+                    SupportsDirectCustomCodecDispatch(customCodec.CodecType, type)
+            };
 
         private bool IsExternAliasOnlyImplementation(INamedTypeSymbol implementationType)
         {

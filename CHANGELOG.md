@@ -10,10 +10,9 @@
 - `RpcMethodDescriptor` is now an observability projection with explicit readonly fields and no `init` accessors, so `with` expressions and object initializers over it no longer compile. Use the constructor or `RpcMethodDescriptor.FromShape`.
 - `SharpLinkGeneratedMethodDescriptor` carries `RpcMethodShape Shape` instead of `RpcMethodKind Kind` and `bool SupportsCancellation`.
 - `SharpLinkServerInvocationContext` gained `Shape`, and its `Method` property now projects `RpcMethodDescriptor` on first read instead of being supplied by the constructor.
-- Generated stubs no longer publish a per-method descriptor table or a separate cancellation table; both are replaced by one packed `RpcMethodShape` table. The generated ABI version must move from API 4 to API 5 at the 3.0 release boundary so a 2.0-generated assembly is rejected instead of silently treated as unresolvable; that version bump and the public API baseline regeneration are release-boundary actions and are not part of this change.
+- Generated stubs no longer publish a per-method descriptor table or a separate cancellation table; both are replaced by one packed `RpcMethodShape` table. The generated ABI version is advanced from API 4 to API 5 at the 3.0 release boundary, so 2.0-generated assemblies are rejected rather than silently treated as unresolvable. The 3.0 public API baseline is regenerated and versioned separately from 2.x.
 
 ### Changed
-
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
 
@@ -22,6 +21,30 @@
 ### Fixed
 
 - Fixed a hung OneWay call with client streams when the logical deadline elapsed while the producer was still running. The pending call was terminated by the deadline first, and the invoker then awaited the pooled lease operation a second time, which never completes; the invocation never returned, its producer stayed alive, and the client's logical invocation accounting never drained. The invoker now publishes the local send/producer failure to the pending request table and observes the lease operation exactly once on every path, so the terminal that actually won - local completion, send failure, deadline, caller cancellation, or a connection close - is what the caller sees, and the pooled operation is always returned.
+
+## [2.0.3] - 2026-10-04
+
+### Fixed
+
+- Fixed the missing public readiness boundary after dynamic registration and replacement (#760): local registration success on a control connection does not acknowledge ContractManifest propagation on a separate Ready data connection. Single and scoped multi-cluster clients can now explicitly await ContractId + exact RpcAssemblyHash, with cancellation, stop and reconnect semantics and fail-closed mismatch handling.
+- Added an explicit previous-hash overload for a declared wire identity replacement. Only that exact old hash may wait for the new identity; unrelated mismatches still fail immediately. Readiness is a point-in-time wire observation, not a lease or implementation-generation acknowledgement. Get stays synchronous and retains its exact compatibility validation; four additive default interface methods preserve old custom-client binary compatibility and report unsupported barriers explicitly.
+- 修复负载采样器因 worker 负载偏斜提前耗尽静态配额的问题，复用预分配且尚未写入的尾区，保留严格总容量和全部原始样本；在测量前准备并初始化真实缓冲区，隔离 worker 高频状态字段。初始化的启动 CPU、内存带宽及更早驻留页成本仍需计入部署评估。
+
+### Validation
+
+- 发布负责人仅对 2.0.3 批准 [有限性能验收例外](doc/releasing.md#仅限-203-的性能验收例外)：保留原采样器 P99.9 门禁失败和尚未查明的根因，明确完整性能矩阵未完成，不宣称原门禁已通过。有限性能检查有 30 分钟硬截止；完整正确性、安全、三平台、AOT、包安装及约 10 分钟稳定性/ABI 门禁保持。
+
+## [2.0.2] - 2026-10-02
+
+### Changed
+
+- Hoisted streaming Codec capability checks from per-item loops to stream scope, reducing repeated capability lookup while preserving existing stream error arbitration, flow-credit behavior, and lifetime cleanup.
+- Generated DTO, union, collection, proxy, and stub code now preserves statically known concrete Codec types where possible, reducing interface dispatch while keeping provider resolution authoritative and leaving public API and wire compatibility unchanged.
+
+### Fixed
+
+- Fixed trimmed and NativeAOT consumption of `SharpLink.Runtime`: PackageReference consumers use a packaged feature switch for trimming/AOT, while ProjectReference consumers are covered for NativeAOT and `TrimMode=full` through the embedded linker substitution without changing Runtime's established mobile copy/link semantics. Generated UnsafeBlit ABI metadata remains the supported trimmed/AOT path, missing metadata fails closed, untrimmed JIT retains the reflective fallback, and package/source smoke tests run with warnings-as-errors. ProjectReference + `TrimMode=partial` remains outside the 2.x support contract and is tracked for the 3.x structural cleanup.
+
 
 ## [2.0.1] - 2026-09-19
 
