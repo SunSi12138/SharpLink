@@ -359,6 +359,62 @@ public class ReadOwnershipPipeReaderTests
     // ========================================================================================
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CompleteAsyncBeforeSuspensionIsArmedShouldWaitForOwnership(bool fault)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var allowReturn = new ManualResetEventSlim();
+        var fake = new FakePipeReader
+        {
+            BeforeReadReturns = () =>
+            {
+                entered.TrySetResult();
+                Ensure(allowReturn.Wait(Timeout), "the test must release the inner ReadAsync call");
+            },
+            OnCancelPendingRead = () => canceled.TrySetResult(),
+        };
+        var reader = new ReadOwnershipPipeReader(fake);
+        var invocation = Task.Run<ValueTask<ReadResult>>(() => reader.ReadAsync());
+        ValueTask completion = default;
+        try
+        {
+            await entered.Task.WaitAsync(Timeout).ConfigureAwait(false);
+            completion = reader.CompleteAsync();
+            await canceled.Task.WaitAsync(Timeout).ConfigureAwait(false);
+            Ensure(!completion.IsCompleted && fake.CompleteAsyncCount == 0,
+                "completion must wait for ownership even before the suspended source is armed");
+        }
+        finally
+        {
+            allowReturn.Set();
+        }
+
+        var pending = await invocation.WaitAsync(Timeout).ConfigureAwait(false);
+        Ensure(!pending.IsCompleted, "the acquired read must still arm after completion was requested");
+        if (fault)
+        {
+            var expected = new IOException("failure after shutdown requested");
+            fake.PublishFault(expected);
+            await WithTimeout(completion, "completion after the inner fault released ownership");
+            Ensure(ReferenceEquals(Capture(() => pending.GetAwaiter().GetResult()), expected),
+                "transport cleanup must not invalidate the unobserved source failure");
+        }
+        else
+        {
+            fake.Publish(Result(0xAF));
+            var result = pending.GetAwaiter().GetResult();
+            Ensure(!completion.IsCompleted && fake.CompleteAsyncCount == 0,
+                "the returned buffer must retain ownership until AdvanceTo");
+            reader.AdvanceTo(result.Buffer.End);
+            await WithTimeout(completion, "completion after the buffer was advanced");
+        }
+        Ensure(fake.CompleteAsyncCount == 1 && fake.CancelPendingReadCount == 1,
+            "shutdown must forward cancellation and complete the inner reader exactly once");
+    }
+
+    [Test]
     public async Task CompleteAsyncRacingPendingReadShouldCompleteInnerExactlyOnce()
     {
         // CompleteAsync and the inner publication are released from two different threads behind a
@@ -721,6 +777,10 @@ public class ReadOwnershipPipeReaderTests
 
         public bool CompleteOnCancel { get; set; }
 
+        public Action? BeforeReadReturns { get; set; }
+
+        public Action? OnCancelPendingRead { get; set; }
+
         public FakeReadMode Mode { get; set; } = FakeReadMode.Suspend;
 
         public int AdvanceCount { get; private set; }
@@ -749,6 +809,7 @@ public class ReadOwnershipPipeReaderTests
                 _cancelNextRead = false;
                 Publish(new ReadResult(Sequence(0xCE), isCanceled: true, isCompleted: false));
             }
+            BeforeReadReturns?.Invoke();
             return new ValueTask<ReadResult>(this, _source.Version);
         }
 
@@ -771,6 +832,7 @@ public class ReadOwnershipPipeReaderTests
         public override void CancelPendingRead()
         {
             CancelPendingReadCount++;
+            OnCancelPendingRead?.Invoke();
             if (!CompleteOnCancel)
                 return;
             if (_armed)

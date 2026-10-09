@@ -123,6 +123,10 @@ internal class StreamTransportConnection : ITransportConnection
 /// </summary>
 internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<ReadResult>
 {
+    private const int ReadStatusMask = 3;
+    private const int ReadSourceActiveMask = 4;
+    private const int ReadVersionShift = 16;
+
     private readonly PipeReader _inner;
     private readonly Lock _gate = new();
 
@@ -137,10 +141,14 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
     private ManualResetValueTaskSourceCore<bool> _readNotification;
     private ReadResult _readResult;
     private ExceptionDispatchInfo? _readError;
-    private ValueTaskSourceStatus _readStatus;
+    // A status query validates the active bit and token from the same atomic snapshot. Results,
+    // faults, and continuation registration remain protected by _gate; only status is lock-free.
+    private int _readState;
     private short _readVersion;
-    private bool _readSourceActive;
     private bool _readContinuationRegistered;
+
+    private ValueTaskSourceStatus ReadStatus => (ValueTaskSourceStatus)(_readState & ReadStatusMask);
+    private bool ReadSourceActive => (_readState & ReadSourceActiveMask) != 0;
 
     /// <summary>The inner read being forwarded. Only valid while a suspension is armed.</summary>
     private ValueTask<ReadResult> _pendingInner;
@@ -236,22 +244,20 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         if (read.IsCompletedSuccessfully)
             return read;
 
-        // TryAcquireRead excludes both active buffer ownership and an unobserved fault.
+        // TryAcquireRead grants exclusive arming: no current ValueTask has escaped and the inner
+        // callback has not been subscribed. CompleteAsync may cancel, but waits for this read's
+        // ownership; no second gate is needed. Initialize everything before publishing Pending.
+        var version = unchecked(++_readVersion);
+        _readContinuationRegistered = false;
+        _readNotification.RunContinuationsAsynchronously = RunContinuationsAsynchronously;
+        _pendingInner = read;
+        // The production async wrapper resumes its state machine under the read caller's
+        // context, even when a consumer uses UnsafeOnCompleted. Capture has no per-read
+        // allocation; clear the field before dispatch so reentrancy cannot retain old state.
+        _readExecutionContext = ExecutionContext.Capture();
+        Volatile.Write(ref _readState, ((ushort)version << ReadVersionShift) | ReadSourceActiveMask);
+
         // Capture the version before subscribing: the inner source may complete inline.
-        short version;
-        lock (_gate)
-        {
-            version = unchecked(++_readVersion);
-            _readSourceActive = true;
-            _readContinuationRegistered = false;
-            _readStatus = ValueTaskSourceStatus.Pending;
-            _readNotification.RunContinuationsAsynchronously = RunContinuationsAsynchronously;
-            _pendingInner = read;
-            // The production async wrapper resumes its state machine under the read caller's
-            // context, even when a consumer uses UnsafeOnCompleted. Capture has no per-read
-            // allocation; clear the field before dispatch so reentrancy cannot retain old state.
-            _readExecutionContext = ExecutionContext.Capture();
-        }
         // A precompleted failure must remain synchronously observable and release transport
         // ownership now. Registering on it would introduce an unnecessary queued callback.
         if (read.IsCompleted)
@@ -336,9 +342,15 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         {
             _readResult = result;
             _readError = error;
-            _readStatus = error is null ? ValueTaskSourceStatus.Succeeded
+            var status = error is null ? ValueTaskSourceStatus.Succeeded
                 : error.SourceException is OperationCanceledException ? ValueTaskSourceStatus.Canceled
                 : ValueTaskSourceStatus.Faulted;
+            Volatile.Write(ref _readState,
+                ((ushort)_readVersion << ReadVersionShift) | ReadSourceActiveMask | (int)status);
+            // An observer-free signal has no continuation/context to detach or notify. A later
+            // registration observes the completed status and uses its own local completed core.
+            if (!_readContinuationRegistered)
+                return;
             notification = _readNotification;
             _readNotification = default;
         }
@@ -353,19 +365,19 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         lock (_gate)
         {
             ValidateReadToken(token);
-            if (_readStatus == ValueTaskSourceStatus.Pending)
+            if (ReadStatus == ValueTaskSourceStatus.Pending)
                 throw new InvalidOperationException("The read has not completed.");
             if (_readError is null)
             {
                 var result = _readResult;
                 _readResult = default;
-                _readSourceActive = false;
+                Volatile.Write(ref _readState, 0);
                 return result;
             }
 
             error = _readError;
             _readError = null;
-            _readSourceActive = false;
+            Volatile.Write(ref _readState, 0);
             _readFaultPending = false;
         }
         // Caller exception filters run before stack unwinding. Throwing under the gate could
@@ -376,11 +388,10 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
 
     ValueTaskSourceStatus IValueTaskSource<ReadResult>.GetStatus(short token)
     {
-        lock (_gate)
-        {
-            ValidateReadToken(token);
-            return _readStatus;
-        }
+        var state = Volatile.Read(ref _readState);
+        if ((state & ReadSourceActiveMask) == 0 || (short)(state >> ReadVersionShift) != token)
+            throw new InvalidOperationException("The read token is no longer valid.");
+        return (ValueTaskSourceStatus)(state & ReadStatusMask);
     }
 
     void IValueTaskSource<ReadResult>.OnCompleted(
@@ -396,7 +407,7 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
             if (_readContinuationRegistered)
                 throw new InvalidOperationException("Only one continuation is supported per read.");
             _readContinuationRegistered = true;
-            if (_readStatus == ValueTaskSourceStatus.Pending)
+            if (ReadStatus == ValueTaskSourceStatus.Pending)
             {
                 // Completion cannot detach this pending core while the gate is held, so this
                 // only registers; it never invokes arbitrary consumer code under the gate.
@@ -414,7 +425,7 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
 
     private void ValidateReadToken(short token)
     {
-        if (!_readSourceActive || token != _readVersion)
+        if (!ReadSourceActive || token != _readVersion)
             throw new InvalidOperationException("The read token is no longer valid.");
     }
 
@@ -439,10 +450,10 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
             if (!_readActive)
                 return;
             _readActive = false;
-            if (_readSourceActive && _readStatus == ValueTaskSourceStatus.Succeeded)
+            if (ReadSourceActive && ReadStatus == ValueTaskSourceStatus.Succeeded)
             {
                 _readResult = default;
-                _readSourceActive = false;
+                Volatile.Write(ref _readState, 0);
             }
             released = _readReleased;
             _readReleased = null;

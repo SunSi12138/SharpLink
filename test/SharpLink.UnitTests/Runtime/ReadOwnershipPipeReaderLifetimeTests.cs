@@ -419,6 +419,70 @@ public class ReadOwnershipPipeReaderLifetimeTests
         }
     }
 
+    [Test]
+    public void StatusShouldRemainCorrectAcrossTokenSignAndWrapBoundaries()
+    {
+        var fake = new AllocationFreePipeReader();
+        var reader = new ReadOwnershipPipeReader(fake);
+        ValueTask<ReadResult> previous = default;
+        for (var i = 0; i < ushort.MaxValue + 3; i++)
+        {
+            var current = reader.ReadAsync();
+            Ensure(!current.IsCompleted, "each new token must initially report Pending");
+            if (i == short.MaxValue || i == ushort.MaxValue)
+            {
+                // Deliberately probe a stale adjacent token at both packed-token boundaries.
+                // Repeated consumption is unsupported; this only checks source-token rejection.
+                var rejected = false;
+                try
+                {
+                    _ = previous.IsCompleted;
+                }
+                catch (InvalidOperationException)
+                {
+                    rejected = true;
+                }
+                Ensure(rejected, "the prior token must not become valid across sign/wrap boundaries");
+            }
+            fake.Publish();
+            Ensure(current.IsCompletedSuccessfully, "the live token must report its own completed status");
+            var result = current.GetAwaiter().GetResult();
+            reader.AdvanceTo(result.Buffer.End);
+            previous = current;
+        }
+    }
+
+    [Test]
+    public void RegisteredConsumerSuspensionsShouldNotAllocateAfterWarmup()
+    {
+        var fake = new AllocationFreePipeReader();
+        var reader = new ReadOwnershipPipeReader(fake);
+        ValueTask<ReadResult> current = default;
+        var consumed = 0;
+        Action continuation = () =>
+        {
+            var result = current.GetAwaiter().GetResult();
+            reader.AdvanceTo(result.Buffer.End);
+            consumed++;
+        };
+        for (var i = 0; i < 1_000; i++)
+            Round();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 10_000; i++)
+            Round();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Ensure(consumed == 11_000, "every pending read must invoke its registered consumer exactly once");
+        Ensure(allocated == 0, $"suspended reads with a cached consumer must allocate 0 bytes, got {allocated}");
+
+        void Round()
+        {
+            current = reader.ReadAsync();
+            Ensure(!current.IsCompleted, "the consumer must register before inner completion");
+            current.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(continuation);
+            fake.Publish();
+        }
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static (ReadOwnershipPipeReader Reader, WeakReference Payload) CompleteSuccess(bool inline, bool synchronousReads)
     {
