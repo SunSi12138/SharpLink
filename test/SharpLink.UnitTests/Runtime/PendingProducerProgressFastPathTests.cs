@@ -109,38 +109,43 @@ public class PendingProducerProgressFastPathTests
     }
 
     [Test]
-    [Arguments(PendingCallCompletionReason.RemoteError)]
-    [Arguments(PendingCallCompletionReason.UserCancellation)]
-    [Arguments(PendingCallCompletionReason.GoAway)]
-    [Arguments(PendingCallCompletionReason.SendFailure)]
-    [Arguments(PendingCallCompletionReason.LocalStreamComplete)]
-    [Arguments(PendingCallCompletionReason.Response)]
-    public async Task FastPathShouldRejectEveryTerminalOwner(
-        PendingCallCompletionReason reason)
+    public async Task FastPathShouldRejectEveryTerminalOwner()
     {
-        using var table = PendingRequestTableTestFixture.Create(capacity: 1);
-        var operation = table.Rent(
-            Int32Codec.Instance,
-            PendingCallKind.ClientStreaming,
-            default,
-            CancellationToken.None,
-            out var requestId,
-            hasResponsePayload: true,
-            responseNullable: false);
-        Ensure(table.TryGetProducerDeadline(requestId, out var deadline),
-            "producer deadline must be resolved before terminal completion");
-        Ensure(table.TryAcceptProducerProgress(requestId, deadline),
-            "live producer should initially accept progress");
+        var reasons = new[]
+        {
+            PendingCallCompletionReason.RemoteError,
+            PendingCallCompletionReason.UserCancellation,
+            PendingCallCompletionReason.GoAway,
+            PendingCallCompletionReason.SendFailure,
+            PendingCallCompletionReason.LocalStreamComplete,
+            PendingCallCompletionReason.Response
+        };
+        foreach (var reason in reasons)
+        {
+            using var table = PendingRequestTableTestFixture.Create(capacity: 1);
+            var operation = table.Rent(
+                Int32Codec.Instance,
+                PendingCallKind.ClientStreaming,
+                default,
+                CancellationToken.None,
+                out var requestId,
+                hasResponsePayload: true,
+                responseNullable: false);
+            Ensure(table.TryGetProducerDeadline(requestId, out var deadline),
+                "producer deadline must be resolved before terminal completion");
+            Ensure(table.TryAcceptProducerProgress(requestId, deadline),
+                "live producer should initially accept progress");
 
-        Ensure(table.TryComplete(requestId, reason),
-            $"terminal reason {reason} must claim the pending slot");
-        Ensure(!table.TryAcceptProducerProgress(requestId, deadline),
-            $"producer progress must reject a slot terminated by {reason}");
-        Ensure(!table.Contains(requestId),
-            "all terminal reasons must remove the authoritative slot exactly once");
-        await ObserveTerminalAsync(operation);
-        Ensure(table.ActiveCount == 0,
-            $"terminal reason {reason} must release pending capacity");
+            Ensure(table.TryComplete(requestId, reason),
+                $"terminal reason {reason} must claim the pending slot");
+            Ensure(!table.TryAcceptProducerProgress(requestId, deadline),
+                $"producer progress must reject a slot terminated by {reason}");
+            Ensure(!table.Contains(requestId),
+                "all terminal reasons must remove the authoritative slot exactly once");
+            await ObserveTerminalAsync(operation);
+            Ensure(table.ActiveCount == 0,
+                $"terminal reason {reason} must release pending capacity");
+        }
     }
 
     [Test]
