@@ -25,7 +25,11 @@ public class RpcMethodDescriptorTests
             oldTimeout, idempotent, streamCount) = descriptor;
         descriptor.Deconstruct(
             out _, out _, out _, out _, out _, out _, out _, out _, out _, out var nullable);
-        var changed = descriptor with { ResponseNullable = false, HasClientStreams = false };
+        var changed = new RpcMethodDescriptor(
+            contractId, methodId, kind,
+            HasResponsePayload: true, HasClientStreams: false,
+            HasMethodTimeout: true, MethodTimeout: timeout,
+            IsIdempotent: true, ClientStreamCount: 2, ResponseNullable: false);
 
         await Assert.That(Unsafe.SizeOf<RpcMethodDescriptor>()).IsEqualTo(32);
         await Assert.That(Marshal.SizeOf<RpcMethodDescriptor>()).IsEqualTo(32);
@@ -41,7 +45,7 @@ public class RpcMethodDescriptorTests
     }
 
     [Test]
-    public async Task CombinedWithFlagUpdatesMustPreserveNonNullMethodTimeout()
+    public async Task ReconstructionOfFlagsMustPreserveNonNullMethodTimeout()
     {
         foreach (var timeout in new[] { TimeSpan.FromSeconds(3), TimeSpan.FromTicks(-42) })
         {
@@ -55,14 +59,11 @@ public class RpcMethodDescriptorTests
                 ClientStreamCount: 2,
                 ResponseNullable: true);
 
-            var updated = original with
-            {
-                HasResponsePayload = false,
-                HasClientStreams = false,
-                HasMethodTimeout = false,
-                IsIdempotent = false,
-                ResponseNullable = false
-            };
+            var updated = new RpcMethodDescriptor(
+                11, 22, RpcMethodKind.DuplexStreaming,
+                HasResponsePayload: false, HasClientStreams: false,
+                HasMethodTimeout: false, MethodTimeout: timeout,
+                IsIdempotent: false, ClientStreamCount: 2, ResponseNullable: false);
 
             await Assert.That(updated.MethodTimeout).IsEqualTo(timeout);
             await Assert.That(updated.MethodTimeout.HasValue).IsTrue();
@@ -70,14 +71,12 @@ public class RpcMethodDescriptorTests
                 || updated.HasMethodTimeout || updated.IsIdempotent || updated.ResponseNullable).IsFalse();
             await Assert.That(original.MethodTimeout).IsEqualTo(timeout);
 
-            var restored = updated with
-            {
-                HasResponsePayload = true,
-                HasClientStreams = true,
-                HasMethodTimeout = true,
-                IsIdempotent = true,
-                ResponseNullable = true
-            };
+            var restored = new RpcMethodDescriptor(
+                updated.ContractId, updated.MethodId, updated.Kind,
+                HasResponsePayload: true, HasClientStreams: true,
+                HasMethodTimeout: true, MethodTimeout: updated.MethodTimeout,
+                IsIdempotent: true, ClientStreamCount: updated.ClientStreamCount,
+                ResponseNullable: true);
 
             await Assert.That(restored.MethodTimeout).IsEqualTo(timeout);
             await Assert.That(restored).IsEqualTo(original);
@@ -90,10 +89,13 @@ public class RpcMethodDescriptorTests
         var descriptor = default(RpcMethodDescriptor);
 
         await Assert.That(descriptor.MethodTimeout.HasValue).IsFalse();
-        await Assert.That(descriptor with { MethodTimeout = null }).IsEqualTo(descriptor);
-        await Assert.That((descriptor with { MethodTimeout = TimeSpan.Zero }).MethodTimeout)
-            .IsEqualTo(TimeSpan.Zero);
-        await Assert.That(descriptor != (descriptor with { MethodTimeout = TimeSpan.Zero })).IsTrue();
+        var explicitlyNull = new RpcMethodDescriptor(
+            0, 0, RpcMethodKind.Unary, false, false, false, null);
+        var explicitlyZero = new RpcMethodDescriptor(
+            0, 0, RpcMethodKind.Unary, false, false, false, TimeSpan.Zero);
+        await Assert.That(explicitlyNull).IsEqualTo(descriptor);
+        await Assert.That(explicitlyZero.MethodTimeout).IsEqualTo(TimeSpan.Zero);
+        await Assert.That(descriptor != explicitlyZero).IsTrue();
     }
 
     [Test]
@@ -124,7 +126,18 @@ public class RpcMethodDescriptorTests
         foreach (var timeout in timeouts)
         {
             var constructed = Create(timeout);
-            var copied = withoutValue with { MethodTimeout = timeout };
+            var copied = RpcMethodDescriptor.FromShape(
+                11, 22,
+                new RpcMethodShape(
+                    RpcMethodKind.DuplexStreaming,
+                    clientStreamCount: 2,
+                    supportsCancellation: true,
+                    hasResponsePayload: true,
+                    responseNullable: true,
+                    hasMethodTimeout: true,
+                    isIdempotent: true,
+                    hasMethodTimeoutValue: timeout.HasValue),
+                timeout);
 
             await Assert.That(constructed.MethodTimeout).IsEqualTo(timeout);
             await Assert.That(copied.MethodTimeout).IsEqualTo(timeout);
@@ -143,6 +156,6 @@ public class RpcMethodDescriptorTests
         await Assert.That(withoutValue != negative).IsTrue();
         await Assert.That(zero != negative).IsTrue();
         await Assert.That(negative != positive).IsTrue();
-        await Assert.That(negative with { MethodTimeout = null }).IsEqualTo(withoutValue);
+        await Assert.That(Create(null)).IsEqualTo(withoutValue);
     }
 }

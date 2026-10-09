@@ -323,4 +323,16 @@ internal sealed partial class SharpLinkServer : ISharpLinkAdmissionRuntimeContro
         Disable,
         TestReplacement
     }
+
+    private static SharpLinkAdmissionContext CreateAdmissionContext(
+        ServerConnectionState connection,
+        in ResolvedMethodCall resolved,
+        ServerRequestEnvelope request)
+        => new(
+            resolved.ContractId,
+            resolved.MethodHash,
+            resolved.Shape.Kind,
+            connection.Session.Id,
+            connection.AuthenticationContext,
+            request.Metadata);
 }

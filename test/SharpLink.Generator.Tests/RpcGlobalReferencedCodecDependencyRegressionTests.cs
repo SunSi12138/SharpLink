@@ -24,8 +24,8 @@ using System;
     typeof(Referenced.Manifest),
     4,
     2,
-    "2.0.0-test",
-    "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
+    "3.0.0-test",
+    "sharplink-3.0-api5-rpcchannel-codec-provider-v1")]
 
 namespace SharpLink.Abstractions
 {

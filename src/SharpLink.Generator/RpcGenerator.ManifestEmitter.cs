@@ -2,7 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v1";
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-rpcchannel-codec-provider-v1";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -55,7 +55,7 @@ public partial class RpcGenerator
         }
         if (!codecs.IsDefaultOrEmpty)
             sb.AppendLine();
-        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 4, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
+        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 5, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
@@ -68,7 +68,7 @@ public partial class RpcGenerator
         sb.AppendLine($"    public {manifestTypeName}() {{ }}");
         sb.AppendLine("    public static void Register()");
         sb.AppendLine("        => SharpLinkGeneratedAssemblyCatalog.Register(Instance);");
-        sb.AppendLine("    public int ApiVersion => 4;");
+        sb.AppendLine("    public int ApiVersion => 5;");
         sb.AppendLine("    public int ProtocolVersion => 2;");
         sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
         sb.AppendLine($"    public Assembly OwnerAssembly => typeof({manifestTypeName}).Assembly;");
@@ -175,13 +175,13 @@ public partial class RpcGenerator
             sb.AppendLine($"            \"{contract.Fingerprint}\",");
             sb.AppendLine("            Array.AsReadOnly(new SharpLinkGeneratedMethodDescriptor[]");
             sb.AppendLine("            {");
+            var (_, timeoutOrdinals) = BuildMethodTimeoutTable(contract.Methods);
             foreach (var method in contract.Methods.OrderBy(static method => method.Hash))
             {
                 sb.AppendLine("                new SharpLinkGeneratedMethodDescriptor(");
                 sb.AppendLine($"                    \"{EscapeString(method.Name)}\",");
                 sb.AppendLine($"                    {method.Hash}L,");
-                sb.AppendLine($"                    RpcMethodKind.{GetMethodKind(method)},");
-                sb.AppendLine($"                    {(method.HasCancellationToken || method.IsStreamReturn || method.Parameters.Any(static parameter => parameter.IsStream) ? "true" : "false")},");
+                sb.AppendLine($"                    new RpcMethodShape(0x{GetPackedMethodShape(method, timeoutOrdinals):x8}u),");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
                 sb.AppendLine($"                    \"{method.Fingerprint}\"),");

@@ -70,6 +70,16 @@ jobs:
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
 
+      - name: Verify reviewed public API and release versions
+        run: |
+          if ! bash ./eng/verify-public-api.sh; then
+            if test -f artifacts/public-api/current/public-api.diff; then
+              cat artifacts/public-api/current/public-api.diff
+            fi
+            exit 1
+          fi
+          python3 ./eng/verify-release-versions.py
+
       - name: Verify NuGet package contracts
         uses: ./.github/actions/verify-packages
 

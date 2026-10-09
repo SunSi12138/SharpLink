@@ -267,17 +267,12 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         {
             public long InterfaceHash { get; } = interfaceHash;
 
-            public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+            // The removed TryGetMethodDescriptor always answered false here; UnknownMethod carries
+            // the same observable facts (not known, no cancellation, no client streams).
+            public RpcMethodShape ResolveMethodShape(long methodHash)
             {
                 _ = methodHash;
-                descriptor = default;
-                return false;
-            }
-
-            public bool SupportsCancellation(long methodHash)
-            {
-                _ = methodHash;
-                return false;
+                return RpcMethodShape.UnknownMethod;
             }
 
             public ValueTask InvokeNoReturnAsync(

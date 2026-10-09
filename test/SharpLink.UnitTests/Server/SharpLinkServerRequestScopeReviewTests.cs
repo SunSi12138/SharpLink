@@ -421,20 +421,14 @@ public class SharpLinkServerRequestScopeReviewTests
         public long InterfaceHash => 2480;
         internal int InvocationCount => Volatile.Read(ref _invocationCount);
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
-        {
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash,
-                methodHash,
-                kind,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return methodHash == MethodHash;
-        }
-
-        public bool SupportsCancellation(long methodHash) => true;
+        public RpcMethodShape ResolveMethodShape(long methodHash)
+            => methodHash == MethodHash
+                ? new RpcMethodShape(
+                    kind,
+                    clientStreamCount: 0,
+                    supportsCancellation: true,
+                    hasResponsePayload: false)
+                : RpcMethodShape.UnknownMethod;
 
         public ValueTask InvokeNoReturnAsync(
             object service,

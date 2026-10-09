@@ -263,7 +263,7 @@ namespace SharpLink.Abstractions
         var start = manifest.IndexOf(marker, StringComparison.Ordinal);
         if (start < 0)
             throw new Exception("Expected generated method descriptor.");
-        var end = manifest.IndexOf("),", start, StringComparison.Ordinal);
+        var end = manifest.IndexOf("\"),", start, StringComparison.Ordinal);
         if (end < 0)
             throw new Exception("Expected generated method descriptor terminator.");
         var quotedLines = manifest[start..end]
@@ -343,7 +343,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 4, 2, "2.0.0-test", "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 5, 2, "3.0.0-test", "sharplink-3.0-api5-rpcchannel-codec-provider-v1")]
 
 namespace SharpLink.Generated
 {

@@ -74,8 +74,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
 public sealed record SharpLinkGeneratedMethodDescriptor(
     string Name,
     long MethodId,
-    RpcMethodKind Kind,
-    bool SupportsCancellation,
+    RpcMethodShape Shape,
     string RequestSchema,
     string ResponseSchema,
     string Fingerprint);
@@ -153,14 +152,14 @@ public interface ISharpLinkGeneratedAssemblyManifest
 public static class SharpLinkGeneratedManifestVersions
 {
     /// <summary>
-    /// The current generated manifest API version. SharpLink 2.0 performs one Generated ABI bump
-    /// from the published 1.1.1 baseline (API 3) to API 4. Intermediate development-only ABI
-    /// numbers are not compatibility boundaries; regenerate all generated artifacts with the 2.0 SDK.
+    /// The current generated manifest API version. SharpLink 3.0 increments the generated ABI
+    /// from the published 2.0 baseline (API 4) to API 5. Previous generated assemblies
+    /// must be rebuilt with the 3.0 SDK: their method-fact lookup ABI is incompatible.
     /// </summary>
-    public const int Api = 4;
+    public const int Api = 5;
 
-    /// <summary>Exact discriminator for the 2.0/API4 generated proxy/runtime ABI.</summary>
-    public const string AbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v1";
+    /// <summary>Exact discriminator for the 3.0/API5 generated proxy/runtime ABI.</summary>
+    public const string AbiIdentity = "sharplink-3.0-api5-rpcchannel-codec-provider-v1";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

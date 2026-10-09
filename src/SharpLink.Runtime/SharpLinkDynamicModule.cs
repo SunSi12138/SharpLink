@@ -233,7 +233,7 @@ internal static class SharpLinkAssemblyManifestLoader
                 if (method is null || string.IsNullOrWhiteSpace(method.Name) ||
                     method.RequestSchema is null || method.ResponseSchema is null ||
                     !IsFingerprint(method.Fingerprint) ||
-                    method.Kind is < RpcMethodKind.Unary or > RpcMethodKind.DuplexStreaming)
+                    method.Shape.Kind is < RpcMethodKind.Unary or > RpcMethodKind.DuplexStreaming)
                 {
                     return Error(
                         SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
