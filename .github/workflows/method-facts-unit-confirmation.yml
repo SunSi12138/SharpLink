@@ -1,0 +1,43 @@
+name: Method Facts Matched Unit Confirmation
+on:
+  push:
+    branches: ['validation/732-module-method-facts']
+    paths:
+      - 'validation-evidence/method-facts-unit/**'
+      - '.github/workflows/method-facts-unit-confirmation.yml'
+permissions:
+  contents: read
+jobs:
+  matched-unit-confirmation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.112'
+      - name: Preserve matched baseline and candidate unit outcomes
+        run: python3 validation-evidence/method-facts-unit/run.py
+      - name: Package bounded text evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import pathlib,zipfile
+          root=pathlib.Path('artifacts/method-facts-unit');dest=pathlib.Path('artifacts/method-facts-unit.zip')
+          with zipfile.ZipFile(dest,'w',zipfile.ZIP_DEFLATED) as z:
+              for f in sorted(root.glob('*')):
+                  if f.is_file() and f.suffix in ('.txt','.log','.json'):
+                      assert f.stat().st_size<12*1024*1024
+                      z.write(f,f.name)
+          assert dest.stat().st_size<=16*1024*1024
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: method-facts-matched-unit-evidence
+          path: artifacts/method-facts-unit.zip
+          retention-days: 30
+          if-no-files-found: error
