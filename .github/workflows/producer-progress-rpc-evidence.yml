@@ -55,7 +55,8 @@ jobs:
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
           dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
-          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -v minimal --treenode-filter '/*/*/PendingProducerProgressFastPathTests/*|/*/*/ClientStreamProducerDeadlineTests/*'
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -v minimal --treenode-filter '/*/*/PendingProducerProgressFastPathTests/*'
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -v minimal --treenode-filter '/*/*/ClientStreamProducerDeadlineTests/*'
 
       - name: Run paired TCP and SharedMemory streaming A/B
         shell: bash
