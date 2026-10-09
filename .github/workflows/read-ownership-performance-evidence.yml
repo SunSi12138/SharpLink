@@ -1,4 +1,4 @@
-name: Read Ownership Optimization Evidence
+name: Read Ownership Safe Dispatch Evidence
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
       - '.github/workflows/read-ownership-performance-evidence.yml'
       - 'eng/perf/read-ownership-*.json'
       - 'eng/perf/read-ownership-micro/**'
+      - 'eng/perf/read-ownership-dispatch/**'
       - 'eng/perf/run-read-ownership.py'
       - 'eng/perf/summarize-read-ownership.py'
       - 'eng/perf/test-read-ownership-harness.py'
@@ -51,10 +52,10 @@ jobs:
           cp eng/perf/*read-ownership*.py eng/perf/read-ownership-revisions.json \
             eng/perf/read-ownership-method.md .github/workflows/read-ownership-performance-evidence.yml \
             artifacts/read-ownership/harness/
-          cp -r eng/perf/read-ownership-micro artifacts/read-ownership/harness/
+          cp -r eng/perf/read-ownership-micro eng/perf/read-ownership-dispatch artifacts/read-ownership/harness/
           sha256sum eng/perf/run-read-ownership.py eng/perf/summarize-read-ownership.py \
             eng/perf/test-read-ownership-harness.py eng/perf/read-ownership-revisions.json \
-            .github/workflows/read-ownership-performance-evidence.yml eng/perf/read-ownership-micro/* > artifacts/read-ownership/harness-sha256.txt
+            .github/workflows/read-ownership-performance-evidence.yml eng/perf/read-ownership-micro/* eng/perf/read-ownership-dispatch/* > artifacts/read-ownership/harness-sha256.txt
 
       - name: Build all arms, then execute all six balanced orders
         shell: bash
@@ -91,7 +92,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: d33136386d569cfe1db4ae649f5f4f2f4bc8279d
+          ref: 8e602aa70bd765d2581090020a6661e18391186d
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
@@ -152,7 +153,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: d33136386d569cfe1db4ae649f5f4f2f4bc8279d
+          ref: 8e602aa70bd765d2581090020a6661e18391186d
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
