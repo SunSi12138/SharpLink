@@ -233,7 +233,19 @@ public static class Program
         if (args.Length > 0 && string.Equals(
             args[0], "--producer-progress-evidence", StringComparison.Ordinal))
         {
-            ProducerProgressEvidenceRunner.Run(args[1..]);
+            // Keep this research-only CLI discoverable without making Program.cs statically depend
+            // on the candidate harness. Some existing A/B workflows copy the PR-head Program.cs into
+            // an exact historical base worktree; a reflection-only edge keeps that base compilable.
+            var runnerType = typeof(Program).Assembly.GetType(
+                "SharpLink.Benchmarks.ProducerProgressEvidenceRunner",
+                throwOnError: true)!;
+            var run = runnerType.GetMethod(
+                "Run",
+                System.Reflection.BindingFlags.Static |
+                System.Reflection.BindingFlags.Public |
+                System.Reflection.BindingFlags.NonPublic)
+                ?? throw new MissingMethodException(runnerType.FullName, "Run");
+            run.Invoke(null, new object?[] { args[1..] });
             return;
         }
         BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
