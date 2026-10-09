@@ -1,0 +1,99 @@
+name: Recover OneWay Evidence
+on:
+  push:
+    branches: [validation/729-evidence-recovery]
+    paths: ['.github/workflows/recover-oneway-evidence.yml']
+permissions:
+  contents: read
+  actions: read
+jobs:
+  preserve-original:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download the immutable completed-run archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p recovery
+          gh api repos/SunSi12138/SharpLink/actions/artifacts/11623994999/zip > recovery/original.zip
+          echo '48c10e5d5244a715251be0bba1ae23ee7de435be96753e191f99adc0e28ecc89  recovery/original.zip' | sha256sum --check
+      - name: Preserve original bytes and export auditable raw evidence
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, pathlib, zipfile, zlib
+          root = pathlib.Path("recovery")
+          data = (root / "original.zip").read_bytes()
+          assert len(data) == 55211772
+          sha = lambda b: hashlib.sha256(b).hexdigest()
+          origin = dict(repository="SunSi12138/SharpLink", runId=37945758812,
+              headSha="6ece2f7a7aaa8b3650885124e26608653cb77684", artifactId=11623994999,
+              archiveSha256=sha(data), archiveBytes=len(data))
+          parts = []
+          for index, start in enumerate(range(0, len(data), 15 * 1024 * 1024)):
+              chunk = data[start:start + 15 * 1024 * 1024]
+              name = f"original.zip.part{index:02d}"
+              (root / name).write_bytes(chunk)
+              parts.append(dict(name=name, bytes=len(chunk), sha256=sha(chunk)))
+          files = []
+          with zipfile.ZipFile(root / "original.zip") as archive:
+              assert archive.testzip() is None
+              for item in archive.infolist():
+                  if item.is_dir():
+                      continue
+                  path = pathlib.PurePosixPath(item.filename)
+                  assert not path.is_absolute() and ".." not in path.parts
+                  content = archive.read(item)
+                  files.append(dict(path=item.filename, bytes=len(content), sha256=sha(content)))
+                  selected = (item.filename.endswith(".json") and "/samples/" not in "/" + item.filename
+                      and "/images/" not in "/" + item.filename)
+                  selected |= item.filename.endswith("-production.patch")
+                  selected |= item.filename.startswith("environment/")
+                  if selected:
+                      encoded = base64.b64encode(zlib.compress(content, 9)).decode()
+                      print("EVIDENCE_FILE " + json.dumps(dict(path=item.filename,
+                          bytes=len(content), sha256=sha(content), encoding="zlib+base64", length=len(encoded))))
+                      for offset in range(0, len(encoded), 4000):
+                          print("EVIDENCE_DATA " + encoded[offset:offset + 4000])
+                      print("EVIDENCE_END")
+          manifest = dict(origin=origin, parts=parts, files=files,
+              note="Original completed measurements; artifact-only recovery, no benchmark execution.")
+          (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          encoded = base64.b64encode(zlib.compress((root / "manifest.json").read_bytes(), 9)).decode()
+          print("EVIDENCE_FILE " + json.dumps(dict(path="recovery-manifest.json",
+              bytes=(root / "manifest.json").stat().st_size,
+              sha256=sha((root / "manifest.json").read_bytes()), encoding="zlib+base64", length=len(encoded))))
+          for offset in range(0, len(encoded), 4000):
+              print("EVIDENCE_DATA " + encoded[offset:offset + 4000])
+          print("EVIDENCE_END")
+          print("RECOVERY_ORIGIN " + json.dumps(origin))
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue729-original-part00
+          path: recovery/original.zip.part00
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue729-original-part01
+          path: recovery/original.zip.part01
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue729-original-part02
+          path: recovery/original.zip.part02
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue729-original-part03
+          path: recovery/original.zip.part03
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue729-recovery-manifest
+          path: recovery/manifest.json
+          retention-days: 7
