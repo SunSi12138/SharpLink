@@ -45,9 +45,10 @@ jobs:
                   assert not path.is_absolute() and ".." not in path.parts
                   content = archive.read(item)
                   files.append(dict(path=item.filename, bytes=len(content), sha256=sha(content)))
-                  selected = (item.filename.endswith(".json") and "/samples/" not in "/" + item.filename
+                  selected = (item.filename.endswith((".json", ".jsonl")) and "/samples/" not in "/" + item.filename
                       and "/images/" not in "/" + item.filename)
                   selected |= item.filename.endswith("-production.patch")
+                  selected |= item.filename.startswith("codegen/") and item.filename.endswith((".log", ".asm", ".txt"))
                   selected |= item.filename.startswith("environment/")
                   if selected:
                       encoded = base64.b64encode(zlib.compress(content, 9)).decode()
