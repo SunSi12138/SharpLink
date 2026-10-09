@@ -41,7 +41,7 @@ jobs:
         run: |
           dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
           dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
-          dotnet test test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release             --filter 'FullyQualifiedName~PendingProducerProgressLeaseTests'             --no-restore -v minimal
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -v minimal --treenode-filter '/*/*/PendingProducerProgressLeaseTests/*'
 
       - name: Run A0 A1 A2 single-thread BenchmarkDotNet
         shell: bash
@@ -49,14 +49,14 @@ jobs:
           SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -o pipefail
-          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj             -c Release --no-build --             --filter '*ProducerProgressBenchmarks*' --exporters json             2>&1 | tee artifacts/performance/producer-progress/bdn.log
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --filter '*ProducerProgressBenchmarks*' --exporters json 2>&1 | tee artifacts/performance/producer-progress/bdn.log
 
       - name: Run same-request and independent-request contention evidence
         shell: bash
         env:
           SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj             -c Release --no-build --             --producer-progress-evidence             100000             artifacts/performance/producer-progress/contention.json             > artifacts/performance/producer-progress/contention.log
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --producer-progress-evidence 100000 artifacts/performance/producer-progress/contention.json > artifacts/performance/producer-progress/contention.log
 
       - name: Summarize evidence
         shell: bash
@@ -68,72 +68,71 @@ jobs:
           from collections import defaultdict
           from pathlib import Path
 
-          root = Path("artifacts/performance/producer-progress")
-          lines = ["# Issue #737 producer-progress evidence", ""]
+          root = Path('artifacts/performance/producer-progress')
+          lines = ['# Issue #737 producer-progress evidence', '']
 
-          reports = list(Path("BenchmarkDotNet.Artifacts/results").glob(
-              "*ProducerProgressBenchmarks*-report-full*.json"))
+          reports = list(Path('BenchmarkDotNet.Artifacts/results').glob(
+              '*ProducerProgressBenchmarks*-report-full*.json'))
           if not reports:
-              raise SystemExit("ProducerProgressBenchmarks full JSON report is missing")
+              raise SystemExit('ProducerProgressBenchmarks full JSON report is missing')
 
-          lines += ["## Single-thread BenchmarkDotNet", "",
-                    "| Deadline | Variant | Mean ns/check | B/op |",
-                    "|---|---|---:|---:|"]
+          lines += ['## Single-thread BenchmarkDotNet', '',
+                    '| Deadline | Variant | Mean ns/check | B/op |',
+                    '|---|---|---:|---:|']
           for report in reports:
               payload = json.loads(report.read_text())
-              rows = payload.get("Benchmarks", [])
+              rows = payload.get('Benchmarks', [])
               for row in rows:
-                  method = row.get("Method", "")
-                  if not method.startswith(("A0_", "A1_", "A2_")):
+                  method = row.get('Method', '')
+                  if not method.startswith(('A0_', 'A1_', 'A2_')):
                       continue
-                  params = row.get("Parameters", "")
-                  stats = row.get("Statistics") or {}
-                  memory = row.get("Memory") or {}
-                  mean = stats.get("Mean")
-                  allocated = memory.get("BytesAllocatedPerOperation")
+                  params = row.get('Parameters', '')
+                  stats = row.get('Statistics') or {}
+                  memory = row.get('Memory') or {}
+                  mean = stats.get('Mean')
+                  allocated = memory.get('BytesAllocatedPerOperation')
                   if not isinstance(mean, (int, float)) or not math.isfinite(mean):
-                      raise SystemExit(f"Missing mean for {method}")
+                      raise SystemExit(f'Missing mean for {method}')
                   if not isinstance(allocated, (int, float)) or not math.isfinite(allocated):
-                      raise SystemExit(f"Missing allocation for {method}")
-                  lines.append(f"| {params} | {method} | {mean:.3f} | {allocated:.2f} |")
+                      raise SystemExit(f'Missing allocation for {method}')
+                  lines.append(f'| {params} | {method} | {mean:.3f} | {allocated:.2f} |')
 
-          evidence = json.loads((root / "contention.json").read_text())
+          evidence = json.loads((root / 'contention.json').read_text())
           grouped = defaultdict(list)
-          for row in evidence["records"]:
-              key = (row["scope"], row["workers"], row["hasDeadline"], row["variant"])
+          for row in evidence['records']:
+              key = (row['scope'], row['workers'], row['hasDeadline'], row['variant'])
               grouped[key].append(row)
 
-          lines += ["", "## Contention runner", "",
-                    "Wall ns/check is median of 3 rotated-order repetitions. "
-                    "Improvement is relative to A0Locked for the same cell.", "",
-                    "| Scope | Workers | Deadline | Variant | Wall ns/check | CPU ns/check | Lock contentions | vs A0 |",
-                    "|---|---:|---|---|---:|---:|---:|---:|"]
+          lines += ['', '## Contention runner', '',
+                    'Wall ns/check is median of 3 rotated-order repetitions. Improvement is relative to A0Locked for the same cell.', '',
+                    '| Scope | Workers | Deadline | Variant | Wall ns/check | CPU ns/check | Lock contentions | Alloc B/check | vs A0 |',
+                    '|---|---:|---|---|---:|---:|---:|---:|---:|']
 
           cells = sorted({(scope, workers, deadline)
                           for scope, workers, deadline, _ in grouped})
           for scope, workers, deadline in cells:
               values = {}
-              for variant in ("A0Locked", "A1Contains", "A2Resolved"):
+              for variant in ('A0Locked', 'A1Contains', 'A2Resolved'):
                   rows = grouped[(scope, workers, deadline, variant)]
                   if len(rows) != 3:
-                      raise SystemExit(f"Expected 3 repetitions for {(scope, workers, deadline, variant)}")
+                      raise SystemExit(f'Expected 3 repetitions for {(scope, workers, deadline, variant)}')
                   values[variant] = {
-                      "wall": statistics.median(r["wallNanosecondsPerCheck"] for r in rows),
-                      "cpu": statistics.median(r["cpuNanosecondsPerCheck"] for r in rows),
-                      "contention": statistics.median(r["lockContentions"] for r in rows),
-                      "alloc": statistics.median(r["allocatedBytesPerCheck"] for r in rows),
+                      'wall': statistics.median(r['wallNanosecondsPerCheck'] for r in rows),
+                      'cpu': statistics.median(r['cpuNanosecondsPerCheck'] for r in rows),
+                      'contention': statistics.median(r['lockContentions'] for r in rows),
+                      'alloc': statistics.median(r['allocatedBytesPerCheck'] for r in rows),
                   }
-              baseline = values["A0Locked"]["wall"]
-              for variant in ("A0Locked", "A1Contains", "A2Resolved"):
+              baseline = values['A0Locked']['wall']
+              for variant in ('A0Locked', 'A1Contains', 'A2Resolved'):
                   value = values[variant]
-                  improvement = 0.0 if variant == "A0Locked" else (baseline - value["wall"]) / baseline * 100
+                  improvement = 0.0 if variant == 'A0Locked' else (baseline - value['wall']) / baseline * 100
                   lines.append(
-                      f"| {scope} | {workers} | {deadline} | {variant} | "
+                      f'| {scope} | {workers} | {deadline} | {variant} | '
                       f"{value['wall']:.3f} | {value['cpu']:.3f} | "
-                      f"{value['contention']:.0f} | {improvement:+.2f}% |")
+                      f"{value['contention']:.0f} | {value['alloc']:.5f} | {improvement:+.2f}% |")
 
-          summary = root / "summary.md"
-          summary.write_text("\n".join(lines) + "\n")
+          summary = root / 'summary.md'
+          summary.write_text('\n'.join(lines) + '\n')
           print(summary.read_text())
           PY
           cat artifacts/performance/producer-progress/summary.md >> "$GITHUB_STEP_SUMMARY"
