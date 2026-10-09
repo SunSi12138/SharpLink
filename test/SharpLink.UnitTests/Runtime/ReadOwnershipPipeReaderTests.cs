@@ -53,9 +53,9 @@ public class ReadOwnershipPipeReaderTests
     [Test]
     public async Task RepeatedGetResultAfterCompletionShouldReturnTheSameResult()
     {
-        // IValueTaskSource.GetResult is allowed to be called more than once once the source has
-        // completed; a manual source that returns itself to a pool inside GetResult must not break
-        // the second observation.
+        // Single observation is the supported ValueTask contract. As a compatibility courtesy,
+        // repeated success observation still returns the same result until AdvanceTo releases it;
+        // it must never manufacture a different buffer while this read is owned.
         var fake = new FakePipeReader { Mode = FakeReadMode.Suspend };
         var reader = new ReadOwnershipPipeReader(fake);
 
@@ -148,11 +148,11 @@ public class ReadOwnershipPipeReaderTests
         // arm N+1's payload.
         //
         // Note the documented contract difference from the previous implementation: this reader is
-        // now itself the IValueTaskSource, so arming the next read calls
-        // ManualResetValueTaskSourceCore.Reset(), which invalidates the previous arm's token.
+        // now itself the IValueTaskSource. AdvanceTo invalidates a successful arm's token and
+        // clears its payload; each later suspended read also advances the token version.
         // Observing a stale ValueTask afterwards therefore throws InvalidOperationException instead
         // of re-returning arm N's result forever. That matches how the BCL's own pooled sources
-        // (Pipe, Socket) behave - "Reset: resets to prepare for the next operation" - and it is
+        // (Pipe, Socket) behave when their pooled state is recycled, and it is
         // still safe for any consumer that observes each read once, which is the documented usage.
         // This test pins BOTH halves: never the new payload, and (if it does not throw) still the
         // old one.

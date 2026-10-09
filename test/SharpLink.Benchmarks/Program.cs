@@ -39,6 +39,12 @@ public static class Program
             return;
         }
         if (args.Length > 0 && string.Equals(
+            args[0], "--server-call-admission-smoke-test", StringComparison.Ordinal))
+        {
+            await ServerCallAdmissionHotPathBenchmarks.RunSmokeTestAsync();
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
             args[0], "--unsafe-blit-padding-evidence", StringComparison.Ordinal))
         {
             UnsafeBlitPaddingEvidenceRunner.Run(args[1..]);

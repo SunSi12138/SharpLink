@@ -98,6 +98,8 @@ internal sealed class SharedMemoryControlChannel : IAsyncDisposable
             ? WaitWithCancellationAsync(_dataAvailable, cancellationToken)
             : WaitWithoutCancellationAsync(_dataAvailable);
 
+    internal bool HasPendingDataWait => !IsClosed && _dataAvailable.HasPendingWait;
+
     public ValueTask WaitForSpaceAsync(CancellationToken cancellationToken)
         => cancellationToken.CanBeCanceled
             ? WaitWithCancellationAsync(_spaceAvailable, cancellationToken)

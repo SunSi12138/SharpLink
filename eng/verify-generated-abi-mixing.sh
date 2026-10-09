@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG="$ROOT/test/SharpLink.PackageSmoke/NuGet.config"
 ARTIFACT_ROOT="$ROOT/artifacts/generated-abi-mixing"
+CONFIG="$ARTIFACT_ROOT/NuGet.config"
 PACKAGE_CACHE="$ARTIFACT_ROOT/packages"
 current_version="$(python3 -c 'import sys, xml.etree.ElementTree as ET; print(ET.parse(sys.argv[1]).findtext(".//VersionPrefix"))' "$ROOT/Directory.Build.props")"
 
@@ -15,6 +15,21 @@ fi
 
 rm -rf "$ARTIFACT_ROOT"
 mkdir -p "$ARTIFACT_ROOT" "$PACKAGE_CACHE"
+
+# This negative-compatibility gate intentionally mixes one exact current SharpLink package
+# from the just-built local feed with one exact published 1.1.1 package from nuget.org.
+# Do not reuse PackageSmoke's source-mapped config: that correctly pins all SharpLink.*
+# packages to the local feed and would therefore make the old-version half unrestorable.
+cat >"$CONFIG" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="SharpLink current packages" value="$ROOT/artifacts/nuget" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+  </packageSources>
+</configuration>
+EOF
 
 verify_rejected() {
   local name="$1"
