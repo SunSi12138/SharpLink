@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally><OutputType>Exe</OutputType><IsPackable>false</IsPackable><EnablePackageValidation>false</EnablePackageValidation><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup>
+  <ItemGroup><Compile Include="../ProfileWindow753.cs" Link="ProfileWindow753.cs" /></ItemGroup>
+</Project>

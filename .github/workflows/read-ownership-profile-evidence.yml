@@ -1,0 +1,431 @@
+name: Read Ownership One-Pass EventPipe Diagnosis
+
+on:
+  push:
+    branches:
+      - 'perf/pr753-read-ownership-opt-d33136386d56'
+    paths:
+      - '.github/workflows/read-ownership-profile-evidence.yml'
+      - 'eng/profile-753/**'
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-profile-pass:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout isolated diagnostic harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.112
+
+      - name: Record environment and immutable harness sources
+        shell: bash
+        run: |
+          mkdir -p artifacts/profile-753/preflight artifacts/profile-753/harness
+          dotnet --info > artifacts/profile-753/preflight/dotnet-info.txt
+          uname -a > artifacts/profile-753/preflight/uname.txt
+          lscpu > artifacts/profile-753/preflight/cpu.txt
+          free -b > artifacts/profile-753/preflight/memory.txt
+          ps -eo pid,comm,args > artifacts/profile-753/preflight/processes.txt
+          git rev-parse HEAD > artifacts/profile-753/preflight/harness-commit.txt
+          printf 'run=%s\nattempt=%s\nrunner=%s\nimage=%s\nimage_version=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_ENVIRONMENT" \
+            "$ImageOS" "$ImageVersion" > artifacts/profile-753/preflight/runner.txt
+          git ls-files eng/profile-753 .github/workflows/read-ownership-profile-evidence.yml \
+            eng/perf/run-read-ownership.py eng/perf/summarize-read-ownership.py \
+            eng/perf/test-read-ownership-harness.py | while IFS= read -r file; do
+              cp --parents "$file" artifacts/profile-753/harness/
+              sha256sum "$file"
+            done > artifacts/profile-753/preflight/harness-sha256.txt
+
+      - name: Test runner gates and install pinned official trace tool
+        shell: bash
+        run: |
+          python3 eng/profile-753/test-runner.py 2>&1 | tee artifacts/profile-753/preflight/runner-tests.log
+          python3 eng/perf/test-read-ownership-harness.py 2>&1 | tee artifacts/profile-753/preflight/formal-validator-tests.log
+          dotnet tool install dotnet-trace --version 10.0.745401 --tool-path "$RUNNER_TEMP/pr753-tools" \
+            2>&1 | tee artifacts/profile-753/preflight/tool-install.log
+          "$RUNNER_TEMP/pr753-tools/dotnet-trace" --version > artifacts/profile-753/preflight/tool-version.txt
+
+      - name: Build pinned parser and calibration
+        shell: bash
+        run: |
+          dotnet build eng/profile-753/parser/ProfileParser.csproj -c Release -v minimal -m:1 -nr:false \
+            -p:UseSharedCompilation=false 2>&1 | tee artifacts/profile-753/preflight/parser-build.log
+          dotnet build eng/profile-753/calibration/Calibration.csproj -c Release -v minimal -m:1 -nr:false \
+            -p:UseSharedCompilation=false 2>&1 | tee artifacts/profile-753/preflight/calibration-build.log
+          find eng/profile-753/parser/bin eng/profile-753/calibration/bin -type f -print0 | \
+            sort -z | xargs -0 sha256sum > artifacts/profile-753/preflight/parser-calibration-binary-sha256.txt
+          cp eng/profile-753/parser/obj/project.assets.json artifacts/profile-753/preflight/parser-assets.json
+          cp eng/profile-753/calibration/obj/project.assets.json artifacts/profile-753/preflight/calibration-assets.json
+          dotnet eng/profile-753/parser/bin/Release/net10.0/ProfileParser.dll --self-test \
+            2>&1 | tee artifacts/profile-753/preflight/parser-tests.log
+
+      - name: Calibrate before the single bounded eighteen-process series
+        shell: bash
+        run: |
+          python3 eng/profile-753/run.py \
+            --manifest eng/profile-753/revisions.json \
+            --output "$GITHUB_WORKSPACE/artifacts/profile-753/evidence" \
+            --work "$RUNNER_TEMP/pr753-profile-arms" \
+            --trace "$RUNNER_TEMP/pr753-tools/dotnet-trace" \
+            --parser "$GITHUB_WORKSPACE/eng/profile-753/parser/bin/Release/net10.0/ProfileParser.dll" \
+            --calibration "$GITHUB_WORKSPACE/eng/profile-753/calibration/bin/Release/net10.0/Calibration.dll"
+
+      - name: Publish diagnostic completion summary
+        shell: bash
+        run: cat artifacts/profile-753/evidence/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package lossless transfer parts below the download cap
+        if: always()
+        shell: bash
+        run: python3 eng/profile-753/package.py artifacts/profile-753 artifacts/profile-753-parts
+
+      - name: Preserve all original evidence even if collection or packaging failed
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-full-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload transfer index
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-index-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/index.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload transfer part 00 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part00-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part00
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 01 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part01-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part01
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 02 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part02-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part02
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 03 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part03-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part03
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 04 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part04-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part04
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 05 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part05-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part05
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 06 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part06-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part06
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 07 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part07-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part07
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 08 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part08-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part08
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 09 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part09-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part09
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 10 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part10-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part10
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 11 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part11-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part11
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 12 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part12-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part12
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 13 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part13-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part13
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 14 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part14-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part14
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 15 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part15-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part15
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 16 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part16-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part16
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 17 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part17-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part17
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 18 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part18-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part18
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 19 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part19-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part19
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 20 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part20-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part20
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 21 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part21-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part21
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 22 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part22-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part22
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 23 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part23-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part23
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 24 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part24-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part24
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 25 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part25-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part25
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 26 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part26-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part26
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 27 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part27-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part27
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 28 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part28-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part28
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 29 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part29-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part29
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 30 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part30-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part30
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload transfer part 31 when present
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-profile-part31-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/profile-753-parts/evidence.part31
+          compression-level: 0
+          if-no-files-found: ignore
+          retention-days: 90

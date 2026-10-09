@@ -1,0 +1,16 @@
+{
+  "baseline": "072a3a13fca0aa9186d2db44e38e5fc846969b07",
+  "safe": "ac903d63c541d972f4268bb404b3c09ce63776e4",
+  "normalized": "1a24cc07036dd2c36f269d8df66cd81f85c14f08",
+  "blocks": 3,
+  "warmupSeconds": 2,
+  "durationSeconds": 15,
+  "sdkVersion": "10.0.112",
+  "runtimeVersion": ".NET 10.0.12",
+  "processorCount": 4,
+  "traceToolVersion": "10.0.745401",
+  "traceEventVersion": "3.2.8",
+  "providers": "Microsoft-DotNETCore-SampleProfiler:0:4,Microsoft-Windows-DotNETRuntime:0x40034019:4,SharpLink-753-ProfileWindow:1:4",
+  "traceBufferMegabytes": 256,
+  "retries": 0
+}
