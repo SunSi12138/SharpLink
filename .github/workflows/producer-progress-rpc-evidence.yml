@@ -68,7 +68,7 @@ jobs:
           set -euo pipefail
           ROOT="$GITHUB_WORKSPACE/artifacts/performance/producer-progress-rpc/raw"
           mkdir -p "$ROOT"
-          scenarios=(Client100x16 Client100x4096 ClientMulti2x100x4 Duplex100x16 Duplex100x4096)
+          scenarios=(Client100x16 Client100x4096 ClientMulti2x100x4 ClientMulti2x1024x4Gated Duplex100x16 Duplex100x4096)
           transports=(tcp sharedmemory)
           for rep in 0 1 2 3 4 5; do
             if (( rep % 2 == 0 )); then revisions=(base candidate); else revisions=(candidate base); fi
@@ -106,8 +106,8 @@ jobs:
 
           base_sha = Path('artifacts/performance/producer-progress-rpc/base.txt').read_text().strip()
           candidate_sha = Path('artifacts/performance/producer-progress-rpc/candidate.txt').read_text().strip()
-          if len(docs) != 120:
-              raise SystemExit(f'Expected exactly 120 paired result documents, got {len(docs)}')
+          if len(docs) != 144:
+              raise SystemExit(f'Expected exactly 144 paired result documents, got {len(docs)}')
           for (transport, scenario, revision, rep), doc in docs.items():
               expected_sha = base_sha if revision == 'base' else candidate_sha
               if doc.get('commit') != expected_sha:
