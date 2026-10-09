@@ -573,7 +573,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             }
 
             deadline = current.Deadline;
-            lease = new ProducerProgressLease(slots, index, id);
+            lease = ProducerProgressLease.Create(this, index, id);
             return true;
         }
     }
@@ -584,11 +584,21 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         private readonly int _index;
         private readonly long _id;
 
-        internal ProducerProgressLease(PendingCall?[] slots, int index, long id)
+        private ProducerProgressLease(PendingCall?[] slots, int index, long id)
         {
             _slots = slots;
             _index = index;
             _id = id;
+        }
+
+        internal static ProducerProgressLease Create(
+            PendingRequestTable owner,
+            int index,
+            long id)
+        {
+            var slots = Volatile.Read(ref owner._slots)
+                ?? throw new InvalidOperationException("Producer-progress slots are unavailable.");
+            return new ProducerProgressLease(slots, index, id);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
