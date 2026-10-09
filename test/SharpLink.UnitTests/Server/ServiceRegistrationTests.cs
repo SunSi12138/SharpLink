@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO.Pipelines;
 using System.Net;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -13,6 +14,169 @@ namespace SharpLink.UnitTests.Server;
 
 public class ServiceRegistrationTests
 {
+    [Test]
+    public async Task ScopedRegistrationsShouldNotAllocateSingletonGates()
+    {
+        using var provider = new ServiceCollection().BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var stub = new StubMarker();
+        var call = ServiceRegistration.CreatePerCall(
+            typeof(object), stub, scopeFactory, static _ => new object(), disposeService: false);
+        var connection = ServiceRegistration.CreateConnection(
+            typeof(object), stub, scopeFactory, static _ => new object(), disposeService: false);
+        var instance = new object();
+        var singleton = ServiceRegistration.CreateSingleton(
+            typeof(object), stub, instance, ownsService: false);
+        var singletonFactory = ServiceRegistration.CreateSingletonFactory(
+            typeof(object), stub, provider, static _ => new object(), ownsService: false);
+        var gateField = typeof(ServiceRegistration).GetField(
+            "_singletonGate", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new Exception("missing singleton gate");
+
+        Ensure(gateField.GetValue(call) is null, "call-lifetime registration must not allocate a Lock");
+        Ensure(gateField.GetValue(connection) is null,
+            "connection-lifetime registration must not allocate a Lock");
+        Ensure(gateField.GetValue(singleton) is Lock && gateField.GetValue(singletonFactory) is Lock,
+            "singleton registration must retain the gate for disposal and lazy activation");
+
+        Ensure(!call.TryGetStaticSingleton(out _),
+            "call-lifetime registration must not take the singleton dispatch path");
+        Ensure(!connection.TryGetStaticSingleton(out _),
+            "connection-lifetime registration must not take the singleton dispatch path");
+        Ensure(!call.TryAcquireDynamicSingleton(isStream: false, out _, out _),
+            "non-module call registration must not take the dynamic singleton path");
+        Ensure(singleton.TryGetStaticSingleton(out var resolved) && ReferenceEquals(instance, resolved),
+            "instance-backed singleton must be resolved before falling back to AcquireAsync");
+        Ensure(singletonFactory.TryGetStaticSingleton(out _),
+            "factory-backed singleton must be resolved before falling back to AcquireAsync");
+
+        var lease = await call.AcquireAsync(null!, isStream: false);
+        Ensure(lease.Service is not null,
+            "root-provider-free call registration must use per-call acquisition");
+        await lease.DisposeAsync();
+        await call.DisposeAsync();
+        await connection.DisposeAsync();
+        await singleton.DisposeAsync();
+        await singletonFactory.DisposeAsync();
+    }
+
+    [Test]
+    public async Task DynamicInstanceSingletonShouldBeAcquiredBeforeFallbackPath()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
+        using var codecRegistration = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(ServiceRegistrationTests).Assembly, manifest, codecRegistration);
+        var instance = new object();
+        var registration = ServiceRegistration.CreateSingleton(
+            typeof(object), new StubMarker(), instance, ownsService: false, module);
+
+        Ensure(registration.HasModule, "dynamic registration must cache module presence");
+        Ensure(registration.ModuleCancellation == module.ForcedCancellation,
+            "dynamic registration must expose the module cancellation token");
+        Ensure(registration.AcceptsCalls, "running dynamic module must accept calls");
+        Ensure(!registration.TryGetStaticSingleton(out _),
+            "dynamic singleton cannot take the static singleton path");
+        Ensure(registration.TryAcquireDynamicSingleton(
+                isStream: false, out var resolved, out var lease),
+            "dynamic singleton must be acquired before the fallback path");
+        try
+        {
+            Ensure(ReferenceEquals(instance, resolved), "dynamic singleton instance identity");
+            Ensure(module.RemainingCalls == 1, "dynamic invocation must hold a module lease");
+        }
+        finally
+        {
+            lease.Dispose();
+        }
+        Ensure(module.RemainingCalls == 0, "dynamic module lease must be released");
+        module.TryBeginDraining();
+        Ensure(!registration.AcceptsCalls, "draining dynamic module must reject calls");
+        await registration.DisposeAsync();
+    }
+
+    [Test]
+    public async Task DynamicServiceDispatchShouldLookupMethodDescriptorOnlyOnce()
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
+        using var codecRegistration = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(ServiceRegistrationTests).Assembly, manifest, codecRegistration);
+
+        await using var server = CreateServer();
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = new RpcSession(
+            RpcSessionTestFixture.Transport(
+                Guid.NewGuid().ToString("N"), input.Reader, output.Writer),
+            RpcSessionTestFixture.ServerOptions());
+        RpcSessionTestFixture.CompleteHandshake(session);
+        var connection = new ServerConnectionState(
+            session,
+            new RpcSessionGeneratedServerBridge(session),
+            new StripedLongMap<ServerCallCancellationState>(
+                RpcSessionTestFixture.RuntimeContext.Concurrency),
+            CancellationToken.None,
+            RpcSessionTestFixture.RuntimeContext.TimeProvider);
+        Ensure(connection.MarkReady(null), "test connection ready");
+        try
+        {
+            var successfulStub = new StubMarker(RpcMethodKind.Unary);
+            var singleton = ServiceRegistration.CreateSingleton(
+                typeof(object), successfulStub, new object(), ownsService: false, module);
+            await InvokeRegisteredServiceAsync(server, singleton, connection, requestId: 101);
+            Ensure(successfulStub.DescriptorLookups == 1,
+                "successful dynamic singleton invocation must probe its descriptor exactly once");
+            Ensure(module.RemainingCalls == 0, "successful invocation releases its module lease");
+            await singleton.DisposeAsync();
+
+            var failingStub = new StubMarker();
+            var call = ServiceRegistration.CreatePerCall(
+                typeof(object), failingStub, new ThrowingScopeFactory("scope cleanup failed"),
+                static _ => throw new InvalidOperationException("activation failed"),
+                disposeService: true, module);
+            var failure = await CaptureAsync(() =>
+                InvokeRegisteredServiceAsync(server, call, connection, requestId: 102));
+            Ensure(ContainsMessage(failure, "activation failed"),
+                "failed dynamic call must preserve its activation error");
+            Ensure(ContainsMessage(failure, "scope cleanup failed"),
+                "failed dynamic call must preserve its cleanup error");
+            Ensure(failingStub.DescriptorLookups == 1,
+                "failed asynchronous acquisition must reuse its descriptor for telemetry");
+            Ensure(module.RemainingCalls == 0, "failed acquisition releases its module lease");
+            await call.DisposeAsync();
+        }
+        finally
+        {
+            await connection.CloseAsync();
+        }
+    }
+
+    private static ValueTask InvokeRegisteredServiceAsync(
+        SharpLinkServer server,
+        ServiceRegistration registration,
+        ServerConnectionState connection,
+        long requestId)
+    {
+        var method = typeof(SharpLinkServer).GetMethod(
+            "InvokeServiceAsync", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(nameof(SharpLinkServer), "InvokeServiceAsync");
+        return (ValueTask)(method.Invoke(server,
+        [
+            registration,
+            connection,
+            connection.Session,
+            17L,
+            requestId,
+            ReadOnlySequence<byte>.Empty,
+            null,
+            CancellationToken.None,
+            new SharpLinkCallContextSnapshot(connection.Session.Id, authentication: null)
+        ]) ?? throw new InvalidOperationException("server invocation did not return a ValueTask"));
+    }
+
     [Test]
     public async Task ActivationRollbackShouldPreserveActivationAndScopeFailures()
     {
@@ -480,8 +644,29 @@ public class ServiceRegistrationTests
         public IReadOnlyList<string> Dependencies => [];
     }
 
-    private sealed class StubMarker : IRpcStub
+    private sealed class StubMarker(RpcMethodKind? descriptorKind = null) : IRpcStub
     {
+        private int _descriptorLookups;
+        internal int DescriptorLookups => Volatile.Read(ref _descriptorLookups);
+
+        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        {
+            Interlocked.Increment(ref _descriptorLookups);
+            if (descriptorKind is not { } kind)
+            {
+                descriptor = default;
+                return false;
+            }
+
+            descriptor = new RpcMethodDescriptor(
+                InterfaceHash, methodHash, kind,
+                HasResponsePayload: false,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+            return true;
+        }
+
         public long InterfaceHash => 1;
 
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
