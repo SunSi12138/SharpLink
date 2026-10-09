@@ -97,11 +97,11 @@ namespace SharpLink.Abstractions
     public interface IRpcStub
     {
         long InterfaceHash { get; }
+        void DescribeMethod(long methodHash, SharpLink.Abstractions.RpcMethodShape shape, out SharpLink.Abstractions.RpcMethodDescriptor descriptor);
         System.Threading.Tasks.ValueTask InvokeAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output);
         System.Threading.Tasks.ValueTask InvokeCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.ValueTask InvokeNoReturnAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args);
         System.Threading.Tasks.ValueTask InvokeNoReturnCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Threading.CancellationToken cancellationToken);
-        void DescribeMethod(long methodHash, SharpLink.Abstractions.RpcMethodShape shape, out SharpLink.Abstractions.RpcMethodDescriptor descriptor);
         SharpLink.Abstractions.RpcMethodShape ResolveMethodShape(long methodHash);
     }
     public interface IServerTransportListener : System.IAsyncDisposable
@@ -539,8 +539,8 @@ namespace SharpLink.Abstractions
     }
     public readonly struct RpcMethodDescriptor : System.IEquatable<SharpLink.Abstractions.RpcMethodDescriptor>
     {
-        public RpcMethodDescriptor(long ContractId, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool HasResponsePayload, bool HasClientStreams, bool HasMethodTimeout, System.TimeSpan? MethodTimeout, bool IsIdempotent = false, int ClientStreamCount = 0, bool ResponseNullable = false) { }
         public RpcMethodDescriptor(long contractId, long methodId, SharpLink.Abstractions.RpcMethodShape shape, System.TimeSpan? methodTimeout) { }
+        public RpcMethodDescriptor(long ContractId, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool HasResponsePayload, bool HasClientStreams, bool HasMethodTimeout, System.TimeSpan? MethodTimeout, bool IsIdempotent = false, int ClientStreamCount = 0, bool ResponseNullable = false) { }
         public int ClientStreamCount { get; }
         public long ContractId { get; }
         public bool HasClientStreams { get; }
@@ -566,8 +566,8 @@ namespace SharpLink.Abstractions
     public readonly struct RpcMethodShape : System.IEquatable<SharpLink.Abstractions.RpcMethodShape>
     {
         public const int UnknownClientStreamCount = 15;
-        public RpcMethodShape(SharpLink.Abstractions.RpcMethodKind kind, int clientStreamCount, bool supportsCancellation, bool hasResponsePayload, bool responseNullable = false, bool hasMethodTimeout = false, bool isIdempotent = false, bool hasMethodTimeoutValue = false, int timeoutOrdinal = 0) { }
         public RpcMethodShape(uint packed) { }
+        public RpcMethodShape(SharpLink.Abstractions.RpcMethodKind kind, int clientStreamCount, bool supportsCancellation, bool hasResponsePayload, bool responseNullable = false, bool hasMethodTimeout = false, bool isIdempotent = false, bool hasMethodTimeoutValue = false, int timeoutOrdinal = 0) { }
         public int ClientStreamCount { get; }
         public bool HasClientStreams { get; }
         public bool HasKnownClientStreamCount { get; }
