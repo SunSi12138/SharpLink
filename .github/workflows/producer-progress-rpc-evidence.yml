@@ -6,7 +6,7 @@ on:
       - dev
     paths:
       - 'src/SharpLink.Client/ClientConnection.cs'
-      - 'src/SharpLink.Client/PendingRequestTable.ProducerProgress.cs'
+      - 'src/SharpLink.Client/PendingRequestTable.cs'
       - 'test/SharpLink.UnitTests/Runtime/PendingProducerProgressFastPathTests.cs'
       - 'test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs'
       - '.github/workflows/producer-progress-rpc-evidence.yml'
