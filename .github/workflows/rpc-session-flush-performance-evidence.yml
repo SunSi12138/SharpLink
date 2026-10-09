@@ -55,6 +55,10 @@ jobs:
             "$BASE_WORKTREE/test/SharpLink.Benchmarks/RpcSessionFlushPolicyEvidenceRunner.cs"
           cp test/SharpLink.Benchmarks/Program.cs \
             "$BASE_WORKTREE/test/SharpLink.Benchmarks/Program.cs"
+          # Program.cs references the smoke helper added in the candidate benchmark file.
+          # Keep the copied CLI and its helper in sync when building the historical base.
+          cp test/SharpLink.Benchmarks/ServerCallAdmissionHotPathBenchmarks.cs \
+            "$BASE_WORKTREE/test/SharpLink.Benchmarks/ServerCallAdmissionHotPathBenchmarks.cs"
           echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
 
       - name: Build exact base benchmark harness

@@ -31,6 +31,16 @@ runs:
         --allocation-gate-self-test
         --output "${{ inputs.artifact-directory }}/self-test.json"
 
+    - name: Server call admission benchmark smoke test
+      shell: bash
+      run: >-
+        dotnet run
+        --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+        -c Release
+        --no-build
+        --
+        --server-call-admission-smoke-test
+
     - name: Enforce allocation budgets
       shell: bash
       env:

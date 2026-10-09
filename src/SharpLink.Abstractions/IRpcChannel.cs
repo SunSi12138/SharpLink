@@ -27,6 +27,7 @@ public readonly record struct RpcMethodDescriptor
     private const byte HasMethodTimeoutFlag = 1 << 2;
     private const byte IsIdempotentFlag = 1 << 3;
     private const byte ResponseNullableFlag = 1 << 4;
+    private const byte HasMethodTimeoutValueFlag = 1 << 5;
 
     /// <summary>Creates metadata for a generated RPC contract method.</summary>
     /// <param name="ContractId">Stable generated contract identifier.</param>
@@ -54,7 +55,6 @@ public readonly record struct RpcMethodDescriptor
         this.ContractId = ContractId;
         this.MethodId = MethodId;
         this.Kind = Kind;
-        this.MethodTimeout = MethodTimeout;
         this.ClientStreamCount = ClientStreamCount;
         _flags = (byte)(
             (HasResponsePayload ? HasResponsePayloadFlag : 0) |
@@ -62,6 +62,8 @@ public readonly record struct RpcMethodDescriptor
             (HasMethodTimeout ? HasMethodTimeoutFlag : 0) |
             (IsIdempotent ? IsIdempotentFlag : 0) |
             (ResponseNullable ? ResponseNullableFlag : 0));
+        // Keep the nullable presence bit set by the init accessor.
+        this.MethodTimeout = MethodTimeout;
     }
 
     /// <summary>Gets the stable generated contract identifier.</summary>
@@ -75,15 +77,20 @@ public readonly record struct RpcMethodDescriptor
 
     /// <summary>Gets the explicit method timeout, or <see langword="null"/> to use the client default.</summary>
     /// <remarks>
-    /// Persisted as a tick count with a negative sentinel rather than as
-    /// <see cref="Nullable{T}"/> of <see cref="TimeSpan"/>. The nullable form occupies 16 bytes and
-    /// padded the descriptor to 40; one 8-byte field keeps it at 32. The descriptor is passed by
-    /// value through every client invocation boundary, so its width is on the hot path.
+    /// Persisted as raw ticks with a presence bit in <c>_flags</c> instead of
+    /// <see cref="Nullable{T}"/> of <see cref="TimeSpan"/>. The nullable form occupies 16 bytes
+    /// and padded the descriptor to 40; the 8-byte ticks field keeps it at 32 without changing
+    /// default, null, zero, or negative timeout semantics.
     /// </remarks>
     public TimeSpan? MethodTimeout
     {
-        get => _methodTimeoutTicks < 0 ? null : TimeSpan.FromTicks(_methodTimeoutTicks);
-        init => _methodTimeoutTicks = value?.Ticks ?? NoMethodTimeoutTicks;
+        get => (_flags & HasMethodTimeoutValueFlag) != 0 ? TimeSpan.FromTicks(_methodTimeoutTicks) : null;
+        init
+        {
+            // Canonicalize null to zero ticks, so record equality matches Nullable<TimeSpan>.
+            _methodTimeoutTicks = value.GetValueOrDefault().Ticks;
+            _flags = SetFlag(_flags, HasMethodTimeoutValueFlag, value.HasValue);
+        }
     }
     /// <summary>Gets the number of client-stream parameters owned by the request.</summary>
     public int ClientStreamCount { get; init; }
@@ -119,8 +126,6 @@ public readonly record struct RpcMethodDescriptor
         get => (_flags & ResponseNullableFlag) != 0;
         init => _flags = SetFlag(_flags, ResponseNullableFlag, value);
     }
-
-    private const long NoMethodTimeoutTicks = -1;
 
     private readonly byte _flags;
 

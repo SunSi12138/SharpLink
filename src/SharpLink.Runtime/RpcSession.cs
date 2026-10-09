@@ -433,6 +433,7 @@ internal sealed partial class RpcSession
     }
 
     internal long QueuedSendBytes => Volatile.Read(ref _pump)?.QueuedBytes ?? 0;
+    internal bool HasPendingSendPumpIdleWait => Volatile.Read(ref _pump)?.HasPendingIdleWait ?? false;
 
     internal bool IsDraining => ProtocolPhase == RpcSessionProtocolPhase.Draining;
 
