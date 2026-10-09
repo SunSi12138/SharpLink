@@ -108,6 +108,111 @@ public class PendingProducerProgressFastPathTests
         }
     }
 
+    [Test]
+    [Arguments(PendingCallCompletionReason.RemoteError)]
+    [Arguments(PendingCallCompletionReason.UserCancellation)]
+    [Arguments(PendingCallCompletionReason.GoAway)]
+    [Arguments(PendingCallCompletionReason.SendFailure)]
+    [Arguments(PendingCallCompletionReason.LocalStreamComplete)]
+    [Arguments(PendingCallCompletionReason.Response)]
+    public async Task FastPathShouldRejectEveryTerminalOwner(
+        PendingCallCompletionReason reason)
+    {
+        using var table = PendingRequestTableTestFixture.Create(capacity: 1);
+        var operation = table.Rent(
+            Int32Codec.Instance,
+            PendingCallKind.ClientStreaming,
+            default,
+            CancellationToken.None,
+            out var requestId,
+            hasResponsePayload: true,
+            responseNullable: false);
+        Ensure(table.TryGetProducerDeadline(requestId, out var deadline),
+            "producer deadline must be resolved before terminal completion");
+        Ensure(table.TryAcceptProducerProgress(requestId, deadline),
+            "live producer should initially accept progress");
+
+        Ensure(table.TryComplete(requestId, reason),
+            $"terminal reason {reason} must claim the pending slot");
+        Ensure(!table.TryAcceptProducerProgress(requestId, deadline),
+            $"producer progress must reject a slot terminated by {reason}");
+        Ensure(!table.Contains(requestId),
+            "all terminal reasons must remove the authoritative slot exactly once");
+        await ObserveTerminalAsync(operation);
+        Ensure(table.ActiveCount == 0,
+            $"terminal reason {reason} must release pending capacity");
+    }
+
+    [Test]
+    public async Task FastPathShouldRejectWhileTerminalOwnerCallbackIsStillRunning()
+    {
+        using var owner = new BlockingCompletionOwner();
+        using var table = PendingRequestTableTestFixture.Create(capacity: 1, owner: owner);
+        var operation = table.Rent(
+            Int32Codec.Instance,
+            PendingCallKind.ClientStreaming,
+            default,
+            CancellationToken.None,
+            out var requestId,
+            hasResponsePayload: true,
+            responseNullable: false);
+        Ensure(table.TryGetProducerDeadline(requestId, out var deadline),
+            "the live producer must resolve its deadline");
+        var producerToken = table.GetProducerCancellationToken(requestId);
+        Ensure(!producerToken.IsCancellationRequested,
+            "the producer token must start live");
+
+        var terminal = Task.Run(() =>
+            table.TryComplete(requestId, PendingCallCompletionReason.GoAway));
+        try
+        {
+            Ensure(owner.Entered.Wait(TimeSpan.FromSeconds(5)),
+                "completion must reach the owner callback after the slot was removed");
+            Ensure(!table.TryAcceptProducerProgress(requestId, deadline),
+                "a removed slot must reject progress even while terminal cleanup is blocked");
+            Ensure(!table.Contains(requestId),
+                "the authoritative slot must already be removed");
+            Ensure(producerToken.IsCancellationRequested,
+                "the producer cancellation token must observe the terminal");
+        }
+        finally
+        {
+            owner.AllowCompletion.Set();
+        }
+
+        Ensure(await terminal.WaitAsync(TimeSpan.FromSeconds(5)),
+            "the single terminal path must finish after cleanup is released");
+        await ObserveTerminalAsync(operation);
+        Ensure(table.ActiveCount == 0,
+            "terminal cleanup must release the pending capacity exactly once");
+    }
+
+    private sealed class BlockingCompletionOwner : IPendingCallOwner, IDisposable
+    {
+        internal readonly ManualResetEventSlim Entered = new();
+        internal readonly ManualResetEventSlim AllowCompletion = new();
+
+        public void OnPendingCallRegistered() { }
+
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+            => throw new InvalidOperationException(
+                "The test producer has no cancellation callbacks.", exception);
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+            Entered.Set();
+            if (!AllowCompletion.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("The terminal callback was not released.");
+        }
+
+        public void Dispose()
+        {
+            AllowCompletion.Set();
+            Entered.Dispose();
+            AllowCompletion.Dispose();
+        }
+    }
+
     private static async Task ObserveTerminalAsync(RpcRequestOperation<int> operation)
         => _ = await CaptureTerminalAsync(operation);
 
