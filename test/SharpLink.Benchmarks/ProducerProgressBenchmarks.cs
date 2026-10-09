@@ -214,11 +214,11 @@ internal static class ProducerProgressEvidenceRunner
                     long localSuccesses = variant switch
                     {
                         ProducerProgressVariant.A0Locked =>
-                            RunChecks(iterations, () => fixture.CheckA0(workerIndex)),
+                            fixture.RunA0(workerIndex, iterations),
                         ProducerProgressVariant.A1Contains =>
-                            RunChecks(iterations, () => fixture.CheckA1(workerIndex)),
+                            fixture.RunA1(workerIndex, iterations),
                         ProducerProgressVariant.A2Resolved =>
-                            RunChecks(iterations, () => fixture.CheckA2(workerIndex)),
+                            fixture.RunA2(workerIndex, iterations),
                         _ => throw new ArgumentOutOfRangeException(nameof(variant), variant, null)
                     };
                     Interlocked.Add(ref successfulChecks, localSuccesses);
@@ -285,18 +285,6 @@ internal static class ProducerProgressEvidenceRunner
         };
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static long RunChecks(int iterations, Func<bool> check)
-    {
-        long successful = 0;
-        for (var iteration = 0; iteration < iterations; iteration++)
-        {
-            if (check())
-                successful++;
-        }
-        return successful;
-    }
-
     private enum ProducerProgressVariant
     {
         A0Locked,
@@ -358,6 +346,52 @@ internal static class ProducerProgressEvidenceRunner
                     throw new InvalidOperationException("Cannot resolve producer-progress fixture.");
                 }
             }
+        }
+
+        internal long RunA0(int index, int iterations)
+        {
+            long successful = 0;
+            for (var iteration = 0; iteration < iterations; iteration++)
+            {
+                if (_pending.TryAcceptProducerProgress(_requestIds[index]))
+                    successful++;
+            }
+            return successful;
+        }
+
+        internal long RunA1(int index, int iterations)
+        {
+            long successful = 0;
+            for (var iteration = 0; iteration < iterations; iteration++)
+            {
+                if (ProducerProgressBenchmarks.TryAcceptContains(
+                        _pending,
+                        _requestIds[index],
+                        _deadlines[index],
+                        _timeProvider))
+                {
+                    successful++;
+                }
+            }
+            return successful;
+        }
+
+        internal long RunA2(int index, int iterations)
+        {
+            long successful = 0;
+            for (var iteration = 0; iteration < iterations; iteration++)
+            {
+                if (ProducerProgressBenchmarks.TryAcceptResolved(
+                        _pending,
+                        _leases[index],
+                        _requestIds[index],
+                        _deadlines[index],
+                        _timeProvider))
+                {
+                    successful++;
+                }
+            }
+            return successful;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
