@@ -36,7 +36,52 @@ public class RpcMethodDescriptorTests
         await Assert.That(oldTimeout).IsEqualTo(timeout);
         await Assert.That(streamCount).IsEqualTo(2);
         await Assert.That(changed.ResponseNullable || changed.HasClientStreams).IsFalse();
+        await Assert.That(changed.MethodTimeout).IsEqualTo(timeout);
         await Assert.That(changed.HasResponsePayload && changed.HasMethodTimeout && changed.IsIdempotent).IsTrue();
+    }
+
+    [Test]
+    public async Task CombinedWithFlagUpdatesMustPreserveNonNullMethodTimeout()
+    {
+        foreach (var timeout in new[] { TimeSpan.FromSeconds(3), TimeSpan.FromTicks(-42) })
+        {
+            var original = new RpcMethodDescriptor(
+                11, 22, RpcMethodKind.DuplexStreaming,
+                HasResponsePayload: true,
+                HasClientStreams: true,
+                HasMethodTimeout: true,
+                MethodTimeout: timeout,
+                IsIdempotent: true,
+                ClientStreamCount: 2,
+                ResponseNullable: true);
+
+            var updated = original with
+            {
+                HasResponsePayload = false,
+                HasClientStreams = false,
+                HasMethodTimeout = false,
+                IsIdempotent = false,
+                ResponseNullable = false
+            };
+
+            await Assert.That(updated.MethodTimeout).IsEqualTo(timeout);
+            await Assert.That(updated.MethodTimeout.HasValue).IsTrue();
+            await Assert.That(updated.HasResponsePayload || updated.HasClientStreams
+                || updated.HasMethodTimeout || updated.IsIdempotent || updated.ResponseNullable).IsFalse();
+            await Assert.That(original.MethodTimeout).IsEqualTo(timeout);
+
+            var restored = updated with
+            {
+                HasResponsePayload = true,
+                HasClientStreams = true,
+                HasMethodTimeout = true,
+                IsIdempotent = true,
+                ResponseNullable = true
+            };
+
+            await Assert.That(restored.MethodTimeout).IsEqualTo(timeout);
+            await Assert.That(restored).IsEqualTo(original);
+        }
     }
 
     [Test]
