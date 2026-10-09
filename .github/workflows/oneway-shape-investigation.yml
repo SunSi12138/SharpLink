@@ -1,0 +1,122 @@
+name: OneWay Shape Investigation
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'eng/perf/oneway-shapes/**'
+      - 'eng/perf/run-oneway-local.py'
+      - 'eng/oneway-codegen-evidence.py'
+      - 'test/SharpLink.OneWayEvidence/**'
+      - 'test/SharpLink.OneWayLocalEvidence/**'
+      - 'test/SharpLink.OneWayLayoutEvidence/**'
+      - '.github/workflows/oneway-shape-investigation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  paired-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact investigation head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup baseline-pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build three isolated arms and collect same-runner evidence
+        shell: bash
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+          DOTNET_CLI_USE_MSBUILD_SERVER: '0'
+          MSBUILDDISABLENODEREUSE: '1'
+        run: |
+          python3 eng/perf/oneway-shapes/run.py \
+            --work-root "$RUNNER_TEMP/oneway-shape-arms" \
+            --output "$GITHUB_WORKSPACE/artifacts/oneway-shapes" \
+            --rounds 1 --seconds 1 --warmup 0.5 --features --aot --aot-rounds 1
+
+      - name: Build identical local invocation fixtures in the three arms
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          cmp src/SharpLink.Client/SharpLinkClient.Invokers.cs \
+            "$RUNNER_TEMP/oneway-shape-arms/C/src/SharpLink.Client/SharpLinkClient.Invokers.cs"
+          for arm in A C B; do
+            root="$RUNNER_TEMP/oneway-shape-arms/$arm"
+            cp -R test/SharpLink.OneWayLocalEvidence "$root/test/SharpLink.OneWayLocalEvidence"
+            dotnet build "$root/test/SharpLink.OneWayLocalEvidence/SharpLink.OneWayLocalEvidence.csproj" \
+              -c Release -v minimal
+          done
+
+      - name: Measure paired local invocation and suspension costs
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          python3 eng/perf/run-oneway-local.py \
+            --arm "A=$RUNNER_TEMP/oneway-shape-arms/A" \
+            --arm "C=$RUNNER_TEMP/oneway-shape-arms/C" \
+            --arm "B=$RUNNER_TEMP/oneway-shape-arms/B" \
+            --output artifacts/oneway-shapes/local-paired \
+            --rounds 12 --iterations 200000 --batch 256 --tiered 0 --cpus 2 \
+            | tee artifacts/oneway-shapes/local-paired-console.log
+
+      - name: Corroborate local allocations with tiered PGO
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          python3 eng/perf/run-oneway-local.py \
+            --arm "A=$RUNNER_TEMP/oneway-shape-arms/A" \
+            --arm "C=$RUNNER_TEMP/oneway-shape-arms/C" \
+            --arm "B=$RUNNER_TEMP/oneway-shape-arms/B" \
+            --output artifacts/oneway-shapes/local-tiered \
+            --rounds 6 --iterations 200000 --batch 256 --tiered 1 --cpus 2 \
+            | tee artifacts/oneway-shapes/local-tiered-console.log
+
+      - name: Collect exact closed layouts and native code
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          dotnet build test/SharpLink.OneWayLayoutEvidence -c Release -v minimal
+          helper="$PWD/test/SharpLink.OneWayLayoutEvidence/bin/Release/net10.0/SharpLink.OneWayLayoutEvidence.dll"
+          dotnet "$helper" --self-test
+          python3 eng/oneway-codegen-evidence.py --self-test
+          out="$PWD/artifacts/oneway-shapes"
+          for arm in A C B; do
+            dotnet "$helper" \
+              --assembly "$out/images/$arm/jit/SharpLink.OneWayEvidence.dll" \
+              --label "$arm" --source-sha 553854f56c33a6e02ef225c24f558e5e92037aa1 \
+              --generated-dir "$out/codegen/$arm/jit/generated/SharpLink.Generator" \
+              --output "$out/codegen/$arm/layout.json"
+            for streams in 0 1 2; do
+              python3 eng/oneway-codegen-evidence.py \
+                --jit-log "$out/codegen/$arm/jit/s$streams.log" \
+                --output "$out/codegen/$arm/jit/s$streams-native.json"
+              python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["complete"] and r["coreMoveNextCount"] > 0' \
+                "$out/codegen/$arm/jit/s$streams-native.json"
+            done
+            exe="$out/images/$arm/aot/SharpLink.OneWayEvidence"
+            symbols="$exe"; [ ! -f "$exe.dbg" ] || symbols="$exe.dbg"
+            python3 eng/oneway-codegen-evidence.py \
+              --native-binary "$exe" --symbols "$symbols" \
+              --raw-dir "$out/codegen/$arm/aot/raw" \
+              --output "$out/codegen/$arm/aot/native.json"
+          done
+
+      - name: Upload complete evidence, including failures and native symbols
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oneway-shapes-${{ github.event.pull_request.head.sha }}
+          path: artifacts/oneway-shapes/
+          if-no-files-found: error
+          retention-days: 7
