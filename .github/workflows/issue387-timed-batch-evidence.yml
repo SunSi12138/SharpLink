@@ -1,0 +1,84 @@
+name: Timed Batch Flake Evidence
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: ['validation/issue387-*']
+  workflow_dispatch:
+
+concurrency:
+  group: timed-batch-flake-evidence-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  timed-batch:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Checkout reviewed candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: e5695f153d897e7173ad3635113c4d642f13ec94
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record revision and environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/timed-batch
+          {
+            test "$(git rev-parse HEAD)" = e5695f153d897e7173ad3635113c4d642f13ec94
+            git rev-parse HEAD
+            uname -a
+            dotnet --info
+          } > artifacts/timed-batch/environment.txt
+
+      - name: Restore and build unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj --no-restore -c Release -v minimal
+
+      - name: Repeat both timed-batch variants 100 times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for iteration in $(seq 1 100); do
+            dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+              -c Release --no-build \
+              --treenode-filter '/*/*/SendPumpTests/TimedBatchShouldExtendBatchForFrameArrivingBeforeDeadline' \
+              --minimum-expected-tests 2 \
+              2>&1 | tee "artifacts/timed-batch/target-${iteration}.log"
+          done
+
+      - name: Repeat SendPump and WakeupSignal suites 20 times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for iteration in $(seq 1 20); do
+            dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+              -c Release --no-build \
+              --treenode-filter '/*/*/(SendPumpTests|WakeupSignalTests)/*' \
+              --minimum-expected-tests 25 \
+              2>&1 | tee "artifacts/timed-batch/combined-${iteration}.log"
+          done
+
+      - name: Upload per-iteration evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: timed-batch-${{ matrix.os }}-e5695f153d897e7173ad3635113c4d642f13ec94
+          path: artifacts/timed-batch
+          if-no-files-found: error
+          retention-days: 30
