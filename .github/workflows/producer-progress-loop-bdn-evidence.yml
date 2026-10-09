@@ -1,0 +1,163 @@
+name: Producer Progress Loop BDN Evidence
+
+on:
+  pull_request:
+    branches:
+      - dev
+    paths:
+      - 'src/SharpLink.Client/PendingRequestTable.cs'
+      - 'src/SharpLink.Client/PendingRequestTable.ProducerProgressResearch.cs'
+      - 'test/SharpLink.Benchmarks/ProducerProgressBenchmarks.cs'
+      - 'test/SharpLink.Benchmarks/ProducerProgressLoopBenchmarks.cs'
+      - '.github/workflows/producer-progress-loop-bdn-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact research head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record immutable evidence identity
+        shell: bash
+        run: |
+          mkdir -p artifacts/performance/producer-progress-loop
+          git rev-parse HEAD > artifacts/performance/producer-progress-loop/commit.txt
+          dotnet --info > artifacts/performance/producer-progress-loop/dotnet-info.txt
+          lscpu > artifacts/performance/producer-progress-loop/cpu.txt
+
+      - name: Build release benchmark once
+        shell: bash
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+
+      - name: BDN async producer loop with enumerator and real Int32 Codec
+        shell: bash
+        env:
+          SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DOTNET_ReadyToRun: "0"
+          DOTNET_TieredCompilation: "1"
+          DOTNET_TieredPGO: "1"
+        run: |
+          set -o pipefail
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
+            -c Release --no-build -- \
+            --filter '*ProducerProgressLoopBenchmarks*' --exporters json \
+            2>&1 | tee artifacts/performance/producer-progress-loop/async-loop.log
+
+      - name: BDN persistent-worker same-request contention
+        shell: bash
+        env:
+          SHARPLINK_BENCHMARK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DOTNET_ReadyToRun: "0"
+          DOTNET_TieredCompilation: "1"
+          DOTNET_TieredPGO: "1"
+        run: |
+          set -o pipefail
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
+            -c Release --no-build -- \
+            --filter '*ProducerProgressMultiProducerBenchmarks*' --exporters json \
+            2>&1 | tee artifacts/performance/producer-progress-loop/multi-producer.log
+
+      - name: Validate and publish paired raw BDN measurements
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import math
+          import re
+          from pathlib import Path
+
+          root=Path("artifacts/performance/producer-progress-loop")
+          reports=Path("BenchmarkDotNet.Artifacts/results")
+          data=[]
+          for class_name,expected_pairs in (
+              ("ProducerProgressLoopBenchmarks",8),
+              ("ProducerProgressMultiProducerBenchmarks",6),
+          ):
+              candidates=list(reports.glob(f"*{class_name}-report-full*.json"))
+              if len(candidates)!=1:
+                  raise SystemExit(f"Expected one JSON report for {class_name}, found {len(candidates)}")
+              document=json.loads(candidates[0].read_text())
+              rows=document.get("Benchmarks",[])
+              groups={}
+              for row in rows:
+                  method=row.get("Method","")
+                  if not method.startswith(("A0_", "A1_")):
+                      continue
+                  params=str(row.get("Parameters",""))
+                  key=(class_name,params)
+                  arm=method[:2]
+                  stats=row.get("Statistics") or {}
+                  mem=row.get("Memory") or {}
+                  ns=stats.get("Mean")
+                  allocated=mem.get("BytesAllocatedPerOperation")
+                  if not isinstance(ns,(float,int)) or not math.isfinite(ns) or ns<=0:
+                      raise SystemExit(f"Invalid mean for {class_name}/{method}/{params}")
+                  if not isinstance(allocated,(float,int)) or not math.isfinite(allocated):
+                      raise SystemExit(f"Invalid allocation for {class_name}/{method}/{params}")
+                  groups.setdefault(key,{})[arm]={"ns":ns,"bytes":allocated}
+              if len(groups)!=expected_pairs:
+                  raise SystemExit(f"{class_name}: expected {expected_pairs} parameter groups, found {len(groups)}")
+              for (name,params),arms in groups.items():
+                  if set(arms)!={"A0","A1"}:
+                      raise SystemExit(f"Incomplete BDN pair for {name}/{params}")
+                  baseline,candidate=arms["A0"],arms["A1"]
+                  items=re.search(r"\bItems=(\d+)",params)
+                  workers=re.search(r"\bWorkers=(\d+)",params)
+                  divisor=int(items.group(1)) if items else (int(workers.group(1))*16384 if workers else 1)
+                  data.append({
+                      "benchmark":name,
+                      "parameters":params,
+                      "a0NsPerOperation":baseline["ns"],
+                      "a1NsPerOperation":candidate["ns"],
+                      "a0BytesPerOperation":baseline["bytes"],
+                      "a1BytesPerOperation":candidate["bytes"],
+                      "a1SpeedupPercent":100*(baseline["ns"]-candidate["ns"])/baseline["ns"],
+                      "nsSavedPerItemOrCheck":(baseline["ns"]-candidate["ns"])/divisor,
+                      "bytesDeltaPerOperation":candidate["bytes"]-baseline["bytes"]
+                  })
+
+          lines=[
+              "# #737 same-binary BDN producer-loop and multi-producer attribution",
+              "",
+              "Same exact research binary runs real A0 and A1, with identical enumerator, real Codec, and active PendingCall.",
+              "Loop benchmark excludes transport, flow credit and network; its result is NOT an end-to-end throughput claim.",
+              "Multi-producer benchmark uses persistent dedicated threads and shared request ID; barrier overhead is amortized.",
+              "",
+              "| Benchmark | Parameters | A0 ns/op | A1 ns/op | Saved ns/item or check | Speedup | Alloc B/op delta |",
+              "|---|---|---:|---:|---:|---:|---:|"
+          ]
+          for row in sorted(data,key=lambda r:(r["benchmark"],r["parameters"])):
+              lines.append(
+                  f'| {row["benchmark"]} | {row["parameters"]} | '
+                  f'{row["a0NsPerOperation"]:.2f} | {row["a1NsPerOperation"]:.2f} | '
+                  f'{row["nsSavedPerItemOrCheck"]:+.3f} | {row["a1SpeedupPercent"]:+.2f}% | '
+                  f'{row["bytesDeltaPerOperation"]:+.2f} |')
+          (root/"paired.json").write_text(json.dumps(data,indent=2)+"\n")
+          (root/"summary.md").write_text("\n".join(lines)+"\n")
+          print("\n".join(lines))
+          PY
+          cat artifacts/performance/producer-progress-loop/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload BDN raw results and provenance
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: producer-progress-loop-bdn-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/performance/producer-progress-loop/**
+            BenchmarkDotNet.Artifacts/**
+          if-no-files-found: warn
+          retention-days: 30
