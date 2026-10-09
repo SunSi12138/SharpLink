@@ -116,8 +116,9 @@ internal class StreamTransportConnection : ITransportConnection
 /// instead makes this reader its own <see cref="IValueTaskSource{T}"/>, reusing one
 /// <see cref="ManualResetValueTaskSourceCore{T}"/> notification per reader and forwarding the
 /// inner completion through a single cached delegate, so a successful suspension allocates nothing.
-/// Consumed success state is cleared by AdvanceTo; consumed failure state is cleared by GetResult.
-/// Either boundary invalidates that arm's token, including when no later read suspends.
+/// Both success and failure state are cleared by their single GetResult observation, which
+/// invalidates that arm's token even when no later read suspends. Successful buffer ownership
+/// remains active until AdvanceTo independently of the consumed source state.
 /// </para>
 /// </summary>
 internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<ReadResult>
@@ -251,9 +252,14 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
             // allocation; clear the field before dispatch so reentrancy cannot retain old state.
             _readExecutionContext = ExecutionContext.Capture();
         }
-        // Match the production wrapper's ConfigureAwait(false): forwarding must not require
-        // the ReadAsync caller's SynchronizationContext or TaskScheduler to make progress.
-        read.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(_onInnerCompleted);
+        // A precompleted failure must remain synchronously observable and release transport
+        // ownership now. Registering on it would introduce an unnecessary queued callback.
+        if (read.IsCompleted)
+            OnInnerReadCompleted();
+        else
+            // Match the production wrapper's ConfigureAwait(false): forwarding must not require
+            // the ReadAsync caller's SynchronizationContext or TaskScheduler to make progress.
+            read.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(_onInnerCompleted);
 
         return new ValueTask<ReadResult>(this, version);
     }
@@ -350,7 +356,12 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
             if (_readStatus == ValueTaskSourceStatus.Pending)
                 throw new InvalidOperationException("The read has not completed.");
             if (_readError is null)
-                return _readResult;
+            {
+                var result = _readResult;
+                _readResult = default;
+                _readSourceActive = false;
+                return result;
+            }
 
             error = _readError;
             _readError = null;

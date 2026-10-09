@@ -14,7 +14,7 @@ namespace SharpLink.UnitTests.Runtime;
 /// <remarks>
 /// Three groups:
 /// <list type="bullet">
-/// <item>protocol conformance of the manual source (status, repeated GetResult, faults, and the
+/// <item>protocol conformance of the manual source (status, faults, and the
 /// "registered after completion" case that hangs if it is wrong);</item>
 /// <item>the reentrancy windows the implementation documents (inner completing inline during
 /// <c>UnsafeOnCompleted</c>, and a consumer re-arming the reader from inside that inline
@@ -48,26 +48,6 @@ public class ReadOwnershipPipeReaderTests
         var result = await WithTimeout(read, "suspended read");
         Ensure(result.Buffer.ToArray()[0] == 0x11, "the published payload must be delivered");
         reader.AdvanceTo(result.Buffer.End);
-    }
-
-    [Test]
-    public async Task RepeatedGetResultAfterCompletionShouldReturnTheSameResult()
-    {
-        // Single observation is the supported ValueTask contract. As a compatibility courtesy,
-        // repeated success observation still returns the same result until AdvanceTo releases it;
-        // it must never manufacture a different buffer while this read is owned.
-        var fake = new FakePipeReader { Mode = FakeReadMode.Suspend };
-        var reader = new ReadOwnershipPipeReader(fake);
-
-        var read = reader.ReadAsync();
-        fake.Publish(Result(0x22));
-
-        var first = read.GetAwaiter().GetResult();
-        var second = read.GetAwaiter().GetResult();
-        Ensure(first.Buffer.ToArray()[0] == 0x22 && second.Buffer.ToArray()[0] == 0x22,
-            "repeated GetResult must keep returning the published result");
-        reader.AdvanceTo(first.Buffer.End);
-        await Task.CompletedTask;
     }
 
     [Test]
@@ -148,14 +128,14 @@ public class ReadOwnershipPipeReaderTests
         // arm N+1's payload.
         //
         // Note the documented contract difference from the previous implementation: this reader is
-        // now itself the IValueTaskSource. AdvanceTo invalidates a successful arm's token and
-        // clears its payload; each later suspended read also advances the token version.
+        // now itself the IValueTaskSource. Its single GetResult observation invalidates the
+        // arm's token and clears its payload; each later suspended read also advances the version.
         // Observing a stale ValueTask afterwards therefore throws InvalidOperationException instead
         // of re-returning arm N's result forever. That matches how the BCL's own pooled sources
         // (Pipe, Socket) behave when their pooled state is recycled, and it is
         // still safe for any consumer that observes each read once, which is the documented usage.
-        // This test pins BOTH halves: never the new payload, and (if it does not throw) still the
-        // old one.
+        // This deliberately invalid observation checks source-token rejection; it is not a
+        // supported repeated-consumption contract for ValueTask.
         var fake = new FakePipeReader { Mode = FakeReadMode.Suspend };
         var reader = new ReadOwnershipPipeReader(fake);
 
@@ -311,6 +291,50 @@ public class ReadOwnershipPipeReaderTests
         await WithTimeout(new ValueTask(completion), "completion after canceled-result release");
         Ensure(fake.CompleteAsyncCount == 1,
             "the inner reader must complete exactly once after AdvanceTo");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public void CancelPendingReadShouldForwardAndPreserveCanceledResultOwnership(bool pending)
+    {
+        var fake = new FakePipeReader { CompleteOnCancel = true };
+        var reader = new ReadOwnershipPipeReader(fake);
+        var read = pending ? reader.ReadAsync() : default;
+        reader.CancelPendingRead();
+        Ensure(fake.CancelPendingReadCount == 1, "CancelPendingRead must forward exactly once");
+        if (!pending)
+            read = reader.ReadAsync();
+        Ensure(read.IsCompletedSuccessfully, "inner cancellation must complete the pending or next read");
+        var result = read.GetAwaiter().GetResult();
+        Ensure(result.IsCanceled, "the inner canceled ReadResult must be preserved");
+        Ensure(Capture(() => _ = reader.ReadAsync()) is InvalidOperationException,
+            "a canceled result must retain buffer ownership until AdvanceTo");
+        Ensure(Capture(() => reader.TryRead(out _)) is InvalidOperationException,
+            "TryRead must not bypass canceled-result ownership");
+        reader.AdvanceTo(result.Buffer.End);
+        var next = reader.ReadAsync();
+        fake.Publish(Result(0xCF));
+        var nextResult = next.GetAwaiter().GetResult();
+        Ensure(!nextResult.IsCanceled, "forwarded cancellation must not poison a later fresh arm");
+        reader.AdvanceTo(nextResult.Buffer.End);
+        Ensure(fake.CancelPendingReadCount == 1, "observing and releasing must not forward extra cancellations");
+    }
+
+    [Test]
+    public void RepeatedCancelPendingReadShouldForwardEveryRequest()
+    {
+        var fake = new FakePipeReader();
+        var reader = new ReadOwnershipPipeReader(fake);
+        var read = reader.ReadAsync();
+        reader.CancelPendingRead();
+        reader.CancelPendingRead();
+        Ensure(fake.CancelPendingReadCount == 2, "each explicit cancellation request must reach the inner reader");
+        Ensure(!read.IsCompleted, "the wrapper must not invent a result before the inner publishes");
+        fake.Publish(Result(0xCD));
+        var result = read.GetAwaiter().GetResult();
+        Ensure(!result.IsCanceled, "the inner reader remains authoritative for cancellation semantics");
+        reader.AdvanceTo(result.Buffer.End);
     }
 
     [Test]
@@ -578,10 +602,12 @@ public class ReadOwnershipPipeReaderTests
         var consumerFailure = new ApplicationException("consumer continuation threw");
         var first = reader.ReadAsync();
         ValueTask<ReadResult> second = default;
+        ReadResult ownedResult = default;
         var ran = 0;
         first.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
         {
             var result = first.GetAwaiter().GetResult();
+            ownedResult = result;
             Ensure(result.Buffer.ToArray()[0] == 0xA3, "the consumer must receive the success result");
             ran++;
             if (rearm)
@@ -608,8 +634,7 @@ public class ReadOwnershipPipeReaderTests
         }
         else
         {
-            Ensure(first.IsCompletedSuccessfully, "the source must remain successfully completed");
-            reader.AdvanceTo(first.GetAwaiter().GetResult().Buffer.End);
+            reader.AdvanceTo(ownedResult.Buffer.End);
         }
     }
 
@@ -692,6 +717,9 @@ public class ReadOwnershipPipeReaderTests
         private ManualResetValueTaskSourceCore<ReadResult> _source;
         private CompleteOnSubscribeSource? _inline;
         private bool _armed;
+        private bool _cancelNextRead;
+
+        public bool CompleteOnCancel { get; set; }
 
         public FakeReadMode Mode { get; set; } = FakeReadMode.Suspend;
 
@@ -716,6 +744,11 @@ public class ReadOwnershipPipeReaderTests
 
             _source.Reset();
             _armed = true;
+            if (_cancelNextRead)
+            {
+                _cancelNextRead = false;
+                Publish(new ReadResult(Sequence(0xCE), isCanceled: true, isCompleted: false));
+            }
             return new ValueTask<ReadResult>(this, _source.Version);
         }
 
@@ -735,7 +768,16 @@ public class ReadOwnershipPipeReaderTests
 
         public override void AdvanceTo(SequencePosition consumed, SequencePosition examined) => AdvanceCount++;
 
-        public override void CancelPendingRead() => CancelPendingReadCount++;
+        public override void CancelPendingRead()
+        {
+            CancelPendingReadCount++;
+            if (!CompleteOnCancel)
+                return;
+            if (_armed)
+                Publish(new ReadResult(Sequence(0xCE), isCanceled: true, isCompleted: false));
+            else
+                _cancelNextRead = true;
+        }
 
         public override void Complete(Exception? exception = null)
         {

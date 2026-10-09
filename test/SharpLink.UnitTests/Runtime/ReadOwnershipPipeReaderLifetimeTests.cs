@@ -38,6 +38,26 @@ public class ReadOwnershipPipeReaderLifetimeTests
     }
 
     [Test]
+    public void ObservedSuccessShouldDropPayloadBeforeAdvanceTo()
+    {
+        var (reader, payload) = ObserveWithoutAdvancing();
+        Collect();
+        Ensure(!payload.IsAlive, "single observation must drop the source payload without retaining it for another GetResult");
+        var rejected = false;
+        try
+        {
+            reader.ReadAsync();
+        }
+        catch (InvalidOperationException)
+        {
+            rejected = true;
+        }
+        Ensure(rejected, "clearing consumed source state must not release transport buffer ownership");
+        reader.AdvanceTo(default);
+        GC.KeepAlive(reader);
+    }
+
+    [Test]
     public void ConsumedInlineContinuationShouldNotRetainCapturedState()
     {
         var (reader, state) = CompleteCapturingContinuation();
@@ -414,6 +434,19 @@ public class ReadOwnershipPipeReaderLifetimeTests
             ConsumeSuccess(reader, read);
         if (synchronousReads)
             RunSynchronousReads(reader, fake);
+        return (reader, weak);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (ReadOwnershipPipeReader Reader, WeakReference Payload) ObserveWithoutAdvancing()
+    {
+        var fake = new EphemeralPipeReader();
+        var reader = new ReadOwnershipPipeReader(fake);
+        var payload = new byte[64 * 1024];
+        var weak = new WeakReference(payload);
+        var read = reader.ReadAsync();
+        fake.Publish(new ReadResult(new ReadOnlySequence<byte>(payload), false, false));
+        _ = read.GetAwaiter().GetResult();
         return (reader, weak);
     }
 
