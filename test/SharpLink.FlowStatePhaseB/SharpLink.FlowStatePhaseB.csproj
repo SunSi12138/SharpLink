@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);REUSABLE_OWNER_COMMANDS;DIRECT_PUBLICATION_ADMISSION</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <Compile Include="../../src/SharpLink.Runtime/ProtocolViolationReason.cs" Link="ProtocolViolationReason.cs" />
+  </ItemGroup>
+  <Target Name="GeneratePhaseBControllers" BeforeTargets="BeforeCompile">
+    <Exec Command="python3 &quot;$(MSBuildProjectDirectory)/../../eng/prepare-flow-state-phase-b.py&quot; --output &quot;$(MSBuildProjectDirectory)/obj/prototype&quot;" />
+    <ItemGroup>
+      <Compile Include="$(MSBuildProjectDirectory)/obj/prototype/*.cs" />
+    </ItemGroup>
+  </Target>
+</Project>

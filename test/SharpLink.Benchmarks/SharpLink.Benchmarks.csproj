@@ -1,12 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <DefineConstants Condition="'$(ReadyWriterExperiment)' == 'true'">$(DefineConstants);SHARPLINK_READY_WRITER_EXPERIMENT</DefineConstants>
     <IsPackable>false</IsPackable>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)Generated</CompilerGeneratedFilesOutputPath>
     <DefineConstants Condition="'$(Configuration)' == 'Release'">$(DefineConstants);SHARPLINK_RELEASE_BUILD</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(ReadyWriterExperiment)' == 'true' And '$(ReadyWriterDiagnostic)' == 'true'">
+    <DefineConstants>$(DefineConstants);SHARPLINK_READY_WRITER_DIAGNOSTIC</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
     <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
@@ -34,5 +38,13 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="SharpPack" />
+  </ItemGroup>
+  <!-- Research-only transport control; never link prototype controllers into runtime. -->
+  <ItemGroup>
+    <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.cs" Link="PhaseB/GrantAuthority.cs" />
+    <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Commands.cs" Link="PhaseB/GrantAuthority.Commands.cs" />
+    <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Publication.cs" Link="PhaseB/GrantAuthority.Publication.cs" />
+    <Compile Include="../SharpLink.FlowStatePhaseB/GrantAuthority.Wire.cs" Link="PhaseB/GrantAuthority.Wire.cs" />
+    <Compile Include="../SharpLink.FlowStatePhaseB/ReusableOwnerCommand.cs" Link="PhaseB/ReusableOwnerCommand.cs" />
   </ItemGroup>
 </Project>

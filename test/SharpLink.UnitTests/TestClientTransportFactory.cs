@@ -58,10 +58,10 @@ internal sealed class TestTransportConnection : ITransportConnection
     private readonly Task _observeOutputTask;
     private int _disposed;
 
-    public TestTransportConnection()
+    public TestTransportConnection(Task? outputObservationStart = null)
     {
         _output = new CallbackPipeWriter(_outbound.Writer);
-        _observeOutputTask = ObserveOutputAsync(_disposeCts.Token);
+        _observeOutputTask = ObserveOutputAsync(_disposeCts.Token, outputObservationStart);
     }
 
     public string Id { get; } = Guid.NewGuid().ToString("N");
@@ -219,8 +219,12 @@ internal sealed class TestTransportConnection : ITransportConnection
         _disposeCts.Dispose();
     }
 
-    private async Task ObserveOutputAsync(CancellationToken cancellationToken)
+    private async Task ObserveOutputAsync(CancellationToken cancellationToken, Task? observationStart)
     {
+        // Optional deterministic scheduling control: flushing bytes is not the same
+        // as observing/parsing them. Cancellation must still release this test gate.
+        if (observationStart is not null)
+            await observationStart.WaitAsync(cancellationToken).ConfigureAwait(false);
         while (!cancellationToken.IsCancellationRequested)
         {
             var result = await _outbound.Reader.ReadAsync(cancellationToken);

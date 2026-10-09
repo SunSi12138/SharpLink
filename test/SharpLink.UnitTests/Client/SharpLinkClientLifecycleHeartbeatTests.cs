@@ -31,7 +31,9 @@ public sealed class SharpLinkClientLifecycleHeartbeatTests
         await client.ConnectAsync();
         var connection = GetOnlyReadyConnection(client);
 
-        connection.Session.LastActive = DateTime.UtcNow.AddDays(1);
+        connection.Session.LastActive = provider.GetUtcNow().UtcDateTime.AddDays(1);
+        Ensure(connection.Session.TimeSinceLastActivity == TimeSpan.Zero,
+            "changing wall-clock activity must not advance elapsed heartbeat time");
         _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Ping);
         await YieldUntilAsync(
             () => provider.EarliestTimerTimestamp == TimeSpan.FromSeconds(5).Ticks,

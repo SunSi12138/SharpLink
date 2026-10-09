@@ -88,14 +88,19 @@ internal static class SharpLinkClientRetryBehaviorSupport
     {
         private readonly TaskCompletionSource _evaluationStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _releaseEvaluation = new();
 
         public Task EvaluationStarted => _evaluationStarted.Task;
         public int Count { get; private set; }
+
+        public void ReleaseEvaluation() => _releaseEvaluation.Set();
 
         public SharpLinkRetryDecision Evaluate(in SharpLinkRetryContext context)
         {
             Count++;
             _evaluationStarted.TrySetResult();
+            if (!_releaseEvaluation.Wait(TimeSpan.FromSeconds(2)))
+                throw new TimeoutException("The test did not release the huge-delay retry policy.");
             return new SharpLinkRetryDecision(true, TimeSpan.MaxValue);
         }
     }

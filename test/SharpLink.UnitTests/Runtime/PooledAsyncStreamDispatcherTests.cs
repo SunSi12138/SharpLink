@@ -206,19 +206,44 @@ public class PooledAsyncStreamDispatcherTests
         using var cancellation = new CancellationTokenSource();
         var marker = new object();
         var codec = new ReferenceItemCodec(marker);
+        var controller = new StreamFlowController(4, 4, 1024, 1);
+        var receiveLease = controller.ResolveReceiveCreditLease(1, 2);
+        var creditedBytes = 0;
+        void Consumed(in StreamFlowController.ResolvedReceiveCreditLease lease, int bytes)
+        {
+            GC.KeepAlive(marker);
+            _ = controller.RecordConsumed(in lease, bytes);
+            creditedBytes += bytes;
+        }
+
         var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(cancellation.Token, codec);
-        dispatcher.SetBytesConsumedCallback((_, _, _) => GC.KeepAlive(marker), 1, 2);
-        dispatcher.SetConsumerAbandonedCallback(_ => GC.KeepAlive(marker), 1);
-        _ = dispatcher.GetAsyncEnumerator();
-        await dispatcher.DispatchAsync(Payload);
+        try
+        {
+            dispatcher.SetBytesConsumedCallback((_, _, _) => GC.KeepAlive(marker), 1, 2);
+            Ensure(dispatcher.TrySetResolvedBytesConsumedCallback(Consumed, in receiveLease),
+                "the return fixture must install the resolved callback and receive lease");
+            dispatcher.SetConsumerAbandonedCallback(_ => GC.KeepAlive(marker), 1);
+            _ = dispatcher.GetAsyncEnumerator();
+            controller.AcceptReceived(in receiveLease, 1);
+            await dispatcher.DispatchAsync(Payload);
 
-        dispatcher.Complete(exception: null);
-        await dispatcher.DisposeAsync();
+            dispatcher.Complete(exception: null);
+            await dispatcher.DisposeAsync();
 
-        Ensure(!dispatcher.HasRetainedReferencesForTests,
-            "codec, callbacks, cancellation registration and decoded items must be cleared");
-        cancellation.Cancel();
-        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+            Ensure(creditedBytes == 1,
+                "buffer cleanup must use the installed resolved callback exactly once");
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1 &&
+                   !dispatcher.HasRetainedReferencesForTests,
+                "the static pool must retain no codec, resolved/keyed callbacks, leases, cancellation registrations or items");
+            cancellation.Cancel();
+        }
+        finally
+        {
+            dispatcher.Complete(exception: null);
+            await dispatcher.DisposeAsync();
+            _ = controller.FlushConsumed(in receiveLease);
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
     }
 
     [Test]

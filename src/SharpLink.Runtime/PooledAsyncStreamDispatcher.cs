@@ -3,7 +3,7 @@ namespace SharpLink.Runtime;
 /// <summary>Decodes a single-consumer RPC stream into a pooled asynchronous enumerator.</summary>
 /// <typeparam name="T">The decoded stream item type.</typeparam>
 /// <remarks>Dispose the enumerator to release buffered items and return the dispatcher to its pool.</remarks>
-internal sealed class PooledAsyncStreamDispatcher<T> :
+internal sealed partial class PooledAsyncStreamDispatcher<T> :
     IStreamConsumptionAwareDispatcher,
     IStreamDispatchLease,
     IStreamLocalAbortDispatcher,
@@ -85,6 +85,8 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     private IRpcCodec<T>? _codec;
     private bool _payloadNullable;
     private Action<long, ushort, int>? _bytesConsumed;
+    private ResolvedStreamBytesCallback? _resolvedBytesConsumed;
+    private StreamFlowController.ResolvedReceiveCreditLease _receiveCreditLease;
     private Action<long>? _consumerAbandoned;
     private Func<long, IStreamDispatchState?, ValueTask>? _consumerAbandonedAsync;
     private long _flowControlRequestId;
@@ -92,6 +94,8 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     private long _consumerAbandonedRequestId;
     private int _consumerTerminal;
     private Action<long, ushort, int>? _localAbortBytesConsumed;
+    private ResolvedStreamBytesCallback? _localAbortResolvedBytesConsumed;
+    private StreamFlowController.ResolvedReceiveCreditLease _localAbortReceiveCreditLease;
     private long _localAbortRequestId;
     private ushort _localAbortStreamId;
     private long _localAbortRetentionLeaseState;
@@ -227,12 +231,16 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _error = null;
         _current = default;
         _bytesConsumed = null;
+        _resolvedBytesConsumed = null;
+        _receiveCreditLease = default;
         _consumerAbandoned = null;
         _consumerAbandonedAsync = null;
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
         _consumerAbandonedRequestId = 0;
         _localAbortBytesConsumed = null;
+        _localAbortResolvedBytesConsumed = null;
+        _localAbortReceiveCreditLease = default;
         _localAbortRequestId = 0;
         _localAbortStreamId = 0;
         Volatile.Write(ref _localAbortRetentionLeaseState, 0);
@@ -463,6 +471,14 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _flowControlStreamId = streamId;
     }
 
+    public bool TrySetResolvedBytesConsumedCallback(
+        ResolvedStreamBytesCallback? callback,
+        in StreamFlowController.ResolvedReceiveCreditLease lease)
+    {
+        _resolvedBytesConsumed = callback;
+        _receiveCreditLease = lease;
+        return true;
+    }
     void IStreamLocalAbortDispatcher.CompleteLocalAbort(Exception? exception)
     {
         if (!TryAcquireDispatch(out var retentionLeaseState))
@@ -472,11 +488,15 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         // consumer DisposeAsync may participate in the one-shot retirement as soon as the
         // terminal becomes visible, so it must never observe an uninitialized credit snapshot.
         _localAbortBytesConsumed = _bytesConsumed;
+        _localAbortResolvedBytesConsumed = _resolvedBytesConsumed;
+        _localAbortReceiveCreditLease = _receiveCreditLease;
         _localAbortRequestId = _flowControlRequestId;
         _localAbortStreamId = _flowControlStreamId;
         if (!TryClaimLocalAbort(exception))
         {
             _localAbortBytesConsumed = null;
+            _localAbortResolvedBytesConsumed = null;
+            _localAbortReceiveCreditLease = default;
             _localAbortRequestId = 0;
             _localAbortStreamId = 0;
             ReleaseDispatch(retentionLeaseState);
@@ -523,13 +543,18 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             discardedBytes = checked(discardedBytes + encodedByteCount);
         if (discardedBytes != 0)
         {
-            _localAbortBytesConsumed?.Invoke(
-                _localAbortRequestId,
-                _localAbortStreamId,
-                discardedBytes);
+            if (_localAbortResolvedBytesConsumed is { } resolved)
+                resolved(in _localAbortReceiveCreditLease, discardedBytes);
+            else
+                _localAbortBytesConsumed?.Invoke(
+                    _localAbortRequestId,
+                    _localAbortStreamId,
+                    discardedBytes);
         }
 
         _localAbortBytesConsumed = null;
+        _localAbortResolvedBytesConsumed = null;
+        _localAbortReceiveCreditLease = default;
         _localAbortRequestId = 0;
         _localAbortStreamId = 0;
     }
@@ -1458,12 +1483,16 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         _codec = null;
         _payloadNullable = false;
         _bytesConsumed = null;
+        _resolvedBytesConsumed = null;
+        _receiveCreditLease = default;
         _consumerAbandoned = null;
         _consumerAbandonedAsync = null;
         _flowControlRequestId = 0;
         _flowControlStreamId = 0;
         _consumerAbandonedRequestId = 0;
         _localAbortBytesConsumed = null;
+        _localAbortResolvedBytesConsumed = null;
+        _localAbortReceiveCreditLease = default;
         _localAbortRequestId = 0;
         _localAbortStreamId = 0;
         Volatile.Write(ref _localAbortRetentionLeaseState, 0);
@@ -1544,55 +1573,6 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     internal int BufferCapacityForTests => _totalCapacity;
 
-    internal bool HasRetainedReferencesForTests
-    {
-        get
-        {
-            if (_codec is not null || _error is not null || Volatile.Read(ref _dispatchState) is not null ||
-                _bytesConsumed is not null || _localAbortBytesConsumed is not null ||
-                _consumerAbandoned is not null || _consumerAbandonedAsync is not null ||
-                _current is not null || _enumerationToken.CanBeCanceled ||
-                _additionalEnumerationToken.CanBeCanceled ||
-                !_enumerationCancellationRegistration.Equals(default) ||
-                !_additionalEnumerationCancellationRegistration.Equals(default) ||
-                Volatile.Read(ref _disposeCompletion) is not null ||
-                Volatile.Read(ref _remoteTerminalPublication) is not null ||
-                Volatile.Read(ref _beforeConcurrentDisposeCompletionInstallForTests) is not null ||
-                Volatile.Read(ref _beforeRemoteTerminalPublicationPublishForTests) is not null ||
-                Volatile.Read(ref _beforeRemoteTerminalPublicationCompletionInstallForTests) is not null ||
-                Volatile.Read(ref _afterRemoteTerminalPublicationCompletionInstallForTests) is not null ||
-                Volatile.Read(ref _beforeProducerOperationAcquireForTests) is not null ||
-                Volatile.Read(ref _beforeConsumerWaitOwnerAcquireForTests) is not null ||
-                Volatile.Read(ref _afterConsumerWaitResultForTests) is not null ||
-                Volatile.Read(ref _beforeReturnTransitionForTests) is not null ||
-                Volatile.Read(ref _afterReturnTransitionForTests) is not null)
-            {
-                return true;
-            }
-
-            if (!RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-                return false;
-            if (SegmentHasReferences(_firstSegment))
-                return true;
-            foreach (var segment in _freeSegments)
-            {
-                if (SegmentHasReferences(segment))
-                    return true;
-            }
-            return false;
-        }
-    }
-
-    private static bool SegmentHasReferences(BufferSegment segment)
-    {
-        for (var index = 0; index < segment.Items.Length; index++)
-        {
-            if (segment.Items[index] is not null)
-                return true;
-        }
-        return false;
-    }
-
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static long GetLeaseStatus(long leaseState) => leaseState & LeaseStatusMask;
 
@@ -1608,7 +1588,12 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void NotifyBytesConsumed(int encodedByteCount)
-        => _bytesConsumed?.Invoke(_flowControlRequestId, _flowControlStreamId, encodedByteCount);
+    {
+        if (_resolvedBytesConsumed is { } resolved)
+            resolved(in _receiveCreditLease, encodedByteCount);
+        else
+            _bytesConsumed?.Invoke(_flowControlRequestId, _flowControlStreamId, encodedByteCount);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ThrowIfEnumerationCanceled()

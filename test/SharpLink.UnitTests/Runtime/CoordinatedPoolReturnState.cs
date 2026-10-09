@@ -75,4 +75,3 @@ internal sealed class CoordinatedPoolReturnState : IStreamDispatchState, IDispos
         _releaseDelayedReturn.Dispose();
     }
 }
-

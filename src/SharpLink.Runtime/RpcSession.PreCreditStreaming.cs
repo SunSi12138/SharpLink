@@ -59,6 +59,171 @@ internal sealed partial class RpcSession
             deadlineTimeProvider);
     }
 
+    internal ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        SendUnsizedStreamChunkWithCreditLeaseAsync<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            IRpcCodec<T> codec,
+            CancellationToken cancellationToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease,
+            RpcDeadline deadline = default,
+            TimeProvider? deadlineTimeProvider = null)
+    {
+        ArgumentNullException.ThrowIfNull(codec);
+        return SerializeUnsizedStreamChunkWithCreditLease(
+            requestId,
+            streamId,
+            item,
+            codec,
+            cancellationToken,
+            creditLease,
+            deadline,
+            deadlineTimeProvider);
+    }
+
+    private ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        SerializeUnsizedStreamChunkWithCreditLease<T>(
+            long requestId,
+            ushort streamId,
+            T item,
+            IRpcCodec<T> codec,
+            CancellationToken cancellationToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease,
+            RpcDeadline deadline,
+            TimeProvider? deadlineTimeProvider)
+    {
+        IRpcByteBufferWriter? writer = null;
+        var ownsWriter = true;
+        var creditAcquired = false;
+        try
+        {
+            if (Volatile.Read(ref _terminal) is { } terminal)
+                throw terminal.Exception;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            writer = RentFrameWriter();
+            using (writer.BeginPacketScope(
+                       ProtocolV2FrameType.StreamData,
+                       ProtocolV2FrameFlags.None,
+                       unchecked((ulong)requestId)))
+            {
+                var idSpan = writer.GetSpan(sizeof(ushort));
+                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
+                writer.Advance(sizeof(ushort));
+                codec.Serialize(item, writer);
+            }
+
+            var encodedBytes = Math.Max(
+                1,
+                writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var resolvedLease = creditLease;
+            if (!HasStreamFlowControl ||
+                TryAcquireStreamSendCredit(
+                    creditLease,
+                    requestId,
+                    streamId,
+                    encodedBytes,
+                    out resolvedLease))
+            {
+                creditLease = resolvedLease;
+                creditAcquired = HasStreamFlowControl;
+                try
+                {
+                    ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+                    ownsWriter = false;
+                    SendPacket(writer);
+                }
+                catch
+                {
+                    if (creditAcquired)
+                        ReturnUnsentStreamCredit(creditLease, requestId, streamId, encodedBytes);
+                    throw;
+                }
+                return new ValueTask<StreamFlowController.ResolvedSendCreditLease>(creditLease);
+            }
+
+            creditLease = resolvedLease;
+            var budget = GetOrCreatePreCreditSerializedBudget();
+            var pendingBudget = budget.AcquireAsync(
+                requestId,
+                streamId,
+                encodedBytes,
+                cancellationToken);
+            ownsWriter = false;
+            return AwaitPreCreditBudgetAndResolvedFlowCreditAsync(
+                pendingBudget,
+                writer,
+                requestId,
+                streamId,
+                encodedBytes,
+                budget,
+                cancellationToken,
+                creditLease,
+                deadline,
+                deadlineTimeProvider);
+        }
+        finally
+        {
+            if (ownsWriter && writer is not null)
+                RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
+    private async ValueTask<StreamFlowController.ResolvedSendCreditLease>
+        AwaitPreCreditBudgetAndResolvedFlowCreditAsync(
+            ValueTask pendingBudget,
+            IRpcByteBufferWriter writer,
+            long requestId,
+            ushort streamId,
+            int encodedBytes,
+            PreCreditSerializedBudget budget,
+            CancellationToken cancellationToken,
+            StreamFlowController.ResolvedSendCreditLease creditLease,
+            RpcDeadline deadline,
+            TimeProvider? deadlineTimeProvider)
+    {
+        var ownsWriter = true;
+        var ownsBudget = false;
+        var creditAcquired = false;
+        try
+        {
+            await pendingBudget.ConfigureAwait(false);
+            ownsBudget = true;
+
+            creditLease = await AcquireStreamSendCreditAsync(
+                creditLease,
+                requestId,
+                streamId,
+                encodedBytes,
+                cancellationToken).ConfigureAwait(false);
+            creditAcquired = true;
+
+            budget.Release(encodedBytes);
+            ownsBudget = false;
+
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
+            ownsWriter = false;
+            SendPacket(writer);
+            return creditLease;
+        }
+        catch
+        {
+            if (creditAcquired)
+                ReturnUnsentStreamCredit(creditLease, requestId, streamId, encodedBytes);
+            throw;
+        }
+        finally
+        {
+            if (ownsBudget)
+                budget.Release(encodedBytes);
+            if (ownsWriter)
+                RuntimeContext.Buffers.Return(writer);
+        }
+    }
+
     internal long PreCreditSerializedBytes
         => Volatile.Read(ref _preCreditSerializedBudget)?.ReservedBytes ?? 0;
 

@@ -8,6 +8,28 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--transport-failure-self-test")
+        {
+            await PhaseBTransportFailureChecks.RunAsync();
+            return;
+        }
+#if SHARPLINK_READY_WRITER_EXPERIMENT
+        if (args.Length > 0 && args[0] == "--ready-writer-evidence")
+        {
+            await ReadyWriterEvidence.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--ready-writer-self-test")
+        {
+            await ReadyWriterChecks.RunAsync();
+            return;
+        }
+#endif
+        if (args.Length > 0 && args[0] == "--phase-b-transport-evidence")
+        {
+            await PhaseBTransportEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
         if (args.Length > 0 && string.Equals(
             args[0], "--zstd-evidence", StringComparison.Ordinal))
         {
@@ -90,6 +112,12 @@ public static class Program
             args[0], "--flow-control-evidence", StringComparison.Ordinal))
         {
             await FlowControlEvidenceRunner.RunAsync(args[1..]);
+            return;
+        }
+        if (args.Length > 0 && string.Equals(
+            args[0], "--resolved-flow-state-evidence", StringComparison.Ordinal))
+        {
+            await ResolvedFlowStateEvidenceRunner.RunAsync(args[1..]);
             return;
         }
         if (args.Length > 0 && string.Equals(
