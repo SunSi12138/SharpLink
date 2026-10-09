@@ -38,6 +38,12 @@ jobs:
           files = []
           with zipfile.ZipFile(root / "original.zip") as archive:
               assert archive.testzip() is None
+              core_paths = set()
+              for arm in "ACB":
+                  native = json.loads(archive.read(f"codegen/{arm}/aot/native.json"))
+                  for method in native["methods"]:
+                      if method["symbol"].startswith("SharpLink_Client_SharpLink_Client_SharpLinkClient__InvokeOneWay") and method["symbol"].endswith("__MoveNext"):
+                          core_paths.add(f"codegen/{arm}/aot/raw/" + method["rawDisassembly"])
               for item in archive.infolist():
                   if item.is_dir():
                       continue
@@ -45,11 +51,8 @@ jobs:
                   assert not path.is_absolute() and ".." not in path.parts
                   content = archive.read(item)
                   files.append(dict(path=item.filename, bytes=len(content), sha256=sha(content)))
-                  selected = (item.filename.endswith((".json", ".jsonl")) and "/samples/" not in "/" + item.filename
-                      and "/images/" not in "/" + item.filename)
-                  selected |= item.filename.endswith("-production.patch")
-                  selected |= item.filename.startswith("codegen/") and item.filename.endswith((".log", ".asm", ".txt"))
-                  selected |= item.filename.startswith("environment/")
+                  selected = item.filename.endswith(".jsonl") or item.filename in core_paths
+                  selected |= item.filename.startswith("codegen/") and "/jit/" in item.filename and item.filename.endswith(".log")
                   if selected:
                       encoded = base64.b64encode(zlib.compress(content, 9)).decode()
                       print("EVIDENCE_FILE " + json.dumps(dict(path=item.filename,
