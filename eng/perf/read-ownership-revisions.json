@@ -1,0 +1,9 @@
+{
+  "baseline": "072a3a13fca0aa9186d2db44e38e5fc846969b07",
+  "candidate": "d271c3a82155359c0832399eb3f580af726e9fd8",
+  "prior": "11b6e78addb2c0d1bb2413c74cb6a60c94499488",
+  "rounds": 6,
+  "warmupSeconds": 2,
+  "durationSeconds": 6,
+  "microIterations": 1000000
+}
