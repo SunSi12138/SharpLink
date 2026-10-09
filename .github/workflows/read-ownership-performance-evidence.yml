@@ -1,0 +1,173 @@
+name: Read Ownership Optimization Evidence
+
+on:
+  push:
+    branches:
+      - 'perf/pr753-read-ownership-*'
+    paths:
+      - '.github/workflows/read-ownership-performance-evidence.yml'
+      - 'eng/perf/read-ownership-*.json'
+      - 'eng/perf/read-ownership-micro/**'
+      - 'eng/perf/run-read-ownership.py'
+      - 'eng/perf/summarize-read-ownership.py'
+      - 'eng/perf/test-read-ownership-harness.py'
+
+permissions:
+  contents: read
+
+jobs:
+  same-run-three-arm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout isolated evidence harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Verify harness acceptance and negative controls
+        shell: bash
+        run: |
+          mkdir -p artifacts/read-ownership
+          python3 eng/perf/test-read-ownership-harness.py 2>&1 | tee artifacts/read-ownership/harness-self-tests.log
+
+      - name: Record runner environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/read-ownership
+          dotnet --info > artifacts/read-ownership/dotnet-info.txt
+          uname -a > artifacts/read-ownership/uname.txt
+          lscpu > artifacts/read-ownership/cpu.txt
+          free -b > artifacts/read-ownership/memory.txt
+          ps -eo pid,comm,args > artifacts/read-ownership/processes-before.txt
+          printf 'run=%s\nattempt=%s\nrunner=%s\nimage=%s\nimage_version=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_ENVIRONMENT" \
+            "$ImageOS" "$ImageVersion" > artifacts/read-ownership/runner.txt
+          git rev-parse HEAD > artifacts/read-ownership/harness-sha.txt
+          mkdir -p artifacts/read-ownership/harness
+          cp eng/perf/*read-ownership*.py eng/perf/read-ownership-revisions.json \
+            eng/perf/read-ownership-method.md .github/workflows/read-ownership-performance-evidence.yml \
+            artifacts/read-ownership/harness/
+          cp -r eng/perf/read-ownership-micro artifacts/read-ownership/harness/
+          sha256sum eng/perf/run-read-ownership.py eng/perf/summarize-read-ownership.py \
+            eng/perf/test-read-ownership-harness.py eng/perf/read-ownership-revisions.json \
+            .github/workflows/read-ownership-performance-evidence.yml eng/perf/read-ownership-micro/* > artifacts/read-ownership/harness-sha256.txt
+
+      - name: Build all arms, then execute all six balanced orders
+        shell: bash
+        run: |
+          python3 eng/perf/run-read-ownership.py \
+            --manifest eng/perf/read-ownership-revisions.json \
+            --output "$GITHUB_WORKSPACE/artifacts/read-ownership" \
+            --work "$RUNNER_TEMP/read-ownership-arms"
+
+      - name: Publish descriptive summary
+        shell: bash
+        run: cat artifacts/read-ownership/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload every raw observation and build log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: read-ownership-performance-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: artifacts/read-ownership
+          if-no-files-found: error
+          retention-days: 90
+
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      # Keep the same bounded test concurrency as the three-platform release gate.
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Start Fast validation timing
+        run: echo "FAST_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: d33136386d569cfe1db4ae649f5f4f2f4bc8279d
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Production Project Reference Boundary Guard
+        run: python3 eng/check-project-reference-boundaries.py
+
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability Debt Gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        run: ./eng/verify-generated-assembly-dependencies.sh
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Record Fast validation steps elapsed
+        if: always()
+        shell: bash
+        run: |
+          now=$(date +%s)
+          elapsed=$((now - FAST_STARTED_AT))
+          minutes=$((elapsed / 60))
+          seconds=$((elapsed % 60))
+          {
+            echo "### PR Fast timing"
+            echo
+            printf -- "- Fast validation steps elapsed: %dm %02ds\n" "$minutes" "$seconds"
+            echo "- Scope: first workflow step through the final validation step; runner setup and action post-cleanup are excluded"
+            echo "- Full Fast job target: <= 3m under normal hosted-runner conditions"
+            echo "- Hard timeout: 5m"
+            echo "- Previous PR Quick full active-duration median: 7m 03s (representative fresh-run range: 6m 47s to 7m 06s)"
+            echo "- Compare the completed Actions job timestamps for an exact like-for-like full-duration comparison"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  allocation-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: d33136386d569cfe1db4ae649f5f4f2f4bc8279d
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Deterministic managed-allocation gate
+        uses: ./.github/actions/allocation-gate
+        with:
+          artifact-directory: artifacts/perf/allocation-gate
+          negative-control: 'true'
+
+      - name: Upload allocation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: allocation-gate-${{ github.sha }}
+          path: artifacts/perf/allocation-gate
+          if-no-files-found: error
+          retention-days: 30
