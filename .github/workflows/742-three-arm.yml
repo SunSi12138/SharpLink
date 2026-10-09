@@ -1,0 +1,81 @@
+name: 742 Same Host Dev Pre Refactor R Comparison
+on:
+  push:
+    branches: ['perf/735-preflight-flags']
+    paths:
+      - '.github/workflows/742-three-arm.yml'
+      - 'eng/preflight-742-three-arm/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: 742-three-arm
+  cancel-in-progress: false
+jobs:
+  original-jit-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.112
+      - name: Reconstruct exact D P R production roots and preserve original validators
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-three-arm/self-tests.py
+          python3 eng/preflight-742-three-arm/prepare.py "$RUNNER_TEMP/three-arm" artifacts/three-arm/source
+          mkdir -p artifacts/three-arm/env
+          dotnet --info > artifacts/three-arm/env/dotnet.txt
+          uname -a > artifacts/three-arm/env/uname.txt
+          lscpu > artifacts/three-arm/env/cpu.txt
+          python3 - <<'PY'
+          import os, subprocess
+          assert subprocess.check_output(['dotnet', '--version'], text=True).strip() == '10.0.112'
+          versions = [tuple(map(int, line.split()[1].split('.'))) for line in
+                      subprocess.check_output(['dotnet', '--list-runtimes'], text=True).splitlines()
+                      if line.startswith('Microsoft.NETCore.App 10.')]
+          assert max(versions) == (10, 0, 12), 'Original runtime10.0.12 must be selected'
+          available = sorted(os.sched_getaffinity(0))
+          assert len(available) >= 4, 'The original screen requires four available CPUs.'
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('CPU_LIST=' + ','.join(map(str, available[:4])) + '\n')
+          PY
+          for label in D P R; do
+            root="$RUNNER_TEMP/three-arm/$label"
+            safe="${label//\//-}"
+            for project in SharpLink.Benchmarks SharpLink.StreamLoadTest; do
+              dotnet build "$root/test/$project" -c Release -p:PublishAot=false -m:1 /nodeReuse:false -p:UseSharedCompilation=false > "artifacts/three-arm/env/build-$safe-$project.log" 2>&1 || { cat "artifacts/three-arm/env/build-$safe-$project.log"; exit 1; }
+            done
+          done
+      - name: Exactly six complete arm permutations and five original workloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/preflight-742-three-arm/screen.py "$RUNNER_TEMP/three-arm/D" "$RUNNER_TEMP/three-arm/P" "$RUNNER_TEMP/three-arm/R" artifacts/three-arm/raw --affinity "$CPU_LIST"
+      - name: Verify retained screen artifact stays below24MiB
+        id: artifact
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          root = pathlib.Path('artifacts/three-arm')
+          files = [path for path in root.rglob('*') if path.is_file()]
+          assert files and sum(path.stat().st_size for path in files) < 24 * 1024 * 1024
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('ready=true\n')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always() && steps.artifact.outputs.ready == 'true'
+        with:
+          name: 742-three-arm-DPR-${{ github.sha }}
+          path: artifacts/three-arm
+          if-no-files-found: error
+          retention-days: 30
