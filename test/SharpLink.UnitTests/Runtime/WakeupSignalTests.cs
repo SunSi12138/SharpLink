@@ -6,6 +6,50 @@ namespace SharpLink.UnitTests.Runtime;
 public class WakeupSignalTests
 {
     [Test]
+    public async Task IdleObservationMustExcludeUnregisteredLatchedClaimedAndTimedArms()
+    {
+        var signal = new WakeupSignal();
+        Task<bool>? consumer = null;
+        try
+        {
+            Ensure(!signal.HasPendingIdleWait, "a new signal has no registered idle wait");
+            signal.Signal();
+            Ensure(!signal.HasPendingIdleWait, "a latched producer signal is not an idle wait");
+            Ensure(await signal.WaitAsync(), "the initial latch must still be consumed");
+
+            var pending = signal.WaitAsync();
+            Ensure(!signal.HasPendingIdleWait, "publishing an arm alone must not report a waiting continuation");
+            consumer = ConsumeAsync(pending);
+            Ensure(signal.HasPendingIdleWait, "an untimed continuation must be observable before producer wake");
+            signal.Signal();
+            Ensure(!signal.HasPendingIdleWait, "a claimed arm is no longer a pending idle wait");
+            Ensure(await consumer.WaitAsync(TimeSpan.FromSeconds(2)), "the observed arm must consume its real wake");
+
+            var clock = new ManualTimeProvider();
+            consumer = ConsumeAsync(signal.WaitAsync(clock, TimeSpan.FromSeconds(1)));
+            Ensure(!signal.HasPendingIdleWait, "a timed batch wait must not be mistaken for an idle wait");
+            clock.Advance(TimeSpan.FromSeconds(1));
+            Ensure(!await consumer.WaitAsync(TimeSpan.FromSeconds(2)), "the timed arm must retain its deadline outcome");
+
+            pending = signal.WaitAsync();
+            Ensure(!signal.HasPendingIdleWait, "an old continuation must not mark the next unregistered generation idle");
+            consumer = ConsumeAsync(pending);
+            Ensure(signal.HasPendingIdleWait, "a fresh untimed generation must become observable again");
+            signal.Signal();
+            Ensure(await consumer.WaitAsync(TimeSpan.FromSeconds(2)), "a fresh generation still needs its own producer wake");
+        }
+        finally
+        {
+            signal.Signal();
+            if (consumer is not null)
+                await consumer.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+
+        static async Task<bool> ConsumeAsync(ValueTask<bool> wait)
+            => await wait.ConfigureAwait(false);
+    }
+
+    [Test]
     public async Task ClaimedArmMustNotLatchAStaleSignalForTheNextWait()
     {
         var signal = new WakeupSignal();

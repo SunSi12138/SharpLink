@@ -115,9 +115,7 @@ internal sealed partial class SharpLinkClient
         RpcMethodDescriptor method,
         in ResolvedCallControl control)
     {
-        // Same reachability argument as InvokeUnaryWithOptionalRetryAsync: only the unary
-        // entry point reaches this, so the Kind conjunct could never be true.
-        if (!method.IsIdempotent)
+        if (method.Kind != RpcMethodKind.Unary || !method.IsIdempotent)
             return control;
 
         // The captured retry generation lives on the control only. Any participant that re-enters

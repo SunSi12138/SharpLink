@@ -10,8 +10,8 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         CancellationToken cancellationToken)
     {
-        // The Kind conjunct was unreachable: the only caller is InvokeUnaryAsync, and the
-        // generated proxy emits RpcMethodKind.Unary for every method that reaches it.
+        // This helper is reached through the unary invocation pipeline, including
+        // telemetry and interceptor terminals. Generated unary calls use Unary descriptors.
         if (!method.IsIdempotent)
         {
             return InvokeUnaryCoreAsync(
