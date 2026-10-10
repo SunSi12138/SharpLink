@@ -17,9 +17,6 @@ internal sealed partial class SharpLinkClient
         var control = ResolveCallControlForInvocation(
             method, metadata, includeClientDefault: true, interceptors);
         Interlocked.Increment(ref _activeLogicalInvocations);
-        // NOTE: the increment above is the single increment for every unary shape. The simple 1:1
-        // shape releases it from the physical attempt's completion observer; every other shape
-        // releases it through CompleteLogicalInvocation below, exactly as before.
         try
         {
             ValueTask<TResponse> invocation;
@@ -28,9 +25,6 @@ internal sealed partial class SharpLinkClient
             else if (interceptors.Count != 0)
                 invocation = InvokeUnaryInterceptedAsync(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
             else if (IsSimpleOneToOneUnaryShape(method, control))
-                // Simple 1:1 unary shape: the single physical attempt releases the logical
-                // invocation through its exactly-once completion observer, so no outer async
-                // wrapper (and no per-call state-machine box) is created for this shape.
                 return InvokeUnarySimpleShapeAsync(method, request, requestCodec, responseCodec, control, cancellationToken);
             else
                 invocation = InvokeUnaryWithOptionalRetryAsync(method, request, requestCodec, responseCodec, control, cancellationToken);
