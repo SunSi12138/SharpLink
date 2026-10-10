@@ -1,0 +1,280 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "processId",
+    "stopwatchFrequency",
+    "ticksStart",
+    "ticksEnd",
+    "cpuBoundary",
+    "sourceSha",
+    "sample",
+    "transport",
+    "rpc",
+    "concurrency",
+    "operations",
+    "warmup",
+    "runtime",
+    "framework",
+    "os",
+    "architecture",
+    "tailWindowMilliseconds",
+    "boundaryStatus",
+    "threadPoolMinimumWorkers",
+    "threadPoolMinimumIo",
+    "processorCount",
+    "serverGc",
+    "tieredPgo",
+    "bytes",
+    "bytesPerOperation",
+    "objectsPerOperation",
+    "objectsStatus",
+    "gen0",
+    "cpuMilliseconds",
+    "cpuNanosecondsPerOperation",
+    "elapsedSeconds",
+    "qpsBoundary",
+    "markerBoundary",
+    "qps",
+    "p50Nanoseconds",
+    "p99Nanoseconds",
+    "latencyMeaning",
+    "measurement",
+    "received",
+    "telemetry",
+    "receiveCreditBounded",
+    "receiveCreditScope",
+    "creditAcquired",
+    "creditReleased",
+    "creditWaitIncompleteAtProbe",
+    "creditWaitObservation",
+    "creditPeakOutstanding",
+    "creditFinalAvailable",
+    "creditWaitP50Nanoseconds",
+    "creditWaitP99Nanoseconds",
+    "creditCost",
+    "diagnostic",
+    "readCompletionStatus",
+    "clientReadSync",
+    "clientReadIncomplete",
+    "serverReadSync",
+    "serverReadIncomplete",
+    "traceEnabled"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer"
+    },
+    "processId": {
+      "type": "integer"
+    },
+    "stopwatchFrequency": {
+      "type": "integer"
+    },
+    "ticksStart": {
+      "type": "integer"
+    },
+    "ticksEnd": {
+      "type": "integer"
+    },
+    "cpuBoundary": {
+      "type": "string"
+    },
+    "sourceSha": {
+      "type": "string"
+    },
+    "sample": {
+      "type": "string"
+    },
+    "transport": {
+      "type": "string"
+    },
+    "rpc": {
+      "type": "string"
+    },
+    "concurrency": {
+      "type": "integer"
+    },
+    "operations": {
+      "type": "integer"
+    },
+    "warmup": {
+      "type": "integer"
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "framework": {
+      "type": "string"
+    },
+    "os": {
+      "type": "string"
+    },
+    "architecture": {
+      "type": "string"
+    },
+    "tailWindowMilliseconds": {
+      "type": "integer"
+    },
+    "boundaryStatus": {
+      "type": "string"
+    },
+    "threadPoolMinimumWorkers": {
+      "type": "integer"
+    },
+    "threadPoolMinimumIo": {
+      "type": "integer"
+    },
+    "processorCount": {
+      "type": "integer"
+    },
+    "serverGc": {
+      "type": "boolean"
+    },
+    "tieredPgo": {
+      "type": "string"
+    },
+    "bytes": {
+      "type": "integer"
+    },
+    "bytesPerOperation": {
+      "type": "number"
+    },
+    "objectsPerOperation": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "objectsStatus": {
+      "type": "string"
+    },
+    "gen0": {
+      "type": "integer"
+    },
+    "cpuMilliseconds": {
+      "type": "number"
+    },
+    "cpuNanosecondsPerOperation": {
+      "type": "number"
+    },
+    "elapsedSeconds": {
+      "type": "number"
+    },
+    "qpsBoundary": {
+      "type": "string"
+    },
+    "markerBoundary": {
+      "type": "string"
+    },
+    "qps": {
+      "type": "number"
+    },
+    "p50Nanoseconds": {
+      "type": "number"
+    },
+    "p99Nanoseconds": {
+      "type": "number"
+    },
+    "latencyMeaning": {
+      "type": "string"
+    },
+    "measurement": {
+      "type": "string"
+    },
+    "received": {
+      "type": "integer"
+    },
+    "telemetry": {
+      "type": "string"
+    },
+    "receiveCreditBounded": {
+      "type": "boolean"
+    },
+    "receiveCreditScope": {
+      "type": "string"
+    },
+    "creditAcquired": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "creditReleased": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "creditWaitIncompleteAtProbe": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "creditWaitObservation": {
+      "type": "string"
+    },
+    "creditPeakOutstanding": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "creditFinalAvailable": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "creditWaitP50Nanoseconds": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "creditWaitP99Nanoseconds": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "creditCost": {
+      "type": "string"
+    },
+    "diagnostic": {
+      "type": "boolean"
+    },
+    "readCompletionStatus": {
+      "type": "string"
+    },
+    "clientReadSync": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "clientReadIncomplete": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "serverReadSync": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "serverReadIncomplete": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "traceEnabled": {
+      "type": "boolean"
+    }
+  }
+}

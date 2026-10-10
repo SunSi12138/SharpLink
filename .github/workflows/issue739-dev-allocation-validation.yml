@@ -1,0 +1,199 @@
+name: Issue 739 DEV primary allocation evidence
+on:
+  push:
+    branches: ['validation/issue739-dev-allocation-ledger-20261010']
+    paths: ['eng/validation/issue739/**', '.github/workflows/issue739-dev-allocation-validation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  ISSUE739_SOURCE_SHA: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
+  ISSUE739_RUNTIME_VERSION: '10.0.12'
+  ISSUE739_SDK_VERSION: '10.0.112'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_TieredPGO: '1'
+  DOTNET_TieredCompilation: '1'
+  DOTNET_gcServer: '0'
+jobs:
+  dev-native-ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.112'
+      - name: Verify exact dev source and runtime availability
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          test "$(dotnet --version)" = "$ISSUE739_SDK_VERSION"
+          dotnet --list-runtimes | grep -F "Microsoft.NETCore.App $ISSUE739_RUNTIME_VERSION ["
+      - name: Build standalone dev measurement harness
+        run: dotnet build eng/validation/issue739/Issue739.csproj -c Release -m:1 -p:UseSharedCompilation=false
+      - name: Five fresh samples across native 16-cell matrix
+        run: python3 eng/validation/issue739/run.py --dotnet eng/validation/issue739/dotnet-pinned.sh --output artifacts/issue739/dev-native/main --samples 5
+      - name: Preserve raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-native-early-${{ github.sha }}
+          path: artifacts/issue739/dev-native
+          if-no-files-found: error
+      - name: Separate diagnostic read-completion observations
+        run: |
+          mkdir -p artifacts/issue739/dev-native/read-diagnostic
+          for transport in tcp shm; do
+            for rpc in add oneway; do
+              for concurrency in 1 8 32 128; do
+                key="$transport-$rpc-c$concurrency-diagnostic"
+                ISSUE739_DIAGNOSTIC=1 eng/validation/issue739/dotnet-pinned.sh eng/validation/issue739/bin/Release/net10.0/SharpLink.Benchmarks.dll "$transport" "$rpc" "$concurrency" 131072 32768 "$key" "artifacts/issue739/dev-native/read-diagnostic/$key.json"
+              done
+            done
+          done
+      - name: Add N versus 2N boundary sensitivity
+        run: |
+          mkdir -p artifacts/issue739/dev-native/boundary
+          for transport in tcp shm; do
+            for concurrency in 1 128; do
+              for sample in 1 2 3 4 5; do
+                key="$transport-add-c$concurrency-2N-$sample"
+                eng/validation/issue739/dotnet-pinned.sh eng/validation/issue739/bin/Release/net10.0/SharpLink.Benchmarks.dll "$transport" add "$concurrency" 262144 32768 "$key" "artifacts/issue739/dev-native/boundary/$key.json"
+              done
+            done
+          done
+      - name: Preserve raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-native-${{ github.sha }}
+          path: artifacts/issue739/dev-native
+          if-no-files-found: error
+  dev-bounded-oneway:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.112'
+      - name: Verify exact dev source and runtime availability
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          test "$(dotnet --version)" = "$ISSUE739_SDK_VERSION"
+          dotnet --list-runtimes | grep -F "Microsoft.NETCore.App $ISSUE739_RUNTIME_VERSION ["
+      - name: Build standalone dev measurement harness
+        run: dotnet build eng/validation/issue739/Issue739.csproj -c Release -m:1 -p:UseSharedCompilation=false
+      - name: Five fresh samples across receive-bounded OneWay and direct controls
+        run: python3 eng/validation/issue739/run.py --dotnet eng/validation/issue739/dotnet-pinned.sh --bounded-oneway --output artifacts/issue739/dev-bounded/main --samples 5
+      - name: Bounded OneWay N versus 2N sensitivity
+        run: |
+          mkdir -p artifacts/issue739/dev-bounded/boundary
+          for transport in tcp shm; do
+            for concurrency in 1 128; do
+              for sample in 1 2 3 4 5; do
+                key="$transport-oneway-bounded-c$concurrency-2N-$sample"
+                eng/validation/issue739/dotnet-pinned.sh eng/validation/issue739/bin/Release/net10.0/SharpLink.Benchmarks.dll "$transport" oneway-bounded "$concurrency" 262144 32768 "$key" "artifacts/issue739/dev-bounded/boundary/$key.json"
+              done
+            done
+          done
+      - name: Preserve raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-bounded-${{ github.sha }}
+          path: artifacts/issue739/dev-bounded
+          if-no-files-found: error
+  dev-feature-ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [streams, features, spotchecks, suspension]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.112'
+      - name: Verify exact dev source and runtime availability
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          test "$(dotnet --version)" = "$ISSUE739_SDK_VERSION"
+          dotnet --list-runtimes | grep -F "Microsoft.NETCore.App $ISSUE739_RUNTIME_VERSION ["
+      - name: Build exact dev feature harness and capture identities
+        run: |
+          dotnet build eng/validation/issue739/features/Features.csproj -c Release -m:1 -p:UseSharedCompilation=false
+          mkdir -p artifacts/issue739/dev-features/${{ matrix.stage }}
+          dotnet --info > artifacts/issue739/dev-features/${{ matrix.stage }}/dotnet-info.txt
+          lscpu > artifacts/issue739/dev-features/${{ matrix.stage }}/cpu.txt
+          git rev-parse HEAD > artifacts/issue739/dev-features/${{ matrix.stage }}/harness-commit.txt
+          sha256sum eng/validation/issue739/features/bin/Release/net10.0/*.dll eng/validation/issue739/features/bin/Release/net10.0/*.json > artifacts/issue739/dev-features/${{ matrix.stage }}/assembly-and-config-hashes.txt
+      - name: Fresh-process feature cells, receive-bounded OneWay stream policy
+        run: python3 eng/validation/issue739/features/run_matrix.py --dotnet eng/validation/issue739/dotnet-pinned.sh --dll eng/validation/issue739/features/bin/Release/net10.0/SharpLink.Benchmarks.dll --output artifacts/issue739/dev-features/${{ matrix.stage }}/samples --stage ${{ matrix.stage }} --oneway-load-policy receive-bounded --samples 5
+      - name: Preserve raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-features-${{ matrix.stage }}-${{ github.sha }}
+          path: artifacts/issue739/dev-features/${{ matrix.stage }}
+          if-no-files-found: error
+  dev-observer-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.112'
+      - name: Verify exact dev source and runtime availability
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          test "$(dotnet --version)" = "$ISSUE739_SDK_VERSION"
+          dotnet --list-runtimes | grep -F "Microsoft.NETCore.App $ISSUE739_RUNTIME_VERSION ["
+      - name: Build standalone dev measurement harness
+        run: dotnet build eng/validation/issue739/Issue739.csproj -c Release -m:1 -p:UseSharedCompilation=false
+      - name: Build trace decoder and verify parser fixtures
+        run: |
+          dotnet build eng/validation/issue739/trace/TraceDecode.csproj -c Release -m:1 -p:UseSharedCompilation=false
+          python3 -m unittest discover -s eng/validation/issue739/trace -p 'test_*.py'
+          dotnet tool install dotnet-trace --tool-path "$PWD/artifacts/issue739/tools" --version 9.0.661903 --allow-roll-forward
+          mkdir -p artifacts/issue739/dev-observer
+          dotnet --info > artifacts/issue739/dev-observer/dotnet-info.txt
+          lscpu > artifacts/issue739/dev-observer/cpu.txt
+          git rev-parse HEAD > artifacts/issue739/dev-observer/harness-commit.txt
+          sha256sum eng/validation/issue739/bin/Release/net10.0/*.dll eng/validation/issue739/bin/Release/net10.0/*.json > artifacts/issue739/dev-observer/assembly-and-config-hashes.txt
+      - name: Eight focused same-host ABBA controls with six fresh samples per mode
+        run: |
+          for transport in tcp shm; do
+            for rpc in add oneway-bounded; do
+              for concurrency in 1 32; do
+                for cycle in 1 2 3; do
+                  for position in 1 2 3 4; do
+                    key="$transport-$rpc-c$concurrency-cycle$cycle-position$position"
+                    if [ "$position" = 1 ] || [ "$position" = 4 ]; then
+                      eng/validation/issue739/dotnet-pinned.sh eng/validation/issue739/bin/Release/net10.0/SharpLink.Benchmarks.dll "$transport" "$rpc" "$concurrency" 131072 32768 "$key" "artifacts/issue739/dev-observer/$key.json"
+                    else
+                      python3 eng/validation/issue739/trace/collect.py --trace-tool "$PWD/artifacts/issue739/tools/dotnet-trace" --output "$PWD/artifacts/issue739/dev-observer/$key.nettrace" --seconds 120 --max-mib 256 -- dotnet exec --fx-version "$ISSUE739_RUNTIME_VERSION" eng/validation/issue739/bin/Release/net10.0/SharpLink.Benchmarks.dll "$transport" "$rpc" "$concurrency" 131072 32768 "$key" "artifacts/issue739/dev-observer/$key.json"
+                      dotnet eng/validation/issue739/trace/bin/Release/net10.0/TraceDecode.dll "artifacts/issue739/dev-observer/$key.nettrace" "$key" "artifacts/issue739/dev-observer/$key"
+                      python3 eng/validation/issue739/trace/summarize.py "artifacts/issue739/dev-observer/$key" "artifacts/issue739/dev-observer/$key.json"
+                    fi
+                  done
+                done
+              done
+            done
+          done
+      - name: Preserve raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-observer-${{ github.sha }}
+          path: artifacts/issue739/dev-observer
+          if-no-files-found: error

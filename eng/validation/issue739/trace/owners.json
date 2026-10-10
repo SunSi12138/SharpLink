@@ -1,0 +1,102 @@
+[
+  {
+    "owner": "transport-read-ownership-await",
+    "typeContains": [
+      "SharpLink.Runtime.ReadOwnershipPipeReader+<AwaitReadAsync>"
+    ],
+    "frameContains": [
+      "SharpLink.Runtime.ReadOwnershipPipeReader+<AwaitReadAsync>"
+    ]
+  },
+  {
+    "owner": "shm-pipe-read-await",
+    "typeContains": [
+      "SharpLink.Runtime.SharedMemoryPipeReader+<ReadAsync>"
+    ],
+    "frameContains": [
+      "SharpLink.Runtime.SharedMemoryPipeReader+<ReadAsync>"
+    ]
+  },
+  {
+    "owner": "shm-control-cancellation-await",
+    "typeContains": [
+      "SharpLink.Runtime.SharedMemoryControlChannel+<WaitWithCancellationAsync>"
+    ],
+    "frameContains": [
+      "SharpLink.Runtime.SharedMemoryControlChannel+<WaitWithCancellationAsync>"
+    ]
+  },
+  {
+    "owner": "shm-control-pipestream-read-await",
+    "typeContains": [
+      "System.IO.Pipes.PipeStream+<ReadAsyncCore>"
+    ],
+    "frameContains": [
+      "SharpLink.Runtime.SharedMemoryControlChannel+<RunReaderAsync>"
+    ]
+  },
+  {
+    "owner": "client-logical-invocation-await",
+    "typeContains": [
+      "SharpLink.Client.SharpLinkClient+<AwaitLogicalInvocationAsync>"
+    ],
+    "frameContains": [
+      "SharpLink.Client.SharpLinkClient+<AwaitLogicalInvocationAsync>"
+    ]
+  },
+  {
+    "owner": "server-request-permit",
+    "typeEquals": [
+      "SharpLink.Server.ServerRequestPermit"
+    ],
+    "frameContains": [
+      "SharpLink.Server.ServerCallAdmission.TryReserveCall("
+    ]
+  },
+  {
+    "owner": "server-call-context-execution-context",
+    "typeEquals": [
+      "System.Threading.ExecutionContext"
+    ],
+    "frameContains": [
+      "SharpLink.Abstractions.SharpLinkCallContext.Push("
+    ]
+  },
+  {
+    "owner": "server-call-context-asynclocal-map",
+    "typeEquals": [
+      "OneElementAsyncLocalValueMap"
+    ],
+    "frameContains": [
+      "SharpLink.Abstractions.SharpLinkCallContext.Push("
+    ]
+  },
+  {
+    "owner": "frame-writer-array-rent",
+    "typeEquals": [
+      "System.Byte[]"
+    ],
+    "frameContains": [
+      "SharpLink.Runtime.PooledByteBufferWriter.Activate("
+    ]
+  },
+  {
+    "owner": "frame-writer-object",
+    "typeEquals": [
+      "SharpLink.Runtime.PooledByteBufferWriter"
+    ],
+    "frameContains": [
+      "SharpLink.Runtime.PooledByteBufferWriter.CreateInactive("
+    ]
+  },
+  {
+    "owner": "send-pump-ownedframe-storage",
+    "typeEquals": [
+      "SharpLink.Runtime.OwnedFrame[]"
+    ],
+    "frameContains": [
+      "SharpLink.Runtime.RpcSession+SendPump.",
+      "SharpLink.Runtime.RpcSession+SendPump+"
+    ]
+  }
+]
