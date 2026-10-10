@@ -40,10 +40,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
@@ -73,10 +79,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
@@ -119,11 +131,17 @@ jobs:
     timeout-minutes: 25
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
       DOTNET_11_SDK: 11.0.100-rc.1.26425.128
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Pin .NET 11 RC1 SDK for Browser CoreCLR
         shell: bash
@@ -196,10 +214,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
@@ -241,10 +265,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
@@ -336,10 +366,16 @@ jobs:
     timeout-minutes: 20
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Download browser producer corpus
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -417,11 +453,17 @@ jobs:
     timeout-minutes: 25
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
       DOTNET_11_SDK: 11.0.100-rc.1.26425.128
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Pin .NET 11 RC1 SDK for Browser CoreCLR
         shell: bash
@@ -535,10 +577,16 @@ jobs:
     timeout-minutes: 20
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Download Browser CoreCLR producer corpus
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -617,6 +665,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Download Browser CoreCLR consumer evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -647,6 +701,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Download Browser consumer evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -674,10 +734,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      SHARPLINK_COMMIT: ${{ github.sha }}
+      SHARPLINK_COMMIT: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet

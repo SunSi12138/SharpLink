@@ -1,9 +1,11 @@
-name: PR Quick
+name: Issue 762 Exact-Source PR Quick
 
 permissions:
   contents: read
 
 on:
+  push:
+    branches: [validation/762-exact-6f3b1b70]
   workflow_dispatch:
 
 concurrency:
@@ -23,6 +25,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6f3b1b7083d8341829fd7b2337c2607c21a40f1d
+
+      - name: Verify exact source commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "6f3b1b7083d8341829fd7b2337c2607c21a40f1d" && test -z "$(git status --porcelain)"
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
