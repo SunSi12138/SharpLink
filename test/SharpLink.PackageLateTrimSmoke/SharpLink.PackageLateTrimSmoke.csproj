@@ -24,16 +24,10 @@
       <_SharpLinkUnsafeBlitSwitch Include="@(RuntimeHostConfigurationOption)"
                                   Condition="'%(Identity)' == 'SharpLink.Runtime.UnsafeBlitReflectionFallback'" />
     </ItemGroup>
-    <Error Condition="'$(SharpLinkUnsafeBlitTrimConfigurationApplied)' != 'true'"
-           Text="SharpLink trim configuration target did not run after late PublishTrimmed computation." />
-    <Error Condition="'@(_SharpLinkUnsafeBlitSwitch)' == ''"
-           Text="SharpLink UnsafeBlit reflection fallback switch was not added after late PublishTrimmed computation." />
-    <Error Condition="'@(_SharpLinkUnsafeBlitSwitch->'%(Value)')' != 'false'"
-           Text="SharpLink UnsafeBlit reflection fallback switch must be false for late trimming." />
-    <Error Condition="'@(_SharpLinkUnsafeBlitSwitch->'%(Trim)')' != 'true'"
-           Text="SharpLink UnsafeBlit reflection fallback switch must participate in trimming." />
-    <Error Condition="'@(_ILLinkSuppressions)' == ''"
-           Text="SharpLink partial-trim package suppression was not added after late PublishTrimmed computation." />
+    <Error Condition="'@(_SharpLinkUnsafeBlitSwitch)' != ''"
+           Text="Removed UnsafeBlit reflection fallback switch must not be injected, including late trimming." />
+    <Error Condition="'@(_ILLinkSuppressions)' != ''"
+           Text="The generated ABI path must not need package partial-trim warning suppression." />
     <Message Importance="high" Text="PACKAGE_LATE_TRIM_CONFIGURATION_PASS" />
   </Target>
 </Project>

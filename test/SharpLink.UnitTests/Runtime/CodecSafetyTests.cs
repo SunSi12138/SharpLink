@@ -266,8 +266,10 @@ public class CodecSafetyTests
     {
         var bytes = new byte[2048];
         new Random(42).NextBytes(bytes);
-        _ = Deserialize<LargeBlittable>(CreateSegmentedSequence(bytes));
-        ExpectDataLoss(() => Deserialize<LargeBlittable>(new ReadOnlySequence<byte>(bytes.AsMemory(0, 2047))));
+        // This is a raw codec storage-boundary test, not an implicit resolver test.
+        var codec = UnsafeBlitCodec<LargeBlittable>.Instance;
+        _ = codec.Deserialize(CreateSegmentedSequence(bytes));
+        ExpectDataLoss(() => codec.Deserialize(new ReadOnlySequence<byte>(bytes.AsMemory(0, 2047))));
     }
 
     [Test]

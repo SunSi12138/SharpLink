@@ -323,12 +323,6 @@ public partial class RpcGenerator : IIncrementalGenerator
                     SourceText.From(GenerateCodecs(result.Codecs, result.ContractCodecs, result.DtoAnalysis), Encoding.UTF8));
             }
 
-            if (!result.UnsafeBlitRequirements.IsDefaultOrEmpty)
-            {
-                spc.AddSource(
-                    "SharpLink.GeneratedUnsafeBlitRequirements.g.cs",
-                    SourceText.From(GenerateUnsafeBlitRequirements(result.UnsafeBlitRequirements), Encoding.UTF8));
-            }
         });
 
         context.RegisterSourceOutput(sharpPackIntegration, static (spc, result) =>

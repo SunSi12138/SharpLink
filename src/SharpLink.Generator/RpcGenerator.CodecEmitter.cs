@@ -48,7 +48,9 @@ public partial class RpcGenerator
             var concreteCodecTypes = contractCodecNames.Contains(codec.CodecName)
                 ? contractConcreteCodecTypes
                 : globalConcreteCodecTypes;
-            if (codec.Kind == GeneratedCodecKind.Adapter)
+            if (codec.Kind == GeneratedCodecKind.UnsafeBlit)
+                AppendUnsafeBlitCodecFactory(sb, codec);
+            else if (codec.Kind == GeneratedCodecKind.Adapter)
                 AppendAdapterCodecFactory(sb, codec);
             else if (codec.Kind == GeneratedCodecKind.Custom)
                 AppendCustomCodecFactory(sb, codec);

@@ -20,9 +20,11 @@ Generator 根据签名生成五类调用：Unary、OneWay、ClientStreaming、Se
 
 普通 `T[]`（`byte[]` 除外）、`List<T>`、`Dictionary<K,V>`、Tuple/ValueTuple、DTO/record 和普通 user struct/class 不属于 Framework wire primitive。它们即使默认实现使用 generated/native/blit fast path，也仍然是 configurable payload type。换言之：**fast path != primitive != policy immutability**。
 
-当一个值类型没有命中共享内置 Codec、显式/生成 Codec 或 resolver，且其运行时表示不包含 managed reference 时，Runtime 可以回退到 `UnsafeBlitCodec<T>`，直接把 `Unsafe.SizeOf<T>()` 范围内的 managed representation 写入 payload。这个原始表示包含结构体 padding；它既不是 canonical field-wise 编码，也不能把普通 `new`/`default` 后的 padding 为零当作跨运行时安全保证。涉及 unsafe/native/uninitialized 来源或机密边界时，可靠的支持路径是为该 **user-defined payload type** 显式绑定 field-wise/non-raw representation 的自定义 Codec/Adapter，而不是依赖调用方先清 padding 后再经过可能发生的 struct copy。完整边界见 [UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)；跨运行时 ABI/兼容性范围见 [UnsafeBlit 兼容性](codec-compatibility.md)。这里描述的是 RPC payload Codec，不改变 SharpLink 自身协议 framing 字段的编码。
+3.0 中，生成的 UnsafeBlit factory 直接携带 ABI requirement，并由所属 manifest 的冻结 Codec graph 验证。缺少生成或显式 Codec 的任意 unmanaged 类型不再自动回退到反射，包括未裁剪 JIT。Standalone `SharpLinkRuntimeContextBuilder.AddCodec<T>` / `UseCodecResolver` 可注册应用自己的 Codec；生成 RPC 的编码策略仍通过编译期 `RpcCodec`/Adapter 绑定，不能被 endpoint 注册覆盖。详细迁移见 [3.0 UnsafeBlit migration](unsafe-blit-3.0-migration.md)。
 
-NativeAOT 和受支持的 trimmed consumer 不会在运行时重新反射 UnsafeBlit payload 的字段图。Generator 从最终 `FinalUnsafeBlitCodecPlan` 直接发布 native-pointer width 与 framework raw-ABI requirement；Runtime 只验证这份 resolved metadata。没有 source-generated ABI metadata 的任意 unmanaged fallback 在 NativeAOT 或受支持的 trimming 模式下 fail-closed；只有未裁剪 JIT runtime 保留运行时字段图检查。2.x 的 ProjectReference trimming 支持范围为 `TrimMode=full`；PackageReference trimming 则通过包内 feature switch 覆盖 `TrimMode=full` 和 `TrimMode=partial`。ProjectReference `TrimMode=partial` 不属于 2.x 支持合同。
+UnsafeBlit 仍直接发送 managed representation，包括 padding；它不是 canonical field-wise 编码。机密边界应使用 field-wise/non-raw 自定义 Codec/Adapter，不能把普通 `new`/`default` 当作 padding sanitizer。见 [padding 安全评估](unsafe-blit-padding-security.md) 和 [ABI 兼容性](codec-compatibility.md)。
+
+生成 factory 路径在 ProjectReference/PackageReference 的 JIT、`TrimMode=full`、`TrimMode=partial` 和 NativeAOT 中一致；不依赖 package feature switch、linker substitution 或 trim-warning suppression，也不全局修改 Runtime 的 `IsTrimmable`。这不改变 mobile `TrimMode=copy` 的库级策略。
 
 DTO 演进规则：
 

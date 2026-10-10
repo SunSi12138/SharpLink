@@ -122,7 +122,18 @@ internal static class SharpLinkAssemblyManifestLoader
                     $"Manifest type '{manifestType.FullName}' is not owned by the incoming assembly.",
                     assembly);
             }
-            if (Activator.CreateInstance(manifestType) is not ISharpLinkGeneratedAssemblyManifest generated)
+            // Raw metadata preflight rejects incompatible locators before construction. Read the
+            // trusted attribute only afterward to preserve its annotated constructor requirement;
+            // CustomAttributeData.Value cannot carry that requirement through the linker.
+            var typedLocator = assembly.GetCustomAttribute<SharpLinkGeneratedAssemblyManifestAttribute>();
+            if (typedLocator is null || !ReferenceEquals(typedLocator.ManifestType, manifestType))
+            {
+                return Failure(
+                    SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    "The SharpLink manifest locator does not match the trusted locator attribute.",
+                    assembly);
+            }
+            if (Activator.CreateInstance(typedLocator.ManifestType) is not ISharpLinkGeneratedAssemblyManifest generated)
             {
                 return Failure(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,

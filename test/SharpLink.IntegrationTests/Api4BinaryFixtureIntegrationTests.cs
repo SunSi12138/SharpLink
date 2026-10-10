@@ -15,7 +15,7 @@ public sealed class Api4BinaryFixtureIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task FrozenDevelopmentApi4BinaryShouldBeRejectedByExactAbiIdentity()
+    public async Task FrozenDevelopmentApi4BinaryShouldBeRejectedByCurrentManifestBoundary()
     {
         var weakContext = RejectFixture();
         for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
@@ -40,13 +40,13 @@ public sealed class Api4BinaryFixtureIntegrationTests
 
         var result = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
         Ensure(!result.Succeeded && manifest is null,
-            "the pre-#287 development API4 binary must not be positively identified as the current API4 ABI");
+            "the pre-#287 development API4 binary must not be positively identified as the current generated ABI");
         Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,
             $"the API4 ABI collision sentinel should fail as IncompatibleManifest: {result.Error}");
-        Ensure(result.Error!.Message.Contains("API 4/4", StringComparison.Ordinal) &&
+        Ensure(result.Error!.Message.Contains($"API 4/{SharpLinkGeneratedManifestVersions.Api}", StringComparison.Ordinal) &&
                result.Error.Message.Contains("<missing: pre-current ABI locator>", StringComparison.Ordinal) &&
                result.Error.Message.Contains(SharpLinkGeneratedManifestVersions.AbiIdentity, StringComparison.Ordinal),
-            "the rejection must distinguish two incompatible API4 shapes by exact ABI identity");
+            "the rejection must identify the frozen API4 version and missing ABI identity against the current generated ABI");
 
         assembly = null!;
         loadContext.Unload();
