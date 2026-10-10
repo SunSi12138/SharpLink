@@ -45,13 +45,33 @@ class ValidationTests(unittest.TestCase):
         r=row();self.assertIsNone(runner.ledger(r,True)['conditionalReconciledBytes'])
         self.assertEqual(runner.ledger(r,True)['measuredInclusiveScopeBytes'],34)
     def test_overlap_retains_scopes_rejects_sum(self):
-        for index in [32,33,34,35,36]:
+        for index in [32,34,35,36]:
             r=row();update(r,index,1)
             with self.assertRaises(ValueError):self.check(r)
             result=runner.ledger(r,False)
             self.assertIsNone(result['conditionalReconciledBytes'])
             self.assertTrue(result['additiveReconciliationRejected'])
             self.assertEqual(result['measuredInclusiveScopeBytes'],34)
+    def test_cold_threads_preserve_raw_scope_but_never_additive_price(self):
+        r=row();update(r,33,9)
+        self.check(r)
+        result=runner.ledger(r,False)
+        self.assertEqual(result['status'],'scope-only-cold-thread-observation')
+        self.assertEqual(result['measuredInclusiveScopeBytes'],34)
+        self.assertEqual(len(result['scopeSites']),2)
+        self.assertTrue(result['additiveReconciliationRejected'])
+        self.assertEqual(result['scopeInvariantViolations'],['coldThreads'])
+        self.assertIsNone(result['conditionalReconciledBytes'])
+        self.assertIsNone(result['signedResidualBytes'])
+        self.assertIsNone(result['signedResidualBytesPerPayloadOperation'])
+    def test_cold_plus_true_overlap_still_fails(self):
+        r=row();update(r,33,9);update(r,32,1)
+        with self.assertRaises(ValueError):self.check(r)
+    def test_recovery_filter_preserves_14_process_cohort(self):
+        text=(HERE/'run.py').read_text()
+        self.assertIn("choices=[32]",text)
+        self.assertIn('for concurrency in concurrencies:',text)
+        self.assertEqual(len([32])*len('ABBA'*3+'AA'),14)
     def test_prior_overlap_not_hidden(self):
         r=row();r['scopes']['before'][32]=r['scopes']['after'][32]=1
         with self.assertRaises(ValueError):self.check(r)

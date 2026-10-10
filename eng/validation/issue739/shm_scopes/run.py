@@ -34,6 +34,7 @@ def main():
     p.add_argument('--tcp-only', action='store_true')
     p.add_argument('--controls-only', action='store_true')
     p.add_argument('--budget-seconds', type=int, default=1380)
+    p.add_argument('--concurrency', type=int, choices=[32], help='Prospective c32-only balanced recovery cohort; never resume or pool partial prior rows')
     a = p.parse_args()
     if (a.tcp_only or a.controls_only) and not a.correctness_only:
         p.error('--tcp-only is only for non-performance local correctness')
@@ -48,6 +49,8 @@ def main():
     output.mkdir(parents=True)
     work = pathlib.Path(a.work_root).resolve()
     deadline = time.monotonic()+a.budget_seconds
+    concurrencies = [a.concurrency] if a.concurrency is not None else [1,32]
+    planned_rpc_processes = 0 if a.controls_only else len(concurrencies)*(2 if a.correctness_only else 14)
     expected_runtime = os.environ.get('ISSUE739_RUNTIME_VERSION','10.0.2') if a.correctness_only else '10.0.12'
     retained_dotnet={'DOTNET_ROOT','DOTNET_ROOT_X64','DOTNET_ROOT_ARM64','DOTNET_CLI_HOME'}
     stripped={k:v for k,v in os.environ.items() if k.startswith(('DOTNET_','COMPlus_','ISSUE739_')) and k not in retained_dotnet}
@@ -59,10 +62,14 @@ def main():
     manifest = {'schemaVersion': 1, 'sourceSha': SOURCE, 'status':'initializing', 'correctnessOnly':a.correctness_only,
         'runtimePin':expected_runtime, 'sdkPin':expected_sdk, 'sourceRole':'A vanilla primary; B owner counters plus original synchronous initiation inclusive scopes',
         'operationCount':a.operations, 'warmup':a.warmup, 'budgetSeconds':a.budget_seconds,
+        'requestedConcurrencies':concurrencies, 'plannedRpcProcessCount':planned_rpc_processes,
+        'cohortPolicy':'fresh balanced cohort only; do not resume, pool, replace, or silently discard prior partial-run rows',
+        'coldThreadPolicy':'preserve raw first-observed ThreadStatic rows as descriptive scope-only and unpriced; all other scope invariants remain fail-closed',
+        'coldThreadRows':[],
         'platform':platform.platform(), 'processes':[], 'binaries':{}, 'rawSamples':{},
         'sanitizedTuningNames':sorted(stripped), 'toolFiles':{f.name:sha(f) for f in HERE.iterdir() if f.is_file()},
         'policy':{'noOutlierRemoval':True,'freshProcesses':True,'automaticFollowonExperiments':False,
-            'productionSchedule':'SHM Add c1/c32, each 3 ABBA blocks then AA = 28 RPC processes, plus two standalone primitive controls',
+            'productionSchedule':f'SHM Add concurrency {concurrencies}, each 3 ABBA blocks then AA = {len(concurrencies)*14} RPC processes, plus two standalone primitive controls',
             'budgetExhaustion':'abort and preserve partial evidence; never relabel a truncated matrix complete'}}
     write(output/'manifest.json',manifest)
     def command(args, cwd, log, timeout=180, overrides=None):
@@ -140,7 +147,7 @@ def main():
         transports=[] if a.controls_only else ['tcp'] if a.tcp_only else ['shm']
         schedule=['A','B'] if a.correctness_only else list('ABBA'*3+'AA')
         for transport in transports:
-            for concurrency in [1,32]:
+            for concurrency in concurrencies:
                 for index,variant in enumerate(schedule):
                     name=f'{transport}-add-c{concurrency}-{index:02}-{variant}'
                     path=output/(name+'.json')
@@ -169,6 +176,9 @@ def main():
                         raise ValueError('Diagnostic/configuration mismatch')
                     row['_sequence']=index;row['_variant']=variant
                     row['_ledger']=ledger(row,a.correctness_only)
+                    if variant=='B' and row['scopes']['delta'][33] != 0:
+                        manifest['coldThreadRows'].append(name)
+                        write(output/'manifest.json',manifest)
                     rows.append(row)
                     write(output/'ledger-partial.json',[{'sample':r['sample'],**r['_ledger']} for r in rows])
                     print(name,f"{row['bytesPerOperation']:.3f} B/op",flush=True)
@@ -233,7 +243,10 @@ def validate_row(row,transport,concurrency,operations,warmup,sample,variant,runt
         if len(s[key])!=expected or any(type(x)is not int or x<0 for x in s[key]):raise ValueError('Invalid scope '+key)
     if s['delta']!=[end-begin for begin,end in zip(s['before'],s['after'])]:raise ValueError('Scope delta mismatch')
     if variant=='A':return
-    if any(s['delta'][index]!=0 for index in [32,33,34,35,36]):raise ValueError('Scope overlap/cold ThreadStatic/thread mismatch/invalid observation/priced owner overlap; reject attribution')
+    if any(s['delta'][index]!=0 for index in [32,34,35,36]):raise ValueError('Scope overlap/thread mismatch/invalid observation/priced owner overlap; reject sample')
+    # First-observed ThreadStatic paths execute before the allocation endpoint.
+    # Preserve these raw calltrees descriptively, but ledger() must reject all
+    # additive reconciliation with gross because first-touch setup can be inside it.
     # Also reject any earlier overlap or thread mismatch; warmup cannot hide invalid instrumentation.
     if any(s['after'][index]!=0 for index in [32,34,35,36]):raise ValueError('Prior scope invariant failure')
     if s['before'][33]<1:raise ValueError('No warmed ThreadStatic paths')
@@ -262,18 +275,21 @@ def ledger(row,correctness):
     violations=[name for i,name in enumerate(['overlap','coldThreads','threadMismatch','invalidObservation','pricedOwnerOverlap']) if s['delta'][32+i] != 0 or (i != 1 and s['after'][32+i] != 0)]
     predicted=None if violations else owner['predictedBytes']
     reconciled=None if predicted is None else predicted+scope_bytes
-    return {'status':'inclusive-scope-plus-conditional-owner-budget' if reconciled is not None else 'unpriced-correctness-or-assumption-gap',
+    return {'status':'scope-only-cold-thread-observation' if violations==['coldThreads'] else 'inclusive-scope-plus-conditional-owner-budget' if reconciled is not None else 'unpriced-correctness-or-assumption-gap',
         'grossBytes':row['bytes'],'ownerBudget':owner,'observedUnpricedOwnerActivity':{name:owner.get('counts',{}).get(name) for name in ['operation_new','context_snapshot_new','send_capacity_tcs_new','send_capacity_wait_uses']},'scopeSites':details,'additiveReconciliationRejected':bool(violations),'scopeInvariantViolations':violations,'measuredInclusiveScopeBytes':scope_bytes,
         'measuredInclusiveScopeBytesPerPayloadOperation':scope_bytes/row['operations'],'conditionalReconciledBytes':reconciled,
         'signedResidualBytes':None if reconciled is None else row['bytes']-reconciled,
         'signedResidualBytesPerPayloadOperation':None if reconciled is None else (row['bytes']-reconciled)/row['operations'],
         'meaning':'two observed nonnested synchronous managed-allocation calltrees plus transferred conditional owner calibration; no exact objects/box count, no separate nested wait pricing',
         'residual':'signed, not clamped; includes allocations after original synchronous calls return, unmeasured paths and measurement-boundary difference; gross diagnostic B only, never replace or correct primary A',
-        'returnStatus':'observed after allocation endpoint; pending is not proven actual suspension or source registration'}
+        'returnStatus':'observed after allocation endpoint; pending is not proven actual suspension or source registration',
+        'coldThreadMeaning':'first-observed ThreadStatic contexts, not proven new OS threads; explicit warmup precedes each scope byte start but can contribute to process gross outside the scope; descriptive scope-only rows never receive an additive residual'}
 
 def summarize(rows,correctness):
     result=base.summarize(rows,correctness)
-    result['completionScope']='SHM Add c1/c32, 3 ABBA blocks plus AA per cell; two standalone zero-managed-allocation controls; no automatic extension'
+    result['completionScope']=f'SHM Add concurrency {sorted({r["concurrency"] for r in rows})}, 3 ABBA blocks plus AA per cell; two standalone zero-managed-allocation controls; no automatic extension'
+    result['coldThreadSamples']=[r['sample'] for r in rows if r['_variant']=='B' and r['scopes']['delta'][33] != 0]
+    result['cohortPolicy']='single fresh cohort; no pooling with partial prior run, no outlier removal, cold rows remain raw and scope-only/unpriced'
     result['unresolved']='exact object identities/counts, completion-path allocations after initiation returns, outer read-consumer registrations, and any signed residual remain unknown'
     result['scopeBudget']='inclusive measured calltree bytes, not per-type pricing; nested WaitWithCancellation included once inside SHM ReadAsync initiation'
     return result

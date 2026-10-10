@@ -20,8 +20,10 @@ and empty-scope controls. No outlier removal or automatic follow-on experiment.
 A remains vanilla production source and primary performance evidence.
 B adds the prior owner counters plus two inclusive synchronous initiation scopes.
 Both A and B execute the same 132-task/barrier prewarm topology. B warms its
-ThreadStatic and counter paths; a new cold scope thread during the sample rejects
-attribution rather than silently including first-use setup.
+ThreadStatic and counter paths. A first-observed scope ThreadStatic context
+during a sample leaves its raw calltrees descriptive and scope-only/unpriced;
+additive reconciliation is rejected because first-use setup can affect gross
+bytes outside the scope. This is not proof of a newly created OS thread.
 
 Local correctness only, with no SHM access or performance transfer:
 
@@ -62,8 +64,9 @@ reentrancy. Thread identity is checked for every scope. Quiescent epoch-checked
 snapshots require no in-flight scope and no intervening counter mutation. They
 bracket a wider interval than gross byte timestamps; raw first/last timestamps
 are cumulative observations, not additive counters. First-begin includes empty
-scope warmup. Cold threads, overlaps, thread mismatch, invalid observations or
-counter inconsistency reject the sample.
+scope warmup. Overlaps, thread mismatch, invalid observations or counter
+inconsistency reject the sample. Cold ThreadStatic observations are retained
+as descriptive scope-only/unpriced rows; they never receive an additive residual.
 
 An additional shared-depth detector flags priced owner markers inside scopes:
 logical-helper entry, accepted operation registration, successful plain permit,
@@ -101,3 +104,35 @@ SDK compiler and host hashes, and end-of-run integrity rechecks. Reflected async
 field layouts and builder metadata must match A/B for the client/server methods,
 SHM reader and control channel, in addition to the prior owner metadata. No
 production fix, merge, release, or expanded matrix is part of this validation.
+
+
+## Prospective c32-only recovery
+
+Run 38048366564 remains failed/partial and immutable. Its c1 cell completed all
+three ABBA blocks plus AA. Its c32 cell stopped after sample 05-B because nine
+first-observed ThreadStatic contexts tripped the original guard. The host's
+final integrity rehash was not reached; offline artifact-hash checks do not
+retroactively establish that missing end check.
+
+After independent review, a new c32-only cohort is explicitly bounded to 14
+fresh RPC processes (three ABBA blocks plus AA), plus the same two controls:
+
+```sh
+python3 eng/validation/issue739/shm_scopes/run.py \
+  --dotnet dotnet --output /fresh/c32-output --work-root /fresh/c32-projections \
+  --concurrency 32 --budget-seconds 1380
+```
+
+This is a prospective cohort with its plan recorded before execution. It does
+not rerun c1, resume the old process sequence, pool old partial c32 rows with
+new rows, or discard cold rows. C# instrumentation, projected source generation,
+and frozen dependencies remain byte-identical to the reviewed original run.
+Only runner/reporting policy, tests and this README change.
+
+`WarmCurrentThread` and all `Begin` setup occur before the allocation endpoint.
+Thus explicit cold setup is excluded from the inclusive calltree byte delta but
+can occur inside process gross. Cold rows preserve counts, statuses, same-thread
+checks, raw scope bytes, raw gross and observer metrics. Their additive sum and
+signed residual remain null. Scope nesting, priced-owner overlap, thread
+mismatch and invalid observations remain fail-closed. No inference about exact
+object counts, actual suspension or thread birth follows from these observations.
