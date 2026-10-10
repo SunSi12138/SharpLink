@@ -1,0 +1,43 @@
+name: PR742 NativeAOT toolchain export
+on:
+  push:
+    branches: ['research/742-b3-integration-20261010']
+    paths: ['.github/workflows/742-aot-toolchain-export.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Restore and validate official NativeAOT compiler dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/aot-bootstrap "$RUNNER_TEMP/aot-bootstrap"
+          export NUGET_PACKAGES="$RUNNER_TEMP/aot-packages"
+          cat > "$RUNNER_TEMP/aot-bootstrap/Probe.csproj" <<'XML'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><PublishAot>true</PublishAot></PropertyGroup></Project>
+          XML
+          printf 'System.Console.WriteLine("official NativeAOT bootstrap");\n' > "$RUNNER_TEMP/aot-bootstrap/Program.cs"
+          dotnet --info > artifacts/aot-bootstrap/dotnet.txt
+          dotnet publish "$RUNNER_TEMP/aot-bootstrap/Probe.csproj" -c Release -r linux-x64 -p:RuntimeFrameworkVersion=10.0.12 -p:UseSharedCompilation=false -o "$RUNNER_TEMP/aot-output" 2>&1 | tee artifacts/aot-bootstrap/build.log
+          "$RUNNER_TEMP/aot-output/Probe" | tee artifacts/aot-bootstrap/smoke.log
+          tar -C "$NUGET_PACKAGES" -czf artifacts/aot-bootstrap/nativeaot-packages.tar.gz .
+          (cd artifacts/aot-bootstrap && sha256sum nativeaot-packages.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: pr742-nativeaot-dependencies
+          path: artifacts/aot-bootstrap
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
