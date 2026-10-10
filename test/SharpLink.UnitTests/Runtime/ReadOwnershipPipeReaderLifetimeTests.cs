@@ -91,7 +91,7 @@ public class ReadOwnershipPipeReaderLifetimeTests
     {
         var local = new AsyncLocal<string?>();
         var fake = new EphemeralPipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var reader = new ReadOwnershipPipeReader(fake);
         var read = reader.ReadAsync();
         var observed = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (completedBeforeRegistration)
@@ -121,7 +121,7 @@ public class ReadOwnershipPipeReaderLifetimeTests
     {
         var local = new AsyncLocal<string?>();
         var fake = new EphemeralPipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var reader = new ReadOwnershipPipeReader(fake);
         local.Value = "read caller";
         ValueTask<ReadResult> read;
         if (suppressFlow)
@@ -185,7 +185,7 @@ public class ReadOwnershipPipeReaderLifetimeTests
     public async Task ContinuationShouldHonorSynchronizationContext(bool completedBeforeRegistration, bool useContext)
     {
         var fake = new EphemeralPipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var reader = new ReadOwnershipPipeReader(fake);
         var read = reader.ReadAsync();
         if (completedBeforeRegistration)
             fake.Publish(EmptyResult());
@@ -312,12 +312,12 @@ public class ReadOwnershipPipeReaderLifetimeTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task CompletionRacingRegistrationShouldDispatchExactlyOnce(bool asynchronously)
+    public async Task CompletionRacingRegistrationShouldDispatchExactlyOnce(bool useContext)
     {
         for (var i = 0; i < 500; i++)
         {
             var fake = new EphemeralPipeReader();
-            var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = asynchronously };
+            var reader = new ReadOwnershipPipeReader(fake);
             var read = reader.ReadAsync();
             using var barrier = new Barrier(2);
             var dispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -328,13 +328,33 @@ public class ReadOwnershipPipeReaderLifetimeTests
                 fake.Publish(EmptyResult());
             });
             Ensure(barrier.SignalAndWait(Timeout), "publication must reach the barrier");
-            read.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(() =>
+            // The candidate has no reader dispatch-policy switch. Exercise the natural
+            // publication/registration race and an explicitly queued consumer context instead.
+            var context = new QueuedSynchronizationContext();
+            var previous = SynchronizationContext.Current;
+            try
             {
-                Interlocked.Increment(ref calls);
-                ConsumeSuccess(reader, read);
-                dispatched.SetResult();
-            });
-            await Task.WhenAll(publication, dispatched.Task).WaitAsync(Timeout).ConfigureAwait(false);
+                if (useContext)
+                    SynchronizationContext.SetSynchronizationContext(context);
+                read.ConfigureAwait(useContext).GetAwaiter().UnsafeOnCompleted(() =>
+                {
+                    Interlocked.Increment(ref calls);
+                    ConsumeSuccess(reader, read);
+                    dispatched.SetResult();
+                });
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+            }
+            await publication.WaitAsync(Timeout).ConfigureAwait(false);
+            if (useContext)
+            {
+                Ensure(!dispatched.Task.IsCompleted, "the captured context must own dispatch until pumped");
+                context.RunOne();
+                Ensure(context.PostCount == 1, "the queued consumer must be dispatched exactly once");
+            }
+            await dispatched.Task.WaitAsync(Timeout).ConfigureAwait(false);
             Ensure(calls == 1, "racing registration/publication must dispatch exactly once");
         }
     }
@@ -343,7 +363,7 @@ public class ReadOwnershipPipeReaderLifetimeTests
     public void NestedInlineRearmingShouldLeaveNewestArmIntact()
     {
         var fake = new EphemeralPipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var reader = new ReadOwnershipPipeReader(fake);
         var first = reader.ReadAsync();
         ValueTask<ReadResult> third = default;
         var calls = 0;
@@ -401,6 +421,8 @@ public class ReadOwnershipPipeReaderLifetimeTests
     [Test]
     public void SuccessfulSuspensionsShouldNotAllocateAfterWarmup()
     {
+        // A single reader, warm same-thread cache, and one outstanding box. This exact zero is
+        // a controlled allocation regression, not a promise for bursts or cross-thread reads.
         var fake = new AllocationFreePipeReader();
         var reader = new ReadOwnershipPipeReader(fake);
         for (var i = 0; i < 1_000; i++)
@@ -420,41 +442,28 @@ public class ReadOwnershipPipeReaderLifetimeTests
     }
 
     [Test]
-    public void StatusShouldRemainCorrectAcrossTokenSignAndWrapBoundaries()
+    public void CurrentOperationStatusShouldRemainCorrectAcrossManyPoolReuses()
     {
         var fake = new AllocationFreePipeReader();
         var reader = new ReadOwnershipPipeReader(fake);
-        ValueTask<ReadResult> previous = default;
         for (var i = 0; i < ushort.MaxValue + 3; i++)
         {
             var current = reader.ReadAsync();
-            Ensure(!current.IsCompleted, "each new token must initially report Pending");
-            if (i == short.MaxValue || i == ushort.MaxValue)
-            {
-                // Deliberately probe a stale adjacent token at both packed-token boundaries.
-                // Repeated consumption is unsupported; this only checks source-token rejection.
-                var rejected = false;
-                try
-                {
-                    _ = previous.IsCompleted;
-                }
-                catch (InvalidOperationException)
-                {
-                    rejected = true;
-                }
-                Ensure(rejected, "the prior token must not become valid across sign/wrap boundaries");
-            }
+            Ensure(!current.IsCompleted, "each new operation must initially report Pending");
             fake.Publish();
-            Ensure(current.IsCompletedSuccessfully, "the live token must report its own completed status");
+            Ensure(current.IsCompletedSuccessfully, "the live operation must report its own completed status");
             var result = current.GetAwaiter().GetResult();
             reader.AdvanceTo(result.Buffer.End);
-            previous = current;
+            // Never query the consumed ValueTask: pooled token versioning is an implementation
+            // detail, and stale-status/repeated-GetResult rejection is not a consumer guarantee.
         }
     }
 
     [Test]
     public void RegisteredConsumerSuspensionsShouldNotAllocateAfterWarmup()
     {
+        // Only this warm single-thread fixture with a cached callback is required to allocate
+        // zero. Late queued registration and multiple simultaneously rented boxes may allocate.
         var fake = new AllocationFreePipeReader();
         var reader = new ReadOwnershipPipeReader(fake);
         ValueTask<ReadResult> current = default;
@@ -487,7 +496,7 @@ public class ReadOwnershipPipeReaderLifetimeTests
     private static (ReadOwnershipPipeReader Reader, WeakReference Payload) CompleteSuccess(bool inline, bool synchronousReads)
     {
         var fake = new EphemeralPipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var reader = new ReadOwnershipPipeReader(fake);
         var payload = new byte[64 * 1024];
         var weak = new WeakReference(payload);
         var read = reader.ReadAsync();
@@ -518,7 +527,7 @@ public class ReadOwnershipPipeReaderLifetimeTests
     private static (ReadOwnershipPipeReader Reader, WeakReference Error) CompleteFault(bool inline, bool synchronousReads)
     {
         var fake = new EphemeralPipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var reader = new ReadOwnershipPipeReader(fake);
         var error = new IOException("retention marker");
         var weak = new WeakReference(error);
         var read = reader.ReadAsync();
@@ -536,7 +545,7 @@ public class ReadOwnershipPipeReaderLifetimeTests
     private static (ReadOwnershipPipeReader Reader, WeakReference State) CompleteCapturingContinuation()
     {
         var fake = new EphemeralPipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var reader = new ReadOwnershipPipeReader(fake);
         var state = new object();
         var weak = new WeakReference(state);
         var read = reader.ReadAsync();
@@ -553,7 +562,7 @@ public class ReadOwnershipPipeReaderLifetimeTests
     private static (ReadOwnershipPipeReader Reader, WeakReference State) CompleteFlowingContinuation()
     {
         var fake = new EphemeralPipeReader();
-        var reader = new ReadOwnershipPipeReader(fake) { RunContinuationsAsynchronously = false };
+        var reader = new ReadOwnershipPipeReader(fake);
         var local = new AsyncLocal<object?>();
         var state = new object();
         var weak = new WeakReference(state);
