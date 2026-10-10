@@ -138,10 +138,33 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider, IRpcGenerate
             $"Codec for '{targetType.FullName}' is not part of the compile-time Codec graph owned by Contract assembly '{_owner.Manifest.OwnerAssembly.FullName}'.");
     }
 
-    public IRpcCodec<T> GetGeneratedUnsafeBlitCodec<T>(SharpLinkGeneratedUnsafeBlitRequirement requirement)
+    public IRpcCodec<T> GetGeneratedUnsafeBlitCodec<T>(
+        IRpcGeneratedUnsafeBlitCodecFactory factory,
+        SharpLinkGeneratedUnsafeBlitRequirement requirement)
     {
         _owner.ThrowIfDisposed();
-        RpcUnsafeBlitPlatform.EnsureGeneratedSupported(typeof(T), requirement);
+        ArgumentNullException.ThrowIfNull(factory);
+        var targetType = typeof(T);
+        RpcGeneratedCodecRegistration? registration;
+        if (_scope != RpcGeneratedCodecResolutionScope.Contract ||
+            !_owner.ContractCodecs.TryGetValue(targetType, out registration))
+        {
+            _owner.Codecs.TryGetValue(targetType, out registration);
+        }
+        // Select only this owner's active binding. Do not resolve dependencies or call the
+        // factory here: its Create method is the caller, so either would permit a bypass or recurse.
+        if (registration is null ||
+            !ReferenceEquals(registration.Owner, _owner) ||
+            !ReferenceEquals(registration.Factory, factory) ||
+            !ReferenceEquals(registration.TargetType, targetType) ||
+            registration.UnsafeBlitRequirement is not { } admittedRequirement ||
+            admittedRequirement != requirement)
+        {
+            throw new PlatformNotSupportedException(
+                $"UnsafeBlit Codec for '{targetType.FullName}' requires matching source-generated ABI metadata and its exact owner-local factory registration.");
+        }
+        RpcUnsafeBlitPlatform.EnsureGeneratedSupported(targetType, admittedRequirement);
+        _owner.ThrowIfDisposed();
         return UnsafeBlitCodec<T>.Instance;
     }
 

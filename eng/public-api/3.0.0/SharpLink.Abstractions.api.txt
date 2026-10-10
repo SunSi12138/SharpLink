@@ -80,9 +80,13 @@ namespace SharpLink.Abstractions
         void EnsureUserCodeEntry(long requestId);
         System.Threading.Tasks.ValueTask PumpOutboundStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, long contractId, long methodId, System.Threading.CancellationToken cancellationToken);
     }
+    public interface IRpcGeneratedUnsafeBlitCodecFactory : SharpLink.Abstractions.IRpcGeneratedCodecFactory
+    {
+        SharpLink.Abstractions.SharpLinkGeneratedUnsafeBlitRequirement Requirement { get; }
+    }
     public interface IRpcGeneratedUnsafeBlitCodecProvider
     {
-        SharpLink.Abstractions.IRpcCodec<T> GetGeneratedUnsafeBlitCodec<T>(SharpLink.Abstractions.SharpLinkGeneratedUnsafeBlitRequirement requirement);
+        SharpLink.Abstractions.IRpcCodec<T> GetGeneratedUnsafeBlitCodec<T>(SharpLink.Abstractions.IRpcGeneratedUnsafeBlitCodecFactory factory, SharpLink.Abstractions.SharpLinkGeneratedUnsafeBlitRequirement requirement);
     }
     public interface IRpcRuntimeContext
     {
@@ -948,7 +952,7 @@ namespace SharpLink.Abstractions
     }
     public static class SharpLinkGeneratedManifestVersions
     {
-        public const string AbiIdentity = "sharplink-3.0-api5-generated-unsafe-blit-v1";
+        public const string AbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
         public const int Api = 5;
         public const int Protocol = 2;
     }

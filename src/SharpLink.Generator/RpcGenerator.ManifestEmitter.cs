@@ -2,7 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-generated-unsafe-blit-v1";
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,

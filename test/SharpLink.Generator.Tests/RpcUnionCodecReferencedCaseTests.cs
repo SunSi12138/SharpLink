@@ -47,12 +47,12 @@ namespace SharpLink.Abstractions
             support,
             101UL,
             202UL,
-            "sharplink-3.0-api5-generated-unsafe-blit-v1");
+            "sharplink-3.0-api5-owner-bound-unsafe-blit-v1");
         var secondOwner = CreateReferencedUnionCaseOwner(
             support,
             303UL,
             404UL,
-            "sharplink-3.0-api5-generated-unsafe-blit-v1");
+            "sharplink-3.0-api5-owner-bound-unsafe-blit-v1");
         var incompatibleOwner = CreateReferencedUnionCaseOwner(
             support,
             101UL,

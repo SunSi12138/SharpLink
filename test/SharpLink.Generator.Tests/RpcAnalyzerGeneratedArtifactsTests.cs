@@ -57,7 +57,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal API 5 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 5, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-3.0-api5-generated-unsafe-blit-v1", StringComparison.Ordinal),
+               manifest.Contains("sharplink-3.0-api5-owner-bound-unsafe-blit-v1", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");

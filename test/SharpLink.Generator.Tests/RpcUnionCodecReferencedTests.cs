@@ -55,7 +55,7 @@ using SharpLink.Sdk;
     5,
     2,
     "2.0.0",
-    "sharplink-3.0-api5-generated-unsafe-blit-v1")]
+    "sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
 
 namespace ReferencedUnion
 {

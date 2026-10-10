@@ -51,6 +51,21 @@ public sealed class GeneratedManifestLocatorTests
     }
 
     [Test]
+    [Arguments("sharplink-3.0-api5-generated-unsafe-blit-v1")]
+    [Arguments("other-api5-development-identity")]
+    public void UnboundOrDifferentApi5LocatorShouldRejectBeforeConstruction(string identity)
+    {
+        using var fixture = CreateFixture(locatorAbiIdentity: identity);
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
+        Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest && manifest is null,
+            "an incompatible API5 factory contract must fail before publication");
+        Ensure(fixture.State.ConstructorCalls == 0 && fixture.State.ShapeReads == 0,
+            "exact ABI identity rejection must precede construction and shape reads");
+        Ensure(result.Error!.Message.Contains(identity, StringComparison.Ordinal),
+            "the diagnostic must identify the rejected exact ABI");
+    }
+
+    [Test]
     [Arguments(3, 2)]
     [Arguments(4, 2)]
     [Arguments(6, 2)]

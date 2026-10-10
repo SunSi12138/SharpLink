@@ -23,8 +23,10 @@ public interface IRawService : SharpLink.Sdk.IService
 """);
         var sources = RunGeneratorAndGetSources(source);
         var generated = string.Join("\n", sources);
-        Ensure(generated.Contains("GetGeneratedUnsafeBlitCodec<global::RawPayload>(new SharpLinkGeneratedUnsafeBlitRequirement(8, true))", StringComparison.Ordinal),
-            "the generated factory must carry its finalized platform requirement directly");
+        Ensure(generated.Contains("GetGeneratedUnsafeBlitCodec<global::RawPayload>(this, Requirement)", StringComparison.Ordinal) &&
+               generated.Contains("Requirement => new(8, true)", StringComparison.Ordinal) &&
+               generated.Contains("Factory : IRpcGeneratedUnsafeBlitCodecFactory", StringComparison.Ordinal),
+            "the generated factory must carry its finalized ABI metadata and pass its exact instance");
         Ensure(generated.Contains("provider is not IRpcGeneratedUnsafeBlitCodecProvider", StringComparison.Ordinal),
             "providers without generated validation capability must fail closed");
         Ensure(!generated.Contains("SharpLinkGeneratedUnsafeBlitCatalog", StringComparison.Ordinal),

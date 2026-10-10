@@ -10,9 +10,11 @@ The 2.x generated path and arbitrary unmanaged JIT fallback share a Type-based r
 
 ## Decision
 
-Each finalized generated UnsafeBlit plan emits an owner-local codec factory with its native-pointer width and framework raw-ABI requirement. The generated factory uses the Abstractions-only `IRpcGeneratedUnsafeBlitCodecProvider` capability. Runtime validates the supplied requirement directly, then constructs its internal raw codec. Missing metadata is an error; neither the process catalog nor an endpoint codec resolver is consulted.
+Each finalized generated UnsafeBlit plan emits an owner-local codec factory with its native-pointer width and framework raw-ABI requirement. The generated factory uses the Abstractions-only `IRpcGeneratedUnsafeBlitCodecProvider` capability. Manifest preparation snapshots the factory target Type and requirement. The public capability requires the exact registered factory instance, matching target Type and snapshotted ABI in the receiving owner's active binding scope before constructing its internal raw codec. Contract bindings shadow global bindings; the check never invokes a factory or searches another owner, so it cannot recurse or obtain an unregistered raw codec. Missing metadata is an error; neither the process catalog nor an endpoint codec resolver is consulted.
 
 Remove the arbitrary unmanaged reflective fallback in 3.0. Do not ship an optional reflection package. This supersedes #762's original goal of retaining automatic standalone JIT fallback, by explicit maintainer decision. Builtins/enums, generated contracts and explicitly registered codecs remain supported. Generated dynamic modules use the same owner-local factories and do not need arbitrary Type reflection.
+
+This establishes provenance from admitted owner metadata, not cryptographic trust against application-authored manifests: an application that explicitly registers its own factory already controls its codec implementation. Call-site scalar assertions alone confer no authority.
 
 Factories and their Type references live in the existing manifest-generation ownership graph. No new process-global Type cache is introduced. Existing registration replacement, retirement and collectible ownership rules continue to apply. Request-only raw payloads resolve their generated factory during request-codec construction; builtin inline wire layout is unchanged.
 
@@ -20,7 +22,7 @@ Runtime is not globally trimmable. Generated correctness no longer depends on fi
 
 ## Compatibility and consequences
 
-3.0 uses generated API 5 and exact ABI identity `sharplink-3.0-api5-generated-unsafe-blit-v1`, a single increment from released 2.0.3/API4. The exact identity rejects incompatible development artifacts that also happen to use API 5. This work does not incorporate the independent #754 method-shape proposal.
+3.0 uses generated API 5 and exact ABI identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`, a single increment from released 2.0.3/API4. The exact identity rejects incompatible development artifacts that also happen to use API 5. This work does not incorporate the independent #754 method-shape proposal. Before a combined 3.0 release, #754 and #762 must use one coordinated generated identity, generator output contract and reviewed public API baseline; sharing the API5 number is not compatibility.
 
 The raw wire representation, physical ABI requirements and CodecHash remain unchanged. The public process-wide `SharpLinkGeneratedUnsafeBlitCatalog` is removed. Arbitrary unmanaged types without a generated or explicit codec now fail in ordinary JIT as well as trimmed/AOT applications. See the migration guide for the distinction between standalone runtime registration and generated RPC policy.
 

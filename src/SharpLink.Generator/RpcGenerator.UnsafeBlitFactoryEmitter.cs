@@ -19,9 +19,10 @@ public partial class RpcGenerator
             "An UnsafeBlit factory must carry its finalized ABI requirement.");
         sb.AppendLine($"internal static class {model.CodecName}");
         sb.AppendLine("{");
-        sb.AppendLine("    internal sealed class Factory : IRpcGeneratedCodecFactory");
+        sb.AppendLine("    internal sealed class Factory : IRpcGeneratedUnsafeBlitCodecFactory");
         sb.AppendLine("    {");
         sb.AppendLine($"        public Type TargetType => typeof({model.TypeName});");
+        sb.AppendLine($"        public SharpLinkGeneratedUnsafeBlitRequirement Requirement => new({requirement.NativePointerWidth.ToString(InvariantCulture)}, {(requirement.RequiresDateTimeOffsetRawAbi ? "true" : "false")});");
         AppendFactoryCodecHash(sb, model);
         sb.AppendLine("        public string? AdapterId => null;");
         sb.AppendLine("        public IRpcCodecAdapter? Adapter => null;");
@@ -31,7 +32,7 @@ public partial class RpcGenerator
         sb.AppendLine("                throw new ArgumentException(\"UnsafeBlit factories do not accept an adapter scope.\", nameof(adapterScope));");
         sb.AppendLine("            if (provider is not IRpcGeneratedUnsafeBlitCodecProvider generated)");
         sb.AppendLine("                throw new NotSupportedException(\"The provider cannot validate generated UnsafeBlit ABI requirements.\");");
-        sb.AppendLine($"            return generated.GetGeneratedUnsafeBlitCodec<{model.TypeName}>(new SharpLinkGeneratedUnsafeBlitRequirement({requirement.NativePointerWidth.ToString(InvariantCulture)}, {(requirement.RequiresDateTimeOffsetRawAbi ? "true" : "false")}));");
+        sb.AppendLine($"            return generated.GetGeneratedUnsafeBlitCodec<{model.TypeName}>(this, Requirement);");
         sb.AppendLine("        }");
         sb.AppendLine($"        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<{model.TypeName}>;");
         sb.AppendLine("    }");

@@ -72,20 +72,20 @@
     {
       "name": "Runtime ABI identity",
       "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
-      "pattern": "AbiIdentity = \"sharplink-3.0-api5-generated-unsafe-blit-v(\\d+)\"",
+      "pattern": "AbiIdentity = \"sharplink-3.0-api5-owner-bound-unsafe-blit-v(\\d+)\"",
       "published": 1,
       "current": 1,
       "policy": "unchanged",
-      "reason": "The suffix remains v1 in the distinct 3.0/API5 generated-unsafe-blit ABI family; this does not imply compatibility with any other API5 identity."
+      "reason": "The suffix remains v1 in the distinct 3.0/API5 owner-bound-unsafe-blit ABI family; this does not imply compatibility with any other API5 identity."
     },
     {
       "name": "Generator ABI identity",
       "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
-      "pattern": "GeneratedAbiIdentity = \"sharplink-3.0-api5-generated-unsafe-blit-v(\\d+)\"",
+      "pattern": "GeneratedAbiIdentity = \"sharplink-3.0-api5-owner-bound-unsafe-blit-v(\\d+)\"",
       "published": 1,
       "current": 1,
       "policy": "unchanged",
-      "reason": "The suffix remains v1 in the distinct 3.0/API5 generated-unsafe-blit ABI family; this does not imply compatibility with any other API5 identity."
+      "reason": "The suffix remains v1 in the distinct 3.0/API5 owner-bound-unsafe-blit ABI family; this does not imply compatibility with any other API5 identity."
     },
     {
       "name": "Diagnostic snapshot",

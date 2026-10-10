@@ -343,7 +343,7 @@ namespace SharpLink.Abstractions
             $$"""
 using SharpLink.Abstractions;
 
-[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 5, 2, "3.0.0-test", "sharplink-3.0-api5-generated-unsafe-blit-v1")]
+[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{{manifestTypeName}}), 5, 2, "3.0.0-test", "sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
 
 namespace SharpLink.Generated
 {

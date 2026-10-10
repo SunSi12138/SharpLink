@@ -203,9 +203,7 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
         public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; } =
             [
                 new NativeFactory<PolicyPoint>(_ => codec),
-                new NativeFactory<UnroutedValue>(static provider =>
-                    ((IRpcGeneratedUnsafeBlitCodecProvider)provider)
-                        .GetGeneratedUnsafeBlitCodec<UnroutedValue>(new(8, false)))
+                new TestGeneratedUnsafeBlitFactory<UnroutedValue>()
             ];
         public IReadOnlyList<string> Dependencies => [];
     }

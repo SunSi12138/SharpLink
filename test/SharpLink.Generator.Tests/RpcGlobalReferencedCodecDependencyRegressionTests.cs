@@ -25,7 +25,7 @@ using System;
     5,
     2,
     "2.0.0-test",
-    "sharplink-3.0-api5-generated-unsafe-blit-v1")]
+    "sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
 
 namespace SharpLink.Abstractions
 {

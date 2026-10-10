@@ -111,9 +111,7 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } =
         [
             new NativeFactory<ReferencedChild>(static _ => new ReferencedChildCodec()),
-            new NativeFactory<ReferencedFallbackChild>(static provider =>
-                ((IRpcGeneratedUnsafeBlitCodecProvider)provider)
-                    .GetGeneratedUnsafeBlitCodec<ReferencedFallbackChild>(new(8, false))),
+            new TestGeneratedUnsafeBlitFactory<ReferencedFallbackChild>(),
             new NativeFactory<ReferencedPayload>(static provider =>
                 new ReferencedPayloadCodec(
                     provider.GetCodec<ReferencedChild>(),
