@@ -4,6 +4,6 @@
 - Removal candidates selected from Tier A: artifacts/issue-801-audit/removal-probe.json
 - Full solution compile result: success
 - Unit test result: failure
-- Generator test result: skipped
+- Generator test result: success
 
 This is a non-committed experimental deletion, not a merged code change.

@@ -1,0 +1,38 @@
+Running tests from /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64)
+[[32m+0[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(0s)
+
+[[32m+602[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(2s)
+
+[[32m+1049[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(5s)
+
+[[32m+1743[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(8s)
+
+[[32m+1763[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(11s)
+
+[[32m+1767[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(14s)
+
+[[32m+1875[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(17s)
+
+[[32m+1889[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(20s)
+
+[[32m+1895[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(23s)
+
+[[32m+1898[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(26s)
+
+[[32m+1901[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(29s)
+
+[[32m+1909[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(32s)
+
+[[32m+2014[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(35s)
+
+[m/home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64) [32mpassed[m [90m(36s 290ms)[m
+
+  In process file artifacts produced:
+    - /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/TestResults/SharpLink.UnitTests-linux-net10.0-report.html
+
+[32mTest run summary: Passed!
+[m  total: 2018
+  failed: 0
+[32m  succeeded: 2018
+[m  skipped: 0
+  duration: 36s 519ms

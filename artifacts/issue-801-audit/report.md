@@ -1,9 +1,9 @@
 # Issue #801 — dev full-solution symbol reference index
 
 Dev base: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
-Audit head: 666f429278b2010ecc3ff872185f38933c115358
+Audit head: ceae464cbd7de2457df6504e99f621e36a9b960c
 Projects 65; source docs 1383; generated docs 945
-Production source files indexed: 476/476; declarations: 8853; matched references: 111567; elapsed seconds: 94
+Production source files indexed: 476/476; declarations: 8853; matched references: 111567; elapsed seconds: 76
 **Caution:** A/B/C are review candidates, NOT proof of dead code. This scans direct semantic references, not whole-program reachability, reflection, DI or external consumers.
 
 ## Tier counts

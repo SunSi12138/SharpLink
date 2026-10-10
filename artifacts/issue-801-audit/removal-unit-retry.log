@@ -1,13 +1,24 @@
 Running tests from /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64)
 [[32m+0[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(0s)
 
-[[32m+485[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(2s)
+[[32m+326[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(2s)
 
-[[32m+636[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(5s)
+[31mfailed[m TimedServerStreamingShouldLeaveNoFrameworkTaskWhenDeadlineWinsAStalledWrite[90m [90m(312ms)[m
+  [Test Failure] Exception: the transport must retain the Request accepted before the deadline won
+  from /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64)
+[31m  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] Exception: the transport must retain the Request accepted before the deadline won
+[m[90m    at SharpLink.UnitTests.Client.SharpLinkClientServerStreamingTerminalSignalTests.Ensure(Boolean condition, String message) in /_/test/SharpLink.UnitTests/Client/SharpLinkClientServerStreamingTerminalSignalTests.cs:141[90m
+    at SharpLink.UnitTests.Client.SharpLinkClientServerStreamingTerminalSignalTests.TimedServerStreamingShouldLeaveNoFrameworkTaskWhenDeadlineWinsAStalledWrite() in /_/test/SharpLink.UnitTests/Client/SharpLinkClientServerStreamingTerminalSignalTests.cs:68[90m
+    at SharpLink.UnitTests.Client.SharpLinkClientServerStreamingTerminalSignalTests.TimedServerStreamingShouldLeaveNoFrameworkTaskWhenDeadlineWinsAStalledWrite() in /_/test/SharpLink.UnitTests/Client/SharpLinkClientServerStreamingTerminalSignalTests.cs:70[90m
+    at SharpLink.UnitTests.Client.SharpLinkClientServerStreamingTerminalSignalTests.TimedServerStreamingShouldLeaveNoFrameworkTaskWhenDeadlineWinsAStalledWrite() in /_/test/SharpLink.UnitTests/Client/SharpLinkClientServerStreamingTerminalSignalTests.cs:76[90m
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+[m[[32m+378[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(2s)
 
-[[32m+1037[m/[31mx0[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(8s)
+[[32m+493[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(5s)
 
-[31mfailed[m SessionShutdownShouldNotHideAnUnexpectedSiblingCleanupFailure[90m [90m(13ms)[m
+[[32m+1489[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(8s)
+
+[31mfailed[m SessionShutdownShouldNotHideAnUnexpectedSiblingCleanupFailure[90m [90m(9ms)[m
   [Test Failure] InvalidOperationException: unexpected sibling session cleanup failed
   from /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64)
 [31m  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] InvalidOperationException: unexpected sibling session cleanup failed
@@ -25,27 +36,25 @@ Running tests from /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTest
     at SharpLink.Server.SharpLinkServer.ServerLifecycleCoordinator.StopCoreAsync(TimeSpan gracefulTimeout) in /_/src/SharpLink.Server/ServerLifecycleCoordinator.cs:484[90m
     at SharpLink.UnitTests.Server.SharpLinkServerInvocationTests.SessionShutdownShouldNotHideAnUnexpectedSiblingCleanupFailure() in /_/test/SharpLink.UnitTests/Server/SharpLinkServerHeartbeatAndSupervisionTests.cs:225[90m
        --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
-[m[[32m+1749[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(11s)
+[m[[32m+1714[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(8s)
 
-[[32m+1781[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(11s)
+[[32m+1763[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(11s)
 
-[[32m+1810[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(14s)
+[[32m+1818[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(14s)
 
-[[32m+1884[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(17s)
+[[32m+1884[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(17s)
 
-[[32m+1888[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(20s)
+[[32m+1890[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(20s)
 
-[[32m+1892[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(23s)
+[[32m+1895[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(23s)
 
-[[32m+1897[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(26s)
+[[32m+1898[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(26s)
 
-[[32m+1900[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(29s)
+[[32m+1900[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(29s)
 
-[[32m+1901[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(32s)
+[[32m+1928[m/[31mx2[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(32s)
 
-[[32m+1993[m/[31mx1[m/[33m?0[m] SharpLink.UnitTests.dll (net10.0|x64)(35s)
-
-[m/home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64) [31mfailed with 1 error(s)[m [90m(37s 726ms)[m
+[m/home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64) [31mfailed with 2 error(s)[m [90m(35s 403ms)[m
 Exit code: 2
 
   In process file artifacts produced:
@@ -53,8 +62,8 @@ Exit code: 2
 
 [31mTest run summary: Failed!
 [m  total: 2018
-[31m  failed: 1
-[m  succeeded: 2017
+[31m  failed: 2
+[m  succeeded: 2016
   skipped: 0
-  duration: 37s 951ms
+  duration: 35s 634ms
 Test run completed with non-success exit code: 2 (see: https://aka.ms/testingplatform/exitcodes)
