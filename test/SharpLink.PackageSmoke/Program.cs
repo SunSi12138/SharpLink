@@ -55,7 +55,7 @@ public static class Program
 {
     private struct PackageSmokeStandaloneBlit
     {
-        public int Value;
+        public int Value { get; set; }
     }
 
     private static readonly string[] RuntimeRawDispatcherTypeNames =
