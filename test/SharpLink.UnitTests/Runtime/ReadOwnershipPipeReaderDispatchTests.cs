@@ -68,7 +68,8 @@ public class ReadOwnershipPipeReaderDispatchTests
             {
                 completed.TrySetException(error);
             }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         publisher.Start();
         try
         {
