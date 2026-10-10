@@ -1,3 +1,4 @@
+#pragma warning disable CS0618 // WorkspaceFailed is used for broad Roslyn SDK compatibility; diagnostics are still captured.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
