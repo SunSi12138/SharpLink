@@ -33,7 +33,8 @@ internal static class RemovalProbe
                 && x[6] == "0" && x[7] == "0" && x[8] == "0"
                 && x[9] == "0" && x[10] == "0")
             .Select(x => new RemovalCandidate(x[0], int.Parse(x[1]), x[5]))
-            .Where(x => x.Path.StartsWith("src/", StringComparison.Ordinal))
+            .Where(x => x.Path.StartsWith("src/", StringComparison.Ordinal)
+                && !x.Path.StartsWith("src/SharpLink.Shared/", StringComparison.Ordinal))
             .ToArray();
 
         var removed = new List<RemovalCandidate>();
@@ -85,7 +86,15 @@ internal static class RemovalProbe
                     continue;
                 }
 
-                edits.Add((method.Span.Start, method.Span.Length, wanted));
+                // Remove XML documentation belonging to the deleted member as well.
+                // Otherwise leftover /// <param> comments attach to the next
+                // declaration and fail under TreatWarningsAsErrors (CS1573/CS1711).
+                var start = method.Span.Start;
+                foreach (var trivia in method.GetLeadingTrivia())
+                    if (trivia.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
+                        || trivia.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia))
+                        start = Math.Min(start, trivia.SpanStart);
+                edits.Add((start, method.Span.End - start, wanted));
             }
             foreach (var expected in group)
                 if (!edits.Any(x => x.Candidate.Equals(expected))
@@ -109,7 +118,7 @@ internal static class RemovalProbe
         var result = new
         {
             BaselineSha = Environment.GetEnvironmentVariable("AUDIT_DEV_SHA"),
-            Mode = "Ephemeral test-only source removal; never push modified src",
+            Mode = "Ephemeral removal; skip linked SharpLink.Shared multi-assembly sources and remove attached XML docs; never push modified src",
             Requested = entries.Length,
             Removed = removed.Count,
             Skipped = skipped.Count,
