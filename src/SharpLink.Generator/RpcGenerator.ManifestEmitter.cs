@@ -240,8 +240,17 @@ public partial class RpcGenerator
     }
 
     private static void AppendIdentifiedCodecFactoryRegistration(StringBuilder sb, GeneratedCodecModel codec)
-        => sb.AppendLine(
+    {
+        // Raw factories already emit this finalized CodecHash. Register that exact instance:
+        // its owner-bound capability must not observe an identity-only decorator instead.
+        if (codec.Kind == GeneratedCodecKind.UnsafeBlit)
+        {
+            sb.AppendLine($"        new {codec.CodecName}.Factory(),");
+            return;
+        }
+        sb.AppendLine(
             $"        new __SharpLinkIdentifiedCodecFactory(new {codec.CodecName}.Factory(), {codec.CodecHashHigh.ToString(InvariantCulture)}UL, {codec.CodecHashLow.ToString(InvariantCulture)}UL),");
+    }
 
     private static string BuildCompileTimeDescriptor(
         RpcInterfaceModel[] contracts,

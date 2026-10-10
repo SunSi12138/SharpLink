@@ -27,6 +27,8 @@ public interface IRawService : SharpLink.Sdk.IService
                generated.Contains("Requirement => new(8, true)", StringComparison.Ordinal) &&
                generated.Contains("Factory : IRpcGeneratedUnsafeBlitCodecFactory", StringComparison.Ordinal),
             "the generated factory must carry its finalized ABI metadata and pass its exact instance");
+        Ensure(!generated.Contains("new __SharpLinkIdentifiedCodecFactory(new __SharpLinkGeneratedUnsafeBlit_", StringComparison.Ordinal),
+            "the admitted raw factory must remain the exact instance passed to the owner capability");
         Ensure(generated.Contains("provider is not IRpcGeneratedUnsafeBlitCodecProvider", StringComparison.Ordinal),
             "providers without generated validation capability must fail closed");
         Ensure(!generated.Contains("SharpLinkGeneratedUnsafeBlitCatalog", StringComparison.Ordinal),
