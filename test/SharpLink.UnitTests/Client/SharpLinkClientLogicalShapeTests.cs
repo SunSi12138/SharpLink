@@ -6,7 +6,7 @@ using SharpLink.Sdk;
 namespace SharpLink.UnitTests.Client;
 
 [NotInParallel]
-public sealed class SharpLinkClientLogicalShapeTests
+public sealed class SharpLinkClientLogicalShapeTests : SharpLinkMultiClusterClientTestBase
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(10);
 
@@ -115,12 +115,55 @@ public sealed class SharpLinkClientLogicalShapeTests
         Ensure(failure.Message == "injected deadline timer failure",
             "the test must fail specifically after pending-slot publication");
         Ensure(provider.InjectedFailures == 1, "the pending deadline timer must have thrown once");
-        Ensure(inspector.ActiveCallCount == 1,
-            "the published pending call, not the failed Rent() caller, owns the logical release");
+        Ensure(inspector.ActiveCallCount == 0,
+            "failed registration must terminalize its published pending call before returning");
+        Ensure(client.ActiveClientCallCount == 0,
+            "failed registration must not leave a physical attempt active");
 
         await client.StopAsync();
         Ensure(inspector.ActiveCallCount == 0,
-            "connection cleanup must finish the published call without logical underflow");
+            "subsequent connection cleanup must not double-release the logical owner");
+    }
+
+    [Test]
+    public async Task FailedRegistrationMustNotWaitForMultiClusterGracefulRetirementTimeout()
+    {
+        var provider = new ThrowingRegistrationTimeProvider();
+        var transport = new TestClientTransportFactory();
+        await using var multi = CreateDynamicBuilder()
+            .AddCluster(
+                "retiring",
+                child =>
+                {
+                    child.UseTransport(transport);
+                    child.UseTimeProvider(provider);
+                    child.UseRequestTimeout(TimeSpan.FromMinutes(5));
+                },
+                slot => slot.AllowDynamicContracts = true)
+            .Build();
+
+        await multi.StartAsync();
+        await multi.WaitForReadyAsync("retiring").AsTask().WaitAsync(TestTimeout);
+        var childClient = (SharpLinkClient)GetChildChannel(multi, "retiring");
+        var inspector = (ISharpLinkClientDrainInspector)childClient;
+
+        provider.ThrowOnNextDeadlineArm();
+        var terminal = InvokeSpecializedUnary(childClient).AsTask();
+        var failure = await Throws<InvalidOperationException>(terminal.WaitAsync(TestTimeout));
+        Ensure(failure.Message == "injected deadline timer failure",
+            "registration failure must be reported through the pending operation");
+        Ensure(provider.InjectedFailures == 1, "timer arm failure must be injected");
+        Ensure(inspector.ActiveCallCount == 0 && childClient.ActiveClientCallCount == 0,
+            "user-visible terminal failure must not retain a logical or physical pending call");
+
+        // The grace period deliberately greatly exceeds this wait. A leaked logical owner
+        // would postpone RemoveClusterAsync until the full grace deadline and force a stop.
+        var removal = multi.RemoveClusterAsync("retiring", TimeSpan.FromSeconds(8)).AsTask();
+        var result = await removal.WaitAsync(TimeSpan.FromSeconds(2));
+        Ensure(result is { Succeeded: true, ReferencesReleased: true, ForcedStop: false },
+            "retirement must finish gracefully without waiting out its eight-second timeout");
+        Ensure(inspector.ActiveCallCount == 0,
+            "retirement must not release the terminated invocation for a second time");
     }
 
     // Force the 1:1 specialization under test independently of process-wide Activity/Meter
@@ -177,7 +220,7 @@ public sealed class SharpLinkClientLogicalShapeTests
         throw new Exception($"Expected {typeof(TException).Name}.");
     }
 
-    private static void Ensure(bool condition, string message)
+    private new static void Ensure(bool condition, string message)
     {
         if (!condition)
             throw new Exception(message);
