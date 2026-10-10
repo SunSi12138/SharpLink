@@ -10,7 +10,7 @@ public sealed class PendingRequestTablePostOperationObserverTests
     public async Task PostOperationObserverMustSeeTerminalUnaryOperationForSuccessAndFailure()
     {
         using var table = new PendingRequestTable(
-            8, Int32CodecProvider.Instance, NoopOwner.Instance, TimeProvider.System);
+            8, PendingRequestTableTestFixture.Codecs, PendingRequestTableTestFixture.Owner, TimeProvider.System);
 
         var successObserver = new TerminalCheckingObserver();
         var success = table.Rent(
