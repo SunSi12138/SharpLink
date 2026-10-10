@@ -1,0 +1,78 @@
+name: PR742 B3 RPC integration validation
+
+on:
+  push:
+    branches: [work/742-b3-production-integration]
+    paths:
+      - .github/workflows/742-b3-integration-validation.yml
+      - eng/742-integration/prepare-b3.py
+      - eng/742-integration/*.cs.in
+      - test/SharpLink.UnitTests/Runtime/WriterOwnedRpcIntegrationTests.cs
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_PROCESSOR_COUNT: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.1xx
+      - name: Materialize the pinned production integration candidate
+        run: |
+          mkdir -p artifacts/742-integration
+          dotnet --info > artifacts/742-integration/dotnet-info.txt
+          python3 eng/742-integration/prepare-b3.py 2>&1 | tee artifacts/742-integration/prepare-b3.log
+      - name: Build unit tests and generated streaming benchmark
+        run: |
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -maxcpucount:2 2>&1 | tee artifacts/742-integration/b3-unit-build.log
+          dotnet build test/SharpLink.Benchmarks -c Release -p:Platform=AnyCPU -maxcpucount:2 2>&1 | tee artifacts/742-integration/b3-benchmark-build.log
+      - name: Full retained unit suite with B3 disabled
+        run: |
+          timeout 240s taskset -c 0,1 dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
+            --maximum-parallel-tests 4 2>&1 | tee artifacts/742-integration/full-legacy.log
+      - name: Generated RPC smoke on actual TCP and shared memory
+        env:
+          SHARPLINK_WRITER_OWNED_STREAMS: '1'
+        run: |
+          for transport in tcp sharedmemory; do
+            for shape in Server1x16 Server100x16 Server100x4096 Client100x16 Client100x4096 Duplex100x16 Duplex100x4096; do
+              timeout 45s taskset -c 0,1 dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll \
+                --generated-abi-streaming-evidence "$shape" 10 0.5 100 \
+                "artifacts/742-integration/smoke-$transport-$shape.json" "$transport" \
+                2>&1 | tee "artifacts/742-integration/smoke-$transport-$shape.log"
+            done
+          done
+      - name: Full retained suite with B3 activated for real generated streams
+        env:
+          SHARPLINK_WRITER_OWNED_STREAMS: '1'
+        run: |
+          timeout 240s taskset -c 0,1 dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
+            --maximum-parallel-tests 4 2>&1 | tee artifacts/742-integration/full-b3.log
+      - name: Preserve complete candidate, diagnostics and all failures
+        if: always()
+        run: |
+          git diff --binary > artifacts/742-integration/complete-candidate.patch
+          git diff --stat > artifacts/742-integration/changed-stat.txt
+          tar -czf artifacts/742-integration/candidate-sources.tar.gz src eng/742-integration test/SharpLink.UnitTests/Runtime/CoreIntegrationRegressionTests.cs
+          if test -d test/SharpLink.UnitTests/bin/Release/net10.0/TestResults; then
+            cp -r test/SharpLink.UnitTests/bin/Release/net10.0/TestResults artifacts/742-integration/test-results
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: pr742-b3-rpc-validation-${{ github.sha }}
+          path: artifacts/742-integration
+          retention-days: 7
+          if-no-files-found: error
