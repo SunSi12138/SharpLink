@@ -51,7 +51,7 @@ jobs:
           lscpu > "artifacts/perf/issue741-$MODE/cpu.txt"
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           git worktree add --detach "$RUNNER_TEMP/issue741-base-$MODE" "$BASE_SHA"
-          for file in Program.cs BenchmarkEnvironment.cs Issue741RpcEvidenceRunner.cs; do
+          for file in BenchmarkEnvironment.cs Issue741RpcEvidenceRunner.cs; do
             cp "test/SharpLink.Benchmarks/$file" "$RUNNER_TEMP/issue741-base-$MODE/test/SharpLink.Benchmarks/$file"
             cmp "test/SharpLink.Benchmarks/$file" "$RUNNER_TEMP/issue741-base-$MODE/test/SharpLink.Benchmarks/$file"
           done
@@ -67,9 +67,8 @@ jobs:
             else
               source="$GITHUB_WORKSPACE"
             fi
-            project="$source/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            project="$source/test/SharpLink.Issue741AotEvidence/SharpLink.Issue741AotEvidence.csproj"
             if [[ "$MODE" == "native" ]]; then
-              project="$source/test/SharpLink.Issue741AotEvidence/SharpLink.Issue741AotEvidence.csproj"
               dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=true --self-contained true \
                 -o "$ISSUE741_ROOT/builds/native-$revision" -v minimal \
                 > "$ISSUE741_ROOT/build-$revision.log" 2>&1 || {
@@ -77,7 +76,8 @@ jobs:
                   exit 1
                 }
             else
-              dotnet build "$project" -c Release -v minimal \
+              dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=false --self-contained false \
+                -o "$ISSUE741_ROOT/builds/jit-$revision" -v minimal \
                 > "$ISSUE741_ROOT/build-$revision.log" 2>&1 || {
                   cat "$ISSUE741_ROOT/build-$revision.log"
                   exit 1
@@ -133,7 +133,7 @@ jobs:
             # Prefer unambiguous variable boundaries over shell concatenation.
             output="$ISSUE741_ROOT/raw/$transport""__""$scenario""__c""$concurrency""__""$revision""__r""$rep.json"
             if [[ "$MODE" == "jit" ]]; then
-              executable="$source/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"
+              executable="$ISSUE741_ROOT/builds/jit-$revision/SharpLink.Benchmarks.dll"
               SHARPLINK_BENCHMARK_SHA="$sha" SHARPLINK_BENCHMARK_MODE="$MODE" \
                 dotnet "$executable" --issue741-rpc-evidence "$scenario" "$transport" "$concurrency" 250 950 "$output"
             else

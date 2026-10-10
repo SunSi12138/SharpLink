@@ -8,12 +8,6 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
-        if (args.Length > 0 && string.Equals(args[0], "--issue741-rpc-evidence", StringComparison.Ordinal))
-        {
-            await Issue741RpcEvidenceRunner.RunAsync(args[1..]).ConfigureAwait(false);
-            return;
-        }
-
         if (args.Length > 0 && string.Equals(
             args[0], "--zstd-evidence", StringComparison.Ordinal))
         {
