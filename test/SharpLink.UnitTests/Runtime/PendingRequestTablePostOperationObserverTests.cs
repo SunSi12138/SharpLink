@@ -159,6 +159,139 @@ public sealed class PendingRequestTablePostOperationObserverTests
         }
     }
 
+    [Test]
+    public async Task RegistrationOwnerThrowBeforeMarkRegisteredMustTerminalizeAndBalanceCapacity()
+    {
+        using var owner = new ThrowingRegistrationOwner(blockUntilReleased: false, throwOnTerminal: false);
+        using var table = PendingRequestTableTestFixture.Create(8, owner);
+
+        var operation = await Task.Run(() => table.Rent(
+                Int32Codec.Instance, PendingCallKind.Unary, default,
+                CancellationToken.None, out _))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        var failure = await CaptureFailureAsync(operation.AsValueTask().AsTask());
+        Ensure(failure is InvalidOperationException { Message: "injected registration owner failure" },
+            "a pre-MarkRegistered fault must be returned through the authoritative operation");
+        Ensure(table.Count == 0 && table.ActiveCount == 0 && owner.ActiveCount == 0,
+            "registration failure must leave no pending capacity or physical owner");
+        Ensure(owner.TerminalCount == 1,
+            "the registration failure must complete exactly once");
+    }
+
+    [Test]
+    public async Task DisposeAgainstPreMarkRegisteredOwnerFailureMustNotHangTerminalWaiter()
+    {
+        using var owner = new ThrowingRegistrationOwner(blockUntilReleased: true, throwOnTerminal: false);
+        using var table = PendingRequestTableTestFixture.Create(8, owner);
+        var renting = Task.Run(() => table.Rent(
+            Int32Codec.Instance, PendingCallKind.Unary, default,
+            CancellationToken.None, out _));
+
+        Ensure(owner.RegistrationEntered.Wait(TimeSpan.FromSeconds(5)),
+            "registration owner must block before MarkRegistered");
+        var disposing = Task.Run(table.Dispose);
+        var disposedField = typeof(PendingRequestTable).GetField(
+            "_disposed", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("disposed flag not found");
+        try
+        {
+            Ensure(SpinWait.SpinUntil(
+                    () => (int)disposedField.GetValue(table)! != 0,
+                    TimeSpan.FromSeconds(5)),
+                "disposal must start while registration is still before its barrier");
+        }
+        finally
+        {
+            owner.AllowRegistration();
+        }
+
+        var operation = await renting.WaitAsync(TimeSpan.FromSeconds(5));
+        await disposing.WaitAsync(TimeSpan.FromSeconds(5));
+        var failure = await CaptureFailureAsync(operation.AsValueTask().AsTask());
+        Ensure(failure is InvalidOperationException { Message: "injected registration owner failure" }
+               or SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed },
+            "the registering failure or the concurrent disposal must win completion");
+        Ensure(table.Count == 0 && table.ActiveCount == 0 && owner.ActiveCount == 0,
+            "a pre-MarkRegistered failure must not strand the completion thread or capacity");
+        Ensure(owner.TerminalCount == 1, "only one terminal owner is allowed");
+    }
+
+    [Test]
+    public async Task RegistrationCleanupMustPropagateAuthoritativeTerminalOwnerFailure()
+    {
+        using var owner = new ThrowingRegistrationOwner(blockUntilReleased: false, throwOnTerminal: true);
+        using var table = PendingRequestTableTestFixture.Create(8, owner);
+
+        var failure = await CaptureFailureAsync(Task.Run(() =>
+        {
+            _ = table.Rent(
+                Int32Codec.Instance, PendingCallKind.Unary, default,
+                CancellationToken.None, out _);
+        }).WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Ensure(failure is InvalidOperationException { Message: "injected terminal cleanup failure" },
+            "the terminal-owner failure must not be suppressed as a registration diagnostic");
+        Ensure(table.Count == 0 && table.ActiveCount == 0 && owner.ActiveCount == 0,
+            "terminal cleanup error must not leak pending capacity");
+        Ensure(owner.TerminalCount == 1, "owner terminal exception must be observed once");
+    }
+
+    private static async Task<Exception?> CaptureFailureAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
+    }
+
+    private sealed class ThrowingRegistrationOwner(bool blockUntilReleased, bool throwOnTerminal)
+        : IPendingCallOwner, IDisposable
+    {
+        private readonly ManualResetEventSlim _entered = new(false);
+        private readonly ManualResetEventSlim _release = new(!blockUntilReleased);
+        private int _activeCount;
+        private int _terminalCount;
+
+        public ManualResetEventSlim RegistrationEntered => _entered;
+        public int ActiveCount => Volatile.Read(ref _activeCount);
+        public int TerminalCount => Volatile.Read(ref _terminalCount);
+
+        public void OnPendingCallRegistered()
+        {
+            Interlocked.Increment(ref _activeCount);
+            _entered.Set();
+            if (!_release.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("registration gate was not released");
+            throw new InvalidOperationException("injected registration owner failure");
+        }
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+            Interlocked.Decrement(ref _activeCount);
+            Interlocked.Increment(ref _terminalCount);
+            if (throwOnTerminal)
+                throw new InvalidOperationException("injected terminal cleanup failure");
+        }
+
+        public void OnProducerCancellationCallbackFailed(Exception exception)
+        {
+        }
+
+        public void AllowRegistration() => _release.Set();
+
+        public void Dispose()
+        {
+            _release.Set();
+            _entered.Dispose();
+            _release.Dispose();
+        }
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
