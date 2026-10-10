@@ -81,7 +81,7 @@ foreach (var (document, path, scope) in documents)
             {
                 Key = key,
                 Name = symbol.Name,
-                Signature = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                Signature = symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
                 Kind = symbol.Kind.ToString(),
                 Visibility = symbol.DeclaredAccessibility.ToString(),
                 ExternallyVisible = ExternallyVisible(symbol),
@@ -135,8 +135,10 @@ Console.WriteLine($"REFERENCES: {referenceMatches} matched after {stopwatch.Elap
 var sourceFiles = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
     .Where(p => !p.Replace('\\','/').Contains("/obj/") && !p.Replace('\\','/').Contains("/bin/"))
     .Select(p => Relative(root, p)).OrderBy(p => p, StringComparer.Ordinal).ToArray();
+var sourceFileSet = sourceFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
 var loadedFiles = documents.Where(d => d.Scope == "production")
-    .Select(d => d.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    .Select(d => d.Path).Where(sourceFileSet.Contains)
+    .ToHashSet(StringComparer.OrdinalIgnoreCase);
 var missingFiles = sourceFiles.Where(p => !loadedFiles.Contains(p)).ToArray();
 foreach (var record in symbols.Values)
 {
@@ -245,7 +247,7 @@ static string Key(ISymbol symbol)
 {
     var canonical = Normalize(symbol);
     return (canonical.ContainingAssembly?.Identity.Name ?? "<none>") + "|" +
-        canonical.Kind + "|" + canonical.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        canonical.Kind + "|" + canonical.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat);
 }
 static bool ExternallyVisible(ISymbol symbol)
 {
@@ -259,6 +261,21 @@ static bool ExternallyVisible(ISymbol symbol)
 static string ProtectionReason(ISymbol symbol)
 {
     if (symbol.ContainingType?.TypeKind == TypeKind.Interface) return "Interface contract";
+    // Implicit interface implementations have no special syntax and are often
+    // reached exclusively through an interface-valued variable or framework callback.
+    if (symbol.ContainingType is INamedTypeSymbol type && type.AllInterfaces.Length > 0)
+    {
+        foreach (var iface in type.AllInterfaces)
+        {
+            foreach (var member in iface.GetMembers())
+            {
+                var impl = type.FindImplementationForInterfaceMember(member);
+                if (impl is not null && SymbolEqualityComparer.Default.Equals(
+                        impl.OriginalDefinition, symbol.OriginalDefinition))
+                    return "Implicit interface implementation / framework dispatch";
+            }
+        }
+    }
     if (symbol.ContainingType?.TypeKind == TypeKind.Enum) return "Enum/protocol identity";
     if (symbol is IMethodSymbol method)
     {
