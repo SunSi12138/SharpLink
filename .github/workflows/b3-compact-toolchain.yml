@@ -1,0 +1,56 @@
+name: B3 Compact Toolchain
+on:
+  push:
+    branches: [work/742-b3-production-20261011]
+    paths: [.github/workflows/b3-compact-toolchain.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Export fixed source trees
+        run: |
+          mkdir -p "$RUNNER_TEMP/source"
+          git archive e834d3c28c87ad496989af925515cf21babd308d | gzip -1 > "$RUNNER_TEMP/source/e834-source.tar.gz"
+          git archive 0fe26024b114bb6e78411a9b86276086c045d03d | gzip -1 > "$RUNNER_TEMP/source/dev-source.tar.gz"
+          git show -s --format=raw e834d3c28c87ad496989af925515cf21babd308d > "$RUNNER_TEMP/source/e834-commit.txt"
+          sha256sum "$RUNNER_TEMP/source/"*.tar.gz > "$RUNNER_TEMP/source/SHA256SUMS"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: b3-fixed-sources
+          path: ${{ runner.temp }}/source
+          compression-level: 0
+          retention-days: 3
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.102
+      - name: Export .NET 10 only
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/compact"
+          mkdir -p "$out"
+          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          paths=(dotnet sdk/10.0.102)
+          for family in host/fxr shared/Microsoft.NETCore.App shared/Microsoft.AspNetCore.App packs/Microsoft.NETCore.App.Ref packs/Microsoft.AspNetCore.App.Ref packs/Microsoft.NETCore.App.Host.linux-x64; do
+            for p in "$root/$family"/10.*; do
+              if [[ -d "$p" ]]; then paths+=("${p#"$root/"}"); fi
+            done
+          done
+          printf '%s\n' "${paths[@]}" > "$out/included-paths.txt"
+          tar -C "$root" -czf "$out/dotnet-10-toolchain.tar.gz" "${paths[@]}"
+          dotnet --info > "$out/dotnet-info.txt"
+          sha256sum "$out/"*.tar.gz > "$out/SHA256SUMS"
+          test "$(stat -c %s "$out/dotnet-10-toolchain.tar.gz")" -lt 500000000
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: b3-compact-dotnet10
+          path: ${{ runner.temp }}/compact
+          compression-level: 0
+          retention-days: 3
