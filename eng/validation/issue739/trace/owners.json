@@ -1,0 +1,5 @@
+[
+  {"owner":"call-context sampled objects", "typeContains":["SharpLinkCallContext"]},
+  {"owner":"pending-request sampled objects", "typeContains":["PendingRequestTable", "PendingDeadlineScheduler"]},
+  {"owner":"pooled-buffer-writer sampled objects", "typeContains":["PooledByteBufferWriter"]}
+]

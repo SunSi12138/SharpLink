@@ -1,0 +1,108 @@
+name: Issue 739 allocation validation
+on:
+  push:
+    branches: ['validation/issue739-allocation-ledger-20261010']
+    paths: ['eng/validation/issue739/**', '.github/workflows/issue739-allocation-validation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  main-ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ISSUE739_SOURCE_SHA: f26629664ba7788dcd2c97f3e709411101944c04
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_TieredPGO: '1'
+      DOTNET_TieredCompilation: '1'
+      DOTNET_gcServer: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.102'
+      - name: Verify exact production source and build validation-only runner
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          dotnet build eng/validation/issue739/Issue739.csproj -c Release -m:1 -p:UseSharedCompilation=false
+      - name: Fresh-process main matrix and same-shape empty controls
+        run: python3 eng/validation/issue739/run.py --output artifacts/issue739/main --samples 5
+      - name: Separate read-completion diagnostic matrix
+        run: |
+          mkdir -p artifacts/issue739/read-diagnostic
+          for transport in tcp shm; do
+            for rpc in add oneway; do
+              for concurrency in 1 8 32 128; do
+                sample="$transport-$rpc-c$concurrency-diagnostic"
+                ISSUE739_DIAGNOSTIC=1 dotnet eng/validation/issue739/bin/Release/net10.0/SharpLink.Benchmarks.dll "$transport" "$rpc" "$concurrency" 131072 32768 "$sample" "artifacts/issue739/read-diagnostic/$sample.json"
+              done
+            done
+          done
+      - name: Operation-count boundary sensitivity
+        run: |
+          mkdir -p artifacts/issue739/boundary
+          for transport in tcp shm; do
+            for rpc in add oneway; do
+              for concurrency in 1 128; do
+                for sample in 1 2 3 4 5; do
+                  key="$transport-$rpc-c$concurrency-2N-$sample"
+                  dotnet eng/validation/issue739/bin/Release/net10.0/SharpLink.Benchmarks.dll "$transport" "$rpc" "$concurrency" 262144 32768 "$key" "artifacts/issue739/boundary/$key.json"
+                done
+              done
+            done
+          done
+      - name: Upload all raw evidence, including incomplete runs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-main-ledger-${{ github.sha }}
+          path: artifacts/issue739
+          if-no-files-found: error
+  diagnostic-traces:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      ISSUE739_SOURCE_SHA: f26629664ba7788dcd2c97f3e709411101944c04
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_TieredPGO: '1'
+      DOTNET_TieredCompilation: '1'
+      DOTNET_gcServer: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.102'
+      - name: Build pinned-source measurement and trace decoder
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          dotnet build eng/validation/issue739/Issue739.csproj -c Release -m:1 -p:UseSharedCompilation=false
+          dotnet build eng/validation/issue739/trace/TraceDecode.csproj -c Release -m:1 -p:UseSharedCompilation=false
+          python3 -m unittest discover -s eng/validation/issue739/trace -p 'test_*.py'
+          dotnet tool install dotnet-trace --tool-path "$PWD/artifacts/issue739/tools" --version 9.0.661903 --allow-roll-forward
+          dotnet --info > artifacts/issue739/dotnet-info.txt
+          lscpu > artifacts/issue739/cpu.txt
+      - name: Diagnostic sampled-owner subset (never primary timing)
+        run: |
+          for transport in tcp shm; do
+            for rpc in add oneway; do
+              for concurrency in 1 32; do
+                sample="$transport-$rpc-c$concurrency-trace"
+                python3 eng/validation/issue739/trace/collect.py --trace-tool "$PWD/artifacts/issue739/tools/dotnet-trace" --output "$PWD/artifacts/issue739/$sample.nettrace" --seconds 120 --max-mib 256 -- dotnet eng/validation/issue739/bin/Release/net10.0/SharpLink.Benchmarks.dll "$transport" "$rpc" "$concurrency" 100000 8192 "$sample" "artifacts/issue739/$sample.json"
+                dotnet eng/validation/issue739/trace/bin/Release/net10.0/TraceDecode.dll "artifacts/issue739/$sample.nettrace" "$sample" "artifacts/issue739/$sample"
+                python3 eng/validation/issue739/trace/summarize.py "artifacts/issue739/$sample" "artifacts/issue739/$sample.json"
+              done
+            done
+          done
+      - name: Upload raw traces and conservative owner ledger
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-diagnostic-traces-${{ github.sha }}
+          path: |
+            artifacts/issue739
+            !artifacts/issue739/tools
+          if-no-files-found: error
