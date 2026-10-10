@@ -13,6 +13,11 @@ using Microsoft.CodeAnalysis.MSBuild;
 
 // Run against the real solution via Roslyn/MSBuild.  This is a reference index,
 // not a proof of runtime reachability (reflection, external apps, DI, etc.).
+if (args.Length > 0 && string.Equals(args[0], "--probe-remove", StringComparison.Ordinal))
+    return RemovalProbe.Run(
+        args.Length > 1 ? args[1] : Directory.GetCurrentDirectory(),
+        args.Length > 2 ? args[2] : Path.Combine(Directory.GetCurrentDirectory(), "artifacts/issue-801-audit"));
+
 var root = Path.GetFullPath(args.Length > 0 ? args[0] : Directory.GetCurrentDirectory());
 var output = Path.GetFullPath(args.Length > 1 ? args[1] : Path.Combine(root, "artifacts/issue-801-audit"));
 Directory.CreateDirectory(output);
@@ -55,8 +60,13 @@ foreach (var project in projects)
         var path = Relative(root, document.FilePath ?? project.Name + "/" + document.Name);
         documents.Add((document, path, Scope(path)));
     }
+    // Source Generator output belongs to the consuming project. A generated
+    // file from a test/demo project is NOT proof of production reachability.
+    var projectScope = Scope(Relative(root, project.FilePath ?? project.Name));
+    var generatedScope = projectScope == "production" ? "generated"
+        : projectScope is "tests" or "benchmarks" or "examples" ? projectScope : "other";
     foreach (var document in generated)
-        documents.Add((document, "<generated>/" + project.Name + "/" + document.Name, "generated"));
+        documents.Add((document, "<generated>/" + project.Name + "/" + document.Name, generatedScope));
     Console.WriteLine($"PROJECT {project.Name}: {normal.Length} source docs; {generated.Count} generated docs");
 }
 
@@ -156,7 +166,7 @@ var result = new
     ElapsedSeconds = (int)stopwatch.Elapsed.TotalSeconds,
     Projects = projectStats,
     TotalSourceDocuments = documents.Count(d => d.Scope != "generated"),
-    TotalGeneratedDocuments = documents.Count(d => d.Scope == "generated"),
+    TotalGeneratedDocuments = documents.Count(d => d.Path.StartsWith("<generated>/", StringComparison.Ordinal)),
     TotalProductionFiles = sourceFiles.Length,
     IndexedProductionFiles = loadedFiles.Count,
     MissingProductionFiles = missingFiles,
@@ -189,7 +199,7 @@ markdown.AppendLine("# Issue #801 — dev full-solution symbol reference index")
 markdown.AppendLine();
 markdown.AppendLine("Dev base: " + (Environment.GetEnvironmentVariable("AUDIT_DEV_SHA") ?? "unknown"));
 markdown.AppendLine("Audit head: " + (Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "unknown"));
-markdown.AppendLine($"Projects {projects.Length}; source docs {documents.Count(d => d.Scope != "generated")}; generated docs {documents.Count(d => d.Scope == "generated")}");
+markdown.AppendLine($"Projects {projects.Length}; source docs {documents.Count(d => d.Scope != "generated")}; generated docs {documents.Count(d => d.Path.StartsWith("<generated>/", StringComparison.Ordinal))}");
 markdown.AppendLine($"Production source files indexed: {loadedFiles.Count}/{sourceFiles.Length}; declarations: {sorted.Length}; matched references: {referenceMatches}; elapsed seconds: {(int)stopwatch.Elapsed.TotalSeconds}");
 markdown.AppendLine("**Caution:** A/B/C are review candidates, NOT proof of dead code. This scans direct semantic references, not whole-program reachability, reflection, DI or external consumers.");
 markdown.AppendLine();
@@ -217,7 +227,7 @@ foreach (var group in sorted.Where(x => x.Tier.StartsWith("A-") || x.Tier.Starts
 }
 File.WriteAllText(Path.Combine(output, "report.md"), markdown.ToString());
 Console.WriteLine("=== ISSUE 801 AUDIT SUMMARY ===");
-Console.WriteLine($"Indexed source files: {loadedFiles.Count}/{sourceFiles.Length}; symbols: {sorted.Length}; generated docs: {documents.Count(d=>d.Scope == "generated")}");
+Console.WriteLine($"Indexed source files: {loadedFiles.Count}/{sourceFiles.Length}; symbols: {sorted.Length}; generated docs: {documents.Count(d=>d.Path.StartsWith("<generated>/", StringComparison.Ordinal))}");
 foreach (var group in sorted.GroupBy(x=>x.Tier)) Console.WriteLine(group.Key + ": " + group.Count());
 Console.WriteLine("Full evidence: " + output);
 
