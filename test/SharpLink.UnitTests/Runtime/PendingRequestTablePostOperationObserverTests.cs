@@ -237,6 +237,26 @@ public sealed class PendingRequestTablePostOperationObserverTests
     }
 
     [Test]
+    public async Task RegistrationCleanupMustNotReadAClockThatAlsoFailsAfterTimerArm()
+    {
+        var time = new ArmThenFaultTimeProvider();
+        using var table = PendingRequestTableTestFixture.Create(8, timeProvider: time);
+        var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(30), time);
+        time.FailNextTimerArmAndSubsequentTimestampReads();
+
+        var operation = await Task.Run(() => table.Rent(
+                Int32Codec.Instance, PendingCallKind.Unary, deadline,
+                CancellationToken.None, out _, NoopPostOperationObserver.Instance))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        var failure = await CaptureFailureAsync(operation.AsValueTask().AsTask());
+        Ensure(failure is InvalidOperationException { Message: "injected timer arm failure" },
+            "registration failure must survive an unusable clock during terminalization");
+        Ensure(table.Count == 0 && table.ActiveCount == 0,
+            "a published call must release capacity without resampling the failed TimeProvider");
+    }
+
+    [Test]
     public async Task StreamingRegistrationFailureMustCleanupAndStillPropagateRegistrationException()
     {
         using var owner = new ThrowingRegistrationOwner(blockUntilReleased: false, throwOnTerminal: false);
@@ -318,6 +338,48 @@ public sealed class PendingRequestTablePostOperationObserverTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class ArmThenFaultTimeProvider : TimeProvider
+    {
+        private int _failNextArm;
+        private int _failTimestampReads;
+
+        public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+        public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow();
+
+        public override long GetTimestamp()
+            => Volatile.Read(ref _failTimestampReads) == 0
+                ? TimeProvider.System.GetTimestamp()
+                : throw new InvalidOperationException("injected secondary timestamp failure");
+
+        public void FailNextTimerArmAndSubsequentTimestampReads()
+            => Interlocked.Exchange(ref _failNextArm, 1);
+
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = TimeProvider.System.CreateTimer(callback, state, dueTime, period);
+            return state is PendingDeadlineScheduler ? new FaultTimer(this, timer) : timer;
+        }
+
+        private sealed class FaultTimer(ArmThenFaultTimeProvider clock, ITimer inner) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                if (dueTime != Timeout.InfiniteTimeSpan &&
+                    Interlocked.Exchange(ref clock._failNextArm, 0) != 0)
+                {
+                    Volatile.Write(ref clock._failTimestampReads, 1);
+                    throw new InvalidOperationException("injected timer arm failure");
+                }
+
+                return inner.Change(dueTime, period);
+            }
+
+            public void Dispose() => inner.Dispose();
+            public ValueTask DisposeAsync() => inner.DisposeAsync();
+        }
     }
 
     private sealed class NoopStreamDispatcher : IStreamDispatcher
