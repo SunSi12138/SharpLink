@@ -25,7 +25,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ac903d63c541d972f4268bb404b3c09ce63776e4
+          ref: 146480a1e169bc4b2740c6ee7a07e7be98c8326a
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
@@ -86,7 +86,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ac903d63c541d972f4268bb404b3c09ce63776e4
+          ref: 146480a1e169bc4b2740c6ee7a07e7be98c8326a
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
