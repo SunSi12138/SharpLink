@@ -167,7 +167,7 @@ public sealed class PendingRequestTablePostOperationObserverTests
 
         var operation = await Task.Run(() => table.Rent(
                 Int32Codec.Instance, PendingCallKind.Unary, default,
-                CancellationToken.None, out _))
+                CancellationToken.None, out _, NoopPostOperationObserver.Instance))
             .WaitAsync(TimeSpan.FromSeconds(5));
         var failure = await CaptureFailureAsync(operation.AsValueTask().AsTask());
         Ensure(failure is InvalidOperationException { Message: "injected registration owner failure" },
@@ -185,7 +185,7 @@ public sealed class PendingRequestTablePostOperationObserverTests
         using var table = PendingRequestTableTestFixture.Create(8, owner);
         var renting = Task.Run(() => table.Rent(
             Int32Codec.Instance, PendingCallKind.Unary, default,
-            CancellationToken.None, out _));
+            CancellationToken.None, out _, NoopPostOperationObserver.Instance));
 
         Ensure(owner.RegistrationEntered.Wait(TimeSpan.FromSeconds(5)),
             "registration owner must block before MarkRegistered");
@@ -296,6 +296,19 @@ public sealed class PendingRequestTablePostOperationObserverTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class NoopPostOperationObserver : IPendingCallPostOperationObserver
+    {
+        public static readonly NoopPostOperationObserver Instance = new();
+
+        public void OnResponseObserved()
+        {
+        }
+
+        public void OnPendingCallCompleted(in PendingCallCompletion completion)
+        {
+        }
     }
 
     private sealed class TerminalCheckingObserver : IPendingCallPostOperationObserver
