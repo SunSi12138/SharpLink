@@ -3,6 +3,7 @@ set -euo pipefail
 BASE=5560787e64875b7b86389af7cbefe25df7277bd9
 ROOT="$PWD/artifacts/issue736"
 mkdir -p "$ROOT/builds" "$ROOT/logs"
+python3 eng/perf/issue736/test_summarize.py > "$ROOT/logs/validator-tests.log"
 printf '%s\n' "$BASE" > "$ROOT/base.txt"
 git rev-parse HEAD > "$ROOT/candidate.txt"
 dotnet --info > "$ROOT/dotnet-info.txt"
@@ -27,19 +28,37 @@ for arm in baseline candidate lazy; do
 done
 CPU=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
 echo "$CPU" > "$ROOT/affinity.txt"
+python3 - "$ROOT" <<'PYVERIFY'
+import pathlib, sys, hashlib
+root=pathlib.Path(sys.argv[1])
+source_lines=(root/'source-hashes.txt').read_text().splitlines()
+probe=[line.split()[0] for line in source_lines if line.endswith('/Program.cs')]
+assert len(probe)==3 and len(set(probe))==1, 'Harness source differs across arms'
+for kind, name in [('jit','SharpLink.Runtime.dll'),('native','SharpLink.UnitTests')]:
+    digests=[hashlib.sha256((root/'builds'/f'{kind}-{arm}'/name).read_bytes()).hexdigest() for arm in ['baseline','candidate','lazy']]
+    assert len(set(digests))==3, f'Unexpected identical {kind} arm binaries'
+PYVERIFY
 for mode in fullopt pgo native; do
   mkdir -p "$ROOT/$mode"
-  for pair in 1 2 3 4; do
-    if (( pair % 2 )); then arms="baseline candidate lazy"; else arms="lazy candidate baseline"; fi
+  for pair in 1 2 3 4 5 6; do
+    case "$pair" in
+      1) arms="baseline candidate lazy";;
+      2) arms="candidate lazy baseline";;
+      3) arms="lazy baseline candidate";;
+      4) arms="baseline lazy candidate";;
+      5) arms="candidate baseline lazy";;
+      6) arms="lazy candidate baseline";;
+    esac
+    echo "$mode $pair $arms" >> "$ROOT/execution-order.txt"
     for arm in $arms; do
       if [[ "$mode" == native ]]; then
         taskset -c "$CPU" "$ROOT/builds/native-$arm/SharpLink.UnitTests" > "$ROOT/$mode/$arm-$pair.json"
       elif [[ "$mode" == pgo ]]; then
-        DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 taskset -c "$CPU" dotnet "$ROOT/builds/jit-$arm/SharpLink.UnitTests.dll" > "$ROOT/$mode/$arm-$pair.json"
+        ISSUE736_WARMUP_MS=1000 DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 taskset -c "$CPU" dotnet "$ROOT/builds/jit-$arm/SharpLink.UnitTests.dll" > "$ROOT/$mode/$arm-$pair.json"
       else
         DOTNET_TieredCompilation=0 taskset -c "$CPU" dotnet "$ROOT/builds/jit-$arm/SharpLink.UnitTests.dll" > "$ROOT/$mode/$arm-$pair.json"
       fi
     done
   done
-  python3 eng/perf/issue736/summarize.py "$ROOT/$mode" > "$ROOT/summary-$mode.txt"
+  python3 eng/perf/issue736/summarize.py "$ROOT/$mode" "$mode" > "$ROOT/summary-$mode.txt"
 done

@@ -8,7 +8,7 @@ permissions:
 jobs:
   canonical-fast:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     env:
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       TUNIT_MAX_PARALLEL_TESTS: '8'
@@ -40,3 +40,36 @@ jobs:
           name: issue736-storage-${{ github.sha }}
           path: artifacts/issue736/
           if-no-files-found: error
+
+  allocation-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - uses: ./.github/actions/allocation-gate
+        with:
+          artifact-directory: artifacts/perf/allocation-gate
+          negative-control: 'true'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: issue736-allocation-${{ github.sha }}
+          path: artifacts/perf/allocation-gate
+          if-no-files-found: error
+
+  transport-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - run: dotnet build test/SharpLink.IntegrationTests -c Release -v minimal
+      - name: Integration transport and streaming regression tests
+        run: dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1 --timeout 120s
+      - name: NativeAOT transport and topology regression smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
