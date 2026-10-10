@@ -641,10 +641,10 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             _owner.OnPendingCallCapacityIdle();
     }
 
-    private void CompleteRegistrationIfDisposed(PendingCall call)
+    private void CompleteRegistrationIfDisposed(long requestId)
     {
         if (Volatile.Read(ref _disposed) != 0)
-            TryComplete(call.Id, PendingCallCompletionReason.ConnectionClosed);
+            TryComplete(requestId, PendingCallCompletionReason.ConnectionClosed);
     }
 
     private bool TryTakeMatchingCall(

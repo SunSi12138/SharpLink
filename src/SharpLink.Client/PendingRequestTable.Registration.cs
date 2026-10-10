@@ -68,7 +68,7 @@ internal sealed partial class PendingRequestTable
                         registrationPublished = true;
                         try
                         {
-                            OnRegistered(call);
+                            OnRegistered(call, deadline);
                         }
                         catch (Exception registrationFailure)
                         {
@@ -88,9 +88,9 @@ internal sealed partial class PendingRequestTable
                             throw;
                         }
 
-                        if (call.CancellationToken.IsCancellationRequested)
-                            TryComplete(call.Id, PendingCallCompletionReason.UserCancellation);
-                        CompleteRegistrationIfDisposed(call);
+                        if (cancellationToken.IsCancellationRequested)
+                            TryComplete(id, PendingCallCompletionReason.UserCancellation);
+                        CompleteRegistrationIfDisposed(id);
                         return true;
                     }
 
@@ -153,7 +153,7 @@ internal sealed partial class PendingRequestTable
                         published = true;
                         try
                         {
-                            OnRegistered(call);
+                            OnRegistered(call, deadline);
                         }
                         catch (Exception registrationFailure)
                         {
@@ -163,9 +163,9 @@ internal sealed partial class PendingRequestTable
                             throw;
                         }
 
-                        if (call.CancellationToken.IsCancellationRequested)
-                            TryComplete(call.Id, PendingCallCompletionReason.UserCancellation);
-                        CompleteRegistrationIfDisposed(call);
+                        if (cancellationToken.IsCancellationRequested)
+                            TryComplete(id, PendingCallCompletionReason.UserCancellation);
+                        CompleteRegistrationIfDisposed(id);
                         return true;
                     }
 
@@ -233,7 +233,7 @@ internal sealed partial class PendingRequestTable
         }
     }
 
-    private void OnRegistered(PendingCall call)
+    private void OnRegistered(PendingCall call, RpcDeadline deadline)
     {
         // A competing completion may have already claimed the slot and be waiting inside
         // WaitUntilRegistered(). Always publish the barrier, including when an extension
@@ -251,7 +251,7 @@ internal sealed partial class PendingRequestTable
         // A timer failure after publication is caught by the registering caller, which
         // terminalizes the pending slot. Keep cancellation/Dispose terminal transitions
         // outside that registration-only catch so cleanup invariant exceptions propagate.
-        if (call.Deadline.HasValue)
-            _deadlineScheduler.Observe(call.Deadline);
+        if (deadline.HasValue)
+            _deadlineScheduler.Observe(deadline);
     }
 }
