@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
 
@@ -163,6 +164,56 @@ foreach (var (document, path, scope) in documents)
     catch (Exception e) { messages.Add("REFERENCE " + path + ": " + e.Message); }
 }
 Console.WriteLine($"REFERENCES: {referenceMatches} matched ({fallbackMatches} source-location fallbacks) after {stopwatch.Elapsed}");
+
+// A direct semantic-reference graph cannot see Type.GetMethod("Name") and
+// equivalent reflection lookups. Protect these members from automatic deletion
+// but keep the evidence distinct from direct compiler-bound references.
+var reflectiveMethods = new HashSet<string>(StringComparer.Ordinal)
+{
+    "GetMethod", "GetField", "GetProperty", "GetEvent", "GetNestedType"
+};
+var membersBySimpleName = symbols.Values
+    .GroupBy(v => v.Name, StringComparer.Ordinal)
+    .ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
+foreach (var (document, path, scope) in documents)
+{
+    if (path.StartsWith("<generated>/", StringComparison.Ordinal))
+        continue;
+    try
+    {
+        var rootSyntax = await document.GetSyntaxRootAsync();
+        if (rootSyntax is null) continue;
+        foreach (var call in rootSyntax.DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (call.Expression is not MemberAccessExpressionSyntax access ||
+                !reflectiveMethods.Contains(access.Name.Identifier.ValueText) ||
+                call.ArgumentList.Arguments.FirstOrDefault()?.Expression is not LiteralExpressionSyntax literal ||
+                !literal.IsKind(SyntaxKind.StringLiteralExpression))
+                continue;
+            if (!membersBySimpleName.TryGetValue(literal.Token.ValueText, out var targets))
+                continue;
+            var kind = access.Name.Identifier.ValueText;
+            var line = literal.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            foreach (var target in targets)
+            {
+                if (kind == "GetMethod" && target.Kind != "Method" ||
+                    kind == "GetField" && target.Kind != "Field" ||
+                    kind == "GetProperty" && target.Kind != "Property" ||
+                    kind == "GetNestedType" && target.Kind != "NamedType" ||
+                    kind == "GetEvent" && target.Kind != "Event")
+                    continue;
+                var evidence = scope + ":" + path + ":" + line + ":" + kind;
+                if (!target.ReflectionStringReferences.Contains(evidence))
+                    target.ReflectionStringReferences.Add(evidence);
+                if (target.ProtectedRoot.Length == 0)
+                    target.ProtectedRoot = "Reflection member-name string lookup in repository (inspect before removing)";
+            }
+        }
+    }
+    catch (Exception e) { messages.Add("REFLECTION " + path + ": " + e.Message); }
+}
+Console.WriteLine("REFLECTION LOOKUPS: protected " +
+    symbols.Values.Count(v => v.ReflectionStringReferences.Count != 0) + " declarations");
 
 var sourceFiles = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
     .Where(p => !p.Replace('\\','/').Contains("/obj/") && !p.Replace('\\','/').Contains("/bin/"))
@@ -363,6 +414,7 @@ sealed class SymbolRecord
     public int Examples {get;set;}
     public int Other {get;set;}
     public List<Reference> SampleReferences {get;set;} = new();
+    public List<string> ReflectionStringReferences {get;set;} = new();
     [System.Text.Json.Serialization.JsonIgnore]
     public HashSet<string> Seen {get;} = new(StringComparer.Ordinal);
 }
