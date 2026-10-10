@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded, validation-only .NET 11 lowering pilot. No stable or NativeAOT claim."""
+"""Bounded .NET 11 lowering studies; pilot or preregistered repeated stages. No NativeAOT claim."""
 import argparse
 import hashlib
 import json
@@ -26,7 +26,9 @@ PINNED_ENV = {"DOTNET_TieredPGO": "1", "DOTNET_TieredCompilation": "1", "DOTNET_
               "DOTNET_gcServer": "0", "COMPlus_gcServer": "0", "DOTNET_ROLL_FORWARD": "Disable",
               "DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE": "1",
               "ISSUE739_SOURCE_SHA": SOURCE}
-TRADITIONAL_PROJECTS = ["Driver", "Calibration", "Metadata", "SharpLink.Generator"]
+READER_CASES = ["reader-wrapped-sync", "reader-direct-sync", "reader-wrapped-incomplete", "reader-direct-incomplete",
+                "reader-wrapped-incomplete-burst32", "reader-direct-incomplete-burst32"]
+TRADITIONAL_PROJECTS = ["Driver", "Calibration", "ReaderControl", "Metadata", "SharpLink.Generator"]
 CREDENTIAL_ENVIRONMENT_NAMES = {"GITHUB_TOKEN", "GH_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
                                 "VSS_NUGET_EXTERNAL_FEED_ENDPOINTS", "NUGET_AUTH_TOKEN", "SYSTEM_ACCESSTOKEN"}
 
@@ -222,19 +224,37 @@ def validate_sample(row, category, case, sample, operations, warmup, expected_ha
     require(type(row["bytes"]) is int and row["bytes"] >= 0, "Invalid allocation")
     require(math.isfinite(row["bytesPerOperation"]) and row["bytesPerOperation"] == row["bytes"] / operations, "Allocation denominator mismatch")
     require(math.isfinite(row["elapsedSeconds"]) and row["elapsedSeconds"] > 0, "Invalid elapsed time")
-    if category == "calibration":
+    if category in ("calibration", "reader"):
         require(row["kind"] == case and row["completed"] == operations and row["expectedRuntime"] == ENVIRONMENT_VERSION, "Calibration identity/completion mismatch")
         require(row["threadStart"] == row["threadEnd"], "Calibration changed threads")
-        expected_incomplete = operations if case in ("logical-incomplete-wrapper", "logical-completion-control") else 0
+        expected_incomplete = operations if case in ("logical-incomplete-wrapper", "logical-completion-control") or category == "reader" and "incomplete" in case else 0
         require(row["startedIncomplete"] == expected_incomplete, "Incomplete count mismatch")
         require(type(row["currentThreadBytes"]) is int and row["currentThreadBytes"] >= 0, "Invalid current-thread bytes")
         require(math.isfinite(row["currentThreadBytesPerOperation"]) and row["currentThreadBytesPerOperation"] == row["currentThreadBytes"] / operations,
                 "Current-thread denominator mismatch")
         if case.startswith("context-flow-"):
             require(row["details"]["flowCallbackChecks"] == operations, "Flow context checks mismatch")
+        if category == "reader":
+            require(case in READER_CASES, "Unknown reader case")
+            width = 32 if case.endswith("-burst32") else 1
+            wrapped, incomplete = "wrapped" in case, "incomplete" in case
+            require(row["burstWidth"] == width and row["bursts"] == operations // width and operations % width == warmup % width == 0, "Reader burst denominator mismatch")
+            require(row["wrapped"] is wrapped and row["forcedIncomplete"] is incomplete, "Reader wrapper/completion identity mismatch")
+            for name in ("checks", "completed", "reads", "resets", "sourceCompletions", "sourceGetResults", "advances"):
+                require(type(row[name]) is int and row[name] == operations, "Reader lifecycle counter mismatch: " + name)
+            expected_registrations = operations if wrapped and incomplete else 0
+            require(row["continuationRegistrations"] == row["expectedContinuationRegistrations"] == expected_registrations, "Reader continuation count mismatch")
+            require(row["sameThreadVerified"] is True and row["immediateCompletionVerified"] is True, "Reader scheduling mismatch")
+            require(type(row["tokenWraps"]) is int and row["tokenWraps"] >= 0, "Reader token-wrap diagnostic invalid")
+            for name in ("checks", "completed", "reads", "resets", "sourceCompletions", "sourceGetResults", "advances"):
+                require(type(row["warmupCounts"][name]) is int and row["warmupCounts"][name] == warmup, "Reader warmup lifecycle mismatch: " + name)
+            require(row["warmupCounts"]["startedIncomplete"] == (warmup if incomplete else 0), "Reader warmup input mismatch")
+            require(row["warmupCounts"]["continuationRegistrations"] == (warmup if wrapped and incomplete else 0), "Reader warmup continuation mismatch")
     else:
-        transport, kind = case.split("-")
-        require(row["transport"] == transport and row["kind"] == kind and row["concurrency"] == 1 and row["connectionCount"] == 1,
+        parts = case.split("-")
+        transport, kind = parts[:2]
+        concurrency = int(parts[2][1:]) if len(parts) == 3 else 1
+        require(row["transport"] == transport and row["kind"] == kind and row["concurrency"] == concurrency and row["connectionCount"] == 1,
                 "Tiny shape mismatch")
         expected = operations + 1 if kind == "add" else 1
         require(row["received"] == row["expectedReceived"] == expected, "Server receive/sentinel mismatch")
@@ -245,23 +265,78 @@ def validate_sample(row, category, case, sample, operations, warmup, expected_ha
         require(row["ticksEnd"] > row["ticksStart"] and row["stopwatchFrequency"] > 0 and row["gen0"] >= 0, "Invalid timing/GC counters")
 
 
+def stage_plan(stage):
+    require(stage in ("pilot", "stable-tiny", "stable-micro"), "Unknown stage")
+    if stage == "pilot":
+        cases = [("tiny", x) for x in ("tcp-add", "tcp-control", "shm-add", "shm-control")]
+        cases += [("calibration", x) for x in CALIBRATIONS]
+    elif stage == "stable-tiny":
+        cases = [("tiny", f"{transport}-{kind}-c{concurrency}") for transport in ("tcp", "shm")
+                 for kind in ("add", "control") for concurrency in (1, 32, 128)]
+    else:
+        cases = [("calibration", x) for x in CALIBRATIONS] + [("reader", x) for x in READER_CASES]
+    cycles = 1 if stage == "pilot" else 3
+    sequence = [("ABBA", variant) for _ in range(cycles) for variant in ("A", "B", "B", "A")]
+    sequence += [("AA", "A"), ("AA", "A")]
+    return cases, sequence, (1920 if stage == "stable-tiny" else 1100)
+
+
+def cv(values):
+    require(len(values) >= 2 and all(math.isfinite(value) and value >= 0 for value in values), "Invalid CV inputs")
+    mean = statistics.mean(values)
+    return statistics.stdev(values) / mean if mean else 0.0
+
+
+def summarize_cell(rows, category, case, stage, sequence):
+    require([row["variant"] for row in rows] == [item[1] for item in sequence], "Balance mismatch")
+    require([row["group"] for row in rows] == [item[0] for item in sequence], "Group balance mismatch")
+    cohorts = {variant: [row for row in rows if row["group"] == "ABBA" and row["variant"] == variant] for variant in ("A", "B")}
+    allocation_cv = {variant: cv([row["bytesPerOperation"] for row in cohort]) for variant, cohort in cohorts.items()}
+    qps_cv = {variant: cv([row["qps"] for row in cohort]) for variant, cohort in cohorts.items()} if category == "tiny" else None
+    counts_qualify = stage != "pilot" and all(len(cohort) >= 6 for cohort in cohorts.values())
+    allocation_stable = counts_qualify and all(value <= .05 for value in allocation_cv.values())
+    qps_stable = counts_qualify and all(value <= .10 for value in qps_cv.values()) if qps_cv is not None else None
+    stable = allocation_stable and (qps_stable is not False)
+    return {"category": category, "case": case,
+            "rawBytesPerOperation": [{key: row[key] for key in ("variant", "group", "position", "bytesPerOperation", "processId")} for row in rows],
+            "abbaMedian": {variant: statistics.median(row["bytesPerOperation"] for row in cohort) for variant, cohort in cohorts.items()},
+            "abbaSampleCounts": {variant: len(cohort) for variant, cohort in cohorts.items()},
+            "abbaMetricMedians": {variant: {metric: statistics.median(row[metric] for row in cohort)
+                                           for metric in (["bytesPerOperation", "qps", "cpuNanosecondsPerOperation", "p50Nanoseconds", "p99Nanoseconds"]
+                                                          if category == "tiny" else ["bytesPerOperation", "currentThreadBytesPerOperation"])}
+                                  for variant, cohort in cohorts.items()},
+            "allocationCv": allocation_cv, "qpsCv": qps_cv,
+            "allocationStable": allocation_stable, "qpsStable": qps_stable, "stable": stable,
+            "sameBinaryAA": [{key: row[key] for key in ("sample", "processId", "bytesPerOperation")} | ({"qps": row["qps"]} if category == "tiny" else {}) for row in rows if row["group"] == "AA"],
+            "status": "pilot-only; two ABBA samples per variant, not stable acceptance" if stage == "pilot" else
+                      "repeatability-gates-passed; no nonregression inference" if stable else "repeatability-gates-not-met; retain all samples"}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
     parser.add_argument("--dotnet", default="dotnet")
-    parser.add_argument("--operations", type=int, default=8192)
-    parser.add_argument("--warmup", type=int, default=2048)
+    parser.add_argument("--stage", choices=("pilot", "stable-tiny", "stable-micro"), default="pilot")
+    parser.add_argument("--operations", type=int)
+    parser.add_argument("--warmup", type=int)
     parser.add_argument("--calibration-operations", type=int, default=131072)
     parser.add_argument("--calibration-warmup", type=int, default=16384)
     args = parser.parse_args()
-    require(1 <= args.operations <= 32768 and 1 <= args.warmup <= 8192, "Tiny counts exceed pilot bound")
+    cases, sequence, budget = stage_plan(args.stage)
+    args.operations = args.operations if args.operations is not None else (8192 if args.stage == "pilot" else 131072)
+    args.warmup = args.warmup if args.warmup is not None else (2048 if args.stage == "pilot" else 32768)
+    if args.stage == "pilot":
+        require(1 <= args.operations <= 32768 and 1 <= args.warmup <= 8192, "Tiny counts exceed pilot bound")
+    else:
+        require(args.operations == 131072 and args.warmup == 32768, "Repeated tiny counts are preregistered")
+        require(args.calibration_operations == 131072 and args.calibration_warmup == 16384, "Repeated micro counts are preregistered")
     require(1 <= args.calibration_operations <= 262144 and 1 <= args.calibration_warmup <= 32768, "Calibration counts exceed pilot bound")
     here = Path(__file__).resolve().parent
     root = here.parents[3]
     output = Path(args.output).resolve()
     require(not output.exists() or not any(output.iterdir()), "Use a fresh output directory")
     output.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + 1100
+    deadline = time.monotonic() + budget
     env = {key: value for key, value in os.environ.items() if not key.startswith(("DOTNET_", "COMPlus_", "ISSUE739_"))
            and key.upper() not in CREDENTIAL_ENVIRONMENT_NAMES}
     env.update(PINNED_ENV)
@@ -289,17 +364,23 @@ def main():
         require(result.returncode == 0, "Command failed; inspect " + log_name)
         return (output / log_name).read_text()
     provenance = {"schemaVersion": 1, "status": "started", "sourceSha": SOURCE, "sdkPin": SDK, "runtimePin": RUNTIME,
-                  "interpretation": "JIT pilot; one ABBA and same-binary A/A per shape; no stability/causal cross-runtime/NativeAOT claim",
+                  "stage": args.stage,
+                  "interpretation": "JIT same-host stage; " + ("one ABBA" if args.stage == "pilot" else "three ABBA cycles") + "; same-binary A/A retained separately; repeatability is not nonregression or cross-runtime/NativeAOT evidence",
+                  "samplePlan": {"cases": cases, "sequence": sequence, "expectedSamples": len(cases) * len(sequence),
+                                 "tinyOperations": args.operations, "tinyWarmup": args.warmup,
+                                 "microOperations": args.calibration_operations, "microWarmup": args.calibration_warmup},
+                  "repeatabilityPolicy": {"ABBA_samplesPerVariantMinimum": 6, "allocationCvMaximum": .05, "qpsCvMaximum": .10,
+                                          "sameBinaryAA": "reported separately; never pooled into ABBA acceptance", "crossJobComparison": "not valid for stage deltas"},
                   "environment": PINNED_ENV,
                   "credentialVariableNamesRemoved": sorted(key for key in os.environ if key.upper() in CREDENTIAL_ENVIRONMENT_NAMES),
                   "productionProjectsToggled": PRODUCTION_PROJECTS,
                   "fixtureProjectToggled": "Fixture", "traditionalProjects": TRADITIONAL_PROJECTS,
-                  "driverScope": "independent Add-only fixture; fixed traditional drivers; same generator and BCL",
+                  "driverScope": "independent Add-only fixture; A traditional is a comparison control, B production+generated fixture runtime-async on; all measurement consumers stay traditional; original dev source/config untouched",
                   "restorePolicy": "RestoreEnablePackagePruning=false identically in both projected builds; original PackageReferences unchanged; framework asset conflict resolution still applies",
                   "readerLoweringPolicy": "exact-RC1 observed behavior: traditional pooled-builder method in A, runtime-async method with same retained builder attribute in B; no production opt-out attribute added",
                   "readerOptOutReference": "https://github.com/dotnet/runtime/pull/128943 adds separate RuntimeAsyncMethodGeneration(false) to BCL methods; not a universal AsyncMethodBuilder opt-out rule",
                   "driverBinaryPolicy": "one fixed traditional consumer compiled against A, reused in B; independently built B driver archived; only driver DLL/PDB/deps/runtimeconfig/apphost copied",
-                  "sampleTimeoutSeconds": 60, "totalScriptBudgetSeconds": 1100,
+                  "sampleTimeoutSeconds": 60, "totalScriptBudgetSeconds": budget,
                   "outlierRemoval": "none", "rawControlSubtraction": False,
                   "cpuInfo": Path("/proc/cpuinfo").read_text() if Path("/proc/cpuinfo").exists() else platform.processor(),
                   "os": platform.platform()}
@@ -344,6 +425,8 @@ def main():
             projects = {"tiny": target / relative / "Driver/Driver.csproj",
                         "calibration": target / relative.parent / "calibration/Calibration.csproj",
                         "metadata": target / relative / "Metadata/Metadata.csproj"}
+            if args.stage == "stable-micro":
+                projects["reader"] = target / relative / "ReaderControl/ReaderControl.csproj"
             for label, project in projects.items():
                 build_log = command([args.dotnet, "build", project, "-c", "Release", "--nologo", "-v:diag",
                          "-bl:" + str(output / f"{variant}-{label}.binlog")], target, f"{variant}-{label}-build.log")
@@ -356,7 +439,7 @@ def main():
             if variant == "B":
                 archived = output / "independent-B-driver-artifacts"
                 provenance["independentBDriverHashes"] = {}
-                for label in ("tiny", "calibration"):
+                for label in ("tiny", "calibration", "reader") if args.stage == "stable-micro" else ("tiny", "calibration"):
                     destination = archived / label
                     destination.mkdir(parents=True)
                     allowed_names = {"SharpLink.Benchmarks.dll", "SharpLink.Benchmarks.pdb", "SharpLink.Benchmarks.deps.json",
@@ -388,6 +471,9 @@ def main():
                     target, f"{variant}-metadata.log", 60)
             command([args.dotnet, "exec", "--fx-version", RUNTIME, executables["metadata"], output / f"{variant}-calibration-metadata.json", executables["calibration"]],
                     target, f"{variant}-calibration-metadata.log", 60)
+            if args.stage == "stable-micro":
+                command([args.dotnet, "exec", "--fx-version", RUNTIME, executables["metadata"], output / f"{variant}-reader-metadata.json", executables["reader"]],
+                        target, f"{variant}-reader-metadata.log", 60)
         require(provenance["generatorHashes"]["A"] == provenance["generatorHashes"]["B"], "Generator binary changed")
         require(provenance["packageGraphs"]["A"] == provenance["packageGraphs"]["B"], "Resolved package graph differs")
         require(provenance["generatedSourceHashes"]["A"], "No emitted fixture generated source")
@@ -411,12 +497,26 @@ def main():
             calibration_proof.append(report["assemblies"][0]["sha256"])
         require(calibration_proof[0] == calibration_proof[1], "Calibration executable changed")
         proof["calibrationSha256"] = calibration_proof[0]
+        if args.stage == "stable-micro":
+            reader_hashes = []
+            for variant in ("A", "B"):
+                report = json.loads((output / f"{variant}-reader-metadata.json").read_text())
+                methods = report["assemblies"][0]["methods"]
+                require(not any(method["runtimeAsync"] for method in methods), "Reader driver must remain traditional")
+                require(all(traditional(method) for method in methods if method["stateMachineType"] is not None), "Reader state-machine metadata mismatch")
+                reader_hashes.append(report["assemblies"][0]["sha256"])
+                reader = provenance["binaryHashes"][variant]["reader"]
+                tiny = provenance["binaryHashes"][variant]["tiny"]
+                require("SharpLink.Runtime.dll" in reader and "SharpLink.Abstractions.dll" in reader, "Reader lacks inspected dependencies")
+                for filename in reader.keys() & tiny.keys():
+                    if filename.endswith(".dll") and filename != "SharpLink.Benchmarks.dll":
+                        require(reader[filename] == tiny[filename], "Reader dependency differs from metadata-inspected variant: " + filename)
+            require(reader_hashes[0] == reader_hashes[1], "Reader fixed consumer bytes differ")
+            proof["readerDriverSha256"] = reader_hashes[0]
+            proof["readerDriverLowering"] = "synchronous fixed consumer; no runtime-async methods; eligible async methods, if present, retain traditional state-machine metadata"
         write_json(output / "lowering-proof.json", proof)
         provenance["status"] = "lowering-verified-before-sampling"
         write_json(output / "provenance.json", provenance)
-        cases = [("tiny", x) for x in ("tcp-add", "tcp-control", "shm-add", "shm-control")]
-        cases += [("calibration", x) for x in CALIBRATIONS]
-        sequence = [("ABBA", "A"), ("ABBA", "B"), ("ABBA", "B"), ("ABBA", "A"), ("AA", "A"), ("AA", "A")]
         for position, (group, variant) in enumerate(sequence, 1):
             ordered = cases if position % 2 else list(reversed(cases))
             for category, case in ordered:
@@ -426,35 +526,41 @@ def main():
                 sample = f"{category}-{case}-{group}-{position}-{variant}"
                 destination = output / (sample + ".sample.json")
                 argv = [args.dotnet, "exec", "--fx-version", RUNTIME, data["exe"][category]]
-                argv += case.split("-") if category == "tiny" else [case]
+                argv += case.split("-")[:2] if category == "tiny" else [case]
                 argv += [str(operations), str(warmup), sample, str(destination), ENVIRONMENT_VERSION]
+                if category == "tiny" and args.stage != "pilot":
+                    argv.append(case.split("-")[2][1:])
                 command(argv, data["root"], sample + ".log", 60)
                 row = json.loads(destination.read_text())
                 expected_hash = provenance["binaryHashes"][variant][category]["SharpLink.Benchmarks.dll"]
                 validate_sample(row, category, case, sample, operations, warmup, expected_hash)
+                if category == "reader":
+                    require(row["runtimeAssemblySha256"] == provenance["binaryHashes"][variant]["reader"]["SharpLink.Runtime.dll"], "Executed reader production dependency mismatch")
+                    require(row["corelibSha256"] == provenance["runtimeHashes"]["System.Private.CoreLib.dll"] and Path(row["corelibPath"]).parent.name == RUNTIME, "Reader actual framework identity mismatch")
                 require(row["processId"] not in {x["processId"] for x in results}, "Sample PID reused")
                 results.append({**row, "category": category, "case": case, "variant": variant,
-                                "group": group, "position": position, "sampleSha256": sha(destination)})
+                                "group": group, "position": position, "cycle": (position - 1) // 4 + 1 if group == "ABBA" else None, "sampleSha256": sha(destination)})
                 write_json(output / "completed-samples.json", results)
                 print(sample, f'{row["bytesPerOperation"]:.6f} B/op', flush=True)
         summaries = []
         for category, case in cases:
             rows = [x for x in results if x["category"] == category and x["case"] == case]
-            require([x["variant"] for x in rows] == ["A", "B", "B", "A", "A", "A"], "Balance mismatch")
-            summaries.append({"category": category, "case": case,
-                              "rawBytesPerOperation": [{key: row[key] for key in ("variant", "group", "position", "bytesPerOperation", "processId")} for row in rows],
-                              "abbaMedian": {variant: statistics.median(x["bytesPerOperation"] for x in rows if x["group"] == "ABBA" and x["variant"] == variant) for variant in ("A", "B")},
-                              "stable": False, "status": "pilot-only; two ABBA samples per variant, not stable acceptance"})
+            summaries.append(summarize_cell(rows, category, case, args.stage, sequence))
+        require(len(results) == len(cases) * len(sequence), "Incomplete preregistered matrix")
         assert_original(root)
         require(provenance["originalHashes"] == {name: sha(root / name) for name in names}, "Original build inputs changed during pilot")
         # Detect post-proof mutation before declaring success, including all executed DLL/config dependencies.
         for variant, data in variant_data.items():
             for label, directory in data["dirs"].items():
                 require(binary_manifest(directory) == provenance["binaryHashes"][variant][label], "Binaries/config changed after proof")
-        provenance["status"] = "complete-pilot-only"
+        provenance["status"] = "complete-pilot-only" if args.stage == "pilot" else "complete-repeated-stage"
         write_json(output / "summary.json", {"schemaVersion": 1, "status": provenance["status"],
                    "interpretation": provenance["interpretation"], "sourceSha": SOURCE, "samples": len(results),
-                   "stableAcceptance": False, "nativeAot": "not attempted; reflection calibration is JIT only", "cases": summaries})
+                   "stage": args.stage, "stableAcceptance": args.stage != "pilot" and all(row["stable"] for row in summaries),
+                   "stableAcceptanceMeaning": "repeatability gates only; does not accept a performance regression or production change",
+                   "allAllocationStable": all(row["allocationStable"] for row in summaries),
+                   "allQpsStable": all(row["qpsStable"] for row in summaries) if args.stage == "stable-tiny" else None,
+                   "nativeAot": "not attempted; reflection calibration is JIT only", "cases": summaries})
     except Exception as error:
         provenance["status"] = "failed-closed"
         provenance["failure"] = str(error)
@@ -483,6 +589,8 @@ def main():
                 project_directories = {"tiny": target / relative / "Driver",
                                        "calibration": target / relative.parent / "calibration",
                                        "metadata": target / relative / "Metadata"}
+                if args.stage == "stable-micro":
+                    project_directories["reader"] = target / relative / "ReaderControl"
                 for label, project_directory in project_directories.items():
                     source_directory = project_directory / "bin/Release/net11.0"
                     for source in sorted(source_directory.rglob("*")):

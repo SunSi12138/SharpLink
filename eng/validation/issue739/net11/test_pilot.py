@@ -43,6 +43,53 @@ def calibration_row():
 
 
 class Gates(unittest.TestCase):
+    def test_stage_plans_preserve_pilot_and_bound_repeated_matrices(self):
+        for stage, cells, expected, budget in (("pilot", 14, 84, 1100), ("stable-tiny", 12, 168, 1920), ("stable-micro", 16, 224, 1100)):
+            cases, sequence, actual_budget = pilot.stage_plan(stage)
+            self.assertEqual((len(cases), len(cases) * len(sequence), actual_budget), (cells, expected, budget))
+            self.assertEqual([value for group, value in sequence if group == "ABBA"], list("ABBA") * (1 if stage == "pilot" else 3))
+            self.assertEqual(sequence[-2:], [("AA", "A"), ("AA", "A")])
+        self.assertIn(("tiny", "shm-add-c128"), pilot.stage_plan("stable-tiny")[0])
+        self.assertIn(("reader", "reader-wrapped-incomplete-burst32"), pilot.stage_plan("stable-micro")[0])
+
+    def test_repeatability_requires_six_and_separates_allocation_qps(self):
+        for stage in ("pilot", "stable-tiny"):
+            _, sequence, _ = pilot.stage_plan(stage)
+            rows = [{"variant": variant, "group": group, "position": index + 1, "processId": index + 1,
+                     "sample": str(index), "bytesPerOperation": 100, "qps": 100, "cpuNanosecondsPerOperation": 1, "p50Nanoseconds": 1, "p99Nanoseconds": 2} for index, (group, variant) in enumerate(sequence)]
+            result = pilot.summarize_cell(rows, "tiny", "tcp-add-c1", stage, sequence)
+            self.assertEqual(result["stable"], stage != "pilot")
+            if stage != "pilot":
+                rows[1]["qps"] = 300
+                result = pilot.summarize_cell(rows, "tiny", "tcp-add-c1", stage, sequence)
+                self.assertTrue(result["allocationStable"])
+                self.assertFalse(result["qpsStable"])
+                self.assertFalse(result["stable"])
+                rows[-1]["bytesPerOperation"] = 9000
+                result = pilot.summarize_cell(rows, "tiny", "tcp-add-c1", stage, sequence)
+                self.assertTrue(result["allocationStable"])
+                self.assertEqual(result["sameBinaryAA"][-1]["bytesPerOperation"], 9000)
+
+    def test_cv_zero_and_invalid_input(self):
+        self.assertEqual(pilot.cv([0, 0, 0]), 0)
+        with self.assertRaises(ValueError):
+            pilot.cv([0, float("nan")])
+
+    def test_reader_burst_lifecycle_and_denominator(self):
+        row = calibration_row()
+        row.update(kind="reader-wrapped-incomplete-burst32", warmup=32, burstWidth=32, bursts=1,
+                   wrapped=True, forcedIncomplete=True, continuationRegistrations=32, expectedContinuationRegistrations=32,
+                   sameThreadVerified=True, immediateCompletionVerified=True, tokenWraps=0)
+        row["warmupCounts"] = {}
+        for name in ("checks", "completed", "reads", "resets", "sourceCompletions", "sourceGetResults", "advances", "startedIncomplete", "continuationRegistrations"):
+            row[name] = 32
+            row["warmupCounts"][name] = 32
+        pilot.validate_sample(row, "reader", row["kind"], "sample", 32, 32, "hash")
+        for name in ("sourceGetResults", "continuationRegistrations", "bursts", "burstWidth"):
+            invalid = {**row, name: row[name] + 1}
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                pilot.validate_sample(invalid, "reader", row["kind"], "sample", 32, 32, "hash")
+
     def test_compiler_command_native_and_managed_launchers(self):
         native = "/dotnet/sdk/11/Roslyn/bincore/csc /noconfig /features:runtime-async=off"
         managed = 'dotnet exec "/dotnet/sdk/11/Roslyn/bincore/csc.dll" /noconfig /features:runtime-async=on'

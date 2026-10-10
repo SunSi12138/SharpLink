@@ -1,0 +1,48 @@
+name: Issue 739 DEV net11 bounded allocation comparison
+on:
+  push:
+    branches: ['validation/issue739-dev-net11-stable-20261010']
+    paths: ['eng/validation/issue739/**', '.github/workflows/issue739-dev-net11-stable.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  ISSUE739_SOURCE_SHA: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
+  ISSUE739_NET11_SDK: '11.0.100-rc.1.26425.128'
+  ISSUE739_NET11_RUNTIME: '11.0.0-rc.1.26425.128'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_TieredPGO: '1'
+  DOTNET_TieredCompilation: '1'
+  DOTNET_gcServer: '0'
+jobs:
+  exact-toolchain-comparison:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - stage: stable-tiny
+            timeout: 35
+          - stage: stable-micro
+            timeout: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '11.0.100-rc.1.26425.128'
+      - name: Verify unchanged pinned dev production inputs
+        run: test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+      - name: Verify exact lowering and run the predeclared balanced stage
+        run: python3 eng/validation/issue739/net11/run_pilot.py --stage '${{ matrix.stage }}' --output 'artifacts/issue739/dev-net11-${{ matrix.stage }}'
+      - name: Preserve all raw samples and explicit failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-net11-${{ matrix.stage }}-${{ github.sha }}
+          path: |
+            artifacts/issue739/dev-net11-${{ matrix.stage }}
+            !artifacts/issue739/dev-net11-${{ matrix.stage }}/work/**
+          if-no-files-found: error
