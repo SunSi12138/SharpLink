@@ -371,7 +371,7 @@ internal sealed class ClientConnection :
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                if (!PendingCalls.TryAcceptProducerProgress(requestId, deadline))
                     throw new SharpLinkException(
                         SharpLinkErrorCode.DeadlineExceeded,
                         "RPC deadline exceeded during client stream production.");
@@ -391,7 +391,7 @@ internal sealed class ClientConnection :
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (!PendingCalls.TryAcceptProducerProgress(requestId))
+            if (!PendingCalls.TryAcceptProducerProgress(requestId, deadline))
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DeadlineExceeded,
                     "RPC deadline exceeded before client stream completion.");
