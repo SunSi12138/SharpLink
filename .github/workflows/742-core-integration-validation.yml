@@ -1,0 +1,71 @@
+name: PR742 core integration validation
+
+on:
+  push:
+    branches: [work/742-b3-production-integration]
+    paths:
+      - .github/workflows/742-core-integration-validation.yml
+      - eng/742-integration/prepare-core.py
+      - test/SharpLink.UnitTests/Runtime/CoreIntegrationRegressionTests.cs
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_PROCESSOR_COUNT: '2'
+      TUNIT_MAX_PARALLEL_TESTS: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.1xx
+      - name: Build unchanged production source with added regression tests
+        run: |
+          mkdir -p artifacts/742-integration
+          dotnet --info > artifacts/742-integration/dotnet-info.txt
+          git rev-parse HEAD > artifacts/742-integration/checkout.txt
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -maxcpucount:2 2>&1 | tee artifacts/742-integration/baseline-build.log
+      - name: Demonstrate the targeted baseline failure
+        shell: bash
+        run: |
+          set +e
+          dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
+            --treenode-filter '/*/*/CoreIntegrationRegressionTests/LocalAbortLateUpdateMustNotRefundAnotherStream' \
+            --maximum-parallel-tests 1 > artifacts/742-integration/baseline-negative.log 2>&1
+          result=$?
+          set -e
+          cat artifacts/742-integration/baseline-negative.log
+          test "$result" -ne 0
+          grep -F "already-refunded abort must not credit bytes" artifacts/742-integration/baseline-negative.log
+          echo "$result" > artifacts/742-integration/baseline-negative-exit-code.txt
+      - name: Materialize and compile the exact core candidate
+        run: |
+          python3 eng/742-integration/prepare-core.py | tee artifacts/742-integration/prepare.log
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -maxcpucount:2 2>&1 | tee artifacts/742-integration/candidate-build.log
+      - name: Run new regressions and all retained unit tests
+        run: |
+          taskset -c 0,1 dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
+            --treenode-filter '/*/*/CoreIntegrationRegressionTests/*' --maximum-parallel-tests 1 \
+            2>&1 | tee artifacts/742-integration/core-regressions.log
+          taskset -c 0,1 dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
+            --maximum-parallel-tests 4 2>&1 | tee artifacts/742-integration/full-unit-tests.log
+      - name: Record complete source and test patch
+        if: always()
+        run: |
+          git diff --binary > artifacts/742-integration/disposable.patch
+          cp test/SharpLink.UnitTests/Runtime/CoreIntegrationRegressionTests.cs artifacts/742-integration/
+          cp eng/742-integration/prepare-core.py artifacts/742-integration/
+          sha256sum src/SharpLink.Runtime/StreamManager.Routing.cs src/SharpLink.Runtime/StreamFlowController.cs > artifacts/742-integration/production-source-sha256.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: pr742-core-validation-${{ github.sha }}
+          path: artifacts/742-integration
+          retention-days: 7
+          if-no-files-found: error
