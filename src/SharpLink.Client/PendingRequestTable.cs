@@ -1,4 +1,4 @@
-﻿namespace SharpLink.Client;
+namespace SharpLink.Client;
 
 internal enum PendingCallKind : byte
 {
@@ -52,6 +52,14 @@ internal interface IPendingCallCompletionObserver
 {
     void OnResponseObserved();
     void OnPendingCallCompleted(in PendingCallCompletion completion);
+}
+
+/// <summary>
+/// A terminal observer that runs after the user-visible request operation is made terminal.
+/// Other observers retain their existing ordering before operation completion.
+/// </summary>
+internal interface IPendingCallPostOperationObserver : IPendingCallCompletionObserver
+{
 }
 
 /// <summary>
@@ -153,11 +161,29 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         bool hasResponsePayload = true,
         bool responseNullable = false)
     {
+        var ignoredPublication = false;
+        return Rent(
+            responseCodec, kind, deadline, cancellationToken, out id, completionObserver,
+            hasResponsePayload, responseNullable, ref ignoredPublication);
+    }
+
+    // Caller-visible publication is set at the successful CAS, before OnRegistered can throw.
+    internal RpcRequestOperation<T> Rent<T>(
+        IRpcCodec<T> responseCodec,
+        PendingCallKind kind,
+        RpcDeadline deadline,
+        CancellationToken cancellationToken,
+        out long id,
+        IPendingCallCompletionObserver? completionObserver,
+        bool hasResponsePayload,
+        bool responseNullable,
+        ref bool registrationPublished)
+    {
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
                 responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
-                completionObserver, out id, out var operation))
+                completionObserver, out id, out var operation, ref registrationPublished))
             return operation;
 
         throw CreateResourceExhaustedException();
@@ -437,38 +463,21 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         return false;
     }
 
-    public bool TryAcceptProducerProgress(long id)
+    /// <summary>
+    /// Validates producer progress against the authoritative request slot without acquiring the
+    /// pending-call completion gate for every stream item. The deadline belongs to the same
+    /// pending generation and was captured under that gate when stream production started.
+    /// Expiration falls back to the pending table's single terminal authority.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryAcceptProducerProgress(long id, RpcDeadline deadline)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
+        if (!Contains(id))
             return false;
+        if (!deadline.IsExpired(_timeProvider))
+            return true;
 
-        var index = (int)(id & _indexMask);
-        var current = Volatile.Read(ref slots[index]);
-        if (current is null || current.Id != id ||
-            current.Kind is not (PendingCallKind.OneWayClientStreaming or
-                                 PendingCallKind.ClientStreaming or
-                                 PendingCallKind.DuplexStreaming))
-        {
-            return false;
-        }
-
-        PendingCall? expiredCall = null;
-        lock (current.CompletionGate)
-        {
-            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
-                return false;
-            if (!current.Deadline.IsExpired(_timeProvider))
-                return true;
-            if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
-                return false;
-            current.WaitUntilRegistered();
-            expiredCall = current;
-        }
-
-        var emptyPayload = ReadOnlySequence<byte>.Empty;
-        CompleteTakenCall(
-            expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+        TryComplete(id, PendingCallCompletionReason.DeadlineExceeded);
         return false;
     }
 
@@ -586,6 +595,24 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         out long id,
         out RpcRequestOperation<T> operation)
     {
+        var ignoredPublication = false;
+        return TryRent(
+            responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
+            completionObserver, out id, out operation, ref ignoredPublication);
+    }
+
+    private bool TryRent<T>(
+        IRpcCodec<T> responseCodec,
+        PendingCallKind kind,
+        RpcDeadline deadline,
+        CancellationToken cancellationToken,
+        bool hasResponsePayload,
+        bool responseNullable,
+        IPendingCallCompletionObserver? completionObserver,
+        out long id,
+        out RpcRequestOperation<T> operation,
+        ref bool registrationPublished)
+    {
         operation = RpcOperationPool<T>.Rent();
         if (TryRegister(
                 kind,
@@ -597,7 +624,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 responseCodec,
                 completionObserver,
                 hasResponsePayload,
-                responseNullable))
+                responseNullable,
+                ref registrationPublished))
         {
             return true;
         }
@@ -618,6 +646,25 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         IPendingCallCompletionObserver? completionObserver,
         bool hasResponsePayload,
         bool responseNullable)
+    {
+        var ignoredPublication = false;
+        return TryRegister(
+            kind, operation, dispatcher, deadline, cancellationToken, out id, responseCodec,
+            completionObserver, hasResponsePayload, responseNullable, ref ignoredPublication);
+    }
+
+    private bool TryRegister<T>(
+        PendingCallKind kind,
+        RpcRequestOperation<T> operation,
+        IStreamDispatcher? dispatcher,
+        RpcDeadline deadline,
+        CancellationToken cancellationToken,
+        out long id,
+        IRpcCodec<T> responseCodec,
+        IPendingCallCompletionObserver? completionObserver,
+        bool hasResponsePayload,
+        bool responseNullable,
+        ref bool registrationPublished)
     {
         if (!TryAcquireCapacity())
         {
@@ -651,6 +698,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                     if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
                     {
                         published = true;
+                        registrationPublished = true;
                         OnRegistered(call);
                         CompleteRegistrationIfDisposed(call);
                         return true;
@@ -792,22 +840,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     private void CompleteRegistrationIfDisposed(PendingCall call)
     {
-        if (Volatile.Read(ref _disposed) == 0)
-            return;
-
-        // The call is already published at this point, so its terminal transition has been
-        // committed and cannot be undone. A throwing terminal observer (the owner callback does
-        // stream-manager and dispatcher work) must therefore not surface as a registration
-        // failure: a caller cannot roll back a published call, and a completion observer that has
-        // already run must not be double-released by a caller that believes registration failed.
-        try
-        {
+        if (Volatile.Read(ref _disposed) != 0)
             TryComplete(call.Id, PendingCallCompletionReason.ConnectionClosed);
-        }
-        catch (Exception)
-        {
-            // Diagnostics-only: the call is terminal either way.
-        }
     }
 
     private bool TryTakeMatchingCall(
@@ -927,7 +961,10 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 call.RequestPublished);
             // Decode response payloads before reporting the terminal admission outcome so malformed
             // endpoint responses are not published as successful attempts.
-            call.CompletionObserver?.OnPendingCallCompleted(in completion);
+            var observer = call.CompletionObserver;
+            var postOperationObserver = observer as IPendingCallPostOperationObserver;
+            if (postOperationObserver is null)
+                observer?.OnPendingCallCompleted(in completion);
 
             if (call.Operation is { } operation)
             {
@@ -939,6 +976,9 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                         "A pending request completed without a result."));
             }
 
+            // The shape observer must not release the logical drain count before the
+            // operation has entered its terminal state.
+            postOperationObserver?.OnPendingCallCompleted(in completion);
             _owner.OnPendingCallCompleted(in completion);
             call.ReturnCompleted();
         }

@@ -74,7 +74,8 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly Func<IServiceProvider, object>? _factory;
     private readonly bool _disposeScopedService;
-    private readonly Lock _singletonGate = new();
+    private readonly Lock? _singletonGate;
+    private readonly bool _hasModule;
     private int _disposed;
 
     private ServiceRegistration(
@@ -99,14 +100,17 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         _factory = factory;
         _disposeScopedService = disposeScopedService;
         Module = module;
+        _hasModule = Module is not null;
+        _singletonGate = lifetime == SharpLinkServiceLifetime.Singleton ? new Lock() : null;
     }
 
     internal Type ContractType { get; }
     internal IRpcStub Stub { get; }
     internal SharpLinkServiceLifetime Lifetime { get; }
     internal SharpLinkDynamicModule? Module { get; }
-    internal CancellationToken ModuleCancellation => Module?.ForcedCancellation ?? CancellationToken.None;
-    internal bool AcceptsCalls => Module is null || Module.State == SharpLinkDynamicModuleState.Running;
+    internal bool HasModule => _hasModule;
+    internal CancellationToken ModuleCancellation => _hasModule ? Module!.ForcedCancellation : CancellationToken.None;
+    internal bool AcceptsCalls => !_hasModule || Module!.State == SharpLinkDynamicModuleState.Running;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetStaticSingleton(out object service)
@@ -118,7 +122,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         long requestId,
         out object service)
     {
-        if (Module is not null || Lifetime != SharpLinkServiceLifetime.Singleton)
+        if (_hasModule || Lifetime != SharpLinkServiceLifetime.Singleton)
         {
             service = null!;
             return false;
@@ -149,14 +153,14 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         out object service,
         out SharpLinkDynamicModuleLease moduleLease)
     {
-        var module = Module;
-        if (module is null || Lifetime != SharpLinkServiceLifetime.Singleton)
+        if (!_hasModule || Lifetime != SharpLinkServiceLifetime.Singleton)
         {
             service = null!;
             moduleLease = default;
             return false;
         }
 
+        var module = Module!;
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (!module.TryAcquire(isStream, out moduleLease))
         {
@@ -219,7 +223,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         SharpLinkDynamicModuleLease moduleLease = default;
-        if (Module is not null && !Module.TryAcquire(isStream, out moduleLease))
+        if (_hasModule && !Module!.TryAcquire(isStream, out moduleLease))
         {
             return ValueTask.FromException<ServiceLease>(new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,
@@ -232,8 +236,6 @@ internal sealed class ServiceRegistration : IAsyncDisposable
                 return ValueTask.FromResult(new ServiceLease(
                     GetOrCreateSingleton(generatedBridge, requestId),
                     moduleLease: moduleLease));
-            if (_singleton is not null)
-                return ValueTask.FromResult(new ServiceLease(_singleton, moduleLease: moduleLease));
             if (Lifetime == SharpLinkServiceLifetime.Connection)
                 return connection.AcquireServiceAsync(this, moduleLease, generatedBridge, requestId);
             return AcquirePerCallAsync(moduleLease, generatedBridge, requestId);
@@ -312,8 +314,16 @@ internal sealed class ServiceRegistration : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        // Scoped registrations never own a singleton and never enter GetOrCreateSingleton.
+        var singletonGate = _singletonGate;
+        if (singletonGate is null)
+        {
+            Interlocked.Exchange(ref _disposed, 1);
+            return;
+        }
+
         object? singleton;
-        lock (_singletonGate)
+        lock (singletonGate)
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
@@ -332,7 +342,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         if (singleton is not null)
             return singleton;
 
-        lock (_singletonGate)
+        lock (_singletonGate!)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             singleton = _singleton;

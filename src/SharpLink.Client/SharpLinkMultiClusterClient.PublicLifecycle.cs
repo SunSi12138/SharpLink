@@ -127,6 +127,22 @@ internal sealed partial class SharpLinkMultiClusterClient
         return WaitForShutdownCoreAsync(cancellationToken);
     }
 
+    public ValueTask WaitForRemoteContractAsync(
+        SharpLinkClusterKey cluster,
+        long contractId,
+        RpcHash128 rpcAssemblyHash,
+        CancellationToken cancellationToken = default)
+        => GetSlot(cluster).Client.WaitForRemoteContractAsync(contractId, rpcAssemblyHash, cancellationToken);
+
+    public ValueTask WaitForRemoteContractAsync(
+        SharpLinkClusterKey cluster,
+        long contractId,
+        RpcHash128 rpcAssemblyHash,
+        RpcHash128 previousRpcAssemblyHash,
+        CancellationToken cancellationToken = default)
+        => GetSlot(cluster).Client.WaitForRemoteContractAsync(
+            contractId, rpcAssemblyHash, previousRpcAssemblyHash, cancellationToken);
+
     public SharpLinkClusterState GetClusterRuntimeState(SharpLinkClusterKey cluster)
         => GetSlot(cluster).Client.ClusterState;
 

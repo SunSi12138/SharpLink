@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net;
 using System.Threading;
@@ -68,14 +69,35 @@ public class SendPumpIdleWakeBenchmarks
         _session = new RpcSession(
             new BenchmarkTransportConnection($"issue157-idle-wake-{Scenario}", _input.Reader, _output),
             new RpcSessionCreationOptions(RpcSessionRole.Client, _context, flushOptions));
-        if (!_session.TryCompleteHandshake(new NegotiatedSessionOptions(
+        try
+        {
+            if (!_session.TryCompleteHandshake(new NegotiatedSessionOptions(
                 ProtocolV2Constants.MinorVersion,
                 ProtocolV2Capabilities.None,
                 _context.Protocol.MaxFramePayloadBytes,
                 _context.FlowControl.StreamReceiveWindowBytes,
                 _context.FlowControl.ConnectionReceiveWindowBytes)))
+            {
+                throw new InvalidOperationException("Issue 157 benchmark session handshake completion failed.");
+            }
+
+            // The pump is lazy. Start it with an empty flush marker during fixture setup,
+            // before any measured idle/wake operation, rather than waiting for a missing pump.
+            _session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        }
+        catch (Exception setupException)
         {
-            throw new InvalidOperationException("Issue 157 benchmark session handshake completion failed.");
+            // GlobalCleanup is not invoked when setup fails. Dispose the started pump
+            // here, retaining the setup failure if disposal also reports an error.
+            try
+            {
+                Cleanup().GetAwaiter().GetResult();
+            }
+            catch (Exception cleanupException)
+            {
+                throw new AggregateException("Idle/wake fixture setup and cleanup failed.", setupException, cleanupException);
+            }
+            throw;
         }
     }
 
@@ -91,10 +113,24 @@ public class SendPumpIdleWakeBenchmarks
     [Benchmark]
     public async ValueTask<long> IdleWakeForceFlushCycle()
     {
+        if (Scenario != IdleWakeScenario.CustomTimedBatch)
+            WaitUntilSendPumpIsIdle();
         var writer = _context.Buffers.Rent();
         writer.WritePacket(ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, 1);
         await _session.SendPacketAndFlushAsync(writer).ConfigureAwait(false);
         return _session.QueuedSendBytes;
+    }
+
+    private void WaitUntilSendPumpIsIdle()
+    {
+        var deadline = Stopwatch.GetTimestamp() + 5L * Stopwatch.Frequency;
+        var spin = new SpinWait();
+        while (!_session.HasPendingSendPumpIdleWait)
+        {
+            if (Stopwatch.GetTimestamp() >= deadline)
+                throw new TimeoutException("Idle/wake fixture did not reach a pending send-pump idle wait within five seconds.");
+            spin.SpinOnce();
+        }
     }
 
     private sealed class BenchmarkTransportConnection(

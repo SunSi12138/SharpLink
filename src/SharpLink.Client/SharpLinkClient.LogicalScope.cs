@@ -1,5 +1,5 @@
 // Client logical-invocation lifetime: static 1:1 call-shape specialization.
-// of the client logical-invocation accountant
+// This specializes the client logical-invocation accountant
 // (src/SharpLink.Client/SharpLinkClient.Invokers.cs, CompleteLogicalInvocation).
 //
 // Shape rule:
@@ -103,10 +103,8 @@ internal sealed partial class SharpLinkClient
     /// Note for audit: the completion of this shape is deliberately NOT detected with
     /// <c>invocation.IsCompleted</c>. An attempt can complete (and fire its observer) before this
     /// method even returns - a synchronous send failure or a concurrent connection close both do -
-    /// so a completed ValueTask here means "the observer already released this logical call", not
-    /// "nothing was registered". Decrementing inline on IsCompleted would double-release exactly
-    /// those calls. The registered/not-registered boundary (attemptRegistered) is the only sound
-    /// signal and is what the core method uses.
+    /// so a completed ValueTask here may mean the observer has already released the call.
+    /// The publication flag, not Rent() return or IsCompleted, owns this decision.
     /// </remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ValueTask<TResponse> InvokeUnarySimpleShapeAsync<TRequest, TResponse>(
@@ -173,10 +171,10 @@ internal sealed partial class SharpLinkClient
     /// <summary>
     /// The cached observer that rides the pending
     /// table's exactly-once terminal transition (PendingRequestTable.CompleteTakenCall fires
-    /// CompletionObserver exactly once per physical attempt, before the caller's ValueTask completes
-    /// and before the PendingCall returns to its pool).
+    /// the post-operation observer exactly once per attempt, after the caller's ValueTask
+    /// becomes terminal and before the PendingCall returns to its pool).
     /// </summary>
-    private sealed class LogicalShapeCompletionObserver(SharpLinkClient client) : IPendingCallCompletionObserver
+    private sealed class LogicalShapeCompletionObserver(SharpLinkClient client) : IPendingCallPostOperationObserver
     {
         public void OnResponseObserved()
         {
