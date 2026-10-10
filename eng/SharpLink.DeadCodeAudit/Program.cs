@@ -1,0 +1,318 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.MSBuild;
+
+// Run against the real solution via Roslyn/MSBuild.  This is a reference index,
+// not a proof of runtime reachability (reflection, external apps, DI, etc.).
+var root = Path.GetFullPath(args.Length > 0 ? args[0] : Directory.GetCurrentDirectory());
+var output = Path.GetFullPath(args.Length > 1 ? args[1] : Path.Combine(root, "artifacts/issue-801-audit"));
+Directory.CreateDirectory(output);
+var messages = new List<string>();
+var msbuildLocator = Type.GetType("Microsoft.Build.Locator.MSBuildLocator, Microsoft.Build.Locator");
+if (msbuildLocator is not null)
+    msbuildLocator.GetMethod("RegisterDefaults", Type.EmptyTypes)?.Invoke(null, null);
+else messages.Add("MSBuildLocator unavailable; workspace might not load.");
+
+var stopwatch = Stopwatch.StartNew();
+using var workspace = MSBuildWorkspace.Create(new Dictionary<string, string> { ["Configuration"] = "Release" });
+workspace.WorkspaceFailed += (_, e) =>
+{
+    var diagnostic = e.Diagnostic.ToString();
+    messages.Add(diagnostic);
+    if (messages.Count < 120) Console.Error.WriteLine("WORKSPACE: " + diagnostic);
+};
+Solution solution;
+try { solution = await workspace.OpenSolutionAsync(Path.Combine(root, "Sharplink.slnx")); }
+catch (Exception e)
+{
+    File.WriteAllText(Path.Combine(output, "failure.txt"), string.Join(Environment.NewLine, messages) + "\n" + e);
+    throw;
+}
+
+var projects = solution.Projects.OrderBy(p => p.Name, StringComparer.Ordinal).ToArray();
+var symbols = new Dictionary<string, SymbolRecord>(StringComparer.Ordinal);
+var documents = new List<(Document Document, string Path, string Scope)>();
+var projectStats = new List<ProjectStat>();
+
+foreach (var project in projects)
+{
+    var normal = project.Documents.ToArray();
+    var generated = new List<Document>();
+    try { generated.AddRange(await project.GetSourceGeneratedDocumentsAsync()); }
+    catch (Exception e) { messages.Add("GENERATED " + project.Name + ": " + e.Message); }
+    projectStats.Add(new ProjectStat(project.Name, normal.Length, generated.Count));
+    foreach (var document in normal)
+    {
+        var path = Relative(root, document.FilePath ?? project.Name + "/" + document.Name);
+        documents.Add((document, path, Scope(path)));
+    }
+    foreach (var document in generated)
+        documents.Add((document, "<generated>/" + project.Name + "/" + document.Name, "generated"));
+    Console.WriteLine($"PROJECT {project.Name}: {normal.Length} source docs; {generated.Count} generated docs");
+}
+
+// Index all production-side declarations, including nested and private types.
+var indexed = 0;
+foreach (var (document, path, scope) in documents)
+{
+    if (scope != "production") continue;
+    try
+    {
+        var syntax = await document.GetSyntaxRootAsync();
+        var model = await document.GetSemanticModelAsync();
+        if (syntax is null || model is null) continue;
+        foreach (var node in syntax.DescendantNodes().Where(IsDeclaration))
+        {
+            ISymbol? symbol;
+            try { symbol = model.GetDeclaredSymbol(node); } catch { continue; }
+            if (symbol is null || symbol.IsImplicitlyDeclared) continue;
+            var key = Key(symbol);
+            if (symbols.ContainsKey(key)) continue;
+            symbols.Add(key, new SymbolRecord
+            {
+                Key = key,
+                Name = symbol.Name,
+                Signature = symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                Kind = symbol.Kind.ToString(),
+                Visibility = symbol.DeclaredAccessibility.ToString(),
+                ExternallyVisible = ExternallyVisible(symbol),
+                ProtectedRoot = ProtectionReason(symbol),
+                Assembly = symbol.ContainingAssembly?.Identity.Name ?? "",
+                Path = path,
+                Line = node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+            });
+        }
+        indexed++;
+    }
+    catch (Exception e) { messages.Add("DECLARATION " + path + ": " + e.Message); }
+}
+Console.WriteLine($"DECLARATIONS: {symbols.Count} indexed from {indexed} documents after {stopwatch.Elapsed}");
+
+// One pass over actual compilations and generated documents; semantic SymbolInfo
+// distinguishes overloads, generic methods, extension dispatch and constructors.
+var referenceMatches = 0L;
+foreach (var (document, path, scope) in documents)
+{
+    try
+    {
+        var syntax = await document.GetSyntaxRootAsync();
+        var model = await document.GetSemanticModelAsync();
+        if (syntax is null || model is null) continue;
+        foreach (var node in syntax.DescendantNodes().Where(IsReference))
+        {
+            ISymbol? referenced;
+            try { referenced = model.GetSymbolInfo(node).Symbol; } catch { continue; }
+            if (referenced is null || !symbols.TryGetValue(Key(referenced), out var item)) continue;
+            var line = node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            if (!item.Seen.Add(scope + "|" + path + "|" + line)) continue;
+            switch (scope)
+            {
+                case "production": item.Production++; break;
+                case "generated": item.Generated++; break;
+                case "tests": item.Tests++; break;
+                case "benchmarks": item.Benchmarks++; break;
+                case "examples": item.Examples++; break;
+                default: item.Other++; break;
+            }
+            if (item.SampleReferences.Count < 12)
+                item.SampleReferences.Add(new Reference(scope, path, line));
+            referenceMatches++;
+        }
+    }
+    catch (Exception e) { messages.Add("REFERENCE " + path + ": " + e.Message); }
+}
+Console.WriteLine($"REFERENCES: {referenceMatches} matched after {stopwatch.Elapsed}");
+
+var sourceFiles = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
+    .Where(p => !p.Replace('\\','/').Contains("/obj/") && !p.Replace('\\','/').Contains("/bin/"))
+    .Select(p => Relative(root, p)).OrderBy(p => p, StringComparer.Ordinal).ToArray();
+var loadedFiles = documents.Where(d => d.Scope == "production")
+    .Select(d => d.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+var missingFiles = sourceFiles.Where(p => !loadedFiles.Contains(p)).ToArray();
+foreach (var record in symbols.Values)
+{
+    record.Tier = record.Production + record.Generated > 0 ? "D-REFERENCED-PRODUCTION"
+        : record.ExternallyVisible ? "C-PUBLIC-API-REVIEW"
+        : record.Tests + record.Benchmarks + record.Examples > 0 ? "B-ONLY-TEST-BENCH-EXAMPLE"
+        : "A-NO-DIRECT-REFERENCE";
+    record.Seen.Clear();
+}
+var sorted = symbols.Values.OrderBy(x => x.Tier).ThenBy(x => x.Path).ThenBy(x => x.Line).ToArray();
+var result = new
+{
+    BaselineDevSha = Environment.GetEnvironmentVariable("AUDIT_DEV_SHA") ?? "unknown",
+    AuditHeadSha = Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "local",
+    ElapsedSeconds = (int)stopwatch.Elapsed.TotalSeconds,
+    Projects = projectStats,
+    TotalSourceDocuments = documents.Count(d => d.Scope != "generated"),
+    TotalGeneratedDocuments = documents.Count(d => d.Scope == "generated"),
+    TotalProductionFiles = sourceFiles.Length,
+    IndexedProductionFiles = loadedFiles.Count,
+    MissingProductionFiles = missingFiles,
+    Declarations = sorted.Length,
+    MatchedReferences = referenceMatches,
+    Breakdown = sorted.GroupBy(x => x.Tier).ToDictionary(g => g.Key, g => g.Count()),
+    WorkspaceDiagnostics = messages.Take(400).ToArray(),
+    Symbols = sorted,
+};
+File.WriteAllText(Path.Combine(output, "report.json"),
+    JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+
+foreach (var group in sorted.GroupBy(r => r.Tier))
+{
+    var csv = new StringBuilder("path,line,assembly,kind,visibility,signature,production,generated,tests,benchmarks,examples,root\n");
+    foreach (var item in group)
+    {
+        string quote(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
+        csv.AppendLine(string.Join(',', new[] {
+            quote(item.Path), item.Line.ToString(), quote(item.Assembly), quote(item.Kind),
+            quote(item.Visibility), quote(item.Signature), item.Production.ToString(),
+            item.Generated.ToString(), item.Tests.ToString(), item.Benchmarks.ToString(),
+            item.Examples.ToString(), quote(item.ProtectedRoot)
+        }));
+    }
+    File.WriteAllText(Path.Combine(output, "tier-" + group.Key.Split('-')[0] + ".csv"), csv.ToString());
+}
+var markdown = new StringBuilder();
+markdown.AppendLine("# Issue #801 — dev full-solution symbol reference index");
+markdown.AppendLine();
+markdown.AppendLine("Dev base: " + (Environment.GetEnvironmentVariable("AUDIT_DEV_SHA") ?? "unknown"));
+markdown.AppendLine("Audit head: " + (Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "unknown"));
+markdown.AppendLine($"Projects {projects.Length}; source docs {documents.Count(d => d.Scope != "generated")}; generated docs {documents.Count(d => d.Scope == "generated")}");
+markdown.AppendLine($"Production source files indexed: {loadedFiles.Count}/{sourceFiles.Length}; declarations: {sorted.Length}; matched references: {referenceMatches}; elapsed seconds: {(int)stopwatch.Elapsed.TotalSeconds}");
+markdown.AppendLine("**Caution:** A/B/C are review candidates, NOT proof of dead code. This scans direct semantic references, not whole-program reachability, reflection, DI or external consumers.");
+markdown.AppendLine();
+markdown.AppendLine("## Tier counts");
+foreach (var group in sorted.GroupBy(x => x.Tier))
+    markdown.AppendLine("- " + group.Key + ": " + group.Count());
+markdown.AppendLine("## Unindexed production files");
+foreach (var item in missingFiles.Take(100)) markdown.AppendLine("- " + item);
+markdown.AppendLine("## Workspace diagnostics (first 30)");
+foreach (var item in messages.Take(30))
+    markdown.AppendLine("- " + item.Replace("\r", " ").Replace("\n", " "));
+foreach (var group in sorted.Where(x => x.Tier.StartsWith("A-") || x.Tier.StartsWith("B-") || x.Tier.StartsWith("C-"))
+    .GroupBy(x => x.Tier))
+{
+    markdown.AppendLine();
+    markdown.AppendLine("## " + group.Key + " (first 120)");
+    markdown.AppendLine("| Symbol | Source | Production | Generated | Tests | Benchmarks | Examples | Safety root |");
+    markdown.AppendLine("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |");
+    foreach (var item in group.OrderBy(x => x.ProtectedRoot.Length != 0)
+        .ThenBy(x => x.Path).ThenBy(x => x.Line).Take(120))
+        markdown.AppendLine("| " + item.Signature.Replace("|", "\\|") + " | " +
+            item.Path + ":" + item.Line + " | " + item.Production + " | " +
+            item.Generated + " | " + item.Tests + " | " + item.Benchmarks +
+            " | " + item.Examples + " | " + (item.ProtectedRoot.Length > 0 ? item.ProtectedRoot : "-") + " |");
+}
+File.WriteAllText(Path.Combine(output, "report.md"), markdown.ToString());
+Console.WriteLine("=== ISSUE 801 AUDIT SUMMARY ===");
+Console.WriteLine($"Indexed source files: {loadedFiles.Count}/{sourceFiles.Length}; symbols: {sorted.Length}; generated docs: {documents.Count(d=>d.Scope == "generated")}");
+foreach (var group in sorted.GroupBy(x=>x.Tier)) Console.WriteLine(group.Key + ": " + group.Count());
+Console.WriteLine("Full evidence: " + output);
+
+static bool IsDeclaration(SyntaxNode n) =>
+    n is BaseMethodDeclarationSyntax or BaseTypeDeclarationSyntax or DelegateDeclarationSyntax
+        or PropertyDeclarationSyntax or IndexerDeclarationSyntax or EventDeclarationSyntax
+        or EnumMemberDeclarationSyntax
+    || n is VariableDeclaratorSyntax v &&
+        v.Parent?.Parent is FieldDeclarationSyntax or EventFieldDeclarationSyntax;
+
+static bool IsReference(SyntaxNode n) => n is SimpleNameSyntax or InvocationExpressionSyntax
+    or ObjectCreationExpressionSyntax or ImplicitObjectCreationExpressionSyntax
+    or AttributeSyntax or ElementAccessExpressionSyntax;
+
+static ISymbol Normalize(ISymbol symbol)
+{
+    if (symbol is IAliasSymbol alias) symbol = alias.Target;
+    if (symbol is IMethodSymbol method)
+    {
+        symbol = method.ReducedFrom ?? method;
+        if (symbol is IMethodSymbol m && m.AssociatedSymbol is { } associated)
+            symbol = associated;
+    }
+    return symbol.OriginalDefinition;
+}
+static string Key(ISymbol symbol)
+{
+    var canonical = Normalize(symbol);
+    return (canonical.ContainingAssembly?.Identity.Name ?? "<none>") + "|" +
+        canonical.Kind + "|" + canonical.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+}
+static bool ExternallyVisible(ISymbol symbol)
+{
+    for (ISymbol? current = symbol; current is not null; current = current.ContainingType)
+    {
+        if (current.DeclaredAccessibility is Accessibility.Private or Accessibility.Internal
+            or Accessibility.ProtectedAndInternal) return false;
+    }
+    return true;
+}
+static string ProtectionReason(ISymbol symbol)
+{
+    if (symbol.ContainingType?.TypeKind == TypeKind.Interface) return "Interface contract";
+    if (symbol.ContainingType?.TypeKind == TypeKind.Enum) return "Enum/protocol identity";
+    if (symbol is IMethodSymbol method)
+    {
+        if (method.IsOverride || method.IsVirtual || method.IsAbstract) return "Virtual dispatch";
+        if (method.ExplicitInterfaceImplementations.Length > 0) return "Interface implementation";
+        if (method.MethodKind is MethodKind.Constructor or MethodKind.StaticConstructor)
+            return "Constructor/activation";
+        if (method.Name is "Main" or "Dispose" or "DisposeAsync") return "Entrypoint/lifecycle";
+    }
+    if (symbol is IPropertySymbol prop)
+    {
+        if (prop.IsOverride || prop.IsVirtual || prop.IsAbstract) return "Virtual dispatch";
+        if (prop.ExplicitInterfaceImplementations.Length > 0) return "Interface implementation";
+    }
+    if (symbol.GetAttributes().Any(a => a.AttributeClass?.Name is
+        "UnmanagedCallersOnlyAttribute" or "ModuleInitializerAttribute"))
+        return "Attribute-discovered entrypoint";
+    return "";
+}
+static string Relative(string root, string name)
+{
+    var path = Path.IsPathRooted(name) ? Path.GetRelativePath(root, name) : name;
+    return path.Replace('\\','/');
+}
+static string Scope(string path)
+{
+    if (path.StartsWith("src/",StringComparison.OrdinalIgnoreCase)) return "production";
+    if (path.StartsWith("test/",StringComparison.OrdinalIgnoreCase))
+        return path.Contains("Benchmarks",StringComparison.OrdinalIgnoreCase) ? "benchmarks" : "tests";
+    if (path.StartsWith("demo/",StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("samples/",StringComparison.OrdinalIgnoreCase)) return "examples";
+    return "other";
+}
+sealed class SymbolRecord
+{
+    public string Key {get;set;} = "";
+    public string Name {get;set;} = "";
+    public string Signature {get;set;} = "";
+    public string Kind {get;set;} = "";
+    public string Visibility {get;set;} = "";
+    public string Assembly {get;set;} = "";
+    public string Path {get;set;} = "";
+    public int Line {get;set;}
+    public string Tier {get;set;} = "";
+    public string ProtectedRoot {get;set;} = "";
+    public bool ExternallyVisible {get;set;}
+    public int Production {get;set;}
+    public int Generated {get;set;}
+    public int Tests {get;set;}
+    public int Benchmarks {get;set;}
+    public int Examples {get;set;}
+    public int Other {get;set;}
+    public List<Reference> SampleReferences {get;set;} = new();
+    [System.Text.Json.Serialization.JsonIgnore]
+    public HashSet<string> Seen {get;} = new(StringComparer.Ordinal);
+}
+sealed record Reference(string Scope, string Path, int Line);
+sealed record ProjectStat(string Project, int SourceDocuments, int GeneratedDocuments);
