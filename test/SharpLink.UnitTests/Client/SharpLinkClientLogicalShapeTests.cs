@@ -18,7 +18,7 @@ public sealed class SharpLinkClientLogicalShapeTests
         await client.ConnectAsync();
         var inspector = (ISharpLinkClientDrainInspector)client;
 
-        var success = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var success = InvokeSpecializedUnary(client).AsTask();
         var successRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TestTimeout);
         Ensure(!success.IsCompleted && inspector.ActiveCallCount == 1,
@@ -27,7 +27,7 @@ public sealed class SharpLinkClientLogicalShapeTests
         Ensure(await success.WaitAsync(TestTimeout) == 123, "successful unary response");
         Ensure(inspector.ActiveCallCount == 0, "success must release once");
 
-        var remoteError = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var remoteError = InvokeSpecializedUnary(client).AsTask();
         var errorRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TestTimeout);
         Ensure(!remoteError.IsCompleted && inspector.ActiveCallCount == 1,
@@ -39,8 +39,7 @@ public sealed class SharpLinkClientLogicalShapeTests
         Ensure(inspector.ActiveCallCount == 0, "remote error must release once");
 
         using var cancellation = new CancellationTokenSource();
-        var cancelled = ClientInvokerTestHelper.InvokeUnaryAsync(
-            client, cancellationToken: cancellation.Token).AsTask();
+        var cancelled = InvokeSpecializedUnary(client, cancellation.Token).AsTask();
         _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TestTimeout);
         Ensure(!cancelled.IsCompleted && inspector.ActiveCallCount == 1,
@@ -62,7 +61,7 @@ public sealed class SharpLinkClientLogicalShapeTests
         var inspector = (ISharpLinkClientDrainInspector)client;
 
         // Seed the cached observer, then decorate it to pause precisely at the terminal hook.
-        var first = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var first = InvokeSpecializedUnary(client).AsTask();
         var firstRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TestTimeout);
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)firstRequest.RequestId));
@@ -76,7 +75,7 @@ public sealed class SharpLinkClientLogicalShapeTests
         using var gate = new PausingPostOperationObserver(original);
         field.SetValue(client, gate);
 
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var invocation = InvokeSpecializedUnary(client).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TestTimeout);
         Ensure(!invocation.IsCompleted && inspector.ActiveCallCount == 1,
@@ -85,8 +84,8 @@ public sealed class SharpLinkClientLogicalShapeTests
         // The RPC receive loop reaches the post-operation observer and blocks there.
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
         await gate.Entered.WaitAsync(TestTimeout);
-        Ensure(invocation.IsCompleted,
-            "the operation must be terminal before the shape observer can release");
+        Ensure(await invocation.WaitAsync(TestTimeout) == 0,
+            "the operation must become user-visible and terminal before the shape observer releases");
         Ensure(inspector.ActiveCallCount == 1,
             "graceful drain must not observe zero before the operation is terminal");
 
@@ -111,7 +110,7 @@ public sealed class SharpLinkClientLogicalShapeTests
         var inspector = (ISharpLinkClientDrainInspector)client;
 
         provider.ThrowOnNextDeadlineArm();
-        var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
+        var invocation = InvokeSpecializedUnary(client).AsTask();
         var failure = await Throws<InvalidOperationException>(invocation.WaitAsync(TestTimeout));
         Ensure(failure.Message == "injected deadline timer failure",
             "the test must fail specifically after pending-slot publication");
@@ -122,6 +121,37 @@ public sealed class SharpLinkClientLogicalShapeTests
         await client.StopAsync();
         Ensure(inspector.ActiveCallCount == 0,
             "connection cleanup must finish the published call without logical underflow");
+    }
+
+    // Force the 1:1 specialization under test independently of process-wide Activity/Meter
+    // listeners installed by unrelated parallel tests. The public dispatcher skips this
+    // specialization when telemetry is enabled, which makes a reflection-free integration
+    // test of the specialized owner non-deterministic in the full validation suite.
+    private static ValueTask<int> InvokeSpecializedUnary(
+        SharpLinkClient client, CancellationToken cancellationToken = default)
+    {
+        var counter = typeof(SharpLinkClient).GetField(
+            "_activeLogicalInvocations", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("logical invocation counter not found");
+        Ensure((int)counter.GetValue(client)! == 0,
+            "test client must have no prior logical invocation");
+        counter.SetValue(client, 1); // Public InvokeUnaryAsync increments before the shape branch.
+
+        var method = new RpcMethodDescriptor(
+            1, 2, RpcMethodKind.Unary, HasResponsePayload: true,
+            HasClientStreams: false, HasMethodTimeout: false, MethodTimeout: null);
+        var control = client.ResolveCallControlForInvocation(
+            method, metadata: null, includeClientDefault: true,
+            client.CaptureInterceptorGenerationForInvocation());
+        var specialize = typeof(SharpLinkClient).GetMethod(
+            "InvokeUnarySimpleShapeAsync", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("specialized unary entry not found");
+        var generic = specialize.MakeGenericMethod(typeof(RpcEmptyRequest), typeof(int));
+        var request = default(RpcEmptyRequest);
+        return (ValueTask<int>)generic.Invoke(
+            client,
+            [method, request, RpcEmptyRequestCodec.Instance,
+                ((IRpcChannel)client).RuntimeContext.Codecs.GetCodec<int>(), control, cancellationToken])!;
     }
 
     private static async Task<TException> Throws<TException>(Task task) where TException : Exception
