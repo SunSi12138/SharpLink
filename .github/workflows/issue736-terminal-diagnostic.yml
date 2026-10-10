@@ -1,0 +1,79 @@
+name: Issue 736 Terminal Regression Diagnosis
+on:
+  push:
+    branches: ['diagnostic/issue736-terminal-20261010']
+permissions:
+  contents: read
+jobs:
+  compare-and-aot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build exact baseline and candidate with identical assertion labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/artifacts/issue736-terminal"
+          mkdir -p "$ROOT"
+          dotnet --info > "$ROOT/dotnet-info.txt"
+          for arm in baseline candidate; do
+            if [[ "$arm" == baseline ]]; then sha=5560787e64875b7b86389af7cbefe25df7277bd9; else sha=25db40a9de1961d661926a78be3bd24e615b8919; fi
+            source="$RUNNER_TEMP/issue736-terminal-$arm"
+            git fetch --no-tags --depth=1 origin "$sha"
+            git worktree add --detach "$source" "$sha"
+            echo "$arm $sha" >> "$ROOT/revisions.txt"
+            python3 - "$source" <<'PY'
+          from pathlib import Path
+          import sys
+          root=Path(sys.argv[1])/'test/SharpLink.IntegrationTests'
+          p=root/'ExtensionFaultContainmentFixtures.cs'
+          s=p.read_text()
+          marker='    private int _move;'
+          assert s.count(marker)==1
+          s=s.replace(marker, '    public string InjectionCase => $"MoveNext={throwMoveNext};Dispose={throwDispose}";\n'+marker)
+          p.write_text(s)
+          p=root/'ExtensionFaultContainmentTests.cs'
+          s=p.read_text()
+          marker='"client stream producer/dispose injection should fail the call"'
+          assert s.count(marker)==1
+          s=s.replace(marker, marker+' + ": " + producer.InjectionCase')
+          p.write_text(s)
+          PY
+            git -C "$source" diff > "$ROOT/assertion-label-$arm.patch"
+            sha256sum "$source/src/SharpLink.Client/ClientConnection.cs" "$source/src/SharpLink.Runtime/StreamManager.cs" >> "$ROOT/source-hashes.txt"
+            dotnet build "$source/test/SharpLink.IntegrationTests" -c Release -v minimal > "$ROOT/build-$arm.log" 2>&1 || { cat "$ROOT/build-$arm.log"; exit 1; }
+          done
+      - name: Reproduce exact test in balanced fresh processes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/artifacts/issue736-terminal"
+          for pair in $(seq 1 20); do
+            if (( pair % 2 )); then arms="baseline candidate"; else arms="candidate baseline"; fi
+            for arm in $arms; do
+              dll="$RUNNER_TEMP/issue736-terminal-$arm/test/SharpLink.IntegrationTests/bin/Release/net10.0/SharpLink.IntegrationTests.dll"
+              set +e
+              dotnet "$dll" --treenode-filter '/*/*/ExtensionFaultContainmentTests/ClientStreamMoveNextAndDisposeFailuresShouldReleasePendingAndProducerState' --maximum-parallel-tests 1 --timeout 120s > "$ROOT/$arm-$pair.log" 2>&1
+              code=$?
+              set -e
+              printf '%s\t%s\t%s\n' "$arm" "$pair" "$code" >> "$ROOT/exits.tsv"
+            done
+          done
+          cat "$ROOT/exits.tsv"
+      - name: NativeAOT transport and topology smoke on exact candidate
+        shell: bash
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/artifacts/issue736-terminal"
+          cd "$RUNNER_TEMP/issue736-terminal-candidate"
+          ./eng/run-shared-memory-aot-process-smoke.sh > "$ROOT/aot-smoke.log" 2>&1 || { cat "$ROOT/aot-smoke.log"; exit 1; }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: issue736-terminal-${{ github.sha }}
+          path: artifacts/issue736-terminal/
+          if-no-files-found: error
