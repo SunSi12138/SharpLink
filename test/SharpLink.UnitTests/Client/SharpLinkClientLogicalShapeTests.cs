@@ -25,7 +25,7 @@ public sealed class SharpLinkClientLogicalShapeTests
             "suspended success must retain logical ownership");
         await transport.Connection.InjectInt32ResponseAsync(unchecked((long)successRequest.RequestId), 123);
         Ensure(await success.WaitAsync(TestTimeout) == 123, "successful unary response");
-        Ensure(inspector.ActiveCallCount == 0, "success must release once");
+        await WaitForLogicalCountAsync(inspector, 0, "success must release once");
 
         var remoteError = InvokeSpecializedUnary(client).AsTask();
         var errorRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request)
@@ -36,7 +36,7 @@ public sealed class SharpLinkClientLogicalShapeTests
             transport, errorRequest, SharpLinkErrorCode.Unavailable);
         var fault = await Throws<SharpLinkException>(remoteError.WaitAsync(TestTimeout));
         Ensure(fault.Code == SharpLinkErrorCode.Unavailable, "remote error must be preserved");
-        Ensure(inspector.ActiveCallCount == 0, "remote error must release once");
+        await WaitForLogicalCountAsync(inspector, 0, "remote error must release once");
 
         using var cancellation = new CancellationTokenSource();
         var cancelled = InvokeSpecializedUnary(client, cancellation.Token).AsTask();
@@ -46,7 +46,7 @@ public sealed class SharpLinkClientLogicalShapeTests
             "suspended cancellation must retain logical ownership");
         cancellation.Cancel();
         _ = await Throws<OperationCanceledException>(cancelled.WaitAsync(TestTimeout));
-        Ensure(inspector.ActiveCallCount == 0, "cancellation must release once");
+        await WaitForLogicalCountAsync(inspector, 0, "cancellation must release once");
 
         await client.StopAsync();
         Ensure(inspector.ActiveCallCount == 0, "later connection cleanup must not release again");
@@ -152,6 +152,15 @@ public sealed class SharpLinkClientLogicalShapeTests
             client,
             [method, request, RpcEmptyRequestCodec.Instance,
                 ((IRpcChannel)client).RuntimeContext.Codecs.GetCodec<int>(), control, cancellationToken])!;
+    }
+
+    private static async Task WaitForLogicalCountAsync(
+        ISharpLinkClientDrainInspector inspector, int expected, string failure)
+    {
+        var deadline = DateTime.UtcNow + TestTimeout;
+        while (inspector.ActiveCallCount != expected && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Ensure(inspector.ActiveCallCount == expected, failure);
     }
 
     private static async Task<TException> Throws<TException>(Task task) where TException : Exception
