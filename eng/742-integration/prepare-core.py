@@ -25,23 +25,19 @@ def main():
         if actual != expected:
             raise RuntimeError(f"Source drift: {name}: {actual} != {expected}")
         before[name] = data.decode()
-
     name = "StreamManager.Routing.cs"
-    text = before[name]
-    prefix, suffix = text.split("    private sealed class DispatcherEntry : IStreamDispatchState", 1)
+    prefix, suffix = before[name].split("    private sealed class DispatcherEntry : IStreamDispatchState", 1)
     if prefix.count(".TryClaimRetirement()") != 5:
         raise RuntimeError("Unexpected retirement call population")
     prefix = prefix.replace(".TryClaimRetirement()", ".TryClaimRetirementAndClose()")
     for line in ["                found.Close();\n", "                    defaultDispatcher.Close();\n",
                  "                        defaultDispatcher.Close();\n", "                        pair.Value.Close();\n",
                  "                        entry.Close();\n"]:
-        prefix = once(prefix, line, "")
+        prefix = once(prefix, "\n" + line, "\n")
     old = "        internal bool TryClaimRetirement()\n            => (Interlocked.Or(ref _state, RetirementClaimedMask) & RetirementClaimedMask) == 0;"
     suffix = once(suffix, old, old + "\n\n        // Claiming retirement and excluding new acquisitions share one linearization point.\n        // Existing DATA counts, cleanup pins and detach ownership are not changed.\n        internal bool TryClaimRetirementAndClose()\n            => (Interlocked.Or(ref _state, RetirementClaimedMask | ClosedMask)\n                & RetirementClaimedMask) == 0;")
     (ROOT / "src/SharpLink.Runtime" / name).write_text(prefix + "    private sealed class DispatcherEntry : IStreamDispatchState" + suffix)
-
     name = "StreamFlowController.cs"
-    text = before[name]
     anchor = "            // A benign double return can overshoot a window: the peer may"
     replacement = """            // AbortSendStreams returns all of this stream's remaining connection debt
             // locally before poisoning it. Once a poisoned stream is fully credited,
@@ -52,9 +48,7 @@ def main():
                 return;
 
 """ + anchor
-    text = once(text, anchor, replacement)
-    (ROOT / "src/SharpLink.Runtime" / name).write_text(text)
-
+    (ROOT / "src/SharpLink.Runtime" / name).write_text(once(before[name], anchor, replacement))
     output = ROOT / "artifacts/742-integration"
     output.mkdir(parents=True, exist_ok=True)
     manifest = {
@@ -64,8 +58,7 @@ def main():
         "candidate_sha256": {name: hashlib.sha256((ROOT / "src/SharpLink.Runtime" / name).read_bytes()).hexdigest() for name in EXPECTED},
     }
     (output / "core-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    patch = subprocess.check_output(["git", "diff", "--binary", "--", "src/SharpLink.Runtime"], cwd=ROOT)
-    (output / "core.patch").write_bytes(patch)
+    (output / "core.patch").write_bytes(subprocess.check_output(["git", "diff", "--binary", "--", "src/SharpLink.Runtime"], cwd=ROOT))
     print(json.dumps(manifest, indent=2))
 
 if __name__ == "__main__":
