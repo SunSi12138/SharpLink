@@ -1,0 +1,42 @@
+name: Issue 736 Storage Validation
+on:
+  push:
+    branches: ['validation/issue736-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  canonical-fast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - run: dotnet restore Sharplink.slnx
+      - run: python3 eng/check-project-reference-boundaries.py
+      - run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+      - run: python3 eng/test-verify-maintainability.py && bash eng/check-maintainability.sh
+      - run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - run: ./eng/verify-generated-assembly-dependencies.sh
+      - run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+      - run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+      - run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+  paired-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build pinned controls and execute balanced evidence
+        shell: bash
+        run: bash eng/perf/issue736/run.sh
+      - name: Upload complete raw evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue736-storage-${{ github.sha }}
+          path: artifacts/issue736/
+          if-no-files-found: error

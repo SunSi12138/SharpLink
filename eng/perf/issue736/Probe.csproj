@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <RootNamespace>SharpLink.Issue736Evidence</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DefineConstants Condition="'$(PublishAot)' == 'true'">$(DefineConstants);NATIVE_AOT</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+  </ItemGroup>
+</Project>
