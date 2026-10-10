@@ -1,0 +1,265 @@
+namespace SharpLink.Runtime;
+
+// Integration candidate: enabled explicitly while the complete production gates run.
+internal sealed partial class RpcSession
+{
+    private WriterOwnedStreamCoordinator? _writerOwnedStreams;
+    private static readonly bool WriterOwnedStreamsEnabled =
+        Environment.GetEnvironmentVariable("SHARPLINK_WRITER_OWNED_STREAMS") == "1";
+
+    internal static long WriterOwnedStreamScopesOpened;
+    internal static long WriterOwnedStreamItemsSubmitted;
+
+    private sealed class ReadyRpcStreamLease : IDisposable
+    {
+        internal readonly WriterOwnedStreamCoordinator Source;
+        internal readonly WriterOwnedStreamCoordinator.StreamHandle Handle;
+        private readonly CancellationToken _callToken;
+        private CancellationTokenRegistration _registration;
+        private int _disposed;
+
+        internal ReadyRpcStreamLease(WriterOwnedStreamCoordinator source,
+            WriterOwnedStreamCoordinator.StreamHandle handle, CancellationToken callToken)
+        {
+            Source = source;
+            Handle = handle;
+            _callToken = callToken;
+            _registration = callToken.UnsafeRegister(static state =>
+            {
+                var lease = (ReadyRpcStreamLease)state!;
+                lease.Source.SafeAbortRpcStream(lease.Handle,
+                    new OperationCanceledException(lease._callToken));
+            }, this);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            _registration.Dispose();
+            Source.ReleaseRpcScope(Handle);
+        }
+    }
+
+    internal ValueTask<StreamFlowController.ResolvedSendCreditLease> OpenWriterOwnedStreamAsync(
+        long requestId, ushort streamId, CancellationToken cancellationToken,
+        RpcDeadline deadline = default, TimeProvider? timeProvider = null)
+    {
+        if (!WriterOwnedStreamsEnabled || !HasStreamFlowControl)
+            return new ValueTask<StreamFlowController.ResolvedSendCreditLease>(default(StreamFlowController.ResolvedSendCreditLease));
+        return OpenWriterOwnedStreamCoreAsync(requestId, streamId, cancellationToken, deadline, timeProvider);
+    }
+
+    private async ValueTask<StreamFlowController.ResolvedSendCreditLease> OpenWriterOwnedStreamCoreAsync(
+        long requestId, ushort streamId, CancellationToken cancellationToken,
+        RpcDeadline deadline, TimeProvider? timeProvider)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
+        // A ready DATA queue is distinct from the ordinary request queue. This cold
+        // fence proves request-before-DATA, including after a later fairness change.
+        await FlushSendQueueAsync(cancellationToken).ConfigureAwait(false);
+        ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
+        var source = GetOrCreateWriterOwnedStreams();
+        var handle = await source.AcquireStreamAsync(requestId, streamId, cancellationToken).ConfigureAwait(false);
+        ReadyRpcStreamLease? scope = null;
+        try
+        {
+            scope = new ReadyRpcStreamLease(source, handle, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
+            var controller = Volatile.Read(ref _protocolState).FlowController!;
+            Interlocked.Increment(ref WriterOwnedStreamScopesOpened);
+            return new StreamFlowController.ResolvedSendCreditLease(controller, requestId, streamId, scope, handle.Generation);
+        }
+        catch (Exception error)
+        {
+            source.SafeAbortRpcStream(handle, error);
+            if (scope is not null) scope.Dispose();
+            else source.ReleaseRpcScope(handle);
+            throw;
+        }
+    }
+
+    private WriterOwnedStreamCoordinator GetOrCreateWriterOwnedStreams()
+    {
+        var source = Volatile.Read(ref _writerOwnedStreams);
+        if (source is not null) return source;
+        lock (_preCreditSerializedBudgetGate)
+        {
+            source = _writerOwnedStreams;
+            if (source is not null) return source;
+            if (Volatile.Read(ref _terminal) is { } terminal) throw terminal.Exception;
+            var flow = Volatile.Read(ref _protocolState).FlowController
+                ?? throw new InvalidOperationException("Writer-owned scheduling requires negotiated flow control.");
+            // Do not silently split one connection's send credit between two owners.
+            if (flow.RetainedSendStreamCount != 0)
+                throw new InvalidOperationException("A legacy send state already owns this connection's credit.");
+            var budget = GetOrCreatePreCreditSerializedBudget();
+            var lifetime = CancellationTokenSource.CreateLinkedTokenSource(LifetimeToken);
+            try
+            {
+                source = new WriterOwnedStreamCoordinator(this, RuntimeContext, lifetime,
+                    reference: false, streams: flow.WriterStreamLimit, items: 1, bytes: 1,
+                    window: flow.WriterStreamWindow, connectionWindow: flow.WriterConnectionWindow,
+                    slots: 4, quantum: 16, preparedByteBudget: 8192, dynamicLifetimes: true);
+                source.ConfigureRpc(budget, NegotiatedMaxFramePayloadBytes);
+                source.Attach();
+                Volatile.Write(ref _writerOwnedStreams, source);
+                _ = ObserveWriterOwnedStreamsAsync(source, lifetime);
+                return source;
+            }
+            catch
+            {
+                lifetime.Dispose();
+                throw;
+            }
+        }
+    }
+
+    private async Task ObserveWriterOwnedStreamsAsync(WriterOwnedStreamCoordinator source,
+        CancellationTokenSource lifetime)
+    {
+        try { await source.Completion.ConfigureAwait(false); }
+        catch (Exception error) { Fault(error); }
+        finally { lifetime.Dispose(); }
+    }
+
+    internal void AbortWriterOwnedStream(StreamFlowController.ResolvedSendCreditLease lease, Exception error)
+    {
+        if (lease.State is ReadyRpcStreamLease scope)
+            scope.Source.SafeAbortRpcStream(scope.Handle, error);
+    }
+
+    internal void ReleaseWriterOwnedStream(StreamFlowController.ResolvedSendCreditLease lease)
+    {
+        if (lease.State is ReadyRpcStreamLease scope) scope.Dispose();
+    }
+
+    internal ValueTask DrainWriterOwnedStreamAsync(StreamFlowController.ResolvedSendCreditLease lease,
+        CancellationToken cancellationToken, RpcDeadline deadline = default, TimeProvider? timeProvider = null)
+    {
+        if (lease.State is not ReadyRpcStreamLease scope) return ValueTask.CompletedTask;
+        return DrainWriterOwnedStreamCoreAsync(scope, cancellationToken, deadline, timeProvider);
+    }
+
+    private async ValueTask DrainWriterOwnedStreamCoreAsync(ReadyRpcStreamLease scope,
+        CancellationToken cancellationToken, RpcDeadline deadline, TimeProvider? timeProvider)
+    {
+        var drain = scope.Source.DrainRpcStreamAsync(scope.Handle);
+        try
+        {
+            if (!drain.IsCompletedSuccessfully)
+            {
+                // Flush DATA already in the pump's pending batch; subsequently selected
+                // final DATA also carries a force-flush bit while the drain is pending.
+                await FlushSendQueueAsync(cancellationToken).ConfigureAwait(false);
+                if (deadline.HasValue && timeProvider is not null)
+                {
+                    if (!await SharpLinkTimer.WaitAsync(drain, deadline, timeProvider, cancellationToken).ConfigureAwait(false))
+                        throw CreateGeneratedStreamDeadlineExceededException();
+                }
+                else
+                    await drain.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            await drain.ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
+        }
+        catch (Exception error)
+        {
+            scope.Source.SafeAbortRpcStream(scope.Handle, error);
+            _ = ObserveAbandonedGeneratedSendAsync(drain);
+            throw;
+        }
+    }
+
+    private async ValueTask<StreamFlowController.ResolvedSendCreditLease> SendWriterOwnedStreamItemAsync<T>(
+        StreamFlowController.ResolvedSendCreditLease lease, T item, IRpcCodec<T> codec,
+        IRpcSizedCodec<T>? exactSizeCodec, CancellationToken cancellationToken,
+        RpcDeadline deadline, TimeProvider? timeProvider)
+    {
+        var scope = (ReadyRpcStreamLease)lease.State!;
+        var budget = GetOrCreatePreCreditSerializedBudget();
+        IRpcByteBufferWriter? writer = null;
+        IRpcSizedCodecSnapshot? snapshot = null;
+        var budgetOwned = false;
+        var creditBytes = 0;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
+            if (exactSizeCodec is not null && exactSizeCodec.TryGetEncodedSize(item, out var encodedBytes, out snapshot))
+            {
+                if (encodedBytes < 0 || encodedBytes > NegotiatedMaxFramePayloadBytes - sizeof(ushort))
+                    throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Encoded stream item exceeds the negotiated frame limit.");
+                creditBytes = Math.Max(1, encodedBytes);
+                await budget.AcquireAsync(lease.RequestId, lease.StreamId, creditBytes, cancellationToken).ConfigureAwait(false);
+                budgetOwned = true;
+                cancellationToken.ThrowIfCancellationRequested();
+                ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
+                writer = RentFrameWriter();
+                using (writer.BeginPacketScope(ProtocolV2FrameType.StreamData, ProtocolV2FrameFlags.None, unchecked((ulong)lease.RequestId)))
+                {
+                    var id = writer.GetSpan(sizeof(ushort));
+                    BinaryPrimitives.WriteUInt16LittleEndian(id, lease.StreamId);
+                    writer.Advance(sizeof(ushort));
+                    exactSizeCodec.SerializeSized(item, writer, encodedBytes, snapshot);
+                }
+                if (writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort) != encodedBytes)
+                    throw new InvalidOperationException("Exact stream size changed during preparation.");
+            }
+            else
+            {
+                writer = RentFrameWriter();
+                using (writer.BeginPacketScope(ProtocolV2FrameType.StreamData, ProtocolV2FrameFlags.None, unchecked((ulong)lease.RequestId)))
+                {
+                    var id = writer.GetSpan(sizeof(ushort));
+                    BinaryPrimitives.WriteUInt16LittleEndian(id, lease.StreamId);
+                    writer.Advance(sizeof(ushort));
+                    codec.Serialize(item, writer);
+                }
+                creditBytes = Math.Max(1, writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
+                if (creditBytes > NegotiatedMaxFramePayloadBytes - sizeof(ushort))
+                    throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Encoded stream item exceeds the negotiated frame limit.");
+                await budget.AcquireAsync(lease.RequestId, lease.StreamId, creditBytes, cancellationToken).ConfigureAwait(false);
+                budgetOwned = true;
+            }
+            if (snapshot is not null)
+            {
+                var captured = snapshot;
+                snapshot = null;
+                exactSizeCodec!.ReleaseSnapshot(captured);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
+            writer = PrepareOutboundPacket(writer, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            ThrowIfGeneratedStreamDeadlineExpired(deadline, timeProvider);
+            var transferred = writer;
+            writer = null; // validation owns the exceptional return
+            ValidateOutboundPacketOrReturn(transferred, allowEmpty: false);
+            budgetOwned = false; // source owns packet + memory reservation on entry, including failure
+            await scope.Source.EnqueueAsync(scope.Handle, transferred, creditBytes).ConfigureAwait(false);
+            Interlocked.Increment(ref WriterOwnedStreamItemsSubmitted);
+            return lease;
+        }
+        finally
+        {
+            try
+            {
+                if (snapshot is not null) exactSizeCodec!.ReleaseSnapshot(snapshot);
+            }
+            finally
+            {
+                try
+                {
+                    if (writer is not null) RuntimeContext.Buffers.Return(writer);
+                }
+                finally
+                {
+                    if (budgetOwned) budget.Release(creditBytes);
+                }
+            }
+        }
+    }
+}
