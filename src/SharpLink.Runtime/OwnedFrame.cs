@@ -13,6 +13,19 @@ internal interface IRequestEmissionFailureObserver
 internal readonly struct OwnedFrame
 {
     private readonly object? _completionState;
+    private readonly int _writerReadyCreditBytes;
+
+    internal IWriterReadyCompletion? WriterReadyCompletion
+        => _completionState as IWriterReadyCompletion;
+
+    internal int WriterReadyCreditBytes => _writerReadyCreditBytes;
+
+    internal OwnedFrame(WriterReadyFrame ready)
+        : this(ready.Packet, ready.ForceFlush, null, false)
+    {
+        _completionState = ready.Completion;
+        _writerReadyCreditBytes = ready.CreditBytes;
+    }
 
     internal OwnedFrame(
         IRpcByteBufferWriter owner,
@@ -23,10 +36,9 @@ internal readonly struct OwnedFrame
     {
         Owner = owner;
         Memory = owner.WrittenMemory;
-        Length = owner.WrittenCount;
+        _writerReadyCreditBytes = 0;
         ForceFlush = forceFlush;
         IsProtocolProgress = isProtocolProgress;
-
         _completionState = (object?)flushCompletion ?? failureObserver;
     }
 
@@ -34,15 +46,13 @@ internal readonly struct OwnedFrame
 
     public ReadOnlyMemory<byte> Memory { get; }
 
-    public int Length { get; }
+    public int Length => Memory.Length;
 
     public bool ForceFlush { get; }
 
     /// <summary>
-    /// True when the frame carries protocol progress (ping/pong, window
-    /// update, go-away) rather than RPC data. The send pump admits and
-    /// drains progress frames against a small reserved byte headroom and a
-    /// bounded priority burst so stream saturation cannot starve them.
+    /// True for protocol progress (ping/pong, window update, go-away) rather
+    /// than RPC data. The pump preserves reserved headroom and bounded service.
     /// </summary>
     public bool IsProtocolProgress { get; }
 
