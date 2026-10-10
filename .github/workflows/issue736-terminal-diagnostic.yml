@@ -43,6 +43,7 @@ jobs:
           PY
             git -C "$source" diff > "$ROOT/assertion-label-$arm.patch"
             sha256sum "$source/src/SharpLink.Client/ClientConnection.cs" "$source/src/SharpLink.Runtime/StreamManager.cs" >> "$ROOT/source-hashes.txt"
+            cp eng/perf/issue736/GatedDisposalDiagnosticTests.cs "$source/test/SharpLink.IntegrationTests/"
             dotnet build "$source/test/SharpLink.IntegrationTests" -c Release -v minimal > "$ROOT/build-$arm.log" 2>&1 || { cat "$ROOT/build-$arm.log"; exit 1; }
           done
       - name: Reproduce exact test in balanced fresh processes
@@ -62,6 +63,23 @@ jobs:
             done
           done
           cat "$ROOT/exits.tsv"
+      - name: Deterministic gated disposal observation and complete integration comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/artifacts/issue736-terminal"
+          for arm in baseline candidate; do
+            dll="$RUNNER_TEMP/issue736-terminal-$arm/test/SharpLink.IntegrationTests/bin/Release/net10.0/SharpLink.IntegrationTests.dll"
+            ISSUE736_DIAG_OUTPUT="$ROOT/gated-$arm.txt" dotnet "$dll" --treenode-filter '/*/*/GatedDisposalDiagnosticTests/*' --maximum-parallel-tests 1 --timeout 120s > "$ROOT/gated-$arm.log" 2>&1 || { cat "$ROOT/gated-$arm.log"; exit 1; }
+            for rep in 1 2; do
+              set +e
+              ISSUE736_DIAG_OUTPUT="$ROOT/gated-$arm.txt" dotnet "$dll" --maximum-parallel-tests 1 --timeout 120s > "$ROOT/full-$arm-$rep.log" 2>&1
+              code=$?
+              set -e
+              printf '%s\t%s\t%s\n' "$arm" "$rep" "$code" >> "$ROOT/full-exits.tsv"
+            done
+          done
+          cat "$ROOT"/gated-*.txt "$ROOT/full-exits.tsv"
       - name: NativeAOT transport and topology smoke on exact candidate
         shell: bash
         env:
