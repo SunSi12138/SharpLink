@@ -1,16 +1,16 @@
 # Issue #801 — dev full-solution symbol reference index
 
 Dev base: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
-Audit head: 9c935f885d10cb44b26206ae8655fc40a34654a7
-Projects 65; source docs 2215; generated docs 945
-Production source files indexed: 476/476; declarations: 8853; matched references: 109848; elapsed seconds: 49
+Audit head: 666f429278b2010ecc3ff872185f38933c115358
+Projects 65; source docs 1383; generated docs 945
+Production source files indexed: 476/476; declarations: 8853; matched references: 111567; elapsed seconds: 94
 **Caution:** A/B/C are review candidates, NOT proof of dead code. This scans direct semantic references, not whole-program reachability, reflection, DI or external consumers.
 
 ## Tier counts
-- A-NO-DIRECT-REFERENCE: 542
-- B-ONLY-TEST-BENCH-EXAMPLE: 303
-- C-PUBLIC-API-REVIEW: 397
-- D-REFERENCED-PRODUCTION: 7611
+- A-NO-DIRECT-REFERENCE: 537
+- B-ONLY-TEST-BENCH-EXAMPLE: 299
+- C-PUBLIC-API-REVIEW: 396
+- D-REFERENCED-PRODUCTION: 7621
 ## Unindexed production files
 ## Workspace diagnostics (first 30)
 - MSBuildLocator unavailable; workspace might not load.
@@ -59,7 +59,6 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Generator.RpcGenerator.GetReferencedInterfaceModels(Microsoft.CodeAnalysis.Compilation, System.Threading.CancellationToken) | src/SharpLink.Generator/RpcGenerator.ReferenceAnalysis.cs:5 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Generator.RpcGenerator.GetReferencedServiceModels(Microsoft.CodeAnalysis.Compilation, System.Threading.CancellationToken) | src/SharpLink.Generator/RpcGenerator.ReferenceAnalysis.cs:29 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Runtime.RpcBufferWriterExtensions | src/SharpLink.Runtime/ArrayBufferWriterExtensions.cs:3 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Runtime.RpcBufferWriterExtensions.extension(SharpLink.Abstractions.IRpcByteBufferWriter) | src/SharpLink.Runtime/ArrayBufferWriterExtensions.cs:6 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Runtime.RpcCodecProvider.TryGetExplicitCodec<T>(out SharpLink.Abstractions.IRpcCodec<T>) | src/SharpLink.Runtime/Codec/RpcCodecProvider.cs:48 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Runtime.RpcGeneratedManifestRegistration.HasContractCodecs | src/SharpLink.Runtime/Codec/RpcCodecProvider.cs:319 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Runtime.RpcGeneratedManifestRegistration.ContractCodecProvider | src/SharpLink.Runtime/Codec/RpcCodecProvider.cs:321 | 0 | 0 | 0 | 0 | 0 | - |
@@ -124,7 +123,6 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Server.AdmissionRuleRuntime.RateDefinition | src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs:980 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.AdmissionRuleRuntime.CreateOwned(SharpLink.Server.SharpLinkAdmissionRuleOptions, string, System.TimeProvider) | src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs:990 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.AdmissionPartitionPool.IdleTimeoutForTests | src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs:1423 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Server.ServerCallCapacityGovernor.Capacity | src/SharpLink.Server/ServerCallCapacityGovernor.cs:26 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.ServerCallCapacityGovernor.ServerCallReservation.IsReserved | src/SharpLink.Server/ServerCallCapacityGovernor.cs:161 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.ServerCallCapacityGovernor.ServerCallReservation.IsActive | src/SharpLink.Server/ServerCallCapacityGovernor.cs:163 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.ServerPreAdmissionStreamBytesPermit.RetainedBytes | src/SharpLink.Server/ServerResourceGovernor.cs:314 | 0 | 0 | 0 | 0 | 0 | - |
@@ -138,6 +136,8 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Server.SharpLinkServer.FrameworkTaskSnapshotForDiagnostics | src/SharpLink.Server/SharpLinkServer.cs:298 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkServer.ForceStop() | src/SharpLink.Server/SharpLinkServer.cs:329 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkServer.DecodeQueueReservationsForDiagnostics | src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs:76 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Server.SharpLinkServer.DecodeScheduledConnectionCountForDiagnostics | src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs:79 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Server.SharpLinkServer.DecodeSkippedBeforeStartForDiagnostics | src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs:82 | 0 | 0 | 0 | 0 | 0 | - |
 
 ## B-ONLY-TEST-BENCH-EXAMPLE (first 120)
 | Symbol | Source | Production | Generated | Tests | Benchmarks | Examples | Safety root |
@@ -259,9 +259,9 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Server.AdmissionStateKernel.PartitionStateCount | src/SharpLink.Server/Admission/AdmissionStateKernel.cs:146 | 0 | 0 | 25 | 0 | 0 | - |
 | SharpLink.Server.AdmissionStateKernel.PartitionEntryCount | src/SharpLink.Server/Admission/AdmissionStateKernel.cs:155 | 0 | 0 | 4 | 0 | 0 | - |
 | SharpLink.Server.AdmissionStateKernel.PartitionRuntimeGenerationCount | src/SharpLink.Server/Admission/AdmissionStateKernel.cs:164 | 0 | 0 | 3 | 0 | 0 | - |
-| SharpLink.Server.ServerConnectionAdmission.MaxConnections | src/SharpLink.Server/Admission/ServerConnectionAdmission.cs:37 | 0 | 0 | 7 | 0 | 0 | - |
-| SharpLink.Server.ServerConnectionAdmission.MaxHandshakes | src/SharpLink.Server/Admission/ServerConnectionAdmission.cs:39 | 0 | 0 | 8 | 0 | 0 | - |
 | SharpLink.Server.ServerConnectionAdmission.ActiveConnections | src/SharpLink.Server/Admission/ServerConnectionAdmission.cs:41 | 0 | 0 | 47 | 0 | 0 | - |
+| SharpLink.Server.ServerConnectionAdmission.ActiveHandshakes | src/SharpLink.Server/Admission/ServerConnectionAdmission.cs:43 | 0 | 0 | 39 | 0 | 0 | - |
+| SharpLink.Server.SharpLinkAdmissionController.GlobalStateForTests | src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs:338 | 0 | 0 | 14 | 0 | 0 | - |
 
 ## C-PUBLIC-API-REVIEW (first 120)
 | Symbol | Source | Production | Generated | Tests | Benchmarks | Examples | Safety root |

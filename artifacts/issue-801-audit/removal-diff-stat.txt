@@ -30,5 +30,4 @@
  .../SharpLinkServer.LifecycleAliases.cs            |   3 +-
  .../SharpLinkServer.RequestLoop.cs                 |   3 +-
  src/SharpLink.Server/SharpLinkServer.cs            |   2 +-
- src/SharpLink.Server/TransportExtensions.cs        |   9 +-
- 33 files changed, 48 insertions(+), 898 deletions(-)
+ 32 files changed, 46 insertions(+), 891 deletions(-)

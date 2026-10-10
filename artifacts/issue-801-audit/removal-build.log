@@ -1,61 +1,71 @@
   SharpLink.Maintainability -> /home/runner/work/SharpLink/SharpLink/eng/SharpLink.Maintainability/bin/Release/net10.0/SharpLink.Maintainability.dll
-  SharpLink.Abstractions -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Abstractions/bin/Release/net10.0/SharpLink.Abstractions.dll
   SharpLink.AotExternalPayloads -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotExternalPayloads/bin/Release/net10.0/SharpLink.AotExternalPayloads.dll
+  SharpLink.Abstractions -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Abstractions/bin/Release/net10.0/SharpLink.Abstractions.dll
   SharpLink.GeneratedAssemblyScanner -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.GeneratedAssemblyScanner/bin/Release/net10.0/SharpLink.GeneratedAssemblyScanner.dll
-  SharpLink.ReferencedCodecProvider -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecProvider/bin/Release/net10.0/SharpLink.ReferencedCodecProvider.dll
-  SharpLink.ModuleDependencyConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ModuleDependencyConsumer/bin/Release/net10.0/SharpLink.ModuleDependencyConsumer.dll
-  SharpLink.RollbackPlugin -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.RollbackPlugin/bin/Release/net10.0/SharpLink.RollbackPlugin.dll
-  SharpLink.ReferencedCodecConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecConsumer/bin/Release/net10.0/SharpLink.ReferencedCodecConsumer.dll
-  SharpLink.Runtime -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll
-  SharpLink.Serializer.SharpPack -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Serializer.SharpPack/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll
   SharpLink.Generator -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(31,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(32,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(42,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(43,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(54,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(55,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(69,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(70,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(90,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(91,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(112,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(113,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-  SharpLink.Compression.Zstd -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Compression.Zstd/bin/Release/net10.0/SharpLink.Compression.Zstd.dll
-  SharpLink.Client -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Client/bin/Release/net10.0/SharpLink.Client.dll
+  SharpLink.ReferencedCodecProvider -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecProvider/bin/Release/net10.0/SharpLink.ReferencedCodecProvider.dll
+  SharpLink.Runtime -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll
+  SharpLink.RollbackPlugin -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.RollbackPlugin/bin/Release/net10.0/SharpLink.RollbackPlugin.dll
+  SharpLink.Serializer.SharpPack -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Serializer.SharpPack/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll
   SharpLink.CodecCompatibility -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.CodecCompatibility/bin/Release/net10.0/SharpLink.CodecCompatibility.dll
-  SharpLink.Generator.Tests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.Generator.Tests/bin/Release/net10.0/SharpLink.Generator.Tests.dll
+  SharpLink.Client -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Client/bin/Release/net10.0/SharpLink.Client.dll
+  SharpLink.Server -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/bin/Release/net10.0/SharpLink.Server.dll
   SharpLink.Sdk -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Sdk/bin/Release/net10.0/SharpLink.Sdk.dll
-  SharpLink.ZstdAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ZstdAotSmoke/bin/Release/net10.0/SharpLink.ZstdAotSmoke.dll
-  SeparatedContracts -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedContracts/bin/Release/net10.0/SeparatedContracts.dll
-  QuickStart.Contracts -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Contracts/bin/Release/net10.0/QuickStart.Contracts.dll
-  SharpLink.DynamicContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.DynamicContracts/bin/Release/net10.0/SharpLink.DynamicPlugin.Contracts.dll
-  MultiCluster.Payments.Contracts -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster.Payments.Contracts/bin/Release/net10.0/MultiCluster.Payments.Contracts.dll
+  SharpLink.Generator.Tests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.Generator.Tests/bin/Release/net10.0/SharpLink.Generator.Tests.dll
+  SharpLink.Compression.Zstd -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Compression.Zstd/bin/Release/net10.0/SharpLink.Compression.Zstd.dll
   SharpLink.ReplacementContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReplacementContracts/bin/Release/net10.0/SharpLink.DynamicPlugin.Contracts.dll
-  MultiCluster.Orders.Contracts -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster.Orders.Contracts/bin/Release/net10.0/MultiCluster.Orders.Contracts.dll
+  SharpLink.LoadTestBase -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.LoadTestBase/bin/Release/net10.0/SharpLink.LoadTestBase.dll
+  SharpLink.DynamicContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.DynamicContracts/bin/Release/net10.0/SharpLink.DynamicPlugin.Contracts.dll
+  SharpLink.SharpPackAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.SharpPackAotSmoke/bin/Release/net10.0/SharpLink.SharpPackAotSmoke.dll
   SharpLink.AotContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotContracts/bin/Release/net10.0/SharpLink.AotContracts.dll
   ProductionTemplate.Contracts -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Contracts/bin/Release/net10.0/ProductionTemplate.Contracts.dll
+  MultiCluster.Orders.Contracts -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster.Orders.Contracts/bin/Release/net10.0/MultiCluster.Orders.Contracts.dll
+  DemoBase -> /home/runner/work/SharpLink/SharpLink/demo/DemoBase/bin/Release/net10.0/DemoBase.dll
+  Log -> /home/runner/work/SharpLink/SharpLink/demo/Log/bin/Release/net10.0/Log.dll
+  Security -> /home/runner/work/SharpLink/SharpLink/demo/Security/bin/Release/net10.0/Security.dll
+  TransportMatrix -> /home/runner/work/SharpLink/SharpLink/demo/TransportMatrix/bin/Release/net10.0/TransportMatrix.dll
+  HelloWorld -> /home/runner/work/SharpLink/SharpLink/demo/HelloWorld/bin/Release/net10.0/HelloWorld.dll
+  SharpLink.Hosting -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Hosting/bin/Release/net10.0/SharpLink.Hosting.dll
+  InterceptorsTelemetry -> /home/runner/work/SharpLink/SharpLink/demo/InterceptorsTelemetry/bin/Release/net10.0/InterceptorsTelemetry.dll
+  Cancel -> /home/runner/work/SharpLink/SharpLink/demo/Cancel/bin/Release/net10.0/Cancel.dll
+  AdmissionControl -> /home/runner/work/SharpLink/SharpLink/demo/AdmissionControl/bin/Release/net10.0/AdmissionControl.dll
+  Resilience -> /home/runner/work/SharpLink/SharpLink/demo/Resilience/bin/Release/net10.0/Resilience.dll
+  Oneway -> /home/runner/work/SharpLink/SharpLink/demo/Oneway/bin/Release/net10.0/Oneway.dll
+  Timeout -> /home/runner/work/SharpLink/SharpLink/demo/Timeout/bin/Release/net10.0/Timeout.dll
+  Streaming -> /home/runner/work/SharpLink/SharpLink/demo/Streaming/bin/Release/net10.0/Streaming.dll
+  QuickStart.Contracts -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Contracts/bin/Release/net10.0/QuickStart.Contracts.dll
+  SeparatedContracts -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedContracts/bin/Release/net10.0/SeparatedContracts.dll
+  SharpLink.ChaosTests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ChaosTests/bin/Release/net10.0/SharpLink.ChaosTests.dll
+  SharpLink.PreCreditAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.PreCreditAotSmoke/bin/Release/net10.0/SharpLink.PreCreditAotSmoke.dll
+  MultiCluster.Payments.Contracts -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster.Payments.Contracts/bin/Release/net10.0/MultiCluster.Payments.Contracts.dll
+  SharpLink.ZstdAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ZstdAotSmoke/bin/Release/net10.0/SharpLink.ZstdAotSmoke.dll
   QuickStart.Client -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Client/bin/Release/net10.0/QuickStart.Client.dll
-  SharpLink.AotServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotServices/bin/Release/net10.0/SharpLink.AotServices.dll
-  SharpLink.ReplacementServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReplacementServices/bin/Release/net10.0/SharpLink.DynamicPlugin.Services.dll
+  QuickStart.Server -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Server/bin/Release/net10.0/QuickStart.Server.dll
+  SharpLink.StaticCodecOwnerTest.Contracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.StaticCodecOwnerTest.Contracts/bin/Debug/net10.0/SharpLink.StaticCodecOwnerTest.Contracts.dll
+  SharpLink.MultiClusterTest.Contracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.MultiClusterTest.Contracts/bin/Debug/net10.0/SharpLink.MultiClusterTest.Contracts.dll
+  Compression -> /home/runner/work/SharpLink/SharpLink/demo/Compression/bin/Release/net10.0/Compression.dll
   ProductionTemplate.Client -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Client/bin/Release/net10.0/ProductionTemplate.Client.dll
+  HostApplication -> /home/runner/work/SharpLink/SharpLink/demo/HostApplication/bin/Release/net10.0/HostApplication.dll
+  SeparatedClient -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedClient/bin/Release/net10.0/SeparatedClient.dll
+  ProductionTemplate.Server -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Server/bin/Release/net10.0/ProductionTemplate.Server.dll
+  SharpLink.AotServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotServices/bin/Release/net10.0/SharpLink.AotServices.dll
+  SeparatedServer -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedServer/bin/Release/net10.0/SeparatedServer.dll
+  SharpLink.LoadTest -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.LoadTest/bin/Release/net10.0/SharpLink.LoadTest.dll
+  MultiCluster -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster/bin/Release/net10.0/MultiCluster.dll
+  SharpLink.StreamLoadTest -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.StreamLoadTest/bin/Release/net10.0/SharpLink.StreamLoadTest.dll
+  SharpLink.StreamLoadTest.Tests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.StreamLoadTest.Tests/bin/Release/net10.0/SharpLink.StreamLoadTest.Tests.dll
   SharpLink.DynamicServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.DynamicServices/bin/Release/net10.0/SharpLink.DynamicPlugin.Services.dll
+  SharpLink.AotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotSmoke/bin/Release/net10.0/SharpLink.AotSmoke.dll
+  SharpLink.LoadTest.Tests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.LoadTest.Tests/bin/Release/net10.0/SharpLink.LoadTest.Tests.dll
+  SharpLink.Benchmarks -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll
+  SharpLink.UnitTests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll
+  SharpLink.ReplacementServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReplacementServices/bin/Release/net10.0/SharpLink.DynamicPlugin.Services.dll
+  SharpLink.ModuleDependencyConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ModuleDependencyConsumer/bin/Release/net10.0/SharpLink.ModuleDependencyConsumer.dll
+  SharpLink.ReferencedCodecConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecConsumer/bin/Release/net10.0/SharpLink.ReferencedCodecConsumer.dll
+  SharpLink.IntegrationTests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.IntegrationTests/bin/Release/net10.0/SharpLink.IntegrationTests.dll
 
-Build FAILED.
-
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(31,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(32,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(42,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(43,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(54,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(55,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(69,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(70,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(90,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(91,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(112,13): error CS0103: The name 'ValidateTcpPort' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
-/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/TransportExtensions.cs(113,13): error CS0103: The name 'ValidateBacklog' does not exist in the current context [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/SharpLink.Server.csproj]
+Build succeeded.
     0 Warning(s)
-    12 Error(s)
+    0 Error(s)
 
-Time Elapsed 00:00:13.12
+Time Elapsed 00:00:49.50
