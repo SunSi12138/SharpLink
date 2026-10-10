@@ -1,0 +1,549 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "sample",
+    "processId",
+    "sourceSha",
+    "runtime",
+    "expectedRuntime",
+    "framework",
+    "architecture",
+    "os",
+    "processorCount",
+    "serverGc",
+    "minimumWorkers",
+    "minimumIo",
+    "tieredPgo",
+    "tieredCompilation",
+    "readyToRun",
+    "cycles",
+    "warmup",
+    "framesPerCycle",
+    "frames",
+    "frameBytes",
+    "queueCapacity",
+    "fixtureOnly",
+    "forceFlushCompletionContract",
+    "controlledIncompleteFlush",
+    "profile",
+    "explicitTimedBatch",
+    "callerCancellationToken",
+    "driverPolicy",
+    "completionPolicy",
+    "idleWaitObservation",
+    "leaseObserver",
+    "counts",
+    "warmupCounts",
+    "writerPendingEnd",
+    "writerRegistrationInFlightEnd",
+    "writerConsumedEnd",
+    "maximumRegistrationInFlight",
+    "bytes",
+    "bytesPerCycle",
+    "bytesPerFrame",
+    "ticksStart",
+    "ticksEnd",
+    "stopwatchFrequency",
+    "elapsedSeconds",
+    "nanosecondsPerCycle",
+    "nanosecondsPerFrame",
+    "cpuSeconds",
+    "gen0Collections",
+    "threadStart",
+    "threadEnd",
+    "precise",
+    "driverIncluded",
+    "subtractionApplied",
+    "executableSha256",
+    "runtimeAssemblySha256",
+    "corelibSha256",
+    "corelibPath",
+    "interpretation"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "pump-idle-sync",
+        "pump-force-sync",
+        "pump-flush-gated",
+        "pump-capacity-completed",
+        "pump-capacity-incomplete",
+        "fixture-sync",
+        "fixture-gated",
+        "fixture-pair"
+      ]
+    },
+    "sample": {
+      "type": "string"
+    },
+    "processId": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sourceSha": {
+      "const": "eb99fe887cf2129d9b88441245ca0a4a6406b6c2"
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "expectedRuntime": {
+      "type": "string"
+    },
+    "framework": {
+      "type": "string"
+    },
+    "architecture": {
+      "type": "string"
+    },
+    "os": {
+      "type": "string"
+    },
+    "processorCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "serverGc": {
+      "type": "boolean"
+    },
+    "minimumWorkers": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "minimumIo": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tieredPgo": {
+      "type": "string"
+    },
+    "tieredCompilation": {
+      "type": "string"
+    },
+    "readyToRun": {
+      "type": "string"
+    },
+    "cycles": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warmup": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "framesPerCycle": {
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "frames": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "frameBytes": {
+      "const": 15
+    },
+    "queueCapacity": {
+      "enum": [
+        15,
+        30
+      ]
+    },
+    "fixtureOnly": {
+      "type": "boolean"
+    },
+    "forceFlushCompletionContract": {
+      "type": "boolean"
+    },
+    "controlledIncompleteFlush": {
+      "type": "boolean"
+    },
+    "profile": {
+      "type": "string"
+    },
+    "explicitTimedBatch": {
+      "type": "boolean"
+    },
+    "callerCancellationToken": {
+      "type": "string"
+    },
+    "driverPolicy": {
+      "type": "string"
+    },
+    "completionPolicy": {
+      "type": "string"
+    },
+    "idleWaitObservation": {
+      "type": "string"
+    },
+    "leaseObserver": {
+      "type": "string"
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Cycles",
+        "Frames",
+        "LeaseActiveObservations",
+        "LeaseReturnedObservations",
+        "PreParked",
+        "PostParked",
+        "FirstAdmissionsCompleted",
+        "SecondCompleted",
+        "SecondIncomplete",
+        "ForceCompletionConsumed",
+        "HeldQueueChecks",
+        "Writer"
+      ],
+      "properties": {
+        "Cycles": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "Frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "LeaseActiveObservations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "LeaseReturnedObservations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "PreParked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "PostParked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "FirstAdmissionsCompleted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SecondCompleted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SecondIncomplete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ForceCompletionConsumed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "HeldQueueChecks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "Writer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "Flushes",
+            "PendingFlushes",
+            "Resets",
+            "RegistrationEntries",
+            "RegistrationsAccepted",
+            "RegistrationsReturned",
+            "Releases",
+            "GetResults",
+            "Bytes",
+            "Frames",
+            "SyncFlushes",
+            "TokenWraps"
+          ],
+          "properties": {
+            "Flushes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "PendingFlushes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Resets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "RegistrationEntries": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "RegistrationsAccepted": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "RegistrationsReturned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Releases": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "GetResults": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Frames": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "SyncFlushes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "TokenWraps": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "warmupCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Cycles",
+        "Frames",
+        "LeaseActiveObservations",
+        "LeaseReturnedObservations",
+        "PreParked",
+        "PostParked",
+        "FirstAdmissionsCompleted",
+        "SecondCompleted",
+        "SecondIncomplete",
+        "ForceCompletionConsumed",
+        "HeldQueueChecks",
+        "Writer"
+      ],
+      "properties": {
+        "Cycles": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "Frames": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "LeaseActiveObservations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "LeaseReturnedObservations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "PreParked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "PostParked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "FirstAdmissionsCompleted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SecondCompleted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SecondIncomplete": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ForceCompletionConsumed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "HeldQueueChecks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "Writer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "Flushes",
+            "PendingFlushes",
+            "Resets",
+            "RegistrationEntries",
+            "RegistrationsAccepted",
+            "RegistrationsReturned",
+            "Releases",
+            "GetResults",
+            "Bytes",
+            "Frames",
+            "SyncFlushes",
+            "TokenWraps"
+          ],
+          "properties": {
+            "Flushes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "PendingFlushes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Resets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "RegistrationEntries": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "RegistrationsAccepted": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "RegistrationsReturned": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Releases": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "GetResults": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Frames": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "SyncFlushes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "TokenWraps": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "writerPendingEnd": {
+      "const": 0
+    },
+    "writerRegistrationInFlightEnd": {
+      "const": 0
+    },
+    "writerConsumedEnd": {
+      "const": 1
+    },
+    "maximumRegistrationInFlight": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "bytesPerCycle": {
+      "type": "number",
+      "minimum": 0
+    },
+    "bytesPerFrame": {
+      "type": "number",
+      "minimum": 0
+    },
+    "ticksStart": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ticksEnd": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stopwatchFrequency": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "elapsedSeconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "nanosecondsPerCycle": {
+      "type": "number",
+      "minimum": 0
+    },
+    "nanosecondsPerFrame": {
+      "type": "number",
+      "minimum": 0
+    },
+    "cpuSeconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "gen0Collections": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "threadStart": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "threadEnd": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "precise": {
+      "const": true
+    },
+    "driverIncluded": {
+      "const": true
+    },
+    "subtractionApplied": {
+      "const": false
+    },
+    "executableSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "runtimeAssemblySha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "corelibSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "corelibPath": {
+      "type": "string"
+    },
+    "interpretation": {
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sharplink:issue739:sendpump:sample:1",
+  "title": "Issue739 controlled SendPump raw sample"
+}

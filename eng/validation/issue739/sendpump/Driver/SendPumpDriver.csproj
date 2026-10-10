@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><IsPackable>false</IsPackable>
+    <AssemblyName>SharpLink.Benchmarks</AssemblyName><ImplicitUsings>enable</ImplicitUsings>
+    <UseRuntimeAsync>false</UseRuntimeAsync>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+  </ItemGroup>
+</Project>
