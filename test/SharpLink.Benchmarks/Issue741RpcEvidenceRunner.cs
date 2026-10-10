@@ -11,7 +11,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
 using SharpLink.Client;
-using SharpLink.Server;
 
 namespace SharpLink.Benchmarks;
 
@@ -49,13 +48,13 @@ internal static class Issue741RpcEvidenceRunner
             ? await BenchmarkEnvironment.CreateAsync(
                 createClientBuilder: port => CreateClient(
                     SharpClientBuilder.Create().UseTcp(IPAddress.Loopback.ToString(), port), scenario),
-                configureBuiltServer: server => server.ReplaceService<IBenchmarkRpc>(service))
+                customRpcService: service)
                 .ConfigureAwait(false)
             : await BenchmarkEnvironment.CreateSharedMemoryAsync(
                 createClientBuilder: name => CreateClient(
                     SharpClientBuilder.Create().UseSharedMemory(name)
                         .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10)), scenario),
-                configureBuiltServer: server => server.ReplaceService<IBenchmarkRpc>(service))
+                customRpcService: service)
                 .ConfigureAwait(false);
 
         var nextCallId = 0;

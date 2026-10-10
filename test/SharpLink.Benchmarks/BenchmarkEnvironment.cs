@@ -49,7 +49,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         Func<int, SharpClientBuilder>? createClientBuilder = null,
         Action<ISharpLinkServer>? configureBuiltServer = null,
         Action<ISharpLinkClient>? configureBuiltClient = null,
-        int expectedReadyConnections = 1)
+        int expectedReadyConnections = 1,
+        IBenchmarkRpc? customRpcService = null)
     {
         var localService = new BenchmarkRpcService();
 
@@ -58,6 +59,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         if (configureServerRuntime is not null)
             serverBuilder.UseRuntime(configureServerRuntime);
         configureServer?.Invoke(serverBuilder);
+        if (customRpcService is not null)
+            serverBuilder.ReplaceService<IBenchmarkRpc>(customRpcService);
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
@@ -100,7 +103,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         Action<ISharpLinkServer>? configureBuiltServer = null,
         Action<ISharpLinkClient>? configureBuiltClient = null,
         bool observeServerReadWaits = false,
-        Func<string, SharpClientBuilder>? createClientBuilder = null)
+        Func<string, SharpClientBuilder>? createClientBuilder = null,
+        IBenchmarkRpc? customRpcService = null)
     {
         var name = $"sharplink-allocation-{Guid.NewGuid():N}";
         var localService = new BenchmarkRpcService();
@@ -111,7 +115,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
         if (configureServerRuntime is not null)
             serverBuilder.UseRuntime(configureServerRuntime);
-        serverBuilder.ReplaceService<IBenchmarkRpc>(localService);
+        serverBuilder.ReplaceService<IBenchmarkRpc>(customRpcService ?? localService);
         var server = serverBuilder.Build();
         configureBuiltServer?.Invoke(server);
         var shutdown = new CancellationTokenSource();
