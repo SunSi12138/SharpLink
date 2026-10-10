@@ -1,0 +1,16 @@
+{
+  "src/SharpLink.Client/SharpLinkClient.Lifecycle.cs": "18df73efc646f15bd935a863c6f42fbb6e18324fefa509c5197e822967025563",
+  "src/SharpLink.Server/SharpLinkServer.Handshake.cs": "b25e6ab366fc4e544b25fef428b57a3f987418c966e54f8323f761dec8838439",
+  "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs": "95624143371275f5e452940f943450107a3d7e93ea71270ccd04fa767e590a73",
+  "src/SharpLink.Runtime/Transport/SharedMemoryControlChannel.cs": "a169f3955df5ba071c2f4bc0a929b068e757a3e29fb5c9aefc78bcfc3185fd4c",
+  "src/SharpLink.Runtime/Transport/SharedMemoryPipelines.cs": "1aa1f13b73083250da06c857ad241a449970be7d5ab00073a827da8e72d2591b",
+  "eng/validation/issue739/multiplicity/README.md": "19a9573d06f8817b3d9bb0d5460c2b57ef321443261422a089c1e8e1e4c2d981",
+  "eng/validation/issue739/multiplicity/MultiplicityProbe.cs.in": "89d6a2f1f1fbe1529dfff6ddc1d0d9da24c0da048e45839c6e3e9bb25f1170d1",
+  "eng/validation/issue739/multiplicity/run.py": "5d3717ec112fe4adc7cee087057eda9821707456ed2de6f1fbb91c9c8f2613b7",
+  "eng/validation/issue739/multiplicity/test_multiplicity.py": "6a26c0998d58017be3318cc5d266ad696155aa4d6716d1c2bbf9ccb7ced241ea",
+  "eng/validation/issue739/multiplicity/expected_hashes.json": "cd232b9cc545dd5d44733121017827d5bd3397fbb8caca2b34717c454f4b99f2",
+  "eng/validation/issue739/multiplicity/counters.py": "31ea7f8e1b8ab59fb29300b2c9c82aff079727c7b4f0095234082189dd698493",
+  "eng/validation/issue739/multiplicity/project.py": "c523c90350cc0f6dfd9a758e72bce9f1cc8cc06cf41eed792dd59a75d079cda6",
+  "eng/validation/issue739/validate.py": "92ba6ce208513598c230b729564c5691c644dd2cd60c12fcd8d97b652ff64d10",
+  "eng/validation/issue739/sample.schema.json": "963d640a6783961b04ed9ce361b889375bbcd10b512a7f82d5087d05bd5dbb25"
+}

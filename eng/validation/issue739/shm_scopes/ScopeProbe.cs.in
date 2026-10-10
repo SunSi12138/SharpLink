@@ -1,0 +1,178 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.IO.Pipelines;
+using System.Buffers;
+using System.Threading.Tasks.Sources;
+namespace Issue739;
+
+// All reflection, delegates, buffers, metadata and thread warmup precede the sample window.
+internal sealed class ScopeProbe
+{
+    private readonly Type? _type;
+    private readonly Action<long[]>? _capture;
+    private readonly long[] _before, _after;
+    private readonly object[] _layout;
+    private long _beforeBegin, _beforeEnd, _afterBegin, _afterEnd;
+    private readonly string _processStartUtc = Process.GetCurrentProcess().StartTime.ToUniversalTime().ToString("O");
+    private readonly string _corelibSha = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(typeof(object).Assembly.Location))).ToLowerInvariant();
+    private ScopeProbe(Type? type)
+    {
+        _type = type;
+        _capture = type is null ? null : (Action<long[]>)type.GetMethod("Capture")!.CreateDelegate(typeof(Action<long[]>));
+        int count = type is null ? 0 : (int)type.GetProperty("Count")!.GetValue(null)!;
+        _before = new long[count]; _after = new long[count];
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+        var names = new HashSet<string> { "SharpLink.Client.SharpLinkClient", "SharpLink.Server.SharpLinkServer", "SharpLink.Runtime.SharedMemoryPipeReader", "SharpLink.Runtime.SharedMemoryControlChannel" };
+        var assemblies = new[] { typeof(SharpLink.Client.SharpClientBuilder).Assembly, typeof(SharpLink.Server.SharpLinkServerBuilder).Assembly, typeof(SharpLink.Runtime.SharedMemoryClientTransportFactory).Assembly };
+        _layout = assemblies.SelectMany(a => a.GetTypes()).Where(t => names.Contains(t.FullName!))
+            .SelectMany(t => t.GetMethods(flags).Select(m => (Method: m, Machine: m.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType)))
+            .Where(x => x.Machine is not null)
+            .Select(x => (object)new { method = x.Method.DeclaringType!.FullName + "." + x.Method.Name + "/" + x.Method.GetGenericArguments().Length,
+                returnType = x.Method.ReturnType.ToString(), implementationFlags = (int)x.Method.GetMethodImplementationFlags(),
+                builder = x.Method.GetCustomAttribute<AsyncMethodBuilderAttribute>()?.BuilderType.ToString() ?? "default",
+                fields = x.Machine!.GetFields(flags).Select(f => new { name = f.Name, type = f.FieldType.ToString() }).OrderBy(f => f.name).ToArray() })
+            .OrderBy(x => JsonSerializer.Serialize(x)).ToArray();
+        if (_layout.Length < 10) throw new InvalidOperationException("Incomplete async metadata coverage");
+    }
+    internal static ScopeProbe Connect()
+    {
+        var type = typeof(SharpLink.Runtime.SharedMemoryClientTransportFactory).Assembly.GetType("SharpLink.Runtime.Issue739ShmScopes");
+        string expected = Environment.GetEnvironmentVariable("ISSUE739_MULTIPLICITY_VARIANT")!;
+        if ((expected == "B") != (type is not null) || expected is not ("A" or "B")) throw new InvalidOperationException("Wrong scope variant");
+        return new(type);
+    }
+    internal void WarmThreads()
+    {
+        Action warm = _type is null ? static () => { } : (Action)_type.GetMethod("WarmCurrentThread")!.CreateDelegate(typeof(Action));
+        Action<int> empty = _type is null ? static _ => { } : (Action<int>)_type.GetMethod("EmptyLoop")!.CreateDelegate(typeof(Action<int>));
+        warm(); empty(32768);
+        using var ready = new CountdownEvent(132);
+        using var release = new ManualResetEventSlim(false);
+        var tasks = new Task[132];
+        for (int i = 0; i < tasks.Length; i++) tasks[i] = Task.Run(() => { warm(); empty(1); ready.Signal(); release.Wait(); });
+        if (!ready.Wait(TimeSpan.FromSeconds(20))) { release.Set(); throw new TimeoutException("Scope ThreadStatic warmup failed"); }
+        release.Set(); Task.WaitAll(tasks);
+        CaptureStart(); CaptureEnd();
+    }
+    internal void CaptureStart() { _beforeBegin = Stopwatch.GetTimestamp(); _capture?.Invoke(_before); _beforeEnd = Stopwatch.GetTimestamp(); }
+    internal void CaptureEnd() { _afterBegin = Stopwatch.GetTimestamp(); _capture?.Invoke(_after); _afterEnd = Stopwatch.GetTimestamp(); }
+    internal object Report() => new
+    {
+        schemaVersion = 1, variant = _capture is null ? "A" : "B", processStartUtc = _processStartUtc, corelibSha256 = _corelibSha,
+        before = _before, after = _after, delta = _after.Zip(_before, (end, start) => end - start).ToArray(),
+        beforeSnapshotBegin = _beforeBegin, beforeSnapshotEnd = _beforeEnd, afterSnapshotBegin = _afterBegin, afterSnapshotEnd = _afterEnd,
+        stateMachineFields = _layout,
+        sites = new[] { "actual SharedMemoryPipeReader.ReadAsync initiation, inclusive nested control wait", "SharedMemoryControlChannel.RunReaderAsync _stream.ReadAsync initiation" },
+        fieldOrder = new[] { "calls", "inclusiveBytes", "elapsedTicks", "completedSuccess", "pending", "faulted", "canceled", "synchronousThrow", "completedSuccessBytes", "pendingBytes", "faultedBytes", "canceledBytes", "synchronousThrowBytes", "firstBeginSinceProcessStart", "lastEnd", "sameThread" },
+        trailingFields = new[] { "overlap", "coldThreads", "threadMismatch", "invalidObservation", "pricedOwnerOverlap" },
+        meaning = "CURRENT-THREAD inclusive managed bytes during original synchronous call initiation only; status probes and atomic reporting after allocation endpoint; pending is not actual suspension or registration; original ValueTask returned unchanged",
+        boundary = "quiescent atomic snapshots bracket a wider window than gross byte timestamps; cumulative firstBegin/lastEnd are timestamp observations, not additive counters; firstBegin includes premeasurement empty-scope warmup; completion-path allocations after original invocation returns are residual; no separate pricing of nested control wait"
+    };
+    internal static void MetadataControl(string output)
+    {
+        var probe = Connect();
+        File.WriteAllText(output, JsonSerializer.Serialize(probe.Report(), new JsonSerializerOptions { WriteIndented = true }));
+    }
+    internal static void EmptyControl(string output)
+    {
+        var probe = Connect();
+        if (probe._type is null) throw new InvalidOperationException("Empty control requires B");
+        var loop = (Action<int>)probe._type.GetMethod("EmptyLoop")!.CreateDelegate(typeof(Action<int>));
+        loop(32768);
+        const int count = 131072;
+        using var process = Process.GetCurrentProcess();
+        _ = process.TotalProcessorTime; _ = Stopwatch.GetTimestamp(); _ = GC.GetAllocatedBytesForCurrentThread();
+        var cpuStart = process.TotalProcessorTime;
+        long ticks = Stopwatch.GetTimestamp(), begin = GC.GetAllocatedBytesForCurrentThread();
+        loop(count);
+        long bytes = GC.GetAllocatedBytesForCurrentThread() - begin, elapsed = Stopwatch.GetTimestamp() - ticks;
+        double cpu = (process.TotalProcessorTime - cpuStart).TotalMilliseconds;
+        var fixtures = CheckFixtures(probe._type);
+        File.WriteAllText(output, JsonSerializer.Serialize(new { schemaVersion = 1, kind = "empty-scope-control", runtime = Environment.Version.ToString(),
+            processId = Environment.ProcessId, processStartUtc = probe._processStartUtc, corelibSha256 = probe._corelibSha, operations = count, currentThreadBytes = bytes,
+            elapsedTicks = elapsed, stopwatchFrequency = Stopwatch.Frequency, cpuMilliseconds = cpu, nanosecondsPerScope = elapsed * 1e9 / Stopwatch.Frequency / count,
+            cpuNanosecondsPerScope = cpu * 1e6 / count, status = bytes == 0 ? "zero-measured" : "nonzero-reject", fixtures,
+            scope = "same empty initiation/depth/current-thread/time/status/atomic primitives; CPU descriptive, never subtracted from RPC primary" }, new JsonSerializerOptions { WriteIndented = true }));
+        if (bytes != 0) throw new InvalidOperationException("Empty scope primitives allocated");
+    }
+    private static object CheckFixtures(Type type)
+    {
+        var pipe = (Func<PipeReader, CancellationToken, ValueTask<ReadResult>>)type.GetMethod("MeasurePipe")!.CreateDelegate(typeof(Func<PipeReader, CancellationToken, ValueTask<ReadResult>>));
+        var stream = (Func<Stream, Memory<byte>, ValueTask<int>>)type.GetMethod("ReadControl")!.CreateDelegate(typeof(Func<Stream, Memory<byte>, ValueTask<int>>));
+        var gate = (Func<PipeReader, CancellationToken, ValueTask<ReadResult>>)type.GetMethod("ReadPipe")!.CreateDelegate(typeof(Func<PipeReader, CancellationToken, ValueTask<ReadResult>>));
+        var capture = (Action<long[]>)type.GetMethod("Capture")!.CreateDelegate(typeof(Action<long[]>));
+        var before = new long[37]; var after = new long[37];
+        var reader = new FakeReader(); var input = new FakeStream(); var buffer = new byte[1];
+        var pendingPipe = new TaskCompletionSource<ReadResult>(); var pendingStream = new TaskCompletionSource<int>();
+        var error = new IOException("fixture"); var cancelled = new CancellationToken(true);
+        ValueTask<ReadResult>[] reads = [new(default(ReadResult)), new(pendingPipe.Task), new(Task.FromException<ReadResult>(error)), new(Task.FromCanceled<ReadResult>(cancelled))];
+        ValueTask<int>[] ints = [new(42), new(pendingStream.Task), new(Task.FromException<int>(error)), new(Task.FromCanceled<int>(cancelled))];
+        capture(before);
+        for (int i = 0; i < reads.Length; i++)
+        {
+            reader.Next = reads[i]; input.Next = ints[i];
+            if (!pipe(reader, default).Equals(reads[i]) || !stream(input, buffer).Equals(ints[i])) throw new InvalidOperationException("ValueTask identity changed");
+        }
+        capture(after);
+        for (int site = 0; site < 2; site++)
+            for (int status = 0; status < 4; status++)
+                if (after[site * 16 + 3 + status] - before[site * 16 + 3 + status] != 1) throw new InvalidOperationException("Return status fixture failed");
+        capture(before); reader.Next = reads[0];
+        if (!gate(reader, default).Equals(reader.Next)) throw new InvalidOperationException("Non-SHM gate changed result");
+        capture(after);
+        if (!before.SequenceEqual(after)) throw new InvalidOperationException("Non-SHM gate was scoped");
+        var identity = new IdentitySource();
+        reader.Next = new ValueTask<ReadResult>(identity, 23);
+        if (!pipe(reader, default).Equals(reader.Next) || identity.Results != 0 || identity.Registrations != 0) throw new InvalidOperationException("Source was consumed or wrapped");
+        // Explicitly exercise both throw paths, preserving the original exception object.
+        reader.Throw = error; input.Throw = error; capture(before);
+        try { _ = pipe(reader, default); throw new Exception("No pipe throw"); } catch (IOException ex) { if (!ReferenceEquals(ex, error)) throw; }
+        try { _ = stream(input, buffer); throw new Exception("No stream throw"); } catch (IOException ex) { if (!ReferenceEquals(ex, error)) throw; }
+        capture(after);
+        if (after[7] - before[7] != 1 || after[23] - before[23] != 1) throw new InvalidOperationException("Synchronous throw fixture failed");
+        reader.Throw = null; input.Throw = null; input.Next = ints[0]; reader.Next = reads[0];
+        reader.OnRead = () => { _ = stream(input, buffer); };
+        capture(before); _ = pipe(reader, default); capture(after);
+        if (after[32] - before[32] != 1 || after[34] != 0 || after[35] != 0) throw new InvalidOperationException("Overlap detector fixture failed");
+        reader.OnRead = (Action)type.GetMethod("PricedOwnerFixture")!.CreateDelegate(typeof(Action));
+        capture(before); _ = pipe(reader, default); capture(after);
+        if (after[36] - before[36] != 1) throw new InvalidOperationException("Priced owner overlap detector failed");
+        return new { pricedOwnerOverlapDetected = true, originalValueTaskIdentity = true, fourReturnStatuses = true, synchronousThrowsPreserved = true, nonShmBypass = true,
+            sourceNotConsumedOrRegistered = true, nestedOverlapDetected = true, allocationClaim = "fixture behavior only; no actual SHM execution" };
+    }
+    private sealed class IdentitySource : IValueTaskSource<ReadResult>
+    {
+        internal int Results, Registrations;
+        public ReadResult GetResult(short token) { Results++; return default; }
+        public ValueTaskSourceStatus GetStatus(short token) { if (token != 23) throw new InvalidOperationException("Token changed"); return ValueTaskSourceStatus.Pending; }
+        public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) { Registrations++; }
+    }
+    private sealed class FakeReader : PipeReader
+    {
+        internal ValueTask<ReadResult> Next;
+        internal Exception? Throw;
+        internal Action? OnRead;
+        public override ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default) { if (Throw is not null) throw Throw; OnRead?.Invoke(); return Next; }
+        public override void AdvanceTo(SequencePosition consumed) { }
+        public override void AdvanceTo(SequencePosition consumed, SequencePosition examined) { }
+        public override void CancelPendingRead() { }
+        public override void Complete(Exception? exception = null) { }
+        public override bool TryRead(out ReadResult result) { result = default; return false; }
+    }
+    private sealed class FakeStream : Stream
+    {
+        internal ValueTask<int> Next;
+        internal Exception? Throw;
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) { if (Throw is not null) throw Throw; return Next; }
+        public override bool CanRead => true; public override bool CanWrite => false; public override bool CanSeek => false;
+        public override long Length => 0; public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+}

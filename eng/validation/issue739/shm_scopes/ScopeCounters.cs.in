@@ -1,0 +1,157 @@
+// Diagnostic projection only: synchronous initiation, original ValueTask returned unchanged.
+#pragma warning disable CS1591
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using Owner = SharpLink.Abstractions.Issue739MultiplicityCounters;
+namespace SharpLink.Runtime;
+public static class Issue739ShmScopes
+{
+    public const int Width = 16;
+    // Per-site: calls, inclusive bytes, elapsed ticks, four return statuses, synchronous throw,
+    // then matching byte buckets, first begin, last end, same-thread observations, bad observations.
+    private static readonly long[] Values = new long[Width * 2 + 5];
+    [ThreadStatic] private static bool Warm;
+    private static long Active, Epoch;
+    public static int Count => Values.Length;
+    public static void WarmCurrentThread()
+    {
+        if (Warm) return;
+        Warm = true;
+        _ = Owner.ScopeDepth;
+        _ = Environment.CurrentManagedThreadId;
+        _ = Stopwatch.GetTimestamp();
+        _ = GC.GetAllocatedBytesForCurrentThread();
+        Interlocked.Increment(ref Values[Width * 2 + 1]);
+    }
+    private readonly record struct Entry(int Site, int Thread, long Ticks, long Bytes);
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Entry Begin(int site)
+    {
+        WarmCurrentThread();
+        Interlocked.Increment(ref Active);
+        Interlocked.Increment(ref Epoch);
+        if (Owner.ScopeDepth++ != 0) Interlocked.Increment(ref Values[Width * 2]);
+        int thread = Environment.CurrentManagedThreadId;
+        long ticks = Stopwatch.GetTimestamp();
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        return new Entry(site, thread, ticks, bytes);
+    }
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void End(Entry entry, long bytesEnd, long ticksEnd, int status)
+    {
+        int offset = entry.Site * Width;
+        long bytes = bytesEnd - entry.Bytes;
+        Interlocked.Increment(ref Values[offset]);
+        Interlocked.Add(ref Values[offset + 1], bytes);
+        Interlocked.Add(ref Values[offset + 2], ticksEnd - entry.Ticks);
+        Interlocked.Increment(ref Values[offset + 3 + status]);
+        Interlocked.Add(ref Values[offset + 8 + status], bytes);
+        MinNonzero(ref Values[offset + 13], entry.Ticks);
+        Max(ref Values[offset + 14], ticksEnd);
+        if (entry.Thread == Environment.CurrentManagedThreadId) Interlocked.Increment(ref Values[offset + 15]);
+        else Interlocked.Increment(ref Values[Width * 2 + 2]);
+        if (bytes < 0 || ticksEnd < entry.Ticks || --Owner.ScopeDepth < 0) Interlocked.Increment(ref Values[Width * 2 + 3]);
+        Interlocked.Increment(ref Epoch);
+        Interlocked.Decrement(ref Active);
+    }
+    private static void MinNonzero(ref long target, long value)
+    {
+        long old = Interlocked.Read(ref target);
+        while (old == 0 || value < old)
+        {
+            long observed = Interlocked.CompareExchange(ref target, value, old);
+            if (observed == old) return;
+            old = observed;
+        }
+    }
+    private static void Max(ref long target, long value)
+    {
+        long old = Interlocked.Read(ref target);
+        while (value > old)
+        {
+            long observed = Interlocked.CompareExchange(ref target, value, old);
+            if (observed == old) return;
+            old = observed;
+        }
+    }
+    public static ValueTask<ReadResult> ReadPipe(PipeReader reader, CancellationToken token)
+        => reader is SharedMemoryPipeReader ? MeasurePipe(reader, token) : reader.ReadAsync(token);
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static ValueTask<ReadResult> MeasurePipe(PipeReader reader, CancellationToken token)
+    {
+        var entry = Begin(0);
+        ValueTask<ReadResult> read;
+        try { read = reader.ReadAsync(token); }
+        catch
+        {
+            long bytes = GC.GetAllocatedBytesForCurrentThread();
+            long ticks = Stopwatch.GetTimestamp();
+            End(entry, bytes, ticks, 4);
+            throw;
+        }
+        long bytesEnd = GC.GetAllocatedBytesForCurrentThread();
+        long ticksEnd = Stopwatch.GetTimestamp();
+        // All status probes are outside the allocation/timing endpoint. A pending observation
+        // is not an actual suspension, OnCompleted registration, or allocation occurrence.
+        int status = !read.IsCompleted ? 1 : read.IsCompletedSuccessfully ? 0 : read.IsCanceled ? 3 : 2;
+        End(entry, bytesEnd, ticksEnd, status);
+        return read;
+    }
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static ValueTask<int> ReadControl(Stream stream, Memory<byte> buffer)
+    {
+        var entry = Begin(1);
+        ValueTask<int> read;
+        try { read = stream.ReadAsync(buffer); }
+        catch
+        {
+            long bytes = GC.GetAllocatedBytesForCurrentThread();
+            long ticks = Stopwatch.GetTimestamp();
+            End(entry, bytes, ticks, 4);
+            throw;
+        }
+        long bytesEnd = GC.GetAllocatedBytesForCurrentThread();
+        long ticksEnd = Stopwatch.GetTimestamp();
+        int status = !read.IsCompleted ? 1 : read.IsCompletedSuccessfully ? 0 : read.IsCanceled ? 3 : 2;
+        End(entry, bytesEnd, ticksEnd, status);
+        return read;
+    }
+    // Same depth/thread/clock/bytes/status/atomic primitive path, with no actual ReadAsync.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void EmptyLoop(int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            var entry = Begin(i & 1);
+            var read = new ValueTask<int>(42);
+            long bytes = GC.GetAllocatedBytesForCurrentThread();
+            long ticks = Stopwatch.GetTimestamp();
+            int status = !read.IsCompleted ? 1 : read.IsCompletedSuccessfully ? 0 : read.IsCanceled ? 3 : 2;
+            End(entry, bytes, ticks, status);
+        }
+    }
+    public static void PricedOwnerFixture() => Owner.Increment(Owner.permit_plain_new);
+    public static void Capture(long[] destination)
+    {
+        if (destination.Length != Values.Length) throw new ArgumentException("Scope counter length");
+        long deadline = Stopwatch.GetTimestamp() + 10 * Stopwatch.Frequency;
+        var spin = new SpinWait();
+        while (true)
+        {
+            long epoch = Interlocked.Read(ref Epoch);
+            if (Interlocked.Read(ref Active) == 0)
+            {
+                for (int i = 0; i < Values.Length - 1; i++) destination[i] = Interlocked.Read(ref Values[i]);
+                destination[^1] = Interlocked.Read(ref Owner.ScopePricedOwnerOverlap);
+                if (Interlocked.Read(ref Active) == 0 && epoch == Interlocked.Read(ref Epoch)) return;
+            }
+            if (Stopwatch.GetTimestamp() > deadline) throw new TimeoutException("Scope snapshot did not quiesce");
+            spin.SpinOnce();
+        }
+    }
+}
