@@ -23,6 +23,7 @@ jobs:
     env:
       AUDIT_DEV_SHA: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
       TESTINGPLATFORM_TELEMETRY_OPTOUT: "1"
+      TUNIT_MAX_PARALLEL_TESTS: "8" # Match the repository PR Fast job to reduce runner-only timing noise.
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
     steps:
       - name: Checkout isolated dev-based audit branch
