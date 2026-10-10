@@ -167,8 +167,9 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                 return EnumCodec<T>.Instance;
             if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
             {
-                RpcUnsafeBlitPlatform.EnsureSupported(targetType);
-                return UnsafeBlitCodec<T>.Instance;
+                throw new PlatformNotSupportedException(
+                    $"UnsafeBlit Codec for '{targetType.FullName}' requires source-generated ABI metadata. " +
+                    "Use a generated RPC contract or register an explicit Codec/Adapter.");
             }
 
             throw new NotSupportedException(

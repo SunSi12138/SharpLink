@@ -45,9 +45,9 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
         Ensure(payloadCodec!.Child is ReferencedChildCodec,
             $"{path} must resolve the generated child through the provider manifest's frozen global graph, not an endpoint AddCodec override");
         Ensure(payloadCodec.FallbackChild is not EndpointFallbackChildCodec,
-            $"{path} must resolve unmanaged fallback semantics from the provider manifest's frozen graph, not endpoint UseCodecResolver state");
+            $"{path} must resolve generated unmanaged semantics from the provider manifest's frozen graph, not endpoint UseCodecResolver state");
         Ensure(payloadCodec.FallbackChild.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
-            $"{path} must use the compile-time unmanaged fallback strategy");
+            $"{path} must use the generated unmanaged factory");
     }
 
     private sealed class ReferencedPayload { }
@@ -111,6 +111,9 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs { get; } =
         [
             new NativeFactory<ReferencedChild>(static _ => new ReferencedChildCodec()),
+            new NativeFactory<ReferencedFallbackChild>(static provider =>
+                ((IRpcGeneratedUnsafeBlitCodecProvider)provider)
+                    .GetGeneratedUnsafeBlitCodec<ReferencedFallbackChild>(new(8, false))),
             new NativeFactory<ReferencedPayload>(static provider =>
                 new ReferencedPayloadCodec(
                     provider.GetCodec<ReferencedChild>(),

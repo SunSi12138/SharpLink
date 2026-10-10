@@ -3,7 +3,6 @@
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <DefineConstants Condition="'$(PublishAot)' == 'true' or '$(PublishTrimmed)' == 'true'">$(DefineConstants);SHARPLINK_NATIVEAOT</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
@@ -15,17 +14,6 @@
     <ItemGroup>
       <Compile Include="..\SharpLink.Shared\RpcBuiltinCollectionWireCatalog.cs"
                Link="Shared\RpcBuiltinCollectionWireCatalog.cs" />
-      <None Update="buildTransitive\SharpLink.Runtime.targets"
-            Pack="true"
-            PackagePath="buildTransitive\SharpLink.Runtime.targets"
-            Visible="false" />
-      <None Update="buildTransitive\SharpLink.Runtime.TrimSuppressions.xml"
-            Pack="true"
-            PackagePath="buildTransitive\SharpLink.Runtime.TrimSuppressions.xml"
-            Visible="false" />
-      <EmbeddedResource Include="ILLink.Substitutions.xml">
-        <LogicalName>ILLink.Substitutions.xml</LogicalName>
-      </EmbeddedResource>
     </ItemGroup>
 
     <ItemGroup>

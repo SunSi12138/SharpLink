@@ -72,7 +72,7 @@ public static class RpcGeneratedCodecResolver
     }
 }
 
-internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
+internal sealed class RpcManifestCodecProvider : IRpcCodecProvider, IRpcGeneratedUnsafeBlitCodecProvider
 {
     private readonly RpcGeneratedManifestRegistration _owner;
     private readonly RpcCodecProvider? _runtimeProvider;
@@ -130,12 +130,19 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider
             return EnumCodec<T>.Instance;
         if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
         {
-            RpcUnsafeBlitPlatform.EnsureSupported(targetType);
-            return UnsafeBlitCodec<T>.Instance;
+            throw new PlatformNotSupportedException(
+                $"UnsafeBlit Codec for '{targetType.FullName}' requires source-generated ABI metadata in its owner-local factory.");
         }
 
         throw new NotSupportedException(
             $"Codec for '{targetType.FullName}' is not part of the compile-time Codec graph owned by Contract assembly '{_owner.Manifest.OwnerAssembly.FullName}'.");
+    }
+
+    public IRpcCodec<T> GetGeneratedUnsafeBlitCodec<T>(SharpLinkGeneratedUnsafeBlitRequirement requirement)
+    {
+        _owner.ThrowIfDisposed();
+        RpcUnsafeBlitPlatform.EnsureGeneratedSupported(typeof(T), requirement);
+        return UnsafeBlitCodec<T>.Instance;
     }
 
     private IRpcCodec<T> ResolveOwned<T>(Type targetType, RpcGeneratedCodecRegistration registration)

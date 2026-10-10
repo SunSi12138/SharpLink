@@ -22,10 +22,10 @@ using System;
     0x6262626262626262UL)]
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(
     typeof(Referenced.Manifest),
-    4,
+    5,
     2,
     "2.0.0-test",
-    "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
+    "sharplink-3.0-api5-generated-unsafe-blit-v1")]
 
 namespace SharpLink.Abstractions
 {

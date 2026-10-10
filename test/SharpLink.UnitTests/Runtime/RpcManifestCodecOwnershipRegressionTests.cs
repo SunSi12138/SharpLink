@@ -30,7 +30,7 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
         Ensure(!ReferenceEquals(ownerValue, runtimeValue),
             "once a Contract owner has compile-time policy, its unrouted unmanaged remainder must come from the frozen compile-time graph rather than runtime UseCodec state");
         Ensure(ownerValue.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
-            "the policy owner must resolve the deterministic compile-time unmanaged fallback independently of endpoint runtime overrides");
+            "the policy owner must resolve the explicit generated unmanaged factory independently of endpoint runtime overrides");
     }
 
     [Test]
@@ -201,7 +201,12 @@ public sealed class RpcManifestCodecOwnershipRegressionTests
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; } =
-            [new NativeFactory<PolicyPoint>(_ => codec)];
+            [
+                new NativeFactory<PolicyPoint>(_ => codec),
+                new NativeFactory<UnroutedValue>(static provider =>
+                    ((IRpcGeneratedUnsafeBlitCodecProvider)provider)
+                        .GetGeneratedUnsafeBlitCodec<UnroutedValue>(new(8, false)))
+            ];
         public IReadOnlyList<string> Dependencies => [];
     }
 
