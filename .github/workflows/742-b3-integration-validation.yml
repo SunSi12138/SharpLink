@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/742-b3-integration-validation.yml
       - eng/742-integration/prepare-b3.py
+      - eng/742-integration/harden-rpc.py
       - eng/742-integration/*.cs.in
       - test/SharpLink.UnitTests/Runtime/WriterOwnedRpcIntegrationTests.cs
 
@@ -34,7 +35,9 @@ jobs:
           mkdir -p artifacts/742-integration
           dotnet --info > artifacts/742-integration/dotnet-info.txt
           python3 eng/742-integration/prepare-b3.py 2>&1 | tee artifacts/742-integration/prepare-b3.log
+          python3 eng/742-integration/harden-rpc.py 2>&1 | tee artifacts/742-integration/harden-rpc.log
       - name: Build unit tests and generated streaming benchmark
+        id: build
         run: |
           dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU -maxcpucount:2 2>&1 | tee artifacts/742-integration/b3-unit-build.log
           dotnet build test/SharpLink.Benchmarks -c Release -p:Platform=AnyCPU -maxcpucount:2 2>&1 | tee artifacts/742-integration/b3-benchmark-build.log
@@ -43,18 +46,36 @@ jobs:
           timeout 240s taskset -c 0,1 dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
             --maximum-parallel-tests 4 2>&1 | tee artifacts/742-integration/full-legacy.log
       - name: Generated RPC smoke on actual TCP and shared memory
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           SHARPLINK_WRITER_OWNED_STREAMS: '1'
+          SHARPLINK_B3_DIAGNOSTICS: '1'
+          SHARPLINK_BENCHMARK_SHA: ${{ github.sha }}
         run: |
-          for transport in tcp sharedmemory; do
-            for shape in Server1x16 Server100x16 Server100x4096 Client100x16 Client100x4096 Duplex100x16 Duplex100x4096; do
-              timeout 45s taskset -c 0,1 dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll \
-                --generated-abi-streaming-evidence "$shape" 10 0.5 100 \
-                "artifacts/742-integration/smoke-$transport-$shape.json" "$transport" \
-                2>&1 | tee "artifacts/742-integration/smoke-$transport-$shape.log"
-            done
-          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, subprocess, sys
+          output = Path('artifacts/742-integration')
+          results = []
+          for transport in ['tcp', 'sharedmemory']:
+              for shape in ['Server1x16', 'Server100x16', 'Server100x4096', 'Client100x16', 'Client100x4096', 'Duplex100x16', 'Duplex100x4096']:
+                  name = f'smoke-{transport}-{shape}'
+                  args = ['timeout', '45s', 'taskset', '-c', '0,1', 'dotnet',
+                      'test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll',
+                      '--generated-abi-streaming-evidence', shape, '10', '0.5', '100', str(output / (name + '.json')), transport]
+                  with (output / (name + '.log')).open('w') as log:
+                      run = subprocess.run(args, stdout=log, stderr=subprocess.STDOUT)
+                  text = (output / (name + '.log')).read_text()
+                  proof = 'B3_PATH_PROOF scopes=' in text
+                  results.append({'name': name, 'exit': run.returncode, 'b3_path_proven': proof})
+                  print(json.dumps(results[-1]), flush=True)
+                  if run.returncode != 0 or not proof:
+                      print(text[-18000:], flush=True)
+          (output / 'rpc-smoke-results.json').write_text(json.dumps(results, indent=2))
+          sys.exit(0 if all(r['exit'] == 0 and r['b3_path_proven'] for r in results) else 1)
+          PY
       - name: Full retained suite with B3 activated for real generated streams
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           SHARPLINK_WRITER_OWNED_STREAMS: '1'
         run: |
