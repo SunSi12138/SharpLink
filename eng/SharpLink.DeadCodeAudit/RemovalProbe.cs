@@ -34,7 +34,12 @@ internal static class RemovalProbe
                 && x[9] == "0" && x[10] == "0")
             .Select(x => new RemovalCandidate(x[0], int.Parse(x[1]), x[5]))
             .Where(x => x.Path.StartsWith("src/", StringComparison.Ordinal)
-                && !x.Path.StartsWith("src/SharpLink.Shared/", StringComparison.Ordinal))
+                && !x.Path.StartsWith("src/SharpLink.Shared/", StringComparison.Ordinal)
+                // The two C#14 extension validators are demonstrably called and
+                // are protected even if a future index regresses.
+                && !(x.Path == "src/SharpLink.Server/TransportExtensions.cs"
+                    && (x.Signature.Contains(".ValidateTcpPort(", StringComparison.Ordinal)
+                        || x.Signature.Contains(".ValidateBacklog(", StringComparison.Ordinal))))
             .ToArray();
 
         var removed = new List<RemovalCandidate>();
