@@ -90,6 +90,9 @@ def make_copy(root, here, target, variant, names):
     <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
     <UseSharedCompilation>false</UseSharedCompilation>
     <UseRuntimeAsync>false</UseRuntimeAsync>
+    <!-- Keep original explicit package references in both projections; SDK11
+         pruning otherwise raises NU1510 for existing framework-provided refs. -->
+    <RestoreEnablePackagePruning>false</RestoreEnablePackagePruning>
   </PropertyGroup>
 '''
             new = new.replace("</Project>", properties + "</Project>")
@@ -288,6 +291,7 @@ def main():
                   "productionProjectsToggled": PRODUCTION_PROJECTS,
                   "fixtureProjectToggled": "Fixture", "traditionalProjects": TRADITIONAL_PROJECTS,
                   "driverScope": "independent Add-only fixture; fixed traditional drivers; same generator and BCL",
+                  "restorePolicy": "RestoreEnablePackagePruning=false identically in both projected builds; original PackageReferences unchanged; framework asset conflict resolution still applies",
                   "driverBinaryPolicy": "one fixed traditional consumer compiled against A, reused in B; independently built B driver archived; only driver DLL/PDB/deps/runtimeconfig/apphost copied",
                   "sampleTimeoutSeconds": 60, "totalScriptBudgetSeconds": 1100,
                   "outlierRemoval": "none", "rawControlSubtraction": False,

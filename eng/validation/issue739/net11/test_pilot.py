@@ -145,6 +145,7 @@ class Gates(unittest.TestCase):
                 self.assertEqual((target / 'src/SharpLink.Runtime/Test.cs').read_bytes(), (root / 'src/SharpLink.Runtime/Test.cs').read_bytes())
                 self.assertIn('net11.0', (target / 'src/SharpLink.Runtime/SharpLink.Runtime.csproj').read_text())
                 self.assertIn('netstandard2.0', (target / 'Directory.Build.props').read_text())
+                self.assertIn('<RestoreEnablePackagePruning>false</RestoreEnablePackagePruning>', (target / 'Directory.Build.props').read_text())
             for name in names:
                 self.assertEqual(pilot.sha(targets['A'] / name), pilot.sha(targets['B'] / name))
             self.assertNotEqual(pilot.sha(targets['A'] / 'Directory.Build.targets'), pilot.sha(targets['B'] / 'Directory.Build.targets'))
