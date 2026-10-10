@@ -1,0 +1,81 @@
+name: PR742 B3 integration validation
+
+on:
+  push:
+    branches: ['research/742-b3-integration-20261010']
+    paths:
+      - '.github/workflows/742-b3-integration-validation.yml'
+      - 'eng/742-b3-integration/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr742-b3-integration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  baseline-toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_PROCESSOR_COUNT: '4'
+      TUNIT_MAX_PARALLEL_TESTS: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record source identity and restore unmodified baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/b3-integration
+          git rev-parse HEAD > artifacts/b3-integration/checkout.txt
+          git rev-parse HEAD^{tree} > artifacts/b3-integration/tree.txt
+          dotnet --info > artifacts/b3-integration/dotnet.txt
+          lscpu > artifacts/b3-integration/cpu.txt
+          git archive --format=tar.gz HEAD > artifacts/b3-integration/source.tar.gz
+          dotnet build test/SharpLink.UnitTests -c Release -p:Platform=AnyCPU 2>&1 | tee artifacts/b3-integration/unit-build.log
+          dotnet build test/SharpLink.Benchmarks -c Release -p:Platform=AnyCPU 2>&1 | tee artifacts/b3-integration/benchmark-build.log
+      - name: Run baseline regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --maximum-parallel-tests 4 2>&1 | tee artifacts/b3-integration/unit-tests.log
+      - name: Package public toolchain and restored dependencies for offline validation
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/pr742-offline-dotnet"
+          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          sdk="$(dotnet --version)"
+          mkdir -p "$target/sdk" "$target/host/fxr" "$target/shared/Microsoft.NETCore.App" "$target/shared/Microsoft.AspNetCore.App" "$target/packs"
+          cp "$root/dotnet" "$target/"
+          cp "$root/LICENSE.txt" "$root/ThirdPartyNotices.txt" "$target/" 2>/dev/null || true
+          cp -a "$root/sdk/$sdk" "$target/sdk/"
+          for directory in "$root"/host/fxr/10.*; do test ! -d "$directory" || cp -a "$directory" "$target/host/fxr/"; done
+          for name in Microsoft.NETCore.App Microsoft.AspNetCore.App; do
+            for directory in "$root/shared/$name"/10.*; do test ! -d "$directory" || cp -a "$directory" "$target/shared/$name/"; done
+          done
+          for family in Microsoft.NETCore.App.Ref Microsoft.AspNetCore.App.Ref Microsoft.NETCore.App.Host.linux-x64; do
+            mkdir -p "$target/packs/$family"
+            for directory in "$root/packs/$family"/10.*; do test ! -d "$directory" || cp -a "$directory" "$target/packs/$family/"; done
+          done
+          tar -C "$target" -czf artifacts/b3-integration/dotnet-toolchain.tar.gz .
+          packages="$(dotnet nuget locals global-packages --list | sed 's/^global-packages: //')"
+          if test -d "$packages"; then tar -C "$packages" -czf artifacts/b3-integration/nuget-packages.tar.gz .; fi
+          find artifacts/b3-integration -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > artifacts/b3-integration/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: pr742-b3-offline-toolchain-${{ github.run_id }}
+          path: artifacts/b3-integration
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
