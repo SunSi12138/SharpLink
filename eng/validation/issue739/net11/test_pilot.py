@@ -15,7 +15,7 @@ def method(type_name, name, arity=0, runtime=False, builder=None):
 
 def report(variant):
     logical = method("SharpLink.Client.SharpLinkClient", "AwaitLogicalInvocationAsync", 1, variant == "B")
-    reader = method("SharpLink.Runtime.ReadOwnershipPipeReader", "AwaitReadAsync", builder="PoolingAsyncValueTaskMethodBuilder`1")
+    reader = method("SharpLink.Runtime.ReadOwnershipPipeReader", "AwaitReadAsync", runtime=variant == "B", builder="PoolingAsyncValueTaskMethodBuilder`1")
     value = {"runtime": pilot.ENVIRONMENT_VERSION, "framework": ".NET " + pilot.RUNTIME,
             "corelibPath": "/dotnet/shared/Microsoft.NETCore.App/" + pilot.RUNTIME + "/System.Private.CoreLib.dll",
             "assemblies": [
@@ -73,6 +73,12 @@ class Gates(unittest.TestCase):
         a, b = report("A"), report("B")
         b["assemblies"][1]["methods"][0]["builderType"] = None
         with self.assertRaisesRegex(ValueError, "Pooled reader"):
+            pilot.verify_metadata(a, b)
+
+    def test_reader_rejects_unobserved_opt_out(self):
+        a, b = report("A"), report("B")
+        b["assemblies"][1]["methods"][0] = method("SharpLink.Runtime.ReadOwnershipPipeReader", "AwaitReadAsync", builder="PoolingAsyncValueTaskMethodBuilder`1")
+        with self.assertRaisesRegex(ValueError, "B pooled reader"):
             pilot.verify_metadata(a, b)
 
     def test_driver_rejects_runtime_lowering(self):

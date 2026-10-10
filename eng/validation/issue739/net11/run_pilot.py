@@ -179,8 +179,11 @@ def verify_metadata(a, b):
     require(traditional(logical_a), "A logical helper is not proven traditional")
     require(logical_b["runtimeAsync"] and logical_b["stateMachineType"] is None, "B logical helper is not proven runtime-async")
     readers = [method(report, "SharpLink.Runtime.dll", "SharpLink.Runtime.ReadOwnershipPipeReader", "AwaitReadAsync", 0) for report in (a, b)]
-    require(all(traditional(x) and x["builderType"] and "PoolingAsyncValueTaskMethodBuilder" in x["builderType"] for x in readers),
-            "Pooled reader lost its custom builder or traditional lowering")
+    require(all(x["builderType"] and "PoolingAsyncValueTaskMethodBuilder" in x["builderType"] for x in readers),
+            "Pooled reader lost its source custom-builder attribute")
+    require(traditional(readers[0]), "A pooled reader is not proven traditional")
+    require(readers[1]["runtimeAsync"] and readers[1]["stateMachineType"] is None and not readers[1]["hasMoveNext"],
+            "B pooled reader does not match the observed exact-RC1 runtime-async lowering")
     require(method_key(readers[0]) == method_key(readers[1]) and readers[0]["builderType"] == readers[1]["builderType"],
             "Pooled reader semantic signature/builder differs")
     driver = []
@@ -200,7 +203,8 @@ def verify_metadata(a, b):
         candidate = lookup.get(method_key(item))
         require(candidate is not None and candidate["runtimeAsync"] and candidate["stateMachineType"] is None,
                 "Generated fixture helper did not change lowering: " + str(method_key(item)))
-    return {"logicalHelperA": logical_a, "logicalHelperB": logical_b, "pooledReader": readers[0],
+    return {"logicalHelperA": logical_a, "logicalHelperB": logical_b, "pooledReaderA": readers[0], "pooledReaderB": readers[1],
+            "pooledReaderInterpretation": "exact RC1 keeps AsyncMethodBuilder attribute but lowers this method to runtime-async in B; no automatic pooled opt-out asserted; source unchanged",
             "driverSha256": driver[0], "fixtureEligibleMethods": eligible,
             "fixtureLoweringStatus": "verified" if eligible else "N/A: no eligible async generated method in fixed Add-only fixture",
             "bcl": "same pinned framework, already compiled with runtime async; compiler switch does not retoggle BCL"}
@@ -292,6 +296,8 @@ def main():
                   "fixtureProjectToggled": "Fixture", "traditionalProjects": TRADITIONAL_PROJECTS,
                   "driverScope": "independent Add-only fixture; fixed traditional drivers; same generator and BCL",
                   "restorePolicy": "RestoreEnablePackagePruning=false identically in both projected builds; original PackageReferences unchanged; framework asset conflict resolution still applies",
+                  "readerLoweringPolicy": "exact-RC1 observed behavior: traditional pooled-builder method in A, runtime-async method with same retained builder attribute in B; no production opt-out attribute added",
+                  "readerOptOutReference": "https://github.com/dotnet/runtime/pull/128943 adds separate RuntimeAsyncMethodGeneration(false) to BCL methods; not a universal AsyncMethodBuilder opt-out rule",
                   "driverBinaryPolicy": "one fixed traditional consumer compiled against A, reused in B; independently built B driver archived; only driver DLL/PDB/deps/runtimeconfig/apphost copied",
                   "sampleTimeoutSeconds": 60, "totalScriptBudgetSeconds": 1100,
                   "outlierRemoval": "none", "rawControlSubtraction": False,
