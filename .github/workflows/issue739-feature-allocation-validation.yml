@@ -1,0 +1,47 @@
+name: Issue 739 stream and feature allocation validation
+on:
+  push:
+    branches: ['validation/issue739-feature-ledger-20261010']
+    paths: ['eng/validation/issue739/features/**', '.github/workflows/issue739-feature-allocation-validation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  feature-ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [streams, features, spotchecks, suspension]
+    env:
+      ISSUE739_SOURCE_SHA: f26629664ba7788dcd2c97f3e709411101944c04
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_TieredPGO: '1'
+      DOTNET_TieredCompilation: '1'
+      DOTNET_gcServer: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.102'
+      - name: Verify and build exact-source supplementary harness
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          dotnet build eng/validation/issue739/features/Features.csproj -c Release -m:1 -p:UseSharedCompilation=false
+          mkdir -p artifacts/issue739/features/${{ matrix.stage }}
+          dotnet --info > artifacts/issue739/features/${{ matrix.stage }}/dotnet-info.txt
+          lscpu > artifacts/issue739/features/${{ matrix.stage }}/cpu.txt
+          git rev-parse HEAD > artifacts/issue739/features/${{ matrix.stage }}/harness-commit.txt
+          sha256sum eng/validation/issue739/features/bin/Release/net10.0/*.dll > artifacts/issue739/features/${{ matrix.stage }}/assembly-hashes.txt
+      - name: Five fresh samples per cell with same-host matched controls
+        run: python3 eng/validation/issue739/features/run_matrix.py --dll eng/validation/issue739/features/bin/Release/net10.0/SharpLink.Benchmarks.dll --output artifacts/issue739/features/${{ matrix.stage }} --stage ${{ matrix.stage }} --samples 5
+      - name: Retain every raw sample and incomplete-run evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-features-${{ matrix.stage }}-${{ github.sha }}
+          path: artifacts/issue739/features/${{ matrix.stage }}
+          if-no-files-found: error
