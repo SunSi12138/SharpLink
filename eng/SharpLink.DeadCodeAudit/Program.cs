@@ -109,6 +109,13 @@ Console.WriteLine($"DECLARATIONS: {symbols.Count} indexed from {indexed} documen
 
 // One pass over actual compilations and generated documents; semantic SymbolInfo
 // distinguishes overloads, generic methods, extension dispatch and constructors.
+// Linked source files and C# 14 extension-block helper symbols sometimes
+// surface from MSBuildWorkspace under a distinct emitted/containing symbol.
+// Fall back to their declared source location and name (not name alone).
+var declarationsBySource = symbols.Values
+    .GroupBy(v => v.Path + "|" + v.Name, StringComparer.Ordinal)
+    .ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
+var fallbackMatches = 0L;
 var referenceMatches = 0L;
 foreach (var (document, path, scope) in documents)
 {
@@ -121,7 +128,22 @@ foreach (var (document, path, scope) in documents)
         {
             ISymbol? referenced;
             try { referenced = model.GetSymbolInfo(node).Symbol; } catch { continue; }
-            if (referenced is null || !symbols.TryGetValue(Key(referenced), out var item)) continue;
+            if (referenced is null) continue;
+            if (!symbols.TryGetValue(Key(referenced), out var item))
+            {
+                var sourceLocation = referenced.Locations.FirstOrDefault(l => l.IsInSource);
+                var sourcePath = sourceLocation?.SourceTree?.FilePath;
+                if (sourceLocation is null || sourcePath is null
+                    || !declarationsBySource.TryGetValue(
+                        Relative(root, sourcePath) + "|" + referenced.Name, out var options)
+                    || options.Length == 0)
+                    continue;
+                // The location points to the declaration identifier; the record
+                // starts at the declaration's first token, which may be earlier.
+                var declarationLine = sourceLocation.GetLineSpan().StartLinePosition.Line + 1;
+                item = options.OrderBy(v => Math.Abs(v.Line - declarationLine)).First();
+                fallbackMatches++;
+            }
             var line = node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
             if (!item.Seen.Add(scope + "|" + path + "|" + line)) continue;
             switch (scope)
@@ -140,7 +162,7 @@ foreach (var (document, path, scope) in documents)
     }
     catch (Exception e) { messages.Add("REFERENCE " + path + ": " + e.Message); }
 }
-Console.WriteLine($"REFERENCES: {referenceMatches} matched after {stopwatch.Elapsed}");
+Console.WriteLine($"REFERENCES: {referenceMatches} matched ({fallbackMatches} source-location fallbacks) after {stopwatch.Elapsed}");
 
 var sourceFiles = Directory.EnumerateFiles(Path.Combine(root, "src"), "*.cs", SearchOption.AllDirectories)
     .Where(p => !p.Replace('\\','/').Contains("/obj/") && !p.Replace('\\','/').Contains("/bin/"))
@@ -165,13 +187,14 @@ var result = new
     AuditHeadSha = Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "local",
     ElapsedSeconds = (int)stopwatch.Elapsed.TotalSeconds,
     Projects = projectStats,
-    TotalSourceDocuments = documents.Count(d => d.Scope != "generated"),
+    TotalSourceDocuments = documents.Count(d => !d.Path.StartsWith("<generated>/", StringComparison.Ordinal)),
     TotalGeneratedDocuments = documents.Count(d => d.Path.StartsWith("<generated>/", StringComparison.Ordinal)),
     TotalProductionFiles = sourceFiles.Length,
     IndexedProductionFiles = loadedFiles.Count,
     MissingProductionFiles = missingFiles,
     Declarations = sorted.Length,
     MatchedReferences = referenceMatches,
+    SourceLocationFallbackMatches = fallbackMatches,
     Breakdown = sorted.GroupBy(x => x.Tier).ToDictionary(g => g.Key, g => g.Count()),
     WorkspaceDiagnostics = messages.Take(400).ToArray(),
     Symbols = sorted,
@@ -199,7 +222,7 @@ markdown.AppendLine("# Issue #801 — dev full-solution symbol reference index")
 markdown.AppendLine();
 markdown.AppendLine("Dev base: " + (Environment.GetEnvironmentVariable("AUDIT_DEV_SHA") ?? "unknown"));
 markdown.AppendLine("Audit head: " + (Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "unknown"));
-markdown.AppendLine($"Projects {projects.Length}; source docs {documents.Count(d => d.Scope != "generated")}; generated docs {documents.Count(d => d.Path.StartsWith("<generated>/", StringComparison.Ordinal))}");
+markdown.AppendLine($"Projects {projects.Length}; source docs {documents.Count(d => !d.Path.StartsWith("<generated>/", StringComparison.Ordinal))}; generated docs {documents.Count(d => d.Path.StartsWith("<generated>/", StringComparison.Ordinal))}");
 markdown.AppendLine($"Production source files indexed: {loadedFiles.Count}/{sourceFiles.Length}; declarations: {sorted.Length}; matched references: {referenceMatches}; elapsed seconds: {(int)stopwatch.Elapsed.TotalSeconds}");
 markdown.AppendLine("**Caution:** A/B/C are review candidates, NOT proof of dead code. This scans direct semantic references, not whole-program reachability, reflection, DI or external consumers.");
 markdown.AppendLine();
