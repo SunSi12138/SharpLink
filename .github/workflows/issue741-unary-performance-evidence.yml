@@ -8,6 +8,7 @@ on:
       - 'src/SharpLink.Client/SharpLinkClient.Invokers.cs'
       - 'src/SharpLink.Client/SharpLinkClient.LogicalScope.cs'
       - 'test/SharpLink.Benchmarks/Issue741RpcEvidenceRunner.cs'
+      - 'test/SharpLink.Issue741AotEvidence/**'
       - 'eng/perf/issue741-summarize.py'
       - '.github/workflows/issue741-unary-performance-evidence.yml'
   workflow_dispatch:
@@ -54,6 +55,7 @@ jobs:
             cp "test/SharpLink.Benchmarks/$file" "$RUNNER_TEMP/issue741-base-$MODE/test/SharpLink.Benchmarks/$file"
             cmp "test/SharpLink.Benchmarks/$file" "$RUNNER_TEMP/issue741-base-$MODE/test/SharpLink.Benchmarks/$file"
           done
+          cp -a test/SharpLink.Issue741AotEvidence "$RUNNER_TEMP/issue741-base-$MODE/test/"
 
       - name: Build exact base and candidate from identical harness
         shell: bash
@@ -67,6 +69,7 @@ jobs:
             fi
             project="$source/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
             if [[ "$MODE" == "native" ]]; then
+              project="$source/test/SharpLink.Issue741AotEvidence/SharpLink.Issue741AotEvidence.csproj"
               dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=true --self-contained true \
                 -o "$ISSUE741_ROOT/builds/native-$revision" -v minimal \
                 > "$ISSUE741_ROOT/build-$revision.log" 2>&1 || {

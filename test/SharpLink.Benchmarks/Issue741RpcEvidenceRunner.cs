@@ -7,6 +7,7 @@ using System.Net;
 using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
@@ -104,7 +105,7 @@ internal static class Issue741RpcEvidenceRunner
         }
 
         Array.Sort(latencies, 0, completed);
-        var result = new
+        var result = new Issue741RpcEvidenceResult
         {
             Commit = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_SHA") ?? "unknown",
             RuntimeMode = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_MODE") ?? "jit",
@@ -132,11 +133,10 @@ internal static class Issue741RpcEvidenceRunner
             P999Us = Percentile(latencies, completed, 99.9)
         };
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(result, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true
-        })).ConfigureAwait(false);
+        await File.WriteAllTextAsync(
+            output,
+            JsonSerializer.Serialize(result, Issue741RpcEvidenceJsonContext.Default.Issue741RpcEvidenceResult))
+            .ConfigureAwait(false);
         Console.WriteLine($"#741 {result.RuntimeMode} {transport} {scenario} c{concurrency}: " +
             $"{completed} calls, {attempts} attempts, " +
             $"{result.ThroughputOperationsPerSecond:F1} ops/s, " +
@@ -233,4 +233,38 @@ internal static class Issue741RpcEvidenceRunner
             return ValueTask.FromResult(left + right);
         }
     }
+}
+
+internal sealed class Issue741RpcEvidenceResult
+{
+    public string Commit { get; init; } = "";
+    public string RuntimeMode { get; init; } = "";
+    public string RuntimeVersion { get; init; } = "";
+    public string RuntimeArchitecture { get; init; } = "";
+    public int CpuCount { get; init; }
+    public bool ServerGc { get; init; }
+    public string Scenario { get; init; } = "";
+    public string Transport { get; init; } = "";
+    public int Concurrency { get; init; }
+    public int WarmupMilliseconds { get; init; }
+    public int MeasurementMilliseconds { get; init; }
+    public double ActualMeasurementSeconds { get; init; }
+    public int Operations { get; init; }
+    public long PhysicalAttempts { get; init; }
+    public int ExpectedAttemptsPerCall { get; init; }
+    public int ValidationFailures { get; init; }
+    public double ThroughputOperationsPerSecond { get; init; }
+    public double CpuUsPerOperation { get; init; }
+    public double AllocatedBytesPerOperation { get; init; }
+    public int Gen0Collections { get; init; }
+    public int Gen1Collections { get; init; }
+    public double P50Us { get; init; }
+    public double P99Us { get; init; }
+    public double P999Us { get; init; }
+}
+
+[JsonSerializable(typeof(Issue741RpcEvidenceResult))]
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
+internal partial class Issue741RpcEvidenceJsonContext : JsonSerializerContext
+{
 }
