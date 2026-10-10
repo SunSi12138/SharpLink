@@ -710,35 +710,29 @@ internal sealed partial class SharpLinkClient
             throw exception;
         }
 
-        var streamCancellationToken = connection!.PendingCalls.GetProducerCancellationToken(requestId);
-        if (!connection.PendingCalls.Contains(requestId))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var exception = CreateDeadlineExceededException();
-            _ = control.LogicalCall?.TryClaimDeadline();
-            outcome?.CompleteLocalFailure(exception);
-            throw exception;
-        }
-
         try
         {
-            var emission = SendRpcCall(
-                connection.Session,
-                method.ContractId,
-                method.MethodId,
-                requestId,
-                flags,
-                request,
-                requestCodec,
-                control.Deadline,
-                control.Metadata,
-                observeEmission: control.Deadline.HasValue,
-                // The pending call owns producer cancellation and request publication.
-                cancellationToken: streamCancellationToken,
-                publicationTable: connection.PendingCalls);
-            await emission.ConfigureAwait(false);
-            await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
-            connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
+            if (connection!.PendingCalls.Contains(requestId))
+            {
+                var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
+                var emission = SendRpcCall(
+                    connection.Session,
+                    method.ContractId,
+                    method.MethodId,
+                    requestId,
+                    flags,
+                    request,
+                    requestCodec,
+                    control.Deadline,
+                    control.Metadata,
+                    observeEmission: control.Deadline.HasValue,
+                    // The pending call owns producer cancellation and request publication.
+                    cancellationToken: streamCancellationToken,
+                    publicationTable: connection.PendingCalls);
+                await emission.ConfigureAwait(false);
+                await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
+                connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
+            }
         }
         catch (Exception exception)
         {
@@ -746,6 +740,8 @@ internal sealed partial class SharpLinkClient
             connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
         }
 
+        // Registration may already have completed and removed the pending entry. Its operation
+        // still owns that terminal result and must be consumed exactly once to return it to the pool.
         _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
     }
 
