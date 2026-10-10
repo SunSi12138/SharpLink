@@ -39,7 +39,11 @@ internal static class RemovalProbe
                 // are protected even if a future index regresses.
                 && !(x.Path == "src/SharpLink.Server/TransportExtensions.cs"
                     && (x.Signature.Contains(".ValidateTcpPort(", StringComparison.Ordinal)
-                        || x.Signature.Contains(".ValidateBacklog(", StringComparison.Ordinal))))
+                        || x.Signature.Contains(".ValidateBacklog(", StringComparison.Ordinal)))
+                // Tests invoke this private alias via Type.GetMethod("DisposeAllSessionsAsync").
+                // Migrating that test is a separate 3.0 cleanup task.
+                && !(x.Path == "src/SharpLink.Server/SharpLinkServer.LifecycleAliases.cs"
+                    && x.Signature.Contains(".DisposeAllSessionsAsync(", StringComparison.Ordinal)))
             .ToArray();
 
         var removed = new List<RemovalCandidate>();
