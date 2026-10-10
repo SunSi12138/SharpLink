@@ -1,0 +1,11 @@
+{
+  "sourceSha": "eb99fe887cf2129d9b88441245ca0a4a6406b6c2",
+  "originSha256": {
+    "ReaderControl/Program.cs": "9fbebfacb7c27d8740db11042d9463929ccfa2cd00f277dad0051ce9ef952072",
+    "Driver/Program.cs": "6e44ab739797e0f02f570680ce8e4f3b557abec3d729df6e103efde091638238",
+    "Fixture/Tiny.cs": "0fcb3b7bd4d27607794312b4c8c4b45606c125422e5c776e9640ef423c5c8e2e",
+    "run_pilot.py": "e8577f0dcdba8864374e8e05c3d12a95ea1634c4b3b916ad396b046a376925e2",
+    "Metadata/Program.cs": "d76fb75994adfe11c34e6419baf6d4395e68e240a1c959c0fb620346b9502015"
+  },
+  "copyPolicy": "ReaderDriver/ControlledReader/Counts mechanics copied byte-for-byte. Tiny Worker/Drain and measured interval copied byte-for-byte; only entry routing, TCPc1 shape restriction, setup transport choice and reporting changed. Fixture source reused unchanged. Native identity replaces assembly-location identity."
+}

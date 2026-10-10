@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>SharpLink.Benchmarks</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <StartupObject>Issue739Aot.Program</StartupObject>
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Fixture/Fixture.csproj" />
+  </ItemGroup>
+  <Target Name="Issue739IlcInputsBefore" BeforeTargets="IlcCompile" DependsOnTargets="ComputeIlcCompileInputs">
+    <GetFileHash Files="@(ManagedBinary);@(IlcReference)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="Issue739InputsBefore" />
+    </GetFileHash>
+    <WriteLinesToFile File="$(IntermediateOutputPath)issue739-ilc-inputs-before.txt"
+      Lines="@(Issue739InputsBefore->'%(FullPath)|%(FileHash)')" Overwrite="true" />
+  </Target>
+  <Target Name="Issue739IlcInputsAfter" AfterTargets="IlcCompile">
+    <GetFileHash Files="@(ManagedBinary);@(IlcReference)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="Issue739InputsAfter" />
+    </GetFileHash>
+    <WriteLinesToFile File="$(IntermediateOutputPath)issue739-ilc-inputs-after.txt"
+      Lines="@(Issue739InputsAfter->'%(FullPath)|%(FileHash)')" Overwrite="true" />
+  </Target>
+</Project>
