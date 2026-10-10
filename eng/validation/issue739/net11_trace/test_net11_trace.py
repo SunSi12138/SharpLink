@@ -109,7 +109,7 @@ class Contracts(unittest.TestCase):
 
     def test_individual_bad_payload_cannot_hide_behind_readable_tick(self):
         for key, bad in (("eventVersion", 5), ("eventVersion", 1), ("allocationAmount64", None), ("allocationAmount64", 0),
-                         ("typeName", None), ("typeName", ""), ("sample", "other"), ("pid", 8), ("unresolvedFrames", -1)):
+                         ("typeName", None), ("typeName", " "), ("typeName", 7), ("sample", "other"), ("pid", 8), ("unresolvedFrames", -1)):
             row, meta, ticks, capture = trace_fixture()
             bad_tick = copy.deepcopy(ticks[0])
             bad_tick[key] = bad
@@ -117,6 +117,36 @@ class Contracts(unittest.TestCase):
             meta["tickEvents"] = 2
             with self.subTest(key=key, bad=bad), self.assertRaises(ValueError):
                 validate_trace(meta, row, ticks, capture, "trace", "toolcore")
+
+    def test_explicit_empty_wire_name_is_unnamed_unattributed_mass(self):
+        row, meta, ticks, capture = trace_fixture()
+        ticks[0]["typeName"] = ""
+        ticks[0]["frames"] = ["System.Runtime.CompilerServices.AsyncHelpers.AllocContinuation()", "SharpLink.Runtime.ReadOwnershipPipeReader.AwaitReadAsync()"]
+        result = validate_trace(meta, row, ticks, capture, "trace", "toolcore")
+        self.assertEqual(result["unnamedTypeTickEvents"], 1)
+        self.assertEqual(result["unnamedTypeWeightBytes"], ticks[0]["allocationAmount64"])
+        rules = json.loads((HERE / "owners.json").read_text())
+        # Frozen rules all require a nonempty type predicate. A stack is never a substitute.
+        self.assertTrue(all(rule.get("typeContains") or rule.get("typeEquals") for rule in rules))
+        value = summary.summarize(meta, row, ticks, rules)
+        self.assertEqual(value["classifiedSampleWeightBytesK"], 0)
+        self.assertEqual(value["missingTypeWeightBytes"], ticks[0]["allocationAmount64"])
+        self.assertEqual(value["owners"]["UNATTRIBUTED"]["sampledTickWeightBytes"], ticks[0]["allocationAmount64"])
+        self.assertIsNone(value["exactObjectsPerOperation"])
+        self.assertIsNone(value["exactOwnerCoverage"])
+        del ticks[0]["typeName"]
+        with self.assertRaises((ValueError, KeyError)):
+            validate_trace(meta, row, ticks, capture, "trace", "toolcore")
+
+    def test_preserved_rc1_empty_name_raw_v4_payload_layout(self):
+        import struct
+        # Actual first-capture payload; raw UTF16 terminator at byte26, not decoder loss.
+        raw = bytes.fromhex("00A1010000000000000000A101000000000018800BE3A97F0000000000000000C8A0C0FEA17F00008000000000000000")
+        self.assertEqual(len(raw), 48)
+        self.assertEqual(struct.unpack_from("<Q", raw, 10)[0], 106752)
+        self.assertEqual(struct.unpack_from("<Q", raw, 18)[0], 0x7fa9e30b8018)
+        self.assertEqual(raw[26:28], b"\x00\x00")
+        self.assertEqual(struct.unpack_from("<Q", raw, 40)[0], 128)
 
     def test_no_object_size_is_unknown_not_reconstructed(self):
         row, meta, ticks, capture = trace_fixture()

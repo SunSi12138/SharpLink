@@ -51,9 +51,25 @@ Collector and decoder, independently manifested:
 
 The collector uses a generated shell wrapper, so its old net8 runtimeconfig never relies on ambient roll-forward. The measured child remains explicitly pinned to net11. The isolated decoder imports the prior parser with a narrow additional loaded-runtime/corelib proof and a raw unrecognized-allocation-event count. It does not change event weighting or attribution semantics.
 
-The first real capture is TCP/B/traced at position 3. It must pass conversion, exact marker sample/PID/bytes/operations, tool/runtime/corelib hashes, known allocation versions (2, 3, 4), positive 64-bit weights and populated types for **every** in-window tick, and at least one resolved allocation stack. Loss accounting must be available. Reported loss, missing stacks and missing ObjectSize remain visible; success of this gate is not a completeness claim. Missing ObjectSize never becomes an exact object estimate. Failure stops the plan without a fallback toolchain or extra capture, preserving raw and partial evidence.
+The first real capture is TCP/B/traced at position 3. It must pass conversion, exact marker sample/PID/bytes/operations, tool/runtime/corelib hashes, known allocation versions (2, 3, 4), positive 64-bit weights and an explicitly present string type field for **every** in-window tick, and at least one resolved allocation stack. Loss accounting must be available. Reported loss, missing stacks and missing ObjectSize remain visible; success of this gate is not a completeness claim. An explicitly present empty string is retained as unnamed, UNATTRIBUTED sampled mass; missing/null/non-string or whitespace-only type fields remain schema failures. Missing ObjectSize never becomes an exact object estimate. Failure stops the plan without a fallback toolchain or extra capture, preserving raw and partial evidence.
 
 The same compatibility gate runs on every later trace. No first-capture support is claimed before actual successful RC1 capture evidence exists.
+
+## Prospective correction after the first failed cohort
+
+The original run `38050164972`, head `f878eff6163fd5af430d0c5f2296a547f398ca54`, stopped at its first B/TCP capture because the original gate required nonempty names. Its failed status and every artifact remain unchanged. Raw trace SHA256: `dc197671784ae00467cb284c86a270c9feb20d97151fd66ff80dfcbad8e57b0a`.
+
+Offline inspection of that same trace found 733 V4 ticks with valid weights, ObjectSize and resolved stacks, zero reported loss, and 402 genuinely empty names representing 42,726,784 of 77,893,144 sampled weight bytes. Direct EventPipe reading and independent decoding of the official V4 binary layout matched all 733 preserved JSONL records field-by-field. The 402 empty-name payloads are complete 48-byte events, with a UTF16 NUL at byte26 and nonzero raw TypeIDs. Names were not lost by ETLX conversion or JSON export. This offline probe used the same TraceEvent3.1.30 assembly under local runtime10.0.2; it did not recapture or replace the original decoder/toolchain evidence.
+
+The reported host/SDK snapshot `3551975be0` has an allocation-event naming path from `GCToCLREventSink::FireGCAllocationTick_V4` through `TypeHandle::GetName` to `MethodTable::_GetFullyQualifiedNameForClass`, which leaves non-array metadata-free types unnamed. Runtime continuation MethodTables and observed `AsyncHelpers.AllocContinuation` stacks support that explanation. The original artifacts do not independently export CoreLib's source revision, so this is a version-qualified source/stack inference, not proof of exact CoreLib revision, source type identity or allocation ownership. Relevant primary sources:
+
+- [V4 payload schema](https://github.com/dotnet/dotnet/blob/3551975be0/src/runtime/src/coreclr/vm/ClrEtwAll.man#L1179-L1189)
+- [Allocation naming call](https://github.com/dotnet/dotnet/blob/3551975be0/src/runtime/src/coreclr/vm/gctoclreventsink.cpp#L175-L203)
+- [TypeHandle naming path](https://github.com/dotnet/dotnet/blob/3551975be0/src/runtime/src/coreclr/vm/typehandle.cpp#L698-L720)
+- [Metadata-token name formatter](https://github.com/dotnet/dotnet/blob/3551975be0/src/runtime/src/coreclr/vm/class.cpp#L2391-L2423)
+- [Continuation MethodTable creation](https://github.com/dotnet/dotnet/blob/3551975be0/src/runtime/src/coreclr/vm/asynccontinuations.cpp#L106-L155)
+
+After reviewer and parent approval, the prospective gate accepts only an explicitly present empty string as unnamed mass, with all other gates unchanged. Frozen owner rules require type predicates, so that mass remains UNATTRIBUTED even when stacks are readable. The compatibility output separately reports unnamed tick count and weight. A subsequent run must be a new labeled cohort with the same20-process plan and pins; it cannot retroactively make the failed cohort accepted or pool its partial samples.
 
 ## Run on an authorized capture host
 
@@ -90,4 +106,4 @@ python3 -m unittest discover -s eng/validation/issue739/net11 -p 'test_pilot.py'
 python3 -m unittest discover -s eng/validation/issue739/trace -p 'test_*.py'
 ```
 
-At implementation time, all 47 offline tests passed. The overlaid driver and decoder also compiled with SDK10.0.102/runtime10.0.2 against available local dependencies, zero warnings/errors; the actual TraceEvent assembly version was confirmed as 3.1.30.0. This is source/API smoke coverage only. The exact SDK11 build and actual RC1 trace compatibility have not been proven locally. Local Unix diagnostic sockets were previously denied; no local captures were attempted or retried for this harness.
+At initial implementation, all 47 offline tests passed. The reviewed prospective empty-name correction adds two regression tests, for 49 total. The overlaid driver and decoder also compiled with SDK10.0.102/runtime10.0.2 against available local dependencies, zero warnings/errors; the actual TraceEvent assembly version was confirmed as 3.1.30.0. This is source/API smoke coverage only. The exact SDK11 build and actual RC1 trace compatibility have not been proven locally. Local Unix diagnostic sockets were previously denied; no local captures were attempted or retried for this harness.

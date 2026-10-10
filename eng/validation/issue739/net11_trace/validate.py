@@ -56,13 +56,18 @@ def validate_trace(meta, sample, ticks, capture, trace_hash, decoder_corelib_has
     require(type(meta["eventsLostReported"]) is int and meta["eventsLostReported"] >= 0 and isinstance(meta["lossNotifications"], list), "Loss accounting unavailable or malformed")
     require(meta["unrecognizedAllocationEvents"] == 0, "Unknown allocation-event schema")
     require(len(ticks) == meta["tickEvents"] and len(ticks) > 0, "No complete allocation-tick stream")
-    resolved = missing_stacks = missing_sizes = 0
+    resolved = missing_stacks = missing_sizes = unnamed_types = unnamed_weight = 0
     versions = set()
     for tick in ticks:
         require(tick["schemaVersion"] == 1 and tick["sample"] == sample["sample"] and tick["pid"] == sample["processId"], "Tick identity mismatch")
         require(type(tick["eventVersion"]) is int and tick["eventVersion"] in (2, 3, 4), "Unsupported allocation-tick version")
         require(type(tick["allocationAmount64"]) is int and tick["allocationAmount64"] > 0, "Missing/invalid allocation weight")
-        require(isinstance(tick["typeName"], str) and bool(tick["typeName"].strip()), "Missing allocation type; net11 decoder compatibility unproven")
+        # A present empty UTF16 name is a source-compatible unnamed record, proven
+        # from the preserved first RC1 capture. Never invent a name from its stack.
+        require(isinstance(tick["typeName"], str) and (tick["typeName"] == "" or bool(tick["typeName"].strip())), "Missing or malformed allocation type field")
+        if tick["typeName"] == "":
+            unnamed_types += 1
+            unnamed_weight += tick["allocationAmount64"]
         require(isinstance(tick["frames"], list) and all(isinstance(frame, str) for frame in tick["frames"]), "Malformed allocation stack")
         require(type(tick["unresolvedFrames"]) is int and 0 <= tick["unresolvedFrames"] <= len(tick["frames"]), "Malformed unresolved-frame count")
         require(meta["markerStartMilliseconds"] < tick["timeRelativeMilliseconds"] < meta["markerStopMilliseconds"], "Tick outside marker window")
@@ -75,5 +80,7 @@ def validate_trace(meta, sample, ticks, capture, trace_hash, decoder_corelib_has
     return {"schemaVersion": 1, "status": "compatible-for-bounded-diagnostics", "sample": sample["sample"],
             "traceSha256": trace_hash, "recognizedVersions": sorted(versions), "checkedTickCount": len(ticks),
             "ticksWithResolvedFrames": resolved, "ticksWithoutStacks": missing_stacks, "ticksWithoutObjectSize": missing_sizes,
+            "unnamedTypeTickEvents": unnamed_types, "unnamedTypeWeightBytes": unnamed_weight,
+            "unnamedTypePolicy": "present empty string retained as UNATTRIBUTED sampled mass; no type or interval-owner inference from frames",
             "eventsLostReported": meta["eventsLostReported"], "lossNotifications": meta["lossNotifications"],
-            "meaning": "field/schema compatibility only; reported loss and missing stacks remain; no completeness/owner-coverage guarantee"}
+            "meaning": "field/schema compatibility only; reported loss, unnamed types and missing stacks remain; no completeness/owner-coverage guarantee"}
