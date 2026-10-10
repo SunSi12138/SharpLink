@@ -4,7 +4,7 @@
     <AssemblyName>SharpLink.Benchmarks</AssemblyName><ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="trace/**/*.cs;features/**/*.cs;calibration/**/*.cs;TraceAnalysis/**/*.cs" />
+    <Compile Remove="trace/**/*.cs;features/**/*.cs;calibration/**/*.cs;net11/**/*.cs;TraceAnalysis/**/*.cs" />
     <ProjectReference Include="../../../src/SharpLink.Server/SharpLink.Server.csproj" />
     <ProjectReference Include="../../../src/SharpLink.Client/SharpLink.Client.csproj" />
     <ProjectReference Include="../../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
