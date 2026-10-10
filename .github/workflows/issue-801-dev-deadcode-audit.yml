@@ -84,9 +84,20 @@ jobs:
             }
           tail -n 30 artifacts/issue-801-audit/removal-unit-tests.log
 
+      - name: Retry removal Unit tests to identify nondeterministic failures
+        id: removal_unit_retry
+        if: always() && steps.removal_build.outcome == 'success' && steps.removal_unit.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build \
+            > artifacts/issue-801-audit/removal-unit-retry.log 2>&1 || {
+              tail -n 100 artifacts/issue-801-audit/removal-unit-retry.log; exit 1;
+            }
+          tail -n 35 artifacts/issue-801-audit/removal-unit-retry.log
+
       - name: Generator tests after removal
         id: removal_generator
-        if: steps.removal_build.outcome == 'success'
+        if: always() && steps.removal_build.outcome == 'success'
         run: |
           dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj \
             -c Release --no-build > artifacts/issue-801-audit/removal-generator-tests.log 2>&1 || {
@@ -110,6 +121,44 @@ jobs:
           } > artifacts/issue-801-audit/removal-validation.md
           git restore -- src/
           git status --short | head -n 50
+
+      - name: Rebuild pristine baseline after restoring all src files
+        id: clean_build
+        if: always() && steps.probe.outcome == 'success'
+        continue-on-error: true
+        run: |
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-audit/baseline-build.log 2>&1 || {
+              tail -n 90 artifacts/issue-801-audit/baseline-build.log; exit 1;
+            }
+          tail -n 22 artifacts/issue-801-audit/baseline-build.log
+
+      - name: Unit tests on unchanged baseline for comparison
+        id: baseline_unit
+        if: always() && steps.clean_build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build \
+            > artifacts/issue-801-audit/baseline-unit-tests.log 2>&1 || {
+              tail -n 120 artifacts/issue-801-audit/baseline-unit-tests.log; exit 1;
+            }
+          tail -n 40 artifacts/issue-801-audit/baseline-unit-tests.log
+
+      - name: Capture baseline comparison outcome
+        if: always()
+        run: |
+          {
+            echo '# Issue 801 — removed versus pristine baseline'
+            echo
+            echo "- Removal compile outcome: ${{ steps.removal_build.outcome }}"
+            echo "- Removal unit outcome: ${{ steps.removal_unit.outcome }}"
+            echo "- Removal unit retry: ${{ steps.removal_unit_retry.outcome }}"
+            echo "- Removal generator outcome: ${{ steps.removal_generator.outcome }}"
+            echo "- Pristine build outcome: ${{ steps.clean_build.outcome }}"
+            echo "- Pristine unit outcome: ${{ steps.baseline_unit.outcome }}"
+            echo
+            echo 'Unit test logs are preserved for name-based failure comparison.'
+          } > artifacts/issue-801-audit/baseline-validation.md
 
       - name: Add short summary to run details
         if: always()
@@ -135,7 +184,7 @@ jobs:
         run: |
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add -f artifacts/issue-801-audit/report.json artifacts/issue-801-audit/report.md artifacts/issue-801-audit/tier-*.csv artifacts/issue-801-audit/removal-*
+          git add -f artifacts/issue-801-audit/report.json artifacts/issue-801-audit/report.md artifacts/issue-801-audit/tier-*.csv artifacts/issue-801-audit/removal-* artifacts/issue-801-audit/baseline-*
           if ! git diff --cached --quiet; then
             git commit -m "audit(issue-801): record dev semantic reachability evidence [skip ci]"
             git push origin HEAD:refs/heads/audit/issue-801-dev-3x-deadcode
