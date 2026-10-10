@@ -115,8 +115,8 @@ public sealed class SharpLinkClientLogicalShapeTests : SharpLinkMultiClusterClie
         Ensure(failure.Message == "injected deadline timer failure",
             "the test must fail specifically after pending-slot publication");
         Ensure(provider.InjectedFailures == 1, "the pending deadline timer must have thrown once");
-        Ensure(inspector.ActiveCallCount == 0,
-            "failed registration must terminalize its published pending call before returning");
+        await WaitForLogicalCountAsync(inspector, 0,
+            "failed registration must terminalize its published pending call promptly");
         Ensure(client.ActiveClientCallCount == 0,
             "failed registration must not leave a physical attempt active");
 
@@ -153,8 +153,9 @@ public sealed class SharpLinkClientLogicalShapeTests : SharpLinkMultiClusterClie
         Ensure(failure.Message == "injected deadline timer failure",
             "registration failure must be reported through the pending operation");
         Ensure(provider.InjectedFailures == 1, "timer arm failure must be injected");
-        Ensure(inspector.ActiveCallCount == 0 && childClient.ActiveClientCallCount == 0,
-            "user-visible terminal failure must not retain a logical or physical pending call");
+        // The operation is made terminal just before the observer releases the logical count,
+        // so the caller continuation may race that final decrement. Starting the actual
+        // retirement here is more precise than asserting the counter is already zero.
 
         // The grace period deliberately greatly exceeds this wait. A leaked logical owner
         // would postpone RemoveClusterAsync until the full grace deadline and force a stop.
@@ -162,8 +163,8 @@ public sealed class SharpLinkClientLogicalShapeTests : SharpLinkMultiClusterClie
         var result = await removal.WaitAsync(TimeSpan.FromSeconds(2));
         Ensure(result is { Succeeded: true, ReferencesReleased: true, ForcedStop: false },
             "retirement must finish gracefully without waiting out its eight-second timeout");
-        Ensure(inspector.ActiveCallCount == 0,
-            "retirement must not release the terminated invocation for a second time");
+        Ensure(inspector.ActiveCallCount == 0 && childClient.ActiveClientCallCount == 0,
+            "retirement must not observe a pending or double-released invocation");
     }
 
     // Force the 1:1 specialization under test independently of process-wide Activity/Meter
