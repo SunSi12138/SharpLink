@@ -7,11 +7,13 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import time
 import traceback
 
 TRANSPORT = 'src/SharpLink.Runtime/Transport/TransportConnection.cs'
+DISPATCH = 'eng/perf/read-ownership-dispatch'
 ARMS = ('baseline', 'safe', 'normalized')
 SCENARIOS = (
     ('tcp-add-c1', 'SharpLink.LoadTest', 'tcp', 'add', 1),
@@ -47,6 +49,8 @@ def load_manifest(path):
         raise ValueError('Three-arm rounds must be a positive multiple of all six permutations')
     if manifest['warmupSeconds'] < 2 or manifest['durationSeconds'] < 6:
         raise ValueError('Formal runs require at least 2s warmup and 6s measurement')
+    if type(manifest.get('dispatchIterations')) is not int or manifest['dispatchIterations'] != 10000:
+        raise ValueError('Reviewed dispatch probe requires exactly 10000 measured operations')
     return manifest
 
 
@@ -73,22 +77,31 @@ def prepare(root, output, work, manifest):
                 raise ValueError(f'{ancestor}/normalized harness or build input differs: {path}')
     provenance = {'manifest': manifest, 'harnessCommit': git(root, 'rev-parse', 'HEAD'),
                   'arms': {}, 'orders': list(itertools.permutations(ARMS)),
-                  'scenarioDefinitions': SCENARIOS}
+                  'scenarioDefinitions': SCENARIOS,
+                  'dispatchSuite': {'name': 'main', 'iterations': manifest['dispatchIterations'],
+                                    'warmupIterations': 5000, 'processObservations': manifest['rounds'] * 3,
+                                    'tieredCompilation': '0',
+                                    'probeOrigin': 'e962d9a7efa58c255a9715152c71cb3dda317e5b',
+                                    'validatorOrigin': 'e919a6ae946c77156726701c55efa05e61913879'}}
     for arm in ARMS:
         revision = manifest[arm]
         tree = work / arm
         run(['git', 'worktree', 'add', '--detach', str(tree), revision], root)
+        shutil.copytree(root / DISPATCH, tree / DISPATCH, ignore=shutil.ignore_patterns('bin', 'obj'))
         provenance['arms'][arm] = {
             'checkoutCommit': revision,
             'identity': revision,
             'readerFileSha256': digest(tree / TRANSPORT),
             'readerOrigin': revision,
             'synthetic': False,
+            'probeSha256': {name: digest(tree / DISPATCH / name) for name in
+                            ('Program.cs', 'ReadOwnershipDispatch.csproj', 'README.md')},
         }
         run(['git', 'diff', '--exit-code', '--', 'src'], tree)
         (output / f'{arm}-source-diff.patch').write_text(git(tree, 'diff', '--', TRANSPORT) + '\n')
         for project in ('test/SharpLink.LoadTest/SharpLink.LoadTest.csproj',
-                        'test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj'):
+                        'test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj',
+                        DISPATCH + '/ReadOwnershipDispatch.csproj'):
             name = Path(project).stem
             run(['dotnet', 'build', project, '-c', 'Release', '-v', 'minimal',
                  '-m:1', '-nr:false', '-p:UseSharedCompilation=false'], tree,
@@ -97,9 +110,10 @@ def prepare(root, output, work, manifest):
             str(p.relative_to(tree)): digest(p) for p in (
                 tree / 'src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll',
                 tree / 'test/SharpLink.LoadTest/bin/Release/net10.0/SharpLink.LoadTest.dll',
-                tree / 'test/SharpLink.StreamLoadTest/bin/Release/net10.0/SharpLink.StreamLoadTest.dll')}
+                tree / 'test/SharpLink.StreamLoadTest/bin/Release/net10.0/SharpLink.StreamLoadTest.dll',
+                tree / DISPATCH / 'bin/Release/net10.0/SharpLink.Benchmarks.dll')}
         runtime_hash = digest(tree / 'src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll')
-        for folder in ('test/SharpLink.LoadTest', 'test/SharpLink.StreamLoadTest'):
+        for folder in ('test/SharpLink.LoadTest', 'test/SharpLink.StreamLoadTest', DISPATCH):
             copied_runtime = tree / folder / 'bin/Release/net10.0/SharpLink.Runtime.dll'
             if digest(copied_runtime) != runtime_hash:
                 raise RuntimeError(f'Executed runtime DLL differs from built runtime: {copied_runtime}')
@@ -121,7 +135,7 @@ def measure(root, output, work, manifest, provenance):
     index = []
     # Per-scenario six permutations put every arm in every position twice, with
     # each pair before/after three times. No sample filtering or selective retry.
-    for scenario in SCENARIOS:
+    for scenario in (('dispatch', None, None, None, None), *SCENARIOS):
         name, project, transport, operation, concurrency = scenario
         for round_number in range(manifest['rounds']):
             for position, arm in enumerate(orders[round_number % 6]):
@@ -130,14 +144,19 @@ def measure(root, output, work, manifest, provenance):
                 tree = work / arm
                 relative = f'raw/{name}-r{round_number + 1}-{position + 1}-{arm}.json'
                 result = output / relative
-                command = ['dotnet', str(tree / f'test/{project}/bin/Release/net10.0/{project}.dll'),
-                           '--mode', 'local', '--transport', transport, '--operation', operation,
-                           '--concurrency', str(concurrency), '--warmup', str(manifest['warmupSeconds']),
-                           '--duration', str(manifest['durationSeconds']), '--profile', 'balanced',
-                           '--min-connections', '1', '--max-connections', '1',
-                           '--max-send-queue-bytes', '67108864', '--recording', 'formal',
-                           '--maximum-recorded-operations', '30000000', '--json-output', str(result)]
-                command += ['--metrics-port', '0'] if project == 'SharpLink.LoadTest' else ['--stream-size', '256']
+                if project is None:
+                    env['DOTNET_TieredCompilation'] = '0'
+                    command = ['dotnet', str(tree / DISPATCH / 'bin/Release/net10.0/SharpLink.Benchmarks.dll'),
+                               arm, str(result), str(manifest['dispatchIterations']), 'main']
+                else:
+                    command = ['dotnet', str(tree / f'test/{project}/bin/Release/net10.0/{project}.dll'),
+                               '--mode', 'local', '--transport', transport, '--operation', operation,
+                               '--concurrency', str(concurrency), '--warmup', str(manifest['warmupSeconds']),
+                               '--duration', str(manifest['durationSeconds']), '--profile', 'balanced',
+                               '--min-connections', '1', '--max-connections', '1',
+                               '--max-send-queue-bytes', '67108864', '--recording', 'formal',
+                               '--maximum-recorded-operations', '30000000', '--json-output', str(result)]
+                    command += ['--metrics-port', '0'] if project == 'SharpLink.LoadTest' else ['--stream-size', '256']
                 entry = {'scenario': name, 'round': round_number + 1, 'position': position + 1,
                          'arm': arm, 'identity': identity, 'file': relative, 'command': command,
                          'startedUtc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}

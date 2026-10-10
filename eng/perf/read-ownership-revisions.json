@@ -1,8 +1,9 @@
 {
-  "baseline": "072a3a13fca0aa9186d2db44e38e5fc846969b07",
-  "safe": "ac903d63c541d972f4268bb404b3c09ce63776e4",
-  "normalized": "1a24cc07036dd2c36f269d8df66cd81f85c14f08",
+  "baseline": "130fae63df31af2401aa07e468e73114f5dba52a",
+  "safe": "a4f2d1b56877a8663cbedd12b15cdbf7d9b8fcd2",
+  "normalized": "1a94414ca6dfde6034eeecff366e4fedb28949a1",
   "rounds": 6,
   "warmupSeconds": 2,
-  "durationSeconds": 6
+  "durationSeconds": 6,
+  "dispatchIterations": 10000
 }
