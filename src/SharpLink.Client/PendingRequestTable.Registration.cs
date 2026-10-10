@@ -76,7 +76,7 @@ internal sealed partial class PendingRequestTable
                             // throws before MarkRegistered. Complete through the table's
                             // authoritative terminal transition; never return a separate
                             // failed ValueTask with the published slot still occupied.
-                            TryComplete(call.Id, PendingCallCompletionReason.SendFailure, registrationFailure);
+                            CompleteFailedRegistration(id, registrationFailure);
                             if (kind == PendingCallKind.Unary &&
                                 completionObserver is IPendingCallPostOperationObserver)
                             {
@@ -159,7 +159,7 @@ internal sealed partial class PendingRequestTable
                         {
                             // Streams have no unary operation to return. Release their
                             // published slot but preserve the original registration failure.
-                            TryComplete(call.Id, PendingCallCompletionReason.SendFailure, registrationFailure);
+                            CompleteFailedRegistration(id, registrationFailure);
                             throw;
                         }
 
@@ -183,6 +183,53 @@ internal sealed partial class PendingRequestTable
             if (!published)
                 ReleaseCapacity();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Terminalizes a registration that already published its slot, without consulting the
+    /// potentially failing application TimeProvider again. Normal deadline arbitration remains
+    /// authoritative for successfully registered calls. The saved request ID, not the pooled
+    /// PendingCall's mutable Id, prevents terminating a later renter after a concurrent winner
+    /// has returned the original call to its pool.
+    /// </summary>
+    private bool CompleteFailedRegistration(long requestId, Exception registrationFailure)
+    {
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null)
+            return false;
+
+        var index = (int)(requestId & _indexMask);
+        while (true)
+        {
+            var current = Volatile.Read(ref slots[index]);
+            if (current is null || current.Id != requestId)
+                return false;
+
+            lock (current.CompletionGate)
+            {
+                if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) ||
+                    current.Id != requestId)
+                {
+                    continue;
+                }
+
+                if (!ReferenceEquals(
+                        Interlocked.CompareExchange(ref slots[index], null, current), current))
+                {
+                    continue;
+                }
+
+                // OnRegistered always signals this gate from finally. A competing Dispose
+                // or cancellation may have already taken the call; in that case we lose the
+                // slot CAS and leave its chosen terminal result untouched.
+                current.WaitUntilRegistered();
+            }
+
+            var payload = ReadOnlySequence<byte>.Empty;
+            CompleteTakenCall(current, PendingCallCompletionReason.SendFailure,
+                registrationFailure, ref payload);
+            return true;
         }
     }
 
