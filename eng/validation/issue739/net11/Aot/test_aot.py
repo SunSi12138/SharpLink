@@ -2,6 +2,7 @@
 """Pure Python fail-closed and copy-origin tests; no NativeAOT performance evidence."""
 import copy
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,6 +10,18 @@ import run_aot as aot
 
 
 class AotTests(unittest.TestCase):
+    def test_fixed_consumer_preserves_bytes_but_refreshes_old_timestamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, destination = Path(tmp) / "A.pdb", Path(tmp) / "B.pdb"
+            source.write_bytes(b"fixed A consumer symbols")
+            destination.write_bytes(b"independently built B symbols")
+            os.utime(source, (1, 1))
+            os.utime(destination, (2, 2))
+            aot.copy_fixed_consumer(source, destination)
+            self.assertEqual(aot.sha(source), aot.sha(destination))
+            self.assertGreater(destination.stat().st_mtime_ns, 2_000_000_000)
+            self.assertEqual(source.stat().st_mtime_ns, 1_000_000_000)
+
     def test_exact_plan_and_origins(self):
         self.assertEqual(len(aot.CASES) * len(aot.SEQUENCE), 48)
         self.assertEqual(aot.SEQUENCE, [("ABBA", "A"), ("ABBA", "B"), ("ABBA", "B"), ("ABBA", "A"), ("AA", "A"), ("AA", "A")])

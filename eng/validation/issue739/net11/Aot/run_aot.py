@@ -27,6 +27,12 @@ OPTIONS = ["-c", "Release", "-r", RID, "--self-contained", "true",
            "-p:StripSymbols=false", "-p:IlcTreatWarningsAsErrors=true", "-p:TrimmerSingleWarn=false"]
 
 
+def copy_fixed_consumer(source, destination):
+    # Keep A's bytes, not A's older timestamp: native publish still traverses
+    # CoreCompile, whose B-generated inputs must not look newer than this PDB/DLL.
+    shutil.copyfile(source, destination)
+
+
 def assert_copy_origins():
     origins = json.loads((HERE / "copy-origins.json").read_text())
     for name, digest in origins["originSha256"].items():
@@ -141,7 +147,8 @@ def export_evidence(output, copies, data, manifest, relative):
             copy(path, proof / "response-files" / path.relative_to(aot))
         for path in (aot / "obj").rglob("issue739-ilc-inputs-*.txt"):
             copy(path, proof / "input-snapshots" / path.name)
-        for path in (aot / "bin/Release/net11.0" / RID).glob("*.dll"):
+        for name in jit.PRODUCTION_PROJECTS + ["Fixture", "SharpLink.Benchmarks"]:
+            path = aot / "bin/Release/net11.0" / RID / (name + ".dll")
             copy(path, proof / "pre-aot-bin" / path.name)
         for path in (aot / "obj/Release/net11.0" / RID).glob("SharpLink.Benchmarks.*"):
             if path.suffix in (".dll", ".pdb"):
@@ -297,7 +304,7 @@ def main():
                         destination = saved / location / name
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(source_dir / name, destination)
-                        shutil.copy2(source_a / name, source_dir / name)
+                        copy_fixed_consumer(source_a / name, source_dir / name)
                 for name in ("SharpLink.Benchmarks.deps.json", "SharpLink.Benchmarks.runtimeconfig.json"):
                     require(sha(directory / name) == sha(data["A"]["bin"] / name), "Consumer binding configuration differs")
             expected = {name + ".dll": sha(directory / (name + ".dll")) for name in jit.PRODUCTION_PROJECTS + ["Fixture", "SharpLink.Benchmarks"]}
