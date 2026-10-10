@@ -230,6 +230,7 @@ Console.WriteLine("=== ISSUE 801 AUDIT SUMMARY ===");
 Console.WriteLine($"Indexed source files: {loadedFiles.Count}/{sourceFiles.Length}; symbols: {sorted.Length}; generated docs: {documents.Count(d=>d.Path.StartsWith("<generated>/", StringComparison.Ordinal))}");
 foreach (var group in sorted.GroupBy(x=>x.Tier)) Console.WriteLine(group.Key + ": " + group.Count());
 Console.WriteLine("Full evidence: " + output);
+return 0;
 
 static bool IsDeclaration(SyntaxNode n) =>
     n is BaseMethodDeclarationSyntax or BaseTypeDeclarationSyntax or DelegateDeclarationSyntax
