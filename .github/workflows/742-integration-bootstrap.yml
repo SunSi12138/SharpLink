@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet-742
-      NUGET_PACKAGES: ${{ runner.temp }}/nuget-742
+      DOTNET_INSTALL_DIR: /tmp/dotnet-742
+      NUGET_PACKAGES: /tmp/nuget-742
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
     steps:
