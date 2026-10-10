@@ -95,8 +95,7 @@ owned=once(owned,'    public int Length { get; }','    public int Length => Memo
 (runtime/'OwnedFrame.cs').write_text(owned)
 shutil.copyfile(base/'RpcSession.WriterReady.cs',runtime/'RpcSession.WriterReady.cs')
 scheduler=(base/'WriterReadyStreamScheduler.cs').read_text()
-# Keep cancellation cleanup idempotence separate from a transport-release error.
-# A release error may poison the stream before Stop discards its still-prepared tail.
+# A release error can poison a stream before Stop discards its prepared tail.
 scheduler=once(scheduler,'AbortApplied, Retired, ProducerBusy;', 'AbortApplied, PreparationAborted, Retired, ProducerBusy;')
 scheduler=once(scheduler,'''            if (stream.Retired || stream.Aborted is not null) return;
             stream.Aborted = error;''','''            if (stream.Retired || stream.PreparationAborted) return;
@@ -111,8 +110,34 @@ flow=once(flow,'''            var updatedConnectionCredit = Math.Min(
 (runtime/'StreamFlowController.cs').write_text(flow)
 for file in base.glob('*Tests.cs'):
     shutil.copyfile(file,root/'test/SharpLink.UnitTests/Runtime'/file.name)
+
+# This pre-existing characterization deliberately required the old accounting bug.
+# Keep its exact two-frame trace and frozen arithmetic counterexample; require the
+# corrected production controller to agree with the conservative authority instead.
+wire_test=root/'test/SharpLink.UnitTests/Runtime/PhaseBWireBoundaryTests.cs'
+data=wire_test.read_bytes()
+assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()=='51ca04adb50510a08eec180607721c4a05146fdd'
+text=data.decode()
+start=text.index('    public async Task DuplicateCreditExposesIndependentConnectionClampCompatibilityGap()')
+end=text.index('\n    [Test]',start)
+old=text[start:end]
+new=old.replace('DuplicateCreditExposesIndependentConnectionClampCompatibilityGap','DuplicateCreditPreservesConservationAndRetainsFrozenLegacyCounterexample').replace('legacy','production')
+new=once(new,'''        var production = new StreamFlowController(16, 32, 1024);''','''        var production = new StreamFlowController(16, 32, 1024);
+        long frozenStreamCredit = 0, frozenConnectionCredit = 0;
+        void ApplyFrozenIndependentClamp(int credit)
+        {
+            frozenStreamCredit = Math.Min(checked(frozenStreamCredit + credit), 16);
+            frozenConnectionCredit = Math.Min(checked(frozenConnectionCredit + credit), 32);
+        }''')
+new=new.replace('        production.ApplyWindowUpdate(41, 0, 16);','        production.ApplyWindowUpdate(41, 0, 16);\n        ApplyFrozenIndependentClamp(16);')
+new=once(new,'''        Require(production.SendConnectionCredit == 32 && snapshot.Free == 16, "CHARACTERIZATION: production independent clamp and model conservation differ; not compatibility acceptance");''','''        Require(frozenStreamCredit == 16 && frozenConnectionCredit == 32,
+            "frozen independent-clamp counterexample must still expose the old defect");
+        Require(production.SendConnectionCredit == 16 && snapshot.Free == 16,
+            "duplicate credit must not fund bytes still outstanding on another stream");''')
+text=text[:start]+new+text[end:]
+wire_test.write_text(text)
 manifest={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in
-    [runtime/'RpcSession.SendPump.cs',runtime/'OwnedFrame.cs',runtime/'RpcSession.WriterReady.cs',runtime/'WriterReadyStreamScheduler.cs',runtime/'StreamFlowController.cs']}
+    [runtime/'RpcSession.SendPump.cs',runtime/'OwnedFrame.cs',runtime/'RpcSession.WriterReady.cs',runtime/'WriterReadyStreamScheduler.cs',runtime/'StreamFlowController.cs',wire_test]}
 (root/'artifacts/b3-development').mkdir(parents=True,exist_ok=True)
 (root/'artifacts/b3-development/source-sha256.json').write_text(json.dumps(manifest,indent=2))
 print('Constructed source-pinned development candidate; normal RPC not enabled.')
