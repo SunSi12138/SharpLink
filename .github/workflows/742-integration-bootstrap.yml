@@ -19,33 +19,56 @@ jobs:
       DOTNET_NOLOGO: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
-        with:
-          dotnet-version: 10.0.1xx
-      - name: Record exact source and toolchain
+      - name: Record exact source
         shell: bash
         run: |
           mkdir -p artifacts/integration-bootstrap
           git rev-parse HEAD > artifacts/integration-bootstrap/source-commit.txt
           git rev-parse HEAD^{tree} > artifacts/integration-bootstrap/source-tree.txt
-          dotnet --info > artifacts/integration-bootstrap/dotnet-info.txt
           git archive --format=tar.gz --output=artifacts/integration-bootstrap/source.tar.gz HEAD
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr742-integration-source-${{ github.sha }}
+          path: |
+            artifacts/integration-bootstrap/source.tar.gz
+            artifacts/integration-bootstrap/source-commit.txt
+            artifacts/integration-bootstrap/source-tree.txt
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.1xx
+      - name: Archive isolated SDK
+        shell: bash
+        run: |
+          dotnet --info > artifacts/integration-bootstrap/dotnet-info.txt
+          tar -czf artifacts/integration-bootstrap/sdk.tar.gz -C "$DOTNET_INSTALL_DIR" .
+          sha256sum artifacts/integration-bootstrap/sdk.tar.gz > artifacts/integration-bootstrap/sdk-sha256.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr742-integration-sdk-${{ github.sha }}
+          path: |
+            artifacts/integration-bootstrap/sdk.tar.gz
+            artifacts/integration-bootstrap/sdk-sha256.txt
+            artifacts/integration-bootstrap/dotnet-info.txt
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
       - name: Restore public project dependencies
         shell: bash
         run: |
           dotnet restore test/SharpLink.UnitTests -p:Platform=AnyCPU
           dotnet restore test/SharpLink.Benchmarks -p:Platform=AnyCPU
           dotnet restore test/SharpLink.ReadyWriterAotEvidence -r linux-x64 -p:Platform=AnyCPU
-      - name: Archive isolated SDK and package cache only
-        shell: bash
-        run: |
-          tar -czf artifacts/integration-bootstrap/sdk.tar.gz -C "$DOTNET_INSTALL_DIR" .
           tar -czf artifacts/integration-bootstrap/public-packages.tar.gz -C "$NUGET_PACKAGES" .
-          sha256sum artifacts/integration-bootstrap/*.tar.gz > artifacts/integration-bootstrap/archive-sha256.txt
+          sha256sum artifacts/integration-bootstrap/public-packages.tar.gz > artifacts/integration-bootstrap/packages-sha256.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: pr742-integration-bootstrap-${{ github.sha }}
-          path: artifacts/integration-bootstrap
+          name: pr742-integration-packages-${{ github.sha }}
+          path: |
+            artifacts/integration-bootstrap/public-packages.tar.gz
+            artifacts/integration-bootstrap/packages-sha256.txt
           compression-level: 0
           retention-days: 3
           if-no-files-found: error
