@@ -1,0 +1,55 @@
+name: B3 Production Validation Workspace
+on:
+  push:
+    branches: [work/742-b3-production-20261011]
+    paths: [.github/workflows/b3-production-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  workspace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.102
+      - name: Restore public validation dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet --info
+          dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+      - name: Export sources and public toolchain only
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/b3-workspace"
+          mkdir -p "$out/toolchain" "$out/packages"
+          git archive --format=tar HEAD | gzip -1 > "$out/toolchain/source.tar.gz"
+          git rev-parse HEAD > "$out/toolchain/source-sha.txt"
+          dotnet --info > "$out/toolchain/dotnet-info.txt"
+          root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          sdk="$(dotnet --version)"
+          paths=(dotnet "sdk/$sdk" host/fxr shared/Microsoft.NETCore.App shared/Microsoft.AspNetCore.App packs)
+          tar -C "$root" -czf "$out/toolchain/dotnet-toolchain.tar.gz" "${paths[@]}"
+          tar -C "$HOME/.nuget" -czf "$RUNNER_TEMP/packages.tar.gz" packages
+          split -b 200M "$RUNNER_TEMP/packages.tar.gz" "$out/packages/nuget-packages.part-"
+          sha256sum "$out/toolchain/"*.tar.gz "$out/packages/"* > "$out/toolchain/archive-sha256.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: b3-validation-toolchain
+          path: ${{ runner.temp }}/b3-workspace/toolchain
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: b3-validation-public-packages
+          path: ${{ runner.temp }}/b3-workspace/packages
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
