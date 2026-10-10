@@ -225,6 +225,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
         released?.TrySetResult();
     }
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     private async ValueTask<ReadResult> AwaitReadAsync(ValueTask<ReadResult> read)
     {
         try
