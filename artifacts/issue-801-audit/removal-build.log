@@ -1,0 +1,28 @@
+  SharpLink.Maintainability -> /home/runner/work/SharpLink/SharpLink/eng/SharpLink.Maintainability/bin/Release/net10.0/SharpLink.Maintainability.dll
+  SharpLink.Abstractions -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Abstractions/bin/Release/net10.0/SharpLink.Abstractions.dll
+  SharpLink.Serializer.SharpPack -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Serializer.SharpPack/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll
+  SharpLink.AotExternalPayloads -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotExternalPayloads/bin/Release/net10.0/SharpLink.AotExternalPayloads.dll
+  SharpLink.GeneratedAssemblyScanner -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.GeneratedAssemblyScanner/bin/Release/net10.0/SharpLink.GeneratedAssemblyScanner.dll
+  SharpLink.ReferencedCodecProvider -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecProvider/bin/Release/net10.0/SharpLink.ReferencedCodecProvider.dll
+  SharpLink.ModuleDependencyConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ModuleDependencyConsumer/bin/Release/net10.0/SharpLink.ModuleDependencyConsumer.dll
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/RpcSessionExtensions.cs(218,31): error CS1573: Parameter 'cancellationToken' has no matching param tag in the XML comment for 'RpcSessionExtensions.extension(RpcSession).SendPongWithBackpressureAsync(long, CancellationToken)' (but other parameters do) [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/SharpLink.Runtime.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/RpcSessionExtensions.cs(241,31): error CS1573: Parameter 'cancellationToken' has no matching param tag in the XML comment for 'RpcSessionExtensions.extension(RpcSession).SendHealthResponseWithBackpressureAsync(long, SharpLinkHealthStatus, CancellationToken)' (but other parameters do) [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/SharpLink.Runtime.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/RpcSessionExtensions.cs(268,30): error CS1711: XML comment has a typeparam tag for 'T', but there is no type parameter by that name [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/SharpLink.Runtime.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/StripedLongMap.cs(190,39): error CS1573: Parameter 'capture' has no matching param tag in the XML comment for 'StripedLongMap<TValue>.CopyEntries<TSnapshot>(Span<TSnapshot>, Func<long, TValue, TSnapshot>)' (but other parameters do) [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/SharpLink.Runtime.csproj]
+  SharpLink.ReferencedCodecConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecConsumer/bin/Release/net10.0/SharpLink.ReferencedCodecConsumer.dll
+  SharpLink.RollbackPlugin -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.RollbackPlugin/bin/Release/net10.0/SharpLink.RollbackPlugin.dll
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/RpcGenerator.DtoGraphAnalysis.cs(399,70): error CS0117: 'RpcBuiltinCollectionWireCatalog' does not contain a definition for 'TryGet' [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/SharpLink.Generator.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/RpcGenerator.FinalCodecPlan.Selection.cs(502,68): error CS0117: 'RpcBuiltinCollectionWireCatalog' does not contain a definition for 'TryGet' [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/SharpLink.Generator.csproj]
+
+Build FAILED.
+
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/RpcSessionExtensions.cs(218,31): error CS1573: Parameter 'cancellationToken' has no matching param tag in the XML comment for 'RpcSessionExtensions.extension(RpcSession).SendPongWithBackpressureAsync(long, CancellationToken)' (but other parameters do) [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/SharpLink.Runtime.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/RpcSessionExtensions.cs(241,31): error CS1573: Parameter 'cancellationToken' has no matching param tag in the XML comment for 'RpcSessionExtensions.extension(RpcSession).SendHealthResponseWithBackpressureAsync(long, SharpLinkHealthStatus, CancellationToken)' (but other parameters do) [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/SharpLink.Runtime.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/RpcSessionExtensions.cs(268,30): error CS1711: XML comment has a typeparam tag for 'T', but there is no type parameter by that name [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/SharpLink.Runtime.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/StripedLongMap.cs(190,39): error CS1573: Parameter 'capture' has no matching param tag in the XML comment for 'StripedLongMap<TValue>.CopyEntries<TSnapshot>(Span<TSnapshot>, Func<long, TValue, TSnapshot>)' (but other parameters do) [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/SharpLink.Runtime.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/RpcGenerator.DtoGraphAnalysis.cs(399,70): error CS0117: 'RpcBuiltinCollectionWireCatalog' does not contain a definition for 'TryGet' [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/SharpLink.Generator.csproj]
+/home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/RpcGenerator.FinalCodecPlan.Selection.cs(502,68): error CS0117: 'RpcBuiltinCollectionWireCatalog' does not contain a definition for 'TryGet' [/home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/SharpLink.Generator.csproj]
+    0 Warning(s)
+    6 Error(s)
+
+Time Elapsed 00:00:04.89

@@ -1,16 +1,16 @@
 # Issue #801 — dev full-solution symbol reference index
 
 Dev base: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
-Audit head: 0f8609861ed4d83078ed02b46ee7d251bbbf3f50
-Projects 65; source docs 1383; generated docs 945
-Production source files indexed: 476/476; declarations: 8853; matched references: 109848; elapsed seconds: 89
+Audit head: a8ef2daab1e9d5eeb64e6cf10574c325b994bea2
+Projects 65; source docs 2215; generated docs 945
+Production source files indexed: 476/476; declarations: 8853; matched references: 109848; elapsed seconds: 71
 **Caution:** A/B/C are review candidates, NOT proof of dead code. This scans direct semantic references, not whole-program reachability, reflection, DI or external consumers.
 
 ## Tier counts
 - A-NO-DIRECT-REFERENCE: 542
 - B-ONLY-TEST-BENCH-EXAMPLE: 303
-- C-PUBLIC-API-REVIEW: 358
-- D-REFERENCED-PRODUCTION: 7650
+- C-PUBLIC-API-REVIEW: 397
+- D-REFERENCED-PRODUCTION: 7611
 ## Unindexed production files
 ## Workspace diagnostics (first 30)
 - MSBuildLocator unavailable; workspace might not load.
@@ -267,6 +267,7 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | Symbol | Source | Production | Generated | Tests | Benchmarks | Examples | Safety root |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | SharpLink.Abstractions.RpcMethodDescriptor.Deconstruct(out long, out long, out SharpLink.Abstractions.RpcMethodKind, out bool, out bool, out bool, out System.TimeSpan?, out bool, out int, out bool) | src/SharpLink.Abstractions/IRpcChannel.cs:178 | 0 | 0 | 1 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcNoClientStreams | src/SharpLink.Abstractions/IRpcChannel.cs:257 | 0 | 0 | 33 | 1 | 1 | - |
 | SharpLink.Abstractions.RpcGeneratedCodecSizing | src/SharpLink.Abstractions/IRpcSizedCodec.cs:46 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.RpcGeneratedCodecSizing.IsSuppressed | src/SharpLink.Abstractions/IRpcSizedCodec.cs:53 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.RpcGeneratedCodecSizing.Enter() | src/SharpLink.Abstractions/IRpcSizedCodec.cs:56 | 0 | 0 | 0 | 0 | 0 | - |
@@ -275,11 +276,39 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Abstractions.LogEvents.Stream.ChunkReceived | src/SharpLink.Abstractions/LogEvents.cs:64 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.LogEvents.Stream.StreamClosed | src/SharpLink.Abstractions/LogEvents.cs:66 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.LogEvents.Server.HeartbeatLoopUnhandledException | src/SharpLink.Abstractions/LogEvents.cs:82 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteFieldKey(System.Buffers.IBufferWriter<byte>, uint, SharpLink.Abstractions.RpcGeneratedWireType) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:39 | 0 | 0 | 418 | 392 | 16 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteObjectEnd(System.Buffers.IBufferWriter<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:50 | 0 | 0 | 33 | 20 | 8 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.TryReadField(ref System.Buffers.SequenceReader<byte>, out uint, out SharpLink.Abstractions.RpcGeneratedWireType) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:53 | 0 | 0 | 20 | 10 | 4 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteBoolean(System.Buffers.IBufferWriter<byte>, bool) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:111 | 0 | 0 | 2 | 2 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadBoolean(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:121 | 0 | 0 | 1 | 1 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteRune(System.Buffers.IBufferWriter<byte>, System.Text.Rune) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:130 | 0 | 0 | 2 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadRune(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:134 | 0 | 0 | 1 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteDecimal(System.Buffers.IBufferWriter<byte>, decimal) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:144 | 0 | 0 | 2 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadDecimal(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:148 | 0 | 0 | 1 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteDateOnly(System.Buffers.IBufferWriter<byte>, System.DateOnly) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:164 | 0 | 0 | 2 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadDateOnly(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:168 | 0 | 0 | 1 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteDateTime(System.Buffers.IBufferWriter<byte>, System.DateTime) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:178 | 0 | 0 | 2 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadDateTime(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:182 | 0 | 0 | 1 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteTimeOnly(System.Buffers.IBufferWriter<byte>, System.TimeOnly) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:192 | 0 | 0 | 2 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadTimeOnly(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:196 | 0 | 0 | 1 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteDateTimeOffset(System.Buffers.IBufferWriter<byte>, System.DateTimeOffset) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:206 | 0 | 0 | 4 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadDateTimeOffset(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:219 | 0 | 0 | 5 | 0 | 0 | - |
 | SharpLink.Abstractions.RpcGeneratedCodecWire.GetFixedWireType(int) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:261 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.EnsureWireType(SharpLink.Abstractions.RpcGeneratedWireType, SharpLink.Abstractions.RpcGeneratedWireType) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:272 | 0 | 0 | 114 | 103 | 4 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WritePresence(System.Buffers.IBufferWriter<byte>, bool) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:279 | 0 | 0 | 64 | 40 | 16 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadPresence(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:287 | 0 | 0 | 17 | 10 | 4 | - |
 | SharpLink.Abstractions.RpcGeneratedCodecWire.WriteString(System.Buffers.IBufferWriter<byte>, string) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:295 | 0 | 0 | 2 | 2 | 0 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadString(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:311 | 0 | 0 | 98 | 92 | 4 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.BeginLength(SharpLink.Abstractions.IRpcByteBufferWriter) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:330 | 0 | 0 | 19 | 7 | 1 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.EndLength(SharpLink.Abstractions.IRpcByteBufferWriter, SharpLink.Abstractions.RpcGeneratedLengthToken) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:341 | 0 | 0 | 19 | 7 | 1 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.SkipField(ref System.Buffers.SequenceReader<byte>, SharpLink.Abstractions.RpcGeneratedWireType) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:364 | 0 | 0 | 19 | 10 | 4 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.WriteCollectionCount(System.Buffers.IBufferWriter<byte>, int, bool) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:388 | 0 | 0 | 11 | 2 | 2 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.ReadCollectionCount(ref System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:403 | 0 | 0 | 5 | 1 | 1 | - |
+| SharpLink.Abstractions.RpcGeneratedCodecWire.EnsureFullyConsumed(in System.Buffers.SequenceReader<byte>) | src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:415 | 0 | 0 | 44 | 22 | 10 | - |
 | SharpLink.Abstractions.RpcHash128.operator ==(SharpLink.Abstractions.RpcHash128, SharpLink.Abstractions.RpcHash128) | src/SharpLink.Abstractions/RpcHash128.cs:40 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.RpcHash128.operator !=(SharpLink.Abstractions.RpcHash128, SharpLink.Abstractions.RpcHash128) | src/SharpLink.Abstractions/RpcHash128.cs:43 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.RpcInvocationExtensions | src/SharpLink.Abstractions/RpcInvocationExtensions.cs:4 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Abstractions.RpcInvocationExtensions.AsVoid<T>(System.Threading.Tasks.ValueTask<T>) | src/SharpLink.Abstractions/RpcInvocationExtensions.cs:7 | 0 | 0 | 29 | 4 | 1 | - |
 | SharpLink.Sdk.RpcCodecAttribute | src/SharpLink.Abstractions/Sdk/RpcCodecAttribute.cs:4 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Sdk.RpcCodecSemanticIdentityAttribute | src/SharpLink.Abstractions/Sdk/RpcCodecSemanticIdentityAttribute.cs:10 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Sdk.RpcServiceAttribute.Lifetime | src/SharpLink.Abstractions/Sdk/RpcServiceAttribute.cs:12 | 0 | 0 | 5 | 0 | 0 | - |
@@ -298,7 +327,10 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Abstractions.SharpLinkEndpointSelectionContext.this[int] | src/SharpLink.Abstractions/SharpLinkEndpoints.cs:182 | 0 | 0 | 4 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkEndpointCandidate.ReadyConnectionCount | src/SharpLink.Abstractions/SharpLinkEndpoints.cs:235 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkEndpointCandidate.ActiveCallCount | src/SharpLink.Abstractions/SharpLinkEndpoints.cs:238 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Abstractions.SharpLinkGeneratedAssemblyCatalog.Register(SharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest) | src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:183 | 0 | 0 | 24 | 1 | 22 | - |
+| SharpLink.Abstractions.SharpLinkGeneratedClusterRouteCatalog.Register(SharpLink.Abstractions.ISharpLinkGeneratedClusterRouteManifest) | src/SharpLink.Abstractions/SharpLinkGeneratedClusterRouteManifest.cs:33 | 0 | 0 | 7 | 0 | 3 | - |
 | SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute | src/SharpLink.Abstractions/SharpLinkGeneratedCodecIdentityAttribute.cs:7 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Abstractions.SharpLinkGeneratedUnsafeBlitCatalog.Register(System.Type, int, bool) | src/SharpLink.Abstractions/SharpLinkGeneratedUnsafeBlitCatalog.cs:18 | 0 | 0 | 4 | 0 | 2 | - |
 | SharpLink.Abstractions.SharpLinkServerInvocationContext.ConnectionId | src/SharpLink.Abstractions/SharpLinkInterceptors.cs:128 | 0 | 0 | 1 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkTelemetryDetailPolicySnapshot.Detailed | src/SharpLink.Abstractions/SharpLinkTelemetryDetailPolicy.cs:19 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkTelemetryDetailExtensions.GetTelemetryDetailPolicySnapshot(SharpLink.Abstractions.ISharpLinkClient) | src/SharpLink.Abstractions/SharpLinkTelemetryDetailPolicy.cs:32 | 0 | 0 | 5 | 0 | 0 | - |
@@ -354,35 +386,3 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateRetryPolicy(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Abstractions.ISharpLinkRetryPolicy, SharpLink.Abstractions.ISharpLinkRetryOptions) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:50 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryDisableRetry(SharpLink.Abstractions.ISharpLinkClient) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:59 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateHeartbeat(SharpLink.Abstractions.ISharpLinkClient, System.TimeSpan, System.TimeSpan) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:65 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateHeartbeatInterval(SharpLink.Abstractions.ISharpLinkClient, System.TimeSpan) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:74 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateHeartbeatTimeout(SharpLink.Abstractions.ISharpLinkClient, System.TimeSpan) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:82 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateReconnectPolicy(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Abstractions.SharpLinkReconnectPolicy) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:90 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateEndpointAdmissionPolicy(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Abstractions.ISharpLinkEndpointAdmissionPolicy) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:98 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryDisableEndpointAdmissionPolicy(SharpLink.Abstractions.ISharpLinkClient) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:106 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateCircuitBreaker(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Abstractions.ISharpLinkCircuitBreakerOptions) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:112 | 0 | 0 | 1 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryDisableCircuitBreaker(SharpLink.Abstractions.ISharpLinkClient) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:120 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateRequestCompressionPolicy(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Abstractions.SharpLinkCompressionSendPolicy) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:126 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TrySetResponseCompressionPreferenceAsync(SharpLink.Abstractions.ISharpLinkClient, bool, System.Threading.CancellationToken) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:134 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientDiagnosticsExtensions | src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:301 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClientDiagnosticsExtensions.ExportDiagnosticSnapshotJson(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Client.SharpLinkClientSupportSnapshotOptions?) | src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:325 | 0 | 0 | 20 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkConnectionPoolSizingExtensions.GetConnectionPoolSizingSnapshot(SharpLink.Abstractions.ISharpLinkClient) | src/SharpLink.Client/SharpLinkConnectionPoolSizing.cs:32 | 0 | 0 | 7 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkConnectionPoolSizingExtensions.UpdateFixedConnectionPoolSizing(SharpLink.Abstractions.ISharpLinkClient, int, int) | src/SharpLink.Client/SharpLinkConnectionPoolSizing.cs:45 | 0 | 0 | 8 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkConnectionPoolSizingExtensions.UpdateClusterConnectionPoolSizing(SharpLink.Abstractions.ISharpLinkClient, int, int) | src/SharpLink.Client/SharpLinkConnectionPoolSizing.cs:61 | 0 | 0 | 4 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkEndpointSelectionRuntimeExtensions | src/SharpLink.Client/SharpLinkEndpointSelectionRuntimeExtensions.cs:28 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkEndpointSelectionRuntimeExtensions.GetEndpointSelectionPolicySnapshot(SharpLink.Abstractions.ISharpLinkClient) | src/SharpLink.Client/SharpLinkEndpointSelectionRuntimeExtensions.cs:31 | 0 | 0 | 15 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkEndpointSelectionRuntimeExtensions.UpdateLoadBalancing(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Client.SharpLinkLoadBalancingStrategy) | src/SharpLink.Client/SharpLinkEndpointSelectionRuntimeExtensions.cs:41 | 0 | 0 | 15 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkEndpointSelectionRuntimeExtensions.UpdateEndpointSelector(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Abstractions.ISharpLinkEndpointSelector) | src/SharpLink.Client/SharpLinkEndpointSelectionRuntimeExtensions.cs:56 | 0 | 0 | 15 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientBuilder.Configure(System.Action<SharpLink.Client.SharpLinkMultiClusterOptions>) | src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs:21 | 0 | 0 | 26 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientBuilder.UseRequestTimeout() | src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs:29 | 0 | 0 | 8 | 0 | 2 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientBuilder.UseRequestTimeout(System.TimeSpan) | src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs:36 | 0 | 0 | 7 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientBuilder.DisableRequestTimeout() | src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs:43 | 0 | 0 | 18 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientBuilder.AddCluster(SharpLink.Abstractions.SharpLinkClusterKey, System.Action<SharpLink.Client.SharpClientBuilder>) | src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs:63 | 0 | 0 | 66 | 0 | 3 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientExtensions | src/SharpLink.Client/SharpLinkMultiClusterClientExtensions.cs:6 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientExtensions.AddClusterAsync(SharpLink.Abstractions.ISharpLinkMultiClusterClient, SharpLink.Abstractions.SharpLinkClusterKey, System.Action<SharpLink.Client.SharpClientBuilder>, System.Action<SharpLink.Client.SharpLinkMultiClusterSlotOptions>?, System.Threading.CancellationToken) | src/SharpLink.Client/SharpLinkMultiClusterClientExtensions.cs:17 | 0 | 0 | 4 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientExtensions.ReplaceClusterAsync(SharpLink.Abstractions.ISharpLinkMultiClusterClient, SharpLink.Abstractions.SharpLinkClusterKey, System.Action<SharpLink.Client.SharpClientBuilder>, System.TimeSpan, System.Threading.CancellationToken) | src/SharpLink.Client/SharpLinkMultiClusterClientExtensions.cs:101 | 0 | 0 | 21 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkMultiClusterClientExtensions.RemoveClusterAsync(SharpLink.Abstractions.ISharpLinkMultiClusterClient, SharpLink.Abstractions.SharpLinkClusterKey, System.TimeSpan, System.Threading.CancellationToken) | src/SharpLink.Client/SharpLinkMultiClusterClientExtensions.cs:141 | 0 | 0 | 17 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkTransportFactories | src/SharpLink.Client/SharpLinkTransportFactories.cs:4 | 0 | 0 | 68 | 3 | 1 | - |
-| SharpLink.Client.SharpLinkTransportFactories.Sockets(SharpLink.Runtime.SocketTransportOptions?) | src/SharpLink.Client/SharpLinkTransportFactories.cs:9 | 0 | 0 | 62 | 3 | 1 | - |
-| SharpLink.Client.SharpLinkTransportFactories.Sockets(System.Net.Security.SslClientAuthenticationOptions, SharpLink.Runtime.SocketTransportOptions?, System.TimeSpan?) | src/SharpLink.Client/SharpLinkTransportFactories.cs:28 | 0 | 0 | 2 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkTransportFactories.NamedPipes(System.Action<SharpLink.Runtime.NamedPipeTransportOptions>?) | src/SharpLink.Client/SharpLinkTransportFactories.cs:50 | 0 | 0 | 2 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkTransportFactories.SharedMemory(System.Action<SharpLink.Runtime.SharedMemoryTransportOptions>?) | src/SharpLink.Client/SharpLinkTransportFactories.cs:64 | 0 | 0 | 2 | 0 | 0 | - |

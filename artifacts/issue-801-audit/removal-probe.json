@@ -1,0 +1,257 @@
+{
+  "BaselineSha": "eb99fe887cf2129d9b88441245ca0a4a6406b6c2",
+  "Mode": "Ephemeral test-only source removal; never push modified src",
+  "Requested": 50,
+  "Removed": 49,
+  "Skipped": 1,
+  "RemovedSymbols": [
+    {
+      "Path": "src/SharpLink.Abstractions/RpcDeadline.cs",
+      "Line": 135,
+      "Signature": "SharpLink.Abstractions.RpcDeadline.GetRemaining(long, long)"
+    },
+    {
+      "Path": "src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs",
+      "Line": 447,
+      "Signature": "SharpLink.Abstractions.RpcGeneratedCodecWire.WriteUInt32(System.Buffers.IBufferWriter\u003Cbyte\u003E, uint)"
+    },
+    {
+      "Path": "src/SharpLink.Abstractions/SharpLinkResourceExhaustion.cs",
+      "Line": 39,
+      "Signature": "SharpLink.Abstractions.SharpLinkResourceExhaustion.CreateRemote(SharpLink.Abstractions.SharpLinkErrorCode, string)"
+    },
+    {
+      "Path": "src/SharpLink.Abstractions/SharpLinkTime.cs",
+      "Line": 27,
+      "Signature": "SharpLink.Abstractions.SharpLinkTime.AddElapsedDuration(long, System.TimeSpan, long)"
+    },
+    {
+      "Path": "src/SharpLink.Abstractions/SharpLinkTimer.cs",
+      "Line": 8,
+      "Signature": "SharpLink.Abstractions.SharpLinkTimer.DelayAsync(System.TimeSpan, System.Threading.CancellationToken)"
+    },
+    {
+      "Path": "src/SharpLink.Abstractions/SharpLinkTimer.cs",
+      "Line": 215,
+      "Signature": "SharpLink.Abstractions.SharpLinkTimer.WaitAsync(System.Threading.Tasks.Task, System.TimeSpan, System.Threading.CancellationToken)"
+    },
+    {
+      "Path": "src/SharpLink.Abstractions/SharpLinkTimer.cs",
+      "Line": 355,
+      "Signature": "SharpLink.Abstractions.SharpLinkTimer.WaitAsync(System.Threading.SemaphoreSlim, System.TimeSpan, System.Threading.CancellationToken)"
+    },
+    {
+      "Path": "src/SharpLink.Client/ClientAssemblyRegistry.cs",
+      "Line": 64,
+      "Signature": "SharpLink.Client.ClientAssemblyRegistry.TryGetProxyRegistration(System.Type, out SharpLink.Client.SharpLinkClient.ClientProxyRegistration)"
+    },
+    {
+      "Path": "src/SharpLink.Client/GeneratedClusterRouteSource.cs",
+      "Line": 93,
+      "Signature": "SharpLink.Client.GeneratedClusterRouteSnapshot.FromManifests(System.Collections.Generic.IReadOnlyList\u003CSharpLink.Abstractions.ISharpLinkGeneratedClusterRouteManifest\u003E)"
+    },
+    {
+      "Path": "src/SharpLink.Client/SharpLinkClient.cs",
+      "Line": 273,
+      "Signature": "SharpLink.Client.SharpLinkClient.CreateAuthenticationRejectedException(string)"
+    },
+    {
+      "Path": "src/SharpLink.Client/SharpLinkClient.RpcChannel.cs",
+      "Line": 5,
+      "Signature": "SharpLink.Client.SharpLinkClient.SendRpcCall(SharpLink.Runtime.RpcSession, long, long, long, SharpLink.Abstractions.ProtocolV2FrameFlags, System.Action\u003CSystem.Buffers.IBufferWriter\u003Cbyte\u003E\u003E?, SharpLink.Abstractions.RpcDeadline, SharpLink.Sdk.SharpLinkMetadata?)"
+    },
+    {
+      "Path": "src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs",
+      "Line": 234,
+      "Signature": "SharpLink.Client.SharpLinkMultiClusterClientBuilder.PrepareRuntimeCluster(SharpLink.Abstractions.SharpLinkClusterKey, SharpLink.Client.SharpClientBuilder, bool)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.AdapterClosedIdentity.cs",
+      "Line": 7,
+      "Signature": "SharpLink.Generator.RpcGenerator.DtoAnalysisState.GetAdapterTargetLogicalIdentity(SharpLink.Generator.GeneratedCodecModel)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.CodecPolicySupport.cs",
+      "Line": 69,
+      "Signature": "SharpLink.Generator.RpcGenerator.DtoAnalysisState.Report(SharpLink.Generator.DtoDiagnosticKind, Microsoft.CodeAnalysis.ISymbol, string, Microsoft.CodeAnalysis.Location?)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.CodecRoutes.cs",
+      "Line": 297,
+      "Signature": "SharpLink.Generator.RpcGenerator.DtoAnalysisState.IsNativeCodecType(Microsoft.CodeAnalysis.ITypeSymbol)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs",
+      "Line": 20,
+      "Signature": "SharpLink.Generator.RpcGenerator.HasSameCodecDefinition(SharpLink.Generator.GeneratedCodecModel, SharpLink.Generator.GeneratedCodecModel)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs",
+      "Line": 125,
+      "Signature": "SharpLink.Generator.RpcGenerator.DtoAnalysisState.EscapeIdentifier(string)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.DtoGraphAnalysis.cs",
+      "Line": 54,
+      "Signature": "SharpLink.Generator.RpcGenerator.DtoAnalysisState.CollectReferencedContractRoots(System.Collections.Generic.Dictionary\u003Cstring, Microsoft.CodeAnalysis.ITypeSymbol\u003E)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.DtoGraphAnalysis.cs",
+      "Line": 419,
+      "Signature": "SharpLink.Generator.RpcGenerator.DtoAnalysisState.IsBuiltin(Microsoft.CodeAnalysis.ITypeSymbol)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.DtoSerializeEmitter.cs",
+      "Line": 96,
+      "Signature": "SharpLink.Generator.RpcGenerator.AppendDtoSuppressedSerializeBody(System.Text.StringBuilder, SharpLink.Generator.DtoCodecAnalysisModel, System.Collections.Generic.Dictionary\u003Cstring, int\u003E, string)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.DtoSizingEmitter.cs",
+      "Line": 5,
+      "Signature": "SharpLink.Generator.RpcGenerator.AppendDtoExactSerializeBody(System.Text.StringBuilder, SharpLink.Generator.DtoCodecAnalysisModel, System.Collections.Generic.Dictionary\u003Cstring, int\u003E)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.ReferenceAnalysis.cs",
+      "Line": 5,
+      "Signature": "SharpLink.Generator.RpcGenerator.GetReferencedInterfaceModels(Microsoft.CodeAnalysis.Compilation, System.Threading.CancellationToken)"
+    },
+    {
+      "Path": "src/SharpLink.Generator/RpcGenerator.ReferenceAnalysis.cs",
+      "Line": 29,
+      "Signature": "SharpLink.Generator.RpcGenerator.GetReferencedServiceModels(Microsoft.CodeAnalysis.Compilation, System.Threading.CancellationToken)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/Codec/RpcCodecProvider.cs",
+      "Line": 48,
+      "Signature": "SharpLink.Runtime.RpcCodecProvider.TryGetExplicitCodec\u003CT\u003E(out SharpLink.Abstractions.IRpcCodec\u003CT\u003E)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/Codec/RpcCodecProvider.cs",
+      "Line": 475,
+      "Signature": "SharpLink.Runtime.RpcGeneratedManifestRegistration.ValidateCodec(SharpLink.Abstractions.IRpcGeneratedCodecFactory, SharpLink.Abstractions.IRpcCodec)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/GeneratedManifestSource.cs",
+      "Line": 86,
+      "Signature": "SharpLink.Runtime.GeneratedManifestSnapshot.FromManifests(System.Collections.Generic.IReadOnlyList\u003CSharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest\u003E)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/RpcSession.ClientStreamPublication.cs",
+      "Line": 5,
+      "Signature": "SharpLink.Runtime.RpcSession.SendClientStreamChunkAsync\u003CT\u003E(long, ushort, T, SharpLink.Abstractions.RpcDeadline, System.TimeProvider, System.Threading.CancellationToken)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/RpcSessionContractManifestExtensions.cs",
+      "Line": 7,
+      "Signature": "SharpLink.Runtime.RpcSessionContractManifestExtensions.extension(SharpLink.Runtime.RpcSession).SendContractManifestAndFlushAsync(SharpLink.Runtime.ProtocolV2ContractManifest, System.Threading.CancellationToken)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/RpcSessionExtensions.cs",
+      "Line": 203,
+      "Signature": "SharpLink.Runtime.RpcSessionExtensions.extension(SharpLink.Runtime.RpcSession).SendPingAsync()"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/RpcSessionExtensions.cs",
+      "Line": 218,
+      "Signature": "SharpLink.Runtime.RpcSessionExtensions.extension(SharpLink.Runtime.RpcSession).SendPongAsync(long)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/RpcSessionExtensions.cs",
+      "Line": 241,
+      "Signature": "SharpLink.Runtime.RpcSessionExtensions.extension(SharpLink.Runtime.RpcSession).SendHealthResponse(long, SharpLink.Abstractions.SharpLinkHealthStatus)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/RpcSessionExtensions.cs",
+      "Line": 296,
+      "Signature": "SharpLink.Runtime.RpcSessionExtensions.extension(SharpLink.Runtime.RpcSession).SendStreamChunkAsync\u003CT\u003E(long, ushort, T, System.Threading.CancellationToken)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/RpcSessionExtensions.cs",
+      "Line": 360,
+      "Signature": "SharpLink.Runtime.RpcSessionExtensions.extension(SharpLink.Runtime.RpcSession).SendStreamCompleteAsync(long, ushort)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/RpcSessionExtensions.cs",
+      "Line": 394,
+      "Signature": "SharpLink.Runtime.RpcSessionExtensions.extension(SharpLink.Runtime.RpcSession).SendStreamErrorAsync(long, ushort, SharpLink.Abstractions.SharpLinkException)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/SharpLinkDynamicModule.cs",
+      "Line": 168,
+      "Signature": "SharpLink.Runtime.SharpLinkAssemblyManifestLoader.ValidateManifest(SharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest, System.Reflection.Assembly)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/SharpLinkDynamicModule.cs",
+      "Line": 500,
+      "Signature": "SharpLink.Runtime.SharpLinkDynamicModule.WaitForDrainAsync(System.Threading.Tasks.Task, System.TimeSpan)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/StreamManager.cs",
+      "Line": 257,
+      "Signature": "SharpLink.Runtime.StreamManager.CompleteStream(long, bool, string?)"
+    },
+    {
+      "Path": "src/SharpLink.Runtime/StripedLongMap.cs",
+      "Line": 182,
+      "Signature": "SharpLink.Runtime.StripedLongMap\u003CTValue\u003E.CopyEntries(System.Span\u003CSystem.Collections.Generic.KeyValuePair\u003Clong, TValue\u003E\u003E)"
+    },
+    {
+      "Path": "src/SharpLink.Server/Admission/AdmissionProgram.cs",
+      "Line": 101,
+      "Signature": "SharpLink.Server.AdmissionProgram.AcquireUse()"
+    },
+    {
+      "Path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+      "Line": 584,
+      "Signature": "SharpLink.Server.SharpLinkAdmissionController.TryReserveAdditionalQueuedBytes(int)"
+    },
+    {
+      "Path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+      "Line": 587,
+      "Signature": "SharpLink.Server.SharpLinkAdmissionController.ReleaseAdditionalQueuedBytes(int)"
+    },
+    {
+      "Path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+      "Line": 990,
+      "Signature": "SharpLink.Server.AdmissionRuleRuntime.CreateOwned(SharpLink.Server.SharpLinkAdmissionRuleOptions, string, System.TimeProvider)"
+    },
+    {
+      "Path": "src/SharpLink.Server/SharpLinkServer.CallPermit.cs",
+      "Line": 10,
+      "Signature": "SharpLink.Server.SharpLinkServer.TryReserveCall(SharpLink.Server.ServerConnectionState, SharpLink.Server.ServerRequestPermitTestHooks?, out SharpLink.Server.ServerRequestPermit?)"
+    },
+    {
+      "Path": "src/SharpLink.Server/SharpLinkServer.cs",
+      "Line": 329,
+      "Signature": "SharpLink.Server.SharpLinkServer.ForceStop()"
+    },
+    {
+      "Path": "src/SharpLink.Server/SharpLinkServer.LifecycleAliases.cs",
+      "Line": 14,
+      "Signature": "SharpLink.Server.SharpLinkServer.DisposeAllSessionsAsync()"
+    },
+    {
+      "Path": "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs",
+      "Line": 461,
+      "Signature": "SharpLink.Server.SharpLinkServer.ObserveUserCall(System.Threading.Tasks.ValueTask, long)"
+    },
+    {
+      "Path": "src/SharpLink.Server/TransportExtensions.cs",
+      "Line": 151,
+      "Signature": "SharpLink.Server.TransportExtensions.extension(SharpLink.Server.SharpLinkServerBuilder).ValidateTcpPort(int)"
+    },
+    {
+      "Path": "src/SharpLink.Server/TransportExtensions.cs",
+      "Line": 157,
+      "Signature": "SharpLink.Server.TransportExtensions.extension(SharpLink.Server.SharpLinkServerBuilder).ValidateBacklog(int)"
+    },
+    {
+      "Path": "src/SharpLink.Shared/RpcBuiltinCollectionWireCatalog.cs",
+      "Line": 52,
+      "Signature": "SharpLink.RpcBuiltinCollectionWireCatalog.TryGet(string, out SharpLink.RpcBuiltinCollectionWireDescriptor)"
+    }
+  ],
+  "SkippedSymbols": [
+    "src/SharpLink.Client/SharpLinkClient.Log.cs:37 lacks body"
+  ]
+}
