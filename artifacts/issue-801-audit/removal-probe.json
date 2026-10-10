@@ -1,8 +1,8 @@
 {
   "BaselineSha": "eb99fe887cf2129d9b88441245ca0a4a6406b6c2",
-  "Mode": "Ephemeral test-only source removal; never push modified src",
-  "Requested": 50,
-  "Removed": 49,
+  "Mode": "Ephemeral removal; skip linked SharpLink.Shared multi-assembly sources and remove attached XML docs; never push modified src",
+  "Requested": 49,
+  "Removed": 48,
   "Skipped": 1,
   "RemovedSymbols": [
     {
@@ -244,11 +244,6 @@
       "Path": "src/SharpLink.Server/TransportExtensions.cs",
       "Line": 157,
       "Signature": "SharpLink.Server.TransportExtensions.extension(SharpLink.Server.SharpLinkServerBuilder).ValidateBacklog(int)"
-    },
-    {
-      "Path": "src/SharpLink.Shared/RpcBuiltinCollectionWireCatalog.cs",
-      "Line": 52,
-      "Signature": "SharpLink.RpcBuiltinCollectionWireCatalog.TryGet(string, out SharpLink.RpcBuiltinCollectionWireDescriptor)"
     }
   ],
   "SkippedSymbols": [

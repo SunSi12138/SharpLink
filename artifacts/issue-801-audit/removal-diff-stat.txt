@@ -20,10 +20,10 @@
  src/SharpLink.Runtime/GeneratedManifestSource.cs   |   4 +-
  .../RpcSession.ClientStreamPublication.cs          |  16 +-
  .../RpcSessionContractManifestExtensions.cs        |  28 +--
- src/SharpLink.Runtime/RpcSessionExtensions.cs      | 174 +------------------
+ src/SharpLink.Runtime/RpcSessionExtensions.cs      | 184 +-------------------
  src/SharpLink.Runtime/SharpLinkDynamicModule.cs    | 192 +--------------------
- src/SharpLink.Runtime/StreamManager.cs             |   5 +-
- src/SharpLink.Runtime/StripedLongMap.cs            |   5 +-
+ src/SharpLink.Runtime/StreamManager.cs             |   6 +-
+ src/SharpLink.Runtime/StripedLongMap.cs            |  11 +-
  src/SharpLink.Server/Admission/AdmissionProgram.cs |   6 +-
  .../Admission/SharpLinkAdmissionController.cs      |  30 +---
  src/SharpLink.Server/SharpLinkServer.CallPermit.cs |   6 +-
@@ -31,5 +31,4 @@
  .../SharpLinkServer.RequestLoop.cs                 |   3 +-
  src/SharpLink.Server/SharpLinkServer.cs            |   2 +-
  src/SharpLink.Server/TransportExtensions.cs        |   9 +-
- .../RpcBuiltinCollectionWireCatalog.cs             |  18 +-
- 34 files changed, 49 insertions(+), 898 deletions(-)
+ 33 files changed, 48 insertions(+), 898 deletions(-)

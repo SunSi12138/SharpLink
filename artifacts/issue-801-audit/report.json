@@ -1,7 +1,7 @@
 {
   "BaselineDevSha": "eb99fe887cf2129d9b88441245ca0a4a6406b6c2",
-  "AuditHeadSha": "a8ef2daab1e9d5eeb64e6cf10574c325b994bea2",
-  "ElapsedSeconds": 71,
+  "AuditHeadSha": "9c935f885d10cb44b26206ae8655fc40a34654a7",
+  "ElapsedSeconds": 48,
   "Projects": [
     {
       "Project": "AdmissionControl",
@@ -26812,23 +26812,23 @@
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 178
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 184
-        },
-        {
-          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IInterceptorTestService_FF840A9015AC9F7F_ProxyImpl.g.cs",
           "Line": 151
         },
         {
           "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICompressionService_88F6D79143515AC0_ProxyImpl.g.cs",
+          "Line": 65
+        },
+        {
+          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IDeadlineCompressionProbeService_D372DFFD1E6B4854_ProxyImpl.g.cs",
           "Line": 42
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IExceptionMappingBoundaryService_4C12216BF0E7C8C1_ProxyImpl.g.cs",
+          "Line": 51
         },
         {
           "Scope": "tests",
@@ -26964,6 +26964,11 @@
       "SampleReferences": [
         {
           "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IUnionAotContract_C2DD846ED6F6FA84_Stub.g.cs",
+          "Line": 95
+        },
+        {
+          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
           "Line": 253
         },
@@ -26971,11 +26976,6 @@
           "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
           "Line": 436
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IUnionAotContract_C2DD846ED6F6FA84_Stub.g.cs",
-          "Line": 95
         },
         {
           "Scope": "benchmarks",
@@ -27045,6 +27045,11 @@
       "SampleReferences": [
         {
           "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IUnionAotContract_C2DD846ED6F6FA84_Stub.g.cs",
+          "Line": 98
+        },
+        {
+          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
           "Line": 234
         },
@@ -27052,11 +27057,6 @@
           "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
           "Line": 256
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IUnionAotContract_C2DD846ED6F6FA84_Stub.g.cs",
-          "Line": 98
         },
         {
           "Scope": "benchmarks",
@@ -31416,16 +31416,6 @@
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IUncooperativeLifetimeService_68C7594E5DDD7F15_ProxyImpl.g.cs",
-          "Line": 32
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 131
-        },
-        {
-          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICallShapeService_186C5C6293C47E9D_ProxyImpl.g.cs",
           "Line": 525
         },
@@ -31443,6 +31433,16 @@
           "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICallShapeService_186C5C6293C47E9D_ProxyImpl.g.cs",
           "Line": 540
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICallShapeService_186C5C6293C47E9D_ProxyImpl.g.cs",
+          "Line": 545
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICallShapeService_186C5C6293C47E9D_ProxyImpl.g.cs",
+          "Line": 550
         }
       ]
     },
@@ -45169,6 +45169,11 @@
         },
         {
           "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
+          "Line": 20
+        },
+        {
+          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
           "Line": 37
         },
@@ -45179,8 +45184,8 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
-          "Line": 20
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
+          "Line": 39
         },
         {
           "Scope": "examples",
@@ -45194,23 +45199,18 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
-          "Line": 39
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 70
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 20
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 78
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 22
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 24
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 86
         }
       ]
     },
@@ -45250,6 +45250,11 @@
         },
         {
           "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
+          "Line": 20
+        },
+        {
+          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
           "Line": 37
         },
@@ -45260,8 +45265,8 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
-          "Line": 20
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
+          "Line": 39
         },
         {
           "Scope": "examples",
@@ -45275,23 +45280,18 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
-          "Line": 39
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 70
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 20
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 78
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 22
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 24
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 86
         }
       ]
     },
@@ -45321,28 +45321,13 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Oneway/IOnewayService_8C191991B600F01A_Stub.g.cs",
-          "Line": 32
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Oneway/SharpLink.GeneratedAssemblyManifest.g.cs",
           "Line": 67
         },
         {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
-          "Line": 91
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink.GeneratedAssemblyManifest.g.cs",
-          "Line": 119
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink.GeneratedAssemblyManifest.g.cs",
-          "Line": 217
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Oneway/IOnewayService_8C191991B600F01A_Stub.g.cs",
+          "Line": 32
         },
         {
           "Scope": "tests",
@@ -45356,6 +45341,21 @@
         },
         {
           "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 119
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 217
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
+          "Line": 91
+        },
+        {
+          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_ProxyImpl.g.cs",
           "Line": 37
         },
@@ -45366,13 +45366,13 @@
         },
         {
           "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
-          "Line": 123
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_ProxyImpl.g.cs",
+          "Line": 41
         },
         {
           "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_ProxyImpl.g.cs",
-          "Line": 41
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
+          "Line": 123
         }
       ]
     },
@@ -45397,18 +45397,23 @@
       "SampleReferences": [
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
-          "Line": 94
-        },
-        {
-          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink.GeneratedAssemblyManifest.g.cs",
           "Line": 153
         },
         {
           "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
+          "Line": 94
+        },
+        {
+          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_ProxyImpl.g.cs",
           "Line": 39
+        },
+        {
+          "Scope": "benchmarks",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IClientBridgeRpc_00FD15F4541AF223_Stub.g.cs",
+          "Line": 46
         },
         {
           "Scope": "benchmarks",
@@ -45437,23 +45442,18 @@
         },
         {
           "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IClientBridgeRpc_00FD15F4541AF223_Stub.g.cs",
-          "Line": 46
-        },
-        {
-          "Scope": "benchmarks",
           "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IClientBridgeRpc_00FD15F4541AF223_ProxyImpl.g.cs",
           "Line": 23
         },
         {
           "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
-          "Line": 126
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_ProxyImpl.g.cs",
+          "Line": 43
         },
         {
           "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
-          "Line": 135
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_ProxyImpl.g.cs",
+          "Line": 52
         }
       ]
     },
@@ -45478,13 +45478,13 @@
       "SampleReferences": [
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
-          "Line": 97
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 225
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink.GeneratedAssemblyManifest.g.cs",
-          "Line": 225
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
+          "Line": 97
         },
         {
           "Scope": "tests",
@@ -45503,16 +45503,6 @@
         },
         {
           "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
-          "Line": 129
-        },
-        {
-          "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
-          "Line": 144
-        },
-        {
-          "Scope": "benchmarks",
           "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_ProxyImpl.g.cs",
           "Line": 46
         },
@@ -45522,9 +45512,14 @@
           "Line": 63
         },
         {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.ChaosTests/SharpLink_ChaosTests_IChaosService_77A469987A45C51C_ProxyImpl.g.cs",
-          "Line": 29
+          "Scope": "benchmarks",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
+          "Line": 129
+        },
+        {
+          "Scope": "benchmarks",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
+          "Line": 144
         },
         {
           "Scope": "tests",
@@ -45535,6 +45530,11 @@
           "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.ChaosTests/SharpLink_ChaosTests_IChaosService_77A469987A45C51C_Stub.g.cs",
           "Line": 59
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.ChaosTests/SharpLink_ChaosTests_IChaosService_77A469987A45C51C_ProxyImpl.g.cs",
+          "Line": 29
         }
       ]
     },
@@ -45559,13 +45559,13 @@
       "SampleReferences": [
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
-          "Line": 100
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IUnionAotContract_C2DD846ED6F6FA84_Stub.g.cs",
+          "Line": 47
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IUnionAotContract_C2DD846ED6F6FA84_Stub.g.cs",
-          "Line": 47
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IUnionAotContract_C2DD846ED6F6FA84_ProxyImpl.g.cs",
+          "Line": 23
         },
         {
           "Scope": "tests",
@@ -45579,8 +45579,8 @@
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IUnionAotContract_C2DD846ED6F6FA84_ProxyImpl.g.cs",
-          "Line": 23
+          "Path": "\u003Cgenerated\u003E/SharpLink.AotSmoke/SharpLink_AotSmoke_IAotService_6AB45A972CC153B8_Stub.g.cs",
+          "Line": 100
         },
         {
           "Scope": "tests",
@@ -45599,16 +45599,6 @@
         },
         {
           "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
-          "Line": 132
-        },
-        {
-          "Scope": "benchmarks",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
-          "Line": 147
-        },
-        {
-          "Scope": "benchmarks",
           "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_ProxyImpl.g.cs",
           "Line": 49
         },
@@ -45616,6 +45606,16 @@
           "Scope": "benchmarks",
           "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_ProxyImpl.g.cs",
           "Line": 66
+        },
+        {
+          "Scope": "benchmarks",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
+          "Line": 132
+        },
+        {
+          "Scope": "benchmarks",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Benchmarks/SharpLink_Benchmarks_IBenchmarkRpc_2BD064D0C650AF0C_Stub.g.cs",
+          "Line": 147
         }
       ]
     },
@@ -45655,6 +45655,11 @@
         },
         {
           "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
+          "Line": 20
+        },
+        {
+          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
           "Line": 32
         },
@@ -45665,16 +45670,6 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
-          "Line": 20
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_ProxyImpl.g.cs",
-          "Line": 20
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
           "Line": 34
         },
@@ -45682,6 +45677,11 @@
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
           "Line": 39
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_ProxyImpl.g.cs",
+          "Line": 20
         },
         {
           "Scope": "examples",
@@ -45942,23 +45942,23 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
-          "Line": 37
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
           "Line": 20
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_ProxyImpl.g.cs",
-          "Line": 20
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Line": 37
         },
         {
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
           "Line": 39
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_ProxyImpl.g.cs",
+          "Line": 20
         },
         {
           "Scope": "examples",
@@ -47525,11 +47525,6 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/SharpLink.GeneratedAssemblyManifest.g.cs",
-          "Line": 30
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
           "Line": 19
         },
@@ -47537,6 +47532,11 @@
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
           "Line": 23
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 30
         },
         {
           "Scope": "examples",
@@ -47555,6 +47555,11 @@
         },
         {
           "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 33
+        },
+        {
+          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
           "Line": 19
         },
@@ -47562,11 +47567,6 @@
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
           "Line": 56
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
-          "Line": 33
         }
       ]
     },
@@ -47788,27 +47788,27 @@
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 179
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 185
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 191
-        },
-        {
-          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IInterceptorTestService_FF840A9015AC9F7F_ProxyImpl.g.cs",
           "Line": 152
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IOneWayInboundDrainService_679F84A0D56610D6_ProxyImpl.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICompressionService_88F6D79143515AC0_ProxyImpl.g.cs",
+          "Line": 66
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICompressionService_88F6D79143515AC0_ProxyImpl.g.cs",
+          "Line": 72
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICompressionService_88F6D79143515AC0_ProxyImpl.g.cs",
+          "Line": 78
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IDeadlineCompressionProbeService_D372DFFD1E6B4854_ProxyImpl.g.cs",
           "Line": 43
         }
       ]
@@ -47884,13 +47884,13 @@
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 157
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITlsIntegrationService_AC2B52F22C252ED3_ProxyImpl.g.cs",
+          "Line": 57
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 163
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IInterceptorTestService_FF840A9015AC9F7F_ProxyImpl.g.cs",
+          "Line": 146
         }
       ]
     },
@@ -47950,13 +47950,8 @@
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 168
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITestService_70502D11BE228348_ProxyImpl.g.cs",
-          "Line": 173
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITlsIntegrationService_AC2B52F22C252ED3_ProxyImpl.g.cs",
+          "Line": 62
         },
         {
           "Scope": "tests",
@@ -47972,6 +47967,11 @@
           "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IInterceptorTestService_FF840A9015AC9F7F_ProxyImpl.g.cs",
           "Line": 169
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IInterceptorTestService_FF840A9015AC9F7F_ProxyImpl.g.cs",
+          "Line": 174
         }
       ]
     },
@@ -48031,28 +48031,28 @@
         },
         {
           "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IInterceptorTestService_FF840A9015AC9F7F_ProxyImpl.g.cs",
-          "Line": 185
-        },
-        {
-          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ITlsIntegrationService_AC2B52F22C252ED3_ProxyImpl.g.cs",
           "Line": 68
         },
         {
           "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IInterceptorTestService_FF840A9015AC9F7F_ProxyImpl.g.cs",
+          "Line": 185
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICompressionService_88F6D79143515AC0_ProxyImpl.g.cs",
+          "Line": 95
+        },
+        {
+          "Scope": "tests",
+          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_IExceptionMappingBoundaryService_4C12216BF0E7C8C1_ProxyImpl.g.cs",
+          "Line": 69
+        },
+        {
+          "Scope": "tests",
           "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICallShapeService_186C5C6293C47E9D_ProxyImpl.g.cs",
           "Line": 943
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICallShapeService_186C5C6293C47E9D_ProxyImpl.g.cs",
-          "Line": 949
-        },
-        {
-          "Scope": "tests",
-          "Path": "\u003Cgenerated\u003E/SharpLink.IntegrationTests/SharpLink_IntegrationTests_ICallShapeService_186C5C6293C47E9D_ProxyImpl.g.cs",
-          "Line": 955
         }
       ]
     },
@@ -48163,12 +48163,22 @@
         },
         {
           "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Proxy.g.cs",
+          "Line": 22
+        },
+        {
+          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
           "Line": 19
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Proxy.g.cs",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Proxy.g.cs",
+          "Line": 22
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
           "Line": 22
         },
         {
@@ -48178,13 +48188,13 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
-          "Line": 22
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
+          "Line": 19
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Proxy.g.cs",
-          "Line": 22
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
+          "Line": 20
         },
         {
           "Scope": "examples",
@@ -48203,18 +48213,8 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
-          "Line": 19
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
-          "Line": 20
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 21
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 24
         }
       ]
     },
@@ -48259,11 +48259,6 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Proxy.g.cs",
-          "Line": 36
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
           "Line": 50
         },
@@ -48274,28 +48269,33 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedCodecs.g.cs",
-          "Line": 60
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Proxy.g.cs",
+          "Line": 36
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 123
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 112
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 130
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 119
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 137
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 188
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 144
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 227
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 270
         }
       ]
     },
@@ -48320,63 +48320,63 @@
       "SampleReferences": [
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Proxy.g.cs",
-          "Line": 47
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
           "Line": 101
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedCodecs.g.cs",
-          "Line": 76
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Proxy.g.cs",
+          "Line": 47
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 352
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 155
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 357
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 160
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 397
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 199
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 420
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 238
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 444
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 288
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 293
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 332
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 410
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
           "Line": 449
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 472
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 518
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 541
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 488
         }
       ]
     },
@@ -48549,6 +48549,11 @@
         },
         {
           "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.SharpPackIntegration.g.cs",
+          "Line": 16
+        },
+        {
+          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedAssemblyManifest.g.cs",
           "Line": 53
         },
@@ -48561,11 +48566,6 @@
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedCodecs.g.cs",
           "Line": 87
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.SharpPackIntegration.g.cs",
-          "Line": 16
         },
         {
           "Scope": "examples",
@@ -48950,13 +48950,23 @@
         },
         {
           "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Proxy.g.cs",
+          "Line": 24
+        },
+        {
+          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
           "Line": 21
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Proxy.g.cs",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Proxy.g.cs",
           "Line": 24
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
+          "Line": 23
         },
         {
           "Scope": "examples",
@@ -48977,16 +48987,6 @@
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/SharpLink.GeneratedAssemblyManifest.g.cs",
           "Line": 50
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
-          "Line": 23
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Proxy.g.cs",
-          "Line": 24
         }
       ]
     },
@@ -49021,23 +49021,13 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
-          "Line": 24
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_ProxyImpl.g.cs",
           "Line": 29
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_ProxyImpl.g.cs",
-          "Line": 29
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Proxy.g.cs",
-          "Line": 28
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Line": 24
         },
         {
           "Scope": "examples",
@@ -49051,23 +49041,33 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 61
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_ProxyImpl.g.cs",
+          "Line": 29
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 62
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Proxy.g.cs",
+          "Line": 28
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 64
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 93
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_ProxyImpl.g.cs",
-          "Line": 66
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 94
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 180
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
+          "Line": 219
         }
       ]
     },
@@ -49148,11 +49148,6 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedCodecs.g.cs",
-          "Line": 49
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
           "Line": 108
         },
@@ -49195,6 +49190,11 @@
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/HelloWorld/IHelloService_7FCC5B9A7F4014E7_Proxy.g.cs",
           "Line": 473
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/HelloWorld/SharpLink.GeneratedCodecs.g.cs",
+          "Line": 49
         },
         {
           "Scope": "examples",
@@ -49984,13 +49984,13 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/SharpLink.GeneratedAssemblyManifest.g.cs",
-          "Line": 33
+          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
+          "Line": 16
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Compression/ICompressionService_4DB85EF7F1A54995_Stub.g.cs",
-          "Line": 16
+          "Path": "\u003Cgenerated\u003E/Compression/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 33
         },
         {
           "Scope": "examples",
@@ -50004,23 +50004,23 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/HostApplication/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
-          "Line": 16
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/HostApplication/SharpLink.GeneratedAssemblyManifest.g.cs",
           "Line": 33
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/InterceptorsTelemetry/SharpLink.GeneratedAssemblyManifest.g.cs",
-          "Line": 33
+          "Path": "\u003Cgenerated\u003E/HostApplication/IHelloService_7FCC5B9A7F4014E7_Stub.g.cs",
+          "Line": 16
         },
         {
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/InterceptorsTelemetry/IObservedService_B98D3E02FC2EB297_Stub.g.cs",
           "Line": 16
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/InterceptorsTelemetry/SharpLink.GeneratedAssemblyManifest.g.cs",
+          "Line": 33
         }
       ]
     },
@@ -61226,21 +61226,6 @@
       "SampleReferences": [
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
-          "Line": 96
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
-          "Line": 104
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
-          "Line": 108
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Proxy.g.cs",
           "Line": 40
         },
@@ -61256,17 +61241,17 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
           "Line": 96
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
           "Line": 104
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
           "Line": 108
         },
         {
@@ -61283,6 +61268,21 @@
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Proxy.g.cs",
           "Line": 51
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Line": 96
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Line": 104
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Line": 108
         }
       ]
     },
@@ -61667,21 +61667,6 @@
       "SampleReferences": [
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
-          "Line": 96
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
-          "Line": 104
-        },
-        {
-          "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
-          "Line": 108
-        },
-        {
-          "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Proxy.g.cs",
           "Line": 40
         },
@@ -61697,17 +61682,17 @@
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
           "Line": 96
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
           "Line": 104
         },
         {
           "Scope": "examples",
-          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Path": "\u003Cgenerated\u003E/AdmissionControl/IAdmissionService_1C90E84AA1A5E2D4_Stub.g.cs",
           "Line": 108
         },
         {
@@ -61724,6 +61709,21 @@
           "Scope": "examples",
           "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Proxy.g.cs",
           "Line": 51
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Line": 96
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Line": 104
+        },
+        {
+          "Scope": "examples",
+          "Path": "\u003Cgenerated\u003E/Cancel/ICancelService_14C376FD3922CAFD_Stub.g.cs",
+          "Line": 108
         }
       ]
     },
@@ -68581,38 +68581,38 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 32
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 35
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 153
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 168
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 171
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 486
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 30
         },
         {
           "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkCircuitBreakerPolicySnapshot.g.cs",
           "Line": 13
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkCircuitBreakerPolicySnapshot.g.cs",
+          "Line": 19
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkCircuitBreakerPolicySnapshot.g.cs",
+          "Line": 22
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkCircuitBreakerPolicySnapshot.g.cs",
+          "Line": 25
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkCircuitBreakerPolicySnapshot.g.cs",
+          "Line": 27
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkCircuitBreakerPolicySnapshot.g.cs",
+          "Line": 29
         }
       ]
     },
@@ -69270,22 +69270,22 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientReadinessSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientReadinessSnapshot.g.cs",
           "Line": 158
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientReadinessSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientReadinessSnapshot.g.cs",
           "Line": 186
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientReadinessSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientReadinessSnapshot.g.cs",
           "Line": 158
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientReadinessSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientReadinessSnapshot.g.cs",
           "Line": 186
         },
         {
@@ -72021,38 +72021,38 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 50
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
           "Line": 13
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
           "Line": 19
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
           "Line": 22
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
           "Line": 25
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
           "Line": 27
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
           "Line": 29
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicyKind.g.cs",
-          "Line": 30
         }
       ]
     },
@@ -72185,33 +72185,8 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 32
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 35
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 133
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 148
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 151
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 476
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 54
         },
         {
           "Scope": "generated",
@@ -72222,6 +72197,31 @@
           "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicySnapshot.g.cs",
           "Line": 19
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicySnapshot.g.cs",
+          "Line": 22
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicySnapshot.g.cs",
+          "Line": 25
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicySnapshot.g.cs",
+          "Line": 27
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicySnapshot.g.cs",
+          "Line": 29
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointAdmissionPolicySnapshot.g.cs",
+          "Line": 32
         }
       ]
     },
@@ -81210,36 +81210,6 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 32
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 35
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 71
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 86
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 89
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 446
-        },
-        {
-          "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
           "Line": 58
         },
@@ -81247,6 +81217,36 @@
           "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkHeartbeatConfigurationSnapshot.g.cs",
           "Line": 13
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkHeartbeatConfigurationSnapshot.g.cs",
+          "Line": 19
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkHeartbeatConfigurationSnapshot.g.cs",
+          "Line": 22
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkHeartbeatConfigurationSnapshot.g.cs",
+          "Line": 25
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkHeartbeatConfigurationSnapshot.g.cs",
+          "Line": 27
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkHeartbeatConfigurationSnapshot.g.cs",
+          "Line": 29
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkHeartbeatConfigurationSnapshot.g.cs",
+          "Line": 32
         }
       ]
     },
@@ -84743,12 +84743,12 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 32
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 32
         },
         {
@@ -84864,12 +84864,12 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 58
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 187
         }
       ]
@@ -84920,22 +84920,22 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 78
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 189
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 78
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 189
         },
         {
@@ -84976,22 +84976,22 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 98
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 190
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 98
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 190
         },
         {
@@ -85032,22 +85032,22 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 118
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 191
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 118
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 191
         },
         {
@@ -85088,22 +85088,22 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 138
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 192
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 138
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 192
         },
         {
@@ -85154,22 +85154,22 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 158
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 194
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 158
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkReconnectPolicy.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkReconnectPolicy.g.cs",
           "Line": 194
         },
         {
@@ -85433,6 +85433,36 @@
         },
         {
           "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 74
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 32
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 71
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 86
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 89
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 168
+        },
+        {
+          "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySource.g.cs",
           "Line": 13
         },
@@ -85440,36 +85470,6 @@
           "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySource.g.cs",
           "Line": 19
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySource.g.cs",
-          "Line": 22
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySource.g.cs",
-          "Line": 25
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySource.g.cs",
-          "Line": 27
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySource.g.cs",
-          "Line": 29
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySource.g.cs",
-          "Line": 30
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRequestTimeoutPolicySource.g.cs",
-          "Line": 13
         }
       ]
     },
@@ -85617,43 +85617,43 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 32
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 70
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 35
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 51
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 66
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 69
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 436
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
           "Line": 13
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
           "Line": 19
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 22
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 25
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 27
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 29
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Line": 32
         }
       ]
     },
@@ -85678,22 +85678,22 @@
       "SampleReferences": [
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
           "Line": 118
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
           "Line": 149
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
           "Line": 118
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRequestTimeoutPolicySnapshot.g.cs",
           "Line": 149
         },
         {
@@ -87279,38 +87279,38 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 32
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 35
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 113
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 128
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 131
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 466
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 82
         },
         {
           "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRetryPolicySnapshot.g.cs",
           "Line": 13
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRetryPolicySnapshot.g.cs",
+          "Line": 19
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRetryPolicySnapshot.g.cs",
+          "Line": 22
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRetryPolicySnapshot.g.cs",
+          "Line": 25
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRetryPolicySnapshot.g.cs",
+          "Line": 27
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkRetryPolicySnapshot.g.cs",
+          "Line": 29
         }
       ]
     },
@@ -157270,43 +157270,43 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportTopologyKind.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportTopologyKind.g.cs",
           "Line": 13
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportTopologyKind.g.cs",
-          "Line": 19
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportTopologyKind.g.cs",
-          "Line": 22
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportTopologyKind.g.cs",
-          "Line": 25
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportTopologyKind.g.cs",
-          "Line": 27
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportTopologyKind.g.cs",
-          "Line": 29
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportTopologyKind.g.cs",
-          "Line": 30
         },
         {
           "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportTopologyKind.g.cs",
-          "Line": 13
+          "Line": 19
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportTopologyKind.g.cs",
+          "Line": 22
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportTopologyKind.g.cs",
+          "Line": 25
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportTopologyKind.g.cs",
+          "Line": 27
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportTopologyKind.g.cs",
+          "Line": 29
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportTopologyKind.g.cs",
+          "Line": 30
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 162
         }
       ]
     },
@@ -157736,23 +157736,23 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointState.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 146
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportEndpointState.g.cs",
           "Line": 13
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointState.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportEndpointState.g.cs",
           "Line": 19
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointState.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportEndpointState.g.cs",
           "Line": 22
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointState.g.cs",
-          "Line": 25
         }
       ]
     },
@@ -157905,6 +157905,11 @@
         },
         {
           "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 138
+        },
+        {
+          "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConnectionSnapshot.g.cs",
           "Line": 32
         },
@@ -157935,13 +157940,8 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.GetJsonTypeInfo.g.cs",
           "Line": 138
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConnectionState.g.cs",
-          "Line": 13
         }
       ]
     },
@@ -159289,53 +159289,53 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
-          "Line": 13
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
-          "Line": 19
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
-          "Line": 22
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
-          "Line": 25
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
-          "Line": 27
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
-          "Line": 29
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
           "Line": 32
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
           "Line": 35
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
-          "Line": 39
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 91
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportRuntimeSnapshot.g.cs",
-          "Line": 56
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 106
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 109
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 316
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 385
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 158
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 32
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 35
         }
       ]
     },
@@ -159370,53 +159370,53 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 13
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 19
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 22
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 25
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 27
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 29
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
           "Line": 32
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
           "Line": 35
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 39
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 113
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 56
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 128
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 131
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 322
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 395
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 126
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 32
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 35
         }
       ]
     },
@@ -159451,53 +159451,53 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 32
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 122
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 35
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 333
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 348
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 351
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 420
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConfigurationSnapshot.g.cs",
-          "Line": 576
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
           "Line": 13
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
           "Line": 19
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
           "Line": 22
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Line": 25
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Line": 27
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Line": 29
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Line": 32
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Line": 35
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportCompressionPolicySnapshot.g.cs",
+          "Line": 39
         }
       ]
     },
@@ -159633,33 +159633,33 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 142
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 182
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.IReadOnlyListSharpLinkSupportEndpointSnapshot.g.cs",
           "Line": 13
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.IReadOnlyListSharpLinkSupportEndpointSnapshot.g.cs",
           "Line": 19
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.IReadOnlyListSharpLinkSupportEndpointSnapshot.g.cs",
           "Line": 22
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.IReadOnlyListSharpLinkSupportEndpointSnapshot.g.cs",
           "Line": 25
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointSnapshot.g.cs",
-          "Line": 27
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportEndpointSnapshot.g.cs",
-          "Line": 29
         }
       ]
     },
@@ -159714,33 +159714,33 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.IReadOnlyListSharpLinkSupportConnectionSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 134
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 178
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConnectionSnapshot.g.cs",
           "Line": 13
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.IReadOnlyListSharpLinkSupportConnectionSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConnectionSnapshot.g.cs",
           "Line": 19
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.IReadOnlyListSharpLinkSupportConnectionSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConnectionSnapshot.g.cs",
           "Line": 22
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.IReadOnlyListSharpLinkSupportConnectionSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportConnectionSnapshot.g.cs",
           "Line": 25
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.IReadOnlyListSharpLinkSupportConnectionSnapshot.g.cs",
-          "Line": 27
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.IReadOnlyListSharpLinkSupportConnectionSnapshot.g.cs",
-          "Line": 29
         }
       ]
     },
@@ -159772,6 +159772,11 @@
           "Scope": "production",
           "Path": "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs",
           "Line": 235
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 130
         },
         {
           "Scope": "generated",
@@ -159810,18 +159815,13 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
-          "Line": 130
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportConnectionResourceSnapshot.g.cs",
+          "Line": 13
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportConnectionSnapshot.g.cs",
-          "Line": 32
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportConnectionSnapshot.g.cs",
-          "Line": 35
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportConnectionResourceSnapshot.g.cs",
+          "Line": 19
         }
       ]
     },
@@ -159856,53 +159856,53 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 150
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 13
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 19
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 22
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 25
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 27
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 29
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 32
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 35
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
           "Line": 39
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportNegotiationSnapshot.g.cs",
-          "Line": 56
         }
       ]
     },
@@ -159952,38 +159952,38 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportResourceSnapshot.g.cs",
-          "Line": 13
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportResourceSnapshot.g.cs",
-          "Line": 19
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportResourceSnapshot.g.cs",
-          "Line": 22
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportResourceSnapshot.g.cs",
-          "Line": 25
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportResourceSnapshot.g.cs",
-          "Line": 27
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportResourceSnapshot.g.cs",
-          "Line": 29
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkSupportResourceSnapshot.g.cs",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
           "Line": 32
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 35
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 177
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 192
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 195
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 336
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkClientSupportSnapshot.g.cs",
+          "Line": 425
         }
       ]
     },
@@ -160063,8 +160063,8 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.SharpLinkClientSupportSnapshot.g.cs",
-          "Line": 32
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 94
         }
       ]
     },
@@ -166308,28 +166308,8 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicySnapshot.g.cs",
-          "Line": 32
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicySnapshot.g.cs",
-          "Line": 71
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicySnapshot.g.cs",
-          "Line": 86
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicySnapshot.g.cs",
-          "Line": 89
-        },
-        {
-          "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicySnapshot.g.cs",
-          "Line": 147
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 102
         },
         {
           "Scope": "generated",
@@ -166350,6 +166330,26 @@
           "Scope": "generated",
           "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicyKind.g.cs",
           "Line": 25
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicyKind.g.cs",
+          "Line": 27
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicyKind.g.cs",
+          "Line": 29
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicyKind.g.cs",
+          "Line": 30
+        },
+        {
+          "Scope": "generated",
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicySnapshot.g.cs",
+          "Line": 32
         }
       ]
     },
@@ -166506,13 +166506,13 @@
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicySnapshot.g.cs",
-          "Line": 13
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 106
         },
         {
           "Scope": "generated",
-          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportCompactJsonContext.SharpLinkEndpointSelectionPolicySnapshot.g.cs",
-          "Line": 19
+          "Path": "\u003Cgenerated\u003E/SharpLink.Client/SharpLinkClientSupportIndentedJsonContext.GetJsonTypeInfo.g.cs",
+          "Line": 110
         }
       ]
     },
