@@ -1,0 +1,41 @@
+name: Issue 739 DEV source multiplicity and continuation diagnostics
+on:
+  push:
+    branches: ['validation/issue739-dev-multiplicity-20261010']
+    paths: ['eng/validation/issue739/**', '.github/workflows/issue739-dev-multiplicity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  ISSUE739_SOURCE_SHA: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
+  ISSUE739_RUNTIME_VERSION: '10.0.12'
+  ISSUE739_SDK_VERSION: '10.0.112'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_TieredPGO: '1'
+  DOTNET_TieredCompilation: '1'
+  DOTNET_gcServer: '0'
+jobs:
+  paired-source-diagnostics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.112'
+      - name: Verify unchanged pinned dev source and exact toolchain
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          test "$(dotnet --version)" = "$ISSUE739_SDK_VERSION"
+          dotnet --list-runtimes | grep -F "Microsoft.NETCore.App $ISSUE739_RUNTIME_VERSION ["
+      - name: Build isolated variants and run the predeclared paired plan
+        run: python3 eng/validation/issue739/multiplicity/run.py --dotnet eng/validation/issue739/dotnet-pinned.sh --output artifacts/issue739/dev-multiplicity --work-root /tmp/issue739-multiplicity
+      - name: Preserve raw totals counters source projection and failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-multiplicity-${{ github.sha }}
+          path: artifacts/issue739/dev-multiplicity
+          if-no-files-found: error

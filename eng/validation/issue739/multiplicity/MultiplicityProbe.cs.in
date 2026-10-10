@@ -1,0 +1,143 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+using SharpLink.Abstractions;
+
+namespace Issue739;
+
+// Setup/reflection/reporting happen outside the measured allocation window.
+internal sealed class MultiplicityProbe
+{
+    private readonly Action<long[]>? _capture;
+    private readonly Func<int, long>? _read;
+    private readonly string[] _names;
+    private readonly long[] _before, _after;
+    private readonly int _inflight;
+    private long _beforeBegin, _beforeEnd, _afterBegin, _afterEnd;
+    private long _registrationFenceBegin, _registrationFenceEnd;
+    private bool _configurationVerified;
+    private object? _layout;
+    private readonly string _executingAssemblySha256;
+
+    private MultiplicityProbe(Type? type)
+    {
+        _executingAssemblySha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Assembly.GetExecutingAssembly().Location))).ToLowerInvariant();
+        _names = type is null ? [] : ((Func<string[]>)type.GetMethod("GetNames")!.CreateDelegate(typeof(Func<string[]>)))();
+        _capture = type is null ? null : (Action<long[]>)type.GetMethod("Capture")!.CreateDelegate(typeof(Action<long[]>));
+        _read = type is null ? null : (Func<int, long>)type.GetMethod("Read")!.CreateDelegate(typeof(Func<int, long>));
+        _before = new long[_names.Length]; _after = new long[_names.Length];
+        _inflight = Array.IndexOf(_names, "operation_registration_inflight");
+        if (type is not null && _inflight < 0) throw new InvalidOperationException("Missing registration fence counter");
+    }
+
+    internal static MultiplicityProbe Connect()
+    {
+        var type = typeof(SharpLinkCallContext).Assembly.GetType("SharpLink.Abstractions.Issue739MultiplicityCounters");
+        string expected = Environment.GetEnvironmentVariable("ISSUE739_MULTIPLICITY_VARIANT") ?? throw new InvalidOperationException("Variant must be explicit");
+        if ((expected == "B") != (type is not null) || expected is not ("A" or "B"))
+            throw new InvalidOperationException("Unexpected diagnostic counter availability");
+        return new(type);
+    }
+
+    internal void VerifyConfiguration(object client, object proxy, object server, string rpcKind)
+    {
+        if (rpcKind != "add") throw new InvalidOperationException("Multiplicity attribution is Add-only");
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+        var type = client.GetType();
+        object? Field(object value, string name) => (value.GetType().GetField(name, flags)
+            ?? throw new InvalidOperationException("Missing required configuration field: " + name)).GetValue(value);
+        foreach (string field in new[] { "_cluster", "_retryOptions", "_retryPolicy", "_endpointAdmissionPolicy" })
+            if (Field(client, field) is not null) throw new InvalidOperationException("Unexpected client configuration: " + field);
+        foreach (var (owner, field) in new[] { (client, "_clientInterceptorGeneration"), (server, "_serverInterceptorGeneration") })
+        {
+            var generation = Field(owner, field) ?? throw new InvalidOperationException("Missing interceptor generation");
+            if ((int)generation.GetType().GetProperty("Count")!.GetValue(generation)! != 0)
+                throw new InvalidOperationException("Interceptors invalidate direct-path attribution");
+        }
+        var telemetry = typeof(SharpLinkCallContext).Assembly.GetType("SharpLink.Abstractions.SharpLinkTelemetry")!;
+        if ((bool)telemetry.GetProperty("ClientCallsEnabled", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!)
+            throw new InvalidOperationException("Telemetry invalidates direct-path attribution");
+        var methods = proxy.GetType().GetFields(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+            .Where(f => f.FieldType == typeof(RpcMethodDescriptor))
+            .Select(f => (RpcMethodDescriptor)f.GetValue(null)!).ToArray();
+        if (methods.Length != 2 || methods.Any(m => m.IsIdempotent || m.HasMethodTimeout || m.HasClientStreams)
+            || methods.Count(m => m.Kind == RpcMethodKind.Unary && m.HasResponsePayload) != 1)
+            throw new InvalidOperationException("Unexpected generated plain Add descriptor");
+        _configurationVerified = true;
+        // Exact field metadata, not an allocation-size claim. Both variants must match.
+        var assemblies = new[] { type.Assembly, typeof(SharpLink.Runtime.SocketClientTransportFactory).Assembly };
+        var wanted = new HashSet<string> { "AwaitLogicalInvocationAsync", "AwaitReadAsync", "FlushAndReleaseAsync", "ReserveAsync" };
+        _layout = assemblies.SelectMany(a => a.GetTypes()).SelectMany(t => t.GetMethods(flags | BindingFlags.Static))
+            .Where(m => wanted.Contains(m.Name))
+            .Select(m => (Method: m, Machine: m.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType))
+            .Where(x => x.Machine is not null)
+            .Select(x => new { method = x.Method.DeclaringType!.FullName + "." + x.Method.Name + "/" + x.Method.GetGenericArguments().Length,
+                builder = x.Method.GetCustomAttribute<AsyncMethodBuilderAttribute>()?.BuilderType.ToString() ?? "default",
+                fields = x.Machine!.GetFields(flags).Select(f => new { name = f.Name, type = f.FieldType.ToString() }).OrderBy(f => f.name).ToArray() })
+            .OrderBy(x => x.method).ToArray();
+        // Pre-JIT the same snapshot and fence paths used around the measured window.
+        CaptureStart(); WaitForRegistrationReturn(); CaptureEnd();
+    }
+
+    internal void CaptureStart()
+    {
+        _beforeBegin = Stopwatch.GetTimestamp(); _capture?.Invoke(_before); _beforeEnd = Stopwatch.GetTimestamp();
+    }
+
+    internal void CaptureEnd()
+    {
+        _afterBegin = Stopwatch.GetTimestamp(); _capture?.Invoke(_after); _afterEnd = Stopwatch.GetTimestamp();
+    }
+
+    internal void WaitForRegistrationReturn()
+    {
+        _registrationFenceBegin = Stopwatch.GetTimestamp();
+        var spin = new SpinWait();
+        while (_read is not null && _read(_inflight) != 0)
+        {
+            if (Stopwatch.GetTimestamp() - _registrationFenceBegin > 10 * Stopwatch.Frequency)
+                throw new TimeoutException("Operation OnCompleted has not returned");
+            spin.SpinOnce();
+        }
+        _registrationFenceEnd = Stopwatch.GetTimestamp();
+    }
+
+    internal object Report(int operations) => new
+    {
+        variant = _capture is null ? "A" : "B", configurationVerified = _configurationVerified,
+        executingAssemblySha256 = _executingAssemblySha256,
+        attributionContract = "exclusive non-idempotent plain unary Add; generated descriptor checked; no cluster/retry/interceptors/telemetry; no health calls in driver; five-minute heartbeats outside bounded sample",
+        counterNames = _names, before = _before, after = _after,
+        delta = _after.Zip(_before, (after, before) => after - before).ToArray(),
+        beforeSnapshotBegin = _beforeBegin, beforeSnapshotEnd = _beforeEnd,
+        afterSnapshotBegin = _afterBegin, afterSnapshotEnd = _afterEnd,
+        registrationFenceBegin = _registrationFenceBegin, registrationFenceEnd = _registrationFenceEnd,
+        boundary = "counter snapshots bracket a wider window than byte timestamps; no reset; payload N plus one measured drain sentinel; background idle-read/signal boundary tails not attributed per RPC",
+        payloadOperations = operations, measuredDrainSentinels = 1, expectedMeasuredRpcInvocations = operations + 1,
+        operationInflightBefore = _capture is null ? (long?)null : _before[_inflight],
+        operationInflightAfter = _capture is null ? (long?)null : _after[_inflight],
+        unknown = "TCP/BCL actual registration, outer RPC read-consumer registration, pooling-builder misses, hidden WaitAsync/tasks/channel/buffer allocations, all-object counts; SHM pulse registrations are undifferentiated control/data/space",
+        awaiterPolicy = "original awaiter and builder types preserved; no custom awaitable, awaiter, builder, AsTask, or continuation wrapper",
+        stateMachineFields = _layout,
+    };
+
+    internal static async Task CounterControl(string output)
+    {
+        var probe = Connect();
+        if (probe._capture is null) throw new InvalidOperationException("Primitive control requires diagnostic variant");
+        var type = typeof(SharpLinkCallContext).Assembly.GetType("SharpLink.Abstractions.Issue739MultiplicityCounters")!;
+        var loop = (Action<int>)type.GetMethod("PrimitiveLoop")!.CreateDelegate(typeof(Action<int>));
+        loop(32768); _ = GC.GetAllocatedBytesForCurrentThread();
+        await Task.Delay(1000).ConfigureAwait(false);
+        const int count = 131072;
+        long start = GC.GetAllocatedBytesForCurrentThread();
+        loop(count);
+        long bytes = GC.GetAllocatedBytesForCurrentThread() - start;
+        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { schemaVersion = 1, kind = "counter-primitive-control",
+            runtime = Environment.Version.ToString(), operations = count, currentThreadBytes = bytes,
+            status = bytes == 0 ? "zero-measured" : "nonzero-reject", scope = "fixed atomic counter/transition/read primitives only; no claim that probes have zero CPU or scheduling effect" }, new JsonSerializerOptions { WriteIndented = true }));
+        if (bytes != 0) throw new InvalidOperationException("Counter primitive allocation detected");
+    }
+}
