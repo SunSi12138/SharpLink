@@ -1,0 +1,57 @@
+name: Issue 739 DEV net11 bounded allocation stacks
+on:
+  push:
+    branches: ['validation/issue739-dev-net11-trace-20261010']
+    paths: ['eng/validation/issue739/**', '.github/workflows/issue739-dev-net11-trace.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  ISSUE739_SOURCE_SHA: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_TieredPGO: '1'
+  DOTNET_TieredCompilation: '1'
+  DOTNET_gcServer: '0'
+jobs:
+  paired-traces:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: |
+            10.0.112
+            11.0.100-rc.1.26425.128
+      - name: Verify unchanged dev and install pinned collector
+        run: |
+          test -z "$(git diff "$ISSUE739_SOURCE_SHA" -- src Directory.Build.props Directory.Packages.props global.json)"
+          dotnet tool install dotnet-trace --tool-path "$RUNNER_TEMP/issue739-trace-tools" --version 9.0.661903 --allow-roll-forward
+      - name: Validate lowering and run bounded paired trace plan
+        shell: bash
+        run: |
+          mapfile -t trace_dlls < <(find "$RUNNER_TEMP/issue739-trace-tools/.store/dotnet-trace/9.0.661903" -path '*/tools/net8.0/any/dotnet-trace.dll' -type f)
+          test "${#trace_dlls[@]}" = 1
+          python3 eng/validation/issue739/net11_trace/run.py --trace-tool-dll "${trace_dlls[0]}" --output artifacts/issue739/dev-net11-trace
+      - name: Preserve raw captures and allocation ticks
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-net11-traces-${{ github.sha }}
+          path: |
+            artifacts/issue739/dev-net11-trace/*.nettrace
+            artifacts/issue739/dev-net11-trace/*.ticks.jsonl
+          if-no-files-found: warn
+      - name: Preserve identities binaries summaries and failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue739-dev-net11-trace-proof-${{ github.sha }}
+          path: |
+            artifacts/issue739/dev-net11-trace
+            !artifacts/issue739/dev-net11-trace/work/**
+            !artifacts/issue739/dev-net11-trace/*.nettrace
+            !artifacts/issue739/dev-net11-trace/*.ticks.jsonl
+          if-no-files-found: error
