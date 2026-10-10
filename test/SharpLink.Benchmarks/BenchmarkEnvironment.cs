@@ -99,7 +99,8 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         Action<SharpLinkRuntimeOptions>? configureClientRuntime = null,
         Action<ISharpLinkServer>? configureBuiltServer = null,
         Action<ISharpLinkClient>? configureBuiltClient = null,
-        bool observeServerReadWaits = false)
+        bool observeServerReadWaits = false,
+        Func<string, SharpClientBuilder>? createClientBuilder = null)
     {
         var name = $"sharplink-allocation-{Guid.NewGuid():N}";
         var localService = new BenchmarkRpcService();
@@ -125,7 +126,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             }
         }, CancellationToken.None);
 
-        var clientBuilder = SharpClientBuilder.Create()
+        var clientBuilder = createClientBuilder?.Invoke(name) ?? SharpClientBuilder.Create()
             .UseSharedMemory(name)
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
         clientBuilder.DisableRequestTimeout();

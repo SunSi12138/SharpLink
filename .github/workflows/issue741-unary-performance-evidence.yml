@@ -1,0 +1,184 @@
+name: Issue 741 Unary Logical Lifetime A/B
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'src/SharpLink.Client/PendingRequestTable*.cs'
+      - 'src/SharpLink.Client/SharpLinkClient.Invokers.cs'
+      - 'src/SharpLink.Client/SharpLinkClient.LogicalScope.cs'
+      - 'test/SharpLink.Benchmarks/Issue741RpcEvidenceRunner.cs'
+      - 'eng/perf/issue741-summarize.py'
+      - '.github/workflows/issue741-unary-performance-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unary-ab:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [jit, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      MODE: ${{ matrix.mode }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup .NET CI
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record provenance and pin identical benchmark harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ISSUE741_ROOT=$GITHUB_WORKSPACE/artifacts/perf/issue741-$MODE" >> "$GITHUB_ENV"
+          echo "BASE_WORKTREE=$RUNNER_TEMP/issue741-base-$MODE" >> "$GITHUB_ENV"
+          mkdir -p "artifacts/perf/issue741-$MODE/raw" "artifacts/perf/issue741-$MODE/builds"
+          printf '%s\n' "$BASE_SHA" > "artifacts/perf/issue741-$MODE/base.txt"
+          printf '%s\n' "$HEAD_SHA" > "artifacts/perf/issue741-$MODE/candidate.txt"
+          dotnet --info > "artifacts/perf/issue741-$MODE/dotnet-info.txt"
+          lscpu > "artifacts/perf/issue741-$MODE/cpu.txt"
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue741-base-$MODE" "$BASE_SHA"
+          for file in Program.cs BenchmarkEnvironment.cs Issue741RpcEvidenceRunner.cs; do
+            cp "test/SharpLink.Benchmarks/$file" "$RUNNER_TEMP/issue741-base-$MODE/test/SharpLink.Benchmarks/$file"
+            cmp "test/SharpLink.Benchmarks/$file" "$RUNNER_TEMP/issue741-base-$MODE/test/SharpLink.Benchmarks/$file"
+          done
+
+      - name: Build exact base and candidate from identical harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for revision in base candidate; do
+            if [[ "$revision" == "base" ]]; then
+              source="$BASE_WORKTREE"
+            else
+              source="$GITHUB_WORKSPACE"
+            fi
+            project="$source/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            if [[ "$MODE" == "native" ]]; then
+              dotnet publish "$project" -c Release -r linux-x64 -p:PublishAot=true --self-contained true \
+                -o "$ISSUE741_ROOT/builds/native-$revision" -v minimal \
+                > "$ISSUE741_ROOT/build-$revision.log" 2>&1 || {
+                  cat "$ISSUE741_ROOT/build-$revision.log"
+                  exit 1
+                }
+            else
+              dotnet build "$project" -c Release -v minimal \
+                > "$ISSUE741_ROOT/build-$revision.log" 2>&1 || {
+                  cat "$ISSUE741_ROOT/build-$revision.log"
+                  exit 1
+                }
+            fi
+          done
+
+      - name: Run balanced equal-work A/B and candidate A/A
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$MODE" == "jit" ]]; then
+            reps=6
+            cat > "$ISSUE741_ROOT/cases.txt" <<'CASES'
+          tcp plain 1
+          tcp plain 32
+          tcp plain 128
+          sharedmemory plain 32
+          sharedmemory plain 128
+          tcp retry-first 32
+          tcp retry-first 128
+          tcp retry-once 32
+          tcp retry-once 128
+          tcp retry-backoff 32
+          tcp retry-exhausted 32
+          sharedmemory retry-first 32
+          sharedmemory retry-once 32
+          CASES
+          else
+            reps=4
+            cat > "$ISSUE741_ROOT/cases.txt" <<'CASES'
+          tcp plain 1
+          tcp plain 128
+          sharedmemory plain 128
+          tcp retry-first 128
+          tcp retry-once 32
+          tcp retry-backoff 32
+          tcp retry-exhausted 32
+          sharedmemory retry-once 32
+          CASES
+          fi
+
+          run_case() {
+            local revision="$1" transport="$2" scenario="$3" concurrency="$4" rep="$5"
+            local executable sha output source
+            if [[ "$revision" == "base" ]]; then
+              source="$BASE_WORKTREE"
+              sha="$BASE_SHA"
+            else
+              source="$GITHUB_WORKSPACE"
+              sha="$HEAD_SHA"
+            fi
+            # Prefer unambiguous variable boundaries over shell concatenation.
+            output="$ISSUE741_ROOT/raw/$transport""__""$scenario""__c""$concurrency""__""$revision""__r""$rep.json"
+            if [[ "$MODE" == "jit" ]]; then
+              executable="$source/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"
+              SHARPLINK_BENCHMARK_SHA="$sha" SHARPLINK_BENCHMARK_MODE="$MODE" \
+                dotnet "$executable" --issue741-rpc-evidence "$scenario" "$transport" "$concurrency" 250 950 "$output"
+            else
+              if [[ "$revision" == "base" ]]; then
+                executable="$ISSUE741_ROOT/builds/native-base/SharpLink.Benchmarks"
+              else
+                executable="$ISSUE741_ROOT/builds/native-candidate/SharpLink.Benchmarks"
+              fi
+              SHARPLINK_BENCHMARK_SHA="$sha" SHARPLINK_BENCHMARK_MODE="$MODE" \
+                "$executable" --issue741-rpc-evidence "$scenario" "$transport" "$concurrency" 250 950 "$output"
+            fi
+          }
+
+          for ((rep=0; rep<reps; rep++)); do
+            if (( rep % 2 == 0 )); then order="base candidate"; else order="candidate base"; fi
+            while read -r transport scenario concurrency; do
+              for revision in $order; do
+                run_case "$revision" "$transport" "$scenario" "$concurrency" "$rep"
+              done
+            done < "$ISSUE741_ROOT/cases.txt"
+          done
+          for rep in 0 1 2; do
+            while read -r transport scenario concurrency; do
+              run_case aa0 "$transport" "$scenario" "$concurrency" "$rep"
+              run_case aa1 "$transport" "$scenario" "$concurrency" "$rep"
+            done <<'AA'
+          tcp plain 32
+          tcp retry-once 32
+          AA
+          done
+
+      - name: Validate, summarize and surface paired metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/perf/issue741-summarize.py "$ISSUE741_ROOT" "$MODE" "$BASE_SHA" "$HEAD_SHA"
+          cat "$ISSUE741_ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw A/B and A/A evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue741-unary-ab-${{ matrix.mode }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/perf/issue741-${{ matrix.mode }}/raw/*.json
+            artifacts/perf/issue741-${{ matrix.mode }}/summary.md
+            artifacts/perf/issue741-${{ matrix.mode }}/paired.json
+            artifacts/perf/issue741-${{ matrix.mode }}/*.txt
+            artifacts/perf/issue741-${{ matrix.mode }}/*.log
+          if-no-files-found: warn
+          retention-days: 30
