@@ -3,9 +3,11 @@ Running tests from /home/runner/work/SharpLink/SharpLink/test/SharpLink.Generato
 
 [[32m+0[m/[31mx0[m/[33m?0[m] SharpLink.Generator.Tests.dll (net10.0|x64)(2s)
 
-[[32m+107[m/[31mx0[m/[33m?0[m] SharpLink.Generator.Tests.dll (net10.0|x64)(5s)
+[[32m+0[m/[31mx0[m/[33m?0[m] SharpLink.Generator.Tests.dll (net10.0|x64)(5s)
 
-[m/home/runner/work/SharpLink/SharpLink/test/SharpLink.Generator.Tests/bin/Release/net10.0/SharpLink.Generator.Tests.dll (net10.0|x64) [32mpassed[m [90m(8s 701ms)[m
+[[32m+0[m/[31mx0[m/[33m?0[m] SharpLink.Generator.Tests.dll (net10.0|x64)(8s)
+
+[m/home/runner/work/SharpLink/SharpLink/test/SharpLink.Generator.Tests/bin/Release/net10.0/SharpLink.Generator.Tests.dll (net10.0|x64) [32mpassed[m [90m(11s 146ms)[m
 
   In process file artifacts produced:
     - /home/runner/work/SharpLink/SharpLink/test/SharpLink.Generator.Tests/bin/Release/net10.0/TestResults/SharpLink.Generator.Tests-linux-net10.0-report.html
@@ -15,4 +17,4 @@ Running tests from /home/runner/work/SharpLink/SharpLink/test/SharpLink.Generato
   failed: 0
 [32m  succeeded: 269
 [m  skipped: 0
-  duration: 8s 911ms
+  duration: 11s 413ms

@@ -1,71 +1,71 @@
-  SharpLink.Maintainability -> /home/runner/work/SharpLink/SharpLink/eng/SharpLink.Maintainability/bin/Release/net10.0/SharpLink.Maintainability.dll
   SharpLink.Abstractions -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Abstractions/bin/Release/net10.0/SharpLink.Abstractions.dll
+  SharpLink.Maintainability -> /home/runner/work/SharpLink/SharpLink/eng/SharpLink.Maintainability/bin/Release/net10.0/SharpLink.Maintainability.dll
   SharpLink.AotExternalPayloads -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotExternalPayloads/bin/Release/net10.0/SharpLink.AotExternalPayloads.dll
   SharpLink.GeneratedAssemblyScanner -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.GeneratedAssemblyScanner/bin/Release/net10.0/SharpLink.GeneratedAssemblyScanner.dll
-  SharpLink.Generator -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll
-  SharpLink.Serializer.SharpPack -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Serializer.SharpPack/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll
+  SharpLink.ReferencedCodecProvider -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecProvider/bin/Release/net10.0/SharpLink.ReferencedCodecProvider.dll
+  SharpLink.ReferencedCodecConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecConsumer/bin/Release/net10.0/SharpLink.ReferencedCodecConsumer.dll
   SharpLink.RollbackPlugin -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.RollbackPlugin/bin/Release/net10.0/SharpLink.RollbackPlugin.dll
+  SharpLink.ModuleDependencyConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ModuleDependencyConsumer/bin/Release/net10.0/SharpLink.ModuleDependencyConsumer.dll
+  SharpLink.Generator -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll
   SharpLink.Runtime -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll
+  SharpLink.Serializer.SharpPack -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Serializer.SharpPack/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll
+  SharpLink.Compression.Zstd -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Compression.Zstd/bin/Release/net10.0/SharpLink.Compression.Zstd.dll
+  SharpLink.CodecCompatibility -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.CodecCompatibility/bin/Release/net10.0/SharpLink.CodecCompatibility.dll
+  SharpLink.Sdk -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Sdk/bin/Release/net10.0/SharpLink.Sdk.dll
   SharpLink.Server -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Server/bin/Release/net10.0/SharpLink.Server.dll
   SharpLink.Client -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Client/bin/Release/net10.0/SharpLink.Client.dll
-  SharpLink.Sdk -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Sdk/bin/Release/net10.0/SharpLink.Sdk.dll
-  SharpLink.ReferencedCodecProvider -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecProvider/bin/Release/net10.0/SharpLink.ReferencedCodecProvider.dll
-  SharpLink.Hosting -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Hosting/bin/Release/net10.0/SharpLink.Hosting.dll
-  SharpLink.CodecCompatibility -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.CodecCompatibility/bin/Release/net10.0/SharpLink.CodecCompatibility.dll
-  SharpLink.Compression.Zstd -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Compression.Zstd/bin/Release/net10.0/SharpLink.Compression.Zstd.dll
-  SharpLink.LoadTestBase -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.LoadTestBase/bin/Release/net10.0/SharpLink.LoadTestBase.dll
   SharpLink.Generator.Tests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.Generator.Tests/bin/Release/net10.0/SharpLink.Generator.Tests.dll
+  QuickStart.Contracts -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Contracts/bin/Release/net10.0/QuickStart.Contracts.dll
+  MultiCluster.Orders.Contracts -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster.Orders.Contracts/bin/Release/net10.0/MultiCluster.Orders.Contracts.dll
+  SharpLink.AotContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotContracts/bin/Release/net10.0/SharpLink.AotContracts.dll
   SharpLink.DynamicContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.DynamicContracts/bin/Release/net10.0/SharpLink.DynamicPlugin.Contracts.dll
-  HostApplication -> /home/runner/work/SharpLink/SharpLink/demo/HostApplication/bin/Release/net10.0/HostApplication.dll
-  SharpLink.ChaosTests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ChaosTests/bin/Release/net10.0/SharpLink.ChaosTests.dll
+  SeparatedContracts -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedContracts/bin/Release/net10.0/SeparatedContracts.dll
+  SharpLink.ReplacementContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReplacementContracts/bin/Release/net10.0/SharpLink.DynamicPlugin.Contracts.dll
+  QuickStart.Server -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Server/bin/Release/net10.0/QuickStart.Server.dll
+  SharpLink.DynamicServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.DynamicServices/bin/Release/net10.0/SharpLink.DynamicPlugin.Services.dll
+  ProductionTemplate.Contracts -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Contracts/bin/Release/net10.0/ProductionTemplate.Contracts.dll
   MultiCluster.Payments.Contracts -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster.Payments.Contracts/bin/Release/net10.0/MultiCluster.Payments.Contracts.dll
   DemoBase -> /home/runner/work/SharpLink/SharpLink/demo/DemoBase/bin/Release/net10.0/DemoBase.dll
   SharpLink.PreCreditAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.PreCreditAotSmoke/bin/Release/net10.0/SharpLink.PreCreditAotSmoke.dll
-  QuickStart.Contracts -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Contracts/bin/Release/net10.0/QuickStart.Contracts.dll
-  MultiCluster.Orders.Contracts -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster.Orders.Contracts/bin/Release/net10.0/MultiCluster.Orders.Contracts.dll
-  ProductionTemplate.Contracts -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Contracts/bin/Release/net10.0/ProductionTemplate.Contracts.dll
-  SharpLink.MultiClusterTest.Contracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.MultiClusterTest.Contracts/bin/Debug/net10.0/SharpLink.MultiClusterTest.Contracts.dll
-  Cancel -> /home/runner/work/SharpLink/SharpLink/demo/Cancel/bin/Release/net10.0/Cancel.dll
-  Timeout -> /home/runner/work/SharpLink/SharpLink/demo/Timeout/bin/Release/net10.0/Timeout.dll
-  SharpLink.StreamLoadTest -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.StreamLoadTest/bin/Release/net10.0/SharpLink.StreamLoadTest.dll
-  Resilience -> /home/runner/work/SharpLink/SharpLink/demo/Resilience/bin/Release/net10.0/Resilience.dll
-  ProductionTemplate.Client -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Client/bin/Release/net10.0/ProductionTemplate.Client.dll
-  HelloWorld -> /home/runner/work/SharpLink/SharpLink/demo/HelloWorld/bin/Release/net10.0/HelloWorld.dll
   InterceptorsTelemetry -> /home/runner/work/SharpLink/SharpLink/demo/InterceptorsTelemetry/bin/Release/net10.0/InterceptorsTelemetry.dll
-  QuickStart.Server -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Server/bin/Release/net10.0/QuickStart.Server.dll
-  ProductionTemplate.Server -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Server/bin/Release/net10.0/ProductionTemplate.Server.dll
-  AdmissionControl -> /home/runner/work/SharpLink/SharpLink/demo/AdmissionControl/bin/Release/net10.0/AdmissionControl.dll
-  Log -> /home/runner/work/SharpLink/SharpLink/demo/Log/bin/Release/net10.0/Log.dll
+  Resilience -> /home/runner/work/SharpLink/SharpLink/demo/Resilience/bin/Release/net10.0/Resilience.dll
   Streaming -> /home/runner/work/SharpLink/SharpLink/demo/Streaming/bin/Release/net10.0/Streaming.dll
-  Oneway -> /home/runner/work/SharpLink/SharpLink/demo/Oneway/bin/Release/net10.0/Oneway.dll
-  QuickStart.Client -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Client/bin/Release/net10.0/QuickStart.Client.dll
-  SharpLink.ReplacementContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReplacementContracts/bin/Release/net10.0/SharpLink.DynamicPlugin.Contracts.dll
-  SharpLink.AotContracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotContracts/bin/Release/net10.0/SharpLink.AotContracts.dll
-  SeparatedContracts -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedContracts/bin/Release/net10.0/SeparatedContracts.dll
-  SharpLink.StaticCodecOwnerTest.Contracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.StaticCodecOwnerTest.Contracts/bin/Debug/net10.0/SharpLink.StaticCodecOwnerTest.Contracts.dll
-  Security -> /home/runner/work/SharpLink/SharpLink/demo/Security/bin/Release/net10.0/Security.dll
-  SharpLink.AotServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotServices/bin/Release/net10.0/SharpLink.AotServices.dll
-  SeparatedClient -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedClient/bin/Release/net10.0/SeparatedClient.dll
-  SeparatedServer -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedServer/bin/Release/net10.0/SeparatedServer.dll
   TransportMatrix -> /home/runner/work/SharpLink/SharpLink/demo/TransportMatrix/bin/Release/net10.0/TransportMatrix.dll
-  SharpLink.ReplacementServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReplacementServices/bin/Release/net10.0/SharpLink.DynamicPlugin.Services.dll
+  SeparatedClient -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedClient/bin/Release/net10.0/SeparatedClient.dll
+  SharpLink.LoadTestBase -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.LoadTestBase/bin/Release/net10.0/SharpLink.LoadTestBase.dll
+  SharpLink.ChaosTests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ChaosTests/bin/Release/net10.0/SharpLink.ChaosTests.dll
+  Cancel -> /home/runner/work/SharpLink/SharpLink/demo/Cancel/bin/Release/net10.0/Cancel.dll
+  AdmissionControl -> /home/runner/work/SharpLink/SharpLink/demo/AdmissionControl/bin/Release/net10.0/AdmissionControl.dll
+  HelloWorld -> /home/runner/work/SharpLink/SharpLink/demo/HelloWorld/bin/Release/net10.0/HelloWorld.dll
+  SharpLink.Hosting -> /home/runner/work/SharpLink/SharpLink/src/SharpLink.Hosting/bin/Release/net10.0/SharpLink.Hosting.dll
   Compression -> /home/runner/work/SharpLink/SharpLink/demo/Compression/bin/Release/net10.0/Compression.dll
-  SharpLink.AotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotSmoke/bin/Release/net10.0/SharpLink.AotSmoke.dll
-  SharpLink.ZstdAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ZstdAotSmoke/bin/Release/net10.0/SharpLink.ZstdAotSmoke.dll
-  SharpLink.LoadTest -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.LoadTest/bin/Release/net10.0/SharpLink.LoadTest.dll
+  QuickStart.Client -> /home/runner/work/SharpLink/SharpLink/samples/QuickStart.Client/bin/Release/net10.0/QuickStart.Client.dll
+  SeparatedServer -> /home/runner/work/SharpLink/SharpLink/demo/SeparatedServer/bin/Release/net10.0/SeparatedServer.dll
+  Timeout -> /home/runner/work/SharpLink/SharpLink/demo/Timeout/bin/Release/net10.0/Timeout.dll
+  Security -> /home/runner/work/SharpLink/SharpLink/demo/Security/bin/Release/net10.0/Security.dll
+  Oneway -> /home/runner/work/SharpLink/SharpLink/demo/Oneway/bin/Release/net10.0/Oneway.dll
+  Log -> /home/runner/work/SharpLink/SharpLink/demo/Log/bin/Release/net10.0/Log.dll
+  SharpLink.MultiClusterTest.Contracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.MultiClusterTest.Contracts/bin/Debug/net10.0/SharpLink.MultiClusterTest.Contracts.dll
   MultiCluster -> /home/runner/work/SharpLink/SharpLink/demo/MultiCluster/bin/Release/net10.0/MultiCluster.dll
+  SharpLink.StaticCodecOwnerTest.Contracts -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.StaticCodecOwnerTest.Contracts/bin/Debug/net10.0/SharpLink.StaticCodecOwnerTest.Contracts.dll
+  SharpLink.ZstdAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ZstdAotSmoke/bin/Release/net10.0/SharpLink.ZstdAotSmoke.dll
+  HostApplication -> /home/runner/work/SharpLink/SharpLink/demo/HostApplication/bin/Release/net10.0/HostApplication.dll
+  SharpLink.SharpPackAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.SharpPackAotSmoke/bin/Release/net10.0/SharpLink.SharpPackAotSmoke.dll
+  SharpLink.LoadTest -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.LoadTest/bin/Release/net10.0/SharpLink.LoadTest.dll
+  SharpLink.StreamLoadTest -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.StreamLoadTest/bin/Release/net10.0/SharpLink.StreamLoadTest.dll
   SharpLink.StreamLoadTest.Tests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.StreamLoadTest.Tests/bin/Release/net10.0/SharpLink.StreamLoadTest.Tests.dll
   SharpLink.LoadTest.Tests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.LoadTest.Tests/bin/Release/net10.0/SharpLink.LoadTest.Tests.dll
-  SharpLink.ModuleDependencyConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ModuleDependencyConsumer/bin/Release/net10.0/SharpLink.ModuleDependencyConsumer.dll
-  SharpLink.SharpPackAotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.SharpPackAotSmoke/bin/Release/net10.0/SharpLink.SharpPackAotSmoke.dll
-  SharpLink.DynamicServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.DynamicServices/bin/Release/net10.0/SharpLink.DynamicPlugin.Services.dll
-  SharpLink.UnitTests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll
-  SharpLink.ReferencedCodecConsumer -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReferencedCodecConsumer/bin/Release/net10.0/SharpLink.ReferencedCodecConsumer.dll
   SharpLink.Benchmarks -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll
+  SharpLink.UnitTests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll
+  ProductionTemplate.Server -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Server/bin/Release/net10.0/ProductionTemplate.Server.dll
+  ProductionTemplate.Client -> /home/runner/work/SharpLink/SharpLink/samples/ProductionTemplate.Client/bin/Release/net10.0/ProductionTemplate.Client.dll
+  SharpLink.AotServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotServices/bin/Release/net10.0/SharpLink.AotServices.dll
+  SharpLink.ReplacementServices -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.ReplacementServices/bin/Release/net10.0/SharpLink.DynamicPlugin.Services.dll
+  SharpLink.AotSmoke -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.AotSmoke/bin/Release/net10.0/SharpLink.AotSmoke.dll
   SharpLink.IntegrationTests -> /home/runner/work/SharpLink/SharpLink/test/SharpLink.IntegrationTests/bin/Release/net10.0/SharpLink.IntegrationTests.dll
 
 Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:37.21
+Time Elapsed 00:00:52.12

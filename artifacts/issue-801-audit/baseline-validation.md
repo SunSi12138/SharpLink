@@ -1,8 +1,8 @@
 # Issue 801 — removed versus pristine baseline
 
 - Removal compile outcome: success
-- Removal unit outcome: failure
-- Removal unit retry: failure
+- Removal unit outcome: success
+- Removal unit retry: skipped
 - Removal generator outcome: success
 - Pristine build outcome: success
 - Pristine unit outcome: success

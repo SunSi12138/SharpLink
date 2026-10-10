@@ -1,9 +1,9 @@
 # Issue #801 — dev full-solution symbol reference index
 
 Dev base: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
-Audit head: ceae464cbd7de2457df6504e99f621e36a9b960c
+Audit head: 1c7bc6d1da8498f494c2d91f4e30a4b68b3070f4
 Projects 65; source docs 1383; generated docs 945
-Production source files indexed: 476/476; declarations: 8853; matched references: 111567; elapsed seconds: 76
+Production source files indexed: 476/476; declarations: 8853; matched references: 111567; elapsed seconds: 102
 **Caution:** A/B/C are review candidates, NOT proof of dead code. This scans direct semantic references, not whole-program reachability, reflection, DI or external consumers.
 
 ## Tier counts
@@ -37,7 +37,6 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Client.GeneratedClusterRouteSnapshot.FromManifests(System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.ISharpLinkGeneratedClusterRouteManifest>) | src/SharpLink.Client/GeneratedClusterRouteSource.cs:93 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.PendingRequestTable.RentAsync<T>(SharpLink.Abstractions.IRpcCodec<T>, bool, SharpLink.Abstractions.RpcDeadline, System.Threading.CancellationToken) | src/SharpLink.Client/PendingRequestTable.cs:177 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.RpcRequestOperation<T>.Initialize(long, SharpLink.Abstractions.IRpcCodecProvider) | src/SharpLink.Client/RpcRequestOperation.cs:33 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Client.SharpLinkClient.AttemptOutcomeState.ShouldHonorAdmissionRetryAfter | src/SharpLink.Client/SharpLinkClient.Attempts.cs:33 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.SharpLinkClient.CreateAuthenticationRejectedException(string) | src/SharpLink.Client/SharpLinkClient.cs:273 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.SharpLinkClient.LogClientDisconnected(Microsoft.Extensions.Logging.ILogger) | src/SharpLink.Client/SharpLinkClient.Log.cs:37 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.SharpLinkClient.SendRpcCall(SharpLink.Runtime.RpcSession, long, long, long, SharpLink.Abstractions.ProtocolV2FrameFlags, System.Action<System.Buffers.IBufferWriter<byte>>?, SharpLink.Abstractions.RpcDeadline, SharpLink.Sdk.SharpLinkMetadata?) | src/SharpLink.Client/SharpLinkClient.RpcChannel.cs:5 | 0 | 0 | 0 | 0 | 0 | - |
@@ -130,14 +129,15 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Server.ServerDecodedBytesPermit.DecodedBytes | src/SharpLink.Server/ServerResourceGovernor.cs:390 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.ServerDecodePermit.DecodedBytesOwned | src/SharpLink.Server/ServerResourceGovernor.cs:432 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.ServerServiceModuleRegistry.DynamicModuleTable.Keys | src/SharpLink.Server/ServerServiceModuleRegistry.cs:75 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Server.ServerServiceModuleRegistry.UnregisterOperationTable.Count | src/SharpLink.Server/ServerServiceModuleRegistry.cs:112 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Server.ServerServiceModuleRegistry.DetachedModuleServiceTable.Count | src/SharpLink.Server/ServerServiceModuleRegistry.cs:144 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkServer.TryReserveCall(SharpLink.Server.ServerConnectionState, SharpLink.Server.ServerRequestPermitTestHooks?, out SharpLink.Server.ServerRequestPermit?) | src/SharpLink.Server/SharpLinkServer.CallPermit.cs:10 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkServer.FrameworkTaskSnapshotForDiagnostics | src/SharpLink.Server/SharpLinkServer.cs:298 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkServer.ForceStop() | src/SharpLink.Server/SharpLinkServer.cs:329 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkServer.DecodeQueueReservationsForDiagnostics | src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs:76 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkServer.DecodeScheduledConnectionCountForDiagnostics | src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs:79 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkServer.DecodeSkippedBeforeStartForDiagnostics | src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs:82 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Server.SharpLinkServer.DecodeStartedWorkCountForDiagnostics | src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs:85 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Server.SharpLinkServer.DecodeAcceptingForDiagnostics | src/SharpLink.Server/SharpLinkServer.DecodeExecutor.cs:88 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Server.SharpLinkServer.ObserveUserCall(System.Threading.Tasks.ValueTask, long) | src/SharpLink.Server/SharpLinkServer.RequestLoop.cs:461 | 0 | 0 | 0 | 0 | 0 | - |
 
 ## B-ONLY-TEST-BENCH-EXAMPLE (first 120)
 | Symbol | Source | Production | Generated | Tests | Benchmarks | Examples | Safety root |
@@ -234,7 +234,6 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Runtime.SharedMemoryPipeReader.HasPendingDataWait | src/SharpLink.Runtime/Transport/SharedMemoryPipelines.cs:24 | 0 | 0 | 0 | 1 | 0 | - |
 | SharpLink.Runtime.ReadOwnershipPipeReader.CompletionRequested | src/SharpLink.Runtime/Transport/TransportConnection.cs:112 | 0 | 0 | 3 | 0 | 0 | - |
 | SharpLink.Serializer.SharpPack.SharpPackRpcCodec<T>.Context | src/SharpLink.Serializer.SharpPack/SharpPackRpcCodec.cs:146 | 0 | 0 | 5 | 0 | 0 | - |
-| SharpLink.Server.ResizableConcurrencyState.ActiveCount | src/SharpLink.Server/Admission/AdmissionLimiterState.cs:42 | 0 | 0 | 31 | 0 | 0 | - |
 | SharpLink.Server.ResizableConcurrencyState.WaitingCount | src/SharpLink.Server/Admission/AdmissionLimiterState.cs:51 | 0 | 0 | 17 | 0 | 0 | - |
 | SharpLink.Server.AdmissionRateState.WaitingCount | src/SharpLink.Server/Admission/AdmissionLimiterState.cs:563 | 0 | 0 | 13 | 0 | 0 | - |
 | SharpLink.Server.AdmissionRateState.TransitionDebtForDiagnostics | src/SharpLink.Server/Admission/AdmissionLimiterState.cs:565 | 0 | 0 | 5 | 0 | 0 | - |
@@ -262,6 +261,7 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Server.ServerConnectionAdmission.ActiveConnections | src/SharpLink.Server/Admission/ServerConnectionAdmission.cs:41 | 0 | 0 | 47 | 0 | 0 | - |
 | SharpLink.Server.ServerConnectionAdmission.ActiveHandshakes | src/SharpLink.Server/Admission/ServerConnectionAdmission.cs:43 | 0 | 0 | 39 | 0 | 0 | - |
 | SharpLink.Server.SharpLinkAdmissionController.GlobalStateForTests | src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs:338 | 0 | 0 | 14 | 0 | 0 | - |
+| SharpLink.Server.SharpLinkAdmissionController.ContractStateForTests(long) | src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs:340 | 0 | 0 | 2 | 0 | 0 | - |
 
 ## C-PUBLIC-API-REVIEW (first 120)
 | Symbol | Source | Production | Generated | Tests | Benchmarks | Examples | Safety root |
@@ -311,7 +311,6 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Abstractions.RpcInvocationExtensions.AsVoid<T>(System.Threading.Tasks.ValueTask<T>) | src/SharpLink.Abstractions/RpcInvocationExtensions.cs:7 | 0 | 0 | 29 | 4 | 1 | - |
 | SharpLink.Sdk.RpcCodecAttribute | src/SharpLink.Abstractions/Sdk/RpcCodecAttribute.cs:4 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Sdk.RpcCodecSemanticIdentityAttribute | src/SharpLink.Abstractions/Sdk/RpcCodecSemanticIdentityAttribute.cs:10 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Sdk.RpcServiceAttribute.Lifetime | src/SharpLink.Abstractions/Sdk/RpcServiceAttribute.cs:12 | 0 | 0 | 5 | 0 | 0 | - |
 | SharpLink.Sdk.SharpLinkRpcContractsAttribute.ContractTypes | src/SharpLink.Abstractions/Sdk/SharpLinkRpcContractsAttribute.cs:9 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkAuthenticationContext.GetClaim(string) | src/SharpLink.Abstractions/SharpLinkAuthenticationContext.cs:73 | 0 | 0 | 2 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkAuthenticationResult.Authenticate(SharpLink.Abstractions.SharpLinkAuthenticationContext) | src/SharpLink.Abstractions/SharpLinkAuthenticationResult.cs:20 | 0 | 0 | 7 | 0 | 1 | - |
@@ -323,7 +322,6 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Abstractions.SharpLinkAuthorization.RequireScope(string, string?) | src/SharpLink.Abstractions/SharpLinkAuthorization.cs:42 | 0 | 0 | 2 | 0 | 1 | - |
 | SharpLink.Abstractions.SharpLinkAuthorization.RequireTenant(string, string?) | src/SharpLink.Abstractions/SharpLinkAuthorization.cs:59 | 0 | 0 | 2 | 0 | 1 | - |
 | SharpLink.Abstractions.SharpLinkClusterKey.implicit operator SharpLink.Abstractions.SharpLinkClusterKey(string) | src/SharpLink.Abstractions/SharpLinkClusterKey.cs:43 | 0 | 0 | 0 | 0 | 0 | - |
-| SharpLink.Abstractions.SharpLinkEndpointSelectionContext.Count | src/SharpLink.Abstractions/SharpLinkEndpoints.cs:174 | 0 | 0 | 11 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkEndpointSelectionContext.this[int] | src/SharpLink.Abstractions/SharpLinkEndpoints.cs:182 | 0 | 0 | 4 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkEndpointCandidate.ReadyConnectionCount | src/SharpLink.Abstractions/SharpLinkEndpoints.cs:235 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Abstractions.SharpLinkEndpointCandidate.ActiveCallCount | src/SharpLink.Abstractions/SharpLinkEndpoints.cs:238 | 0 | 0 | 0 | 0 | 0 | - |
@@ -386,3 +384,5 @@ Production source files indexed: 476/476; declarations: 8853; matched references
 | SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateRetryPolicy(SharpLink.Abstractions.ISharpLinkClient, SharpLink.Abstractions.ISharpLinkRetryPolicy, SharpLink.Abstractions.ISharpLinkRetryOptions) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:50 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryDisableRetry(SharpLink.Abstractions.ISharpLinkClient) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:59 | 0 | 0 | 0 | 0 | 0 | - |
 | SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateHeartbeat(SharpLink.Abstractions.ISharpLinkClient, System.TimeSpan, System.TimeSpan) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:65 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateHeartbeatInterval(SharpLink.Abstractions.ISharpLinkClient, System.TimeSpan) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:74 | 0 | 0 | 0 | 0 | 0 | - |
+| SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions.TryUpdateHeartbeatTimeout(SharpLink.Abstractions.ISharpLinkClient, System.TimeSpan) | src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:82 | 0 | 0 | 0 | 0 | 0 | - |

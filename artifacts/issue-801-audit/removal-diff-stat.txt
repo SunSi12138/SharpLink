@@ -27,7 +27,6 @@
  src/SharpLink.Server/Admission/AdmissionProgram.cs |   6 +-
  .../Admission/SharpLinkAdmissionController.cs      |  30 +---
  src/SharpLink.Server/SharpLinkServer.CallPermit.cs |   6 +-
- .../SharpLinkServer.LifecycleAliases.cs            |   3 +-
  .../SharpLinkServer.RequestLoop.cs                 |   3 +-
  src/SharpLink.Server/SharpLinkServer.cs            |   2 +-
- 32 files changed, 46 insertions(+), 891 deletions(-)
+ 31 files changed, 45 insertions(+), 889 deletions(-)

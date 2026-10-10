@@ -1,8 +1,8 @@
 {
   "BaselineSha": "eb99fe887cf2129d9b88441245ca0a4a6406b6c2",
   "Mode": "Ephemeral removal; skip linked SharpLink.Shared multi-assembly sources and remove attached XML docs; never push modified src",
-  "Requested": 47,
-  "Removed": 46,
+  "Requested": 46,
+  "Removed": 45,
   "Skipped": 1,
   "RemovedSymbols": [
     {
@@ -224,11 +224,6 @@
       "Path": "src/SharpLink.Server/SharpLinkServer.cs",
       "Line": 329,
       "Signature": "SharpLink.Server.SharpLinkServer.ForceStop()"
-    },
-    {
-      "Path": "src/SharpLink.Server/SharpLinkServer.LifecycleAliases.cs",
-      "Line": 14,
-      "Signature": "SharpLink.Server.SharpLinkServer.DisposeAllSessionsAsync()"
     },
     {
       "Path": "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs",
