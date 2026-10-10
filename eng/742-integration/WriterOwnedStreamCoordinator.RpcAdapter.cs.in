@@ -1,0 +1,228 @@
+using System.Collections.Concurrent;
+using System.Threading.Channels;
+
+namespace SharpLink.Runtime;
+
+// Included only by the isolated integration builder until the complete RPC gates pass.
+internal sealed partial class WriterOwnedStreamCoordinator
+{
+    private PreCreditSerializedBudget? _rpcBudget;
+    private int _rpcMaxFramePayloadBytes;
+    private bool _rpcMode;
+    private Channel<WireNotice>? _rpcWireQueue;
+    private int _rpcWirePending;
+    private int _rpcDrainPending;
+    private readonly record struct WireNotice(Stream Stream, long Generation);
+
+    internal void ConfigureRpc(PreCreditSerializedBudget budget, int maxFramePayloadBytes)
+    {
+        if (!_dynamicLifetimes || _reference is not null || _rpcMode)
+            throw new InvalidOperationException("RPC requires one fresh writer-owned authority.");
+        _rpcBudget = budget;
+        _rpcMaxFramePayloadBytes = maxFramePayloadBytes;
+        _rpcWireQueue = Channel.CreateBounded<WireNotice>(new BoundedChannelOptions(_streams.Length)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait,
+            AllowSynchronousContinuations = false
+        });
+        _rpcMode = true;
+    }
+
+    public bool MustFlushPending => Volatile.Read(ref _rpcDrainPending) != 0 || _blocked;
+
+    internal void ReleaseRpcScope(StreamHandle handle)
+    {
+        if (!ReferenceEquals(handle.Owner, this) || (uint)handle.Slot >= (uint)_streams.Length)
+            throw new InvalidOperationException("Foreign RPC scope.");
+        var stream = _streams[handle.Slot];
+        lock (stream.Gate)
+        {
+            if (stream.Generation != handle.Generation || stream.RpcScopeUsers != 1)
+                throw new InvalidOperationException("RPC scope released twice or after reuse.");
+            stream.RpcScopeUsers = 0;
+        }
+        RequestRetirement();
+    }
+
+    internal Task DrainRpcStreamAsync(StreamHandle handle)
+    {
+        var stream = _streams[handle.Slot];
+        lock (stream.Gate)
+        {
+            ValidateHandle(handle, stream);
+            _stopToken.ThrowIfCancellationRequested();
+            if (stream.AbortRequested is { } aborted) return Task.FromException(aborted);
+            if (stream.Closed) return Task.FromException(new InvalidOperationException("Stream already closed."));
+            if (stream.Frames.Count == 0 && stream.ProducerBusy == 0 && stream.Taken == stream.Released)
+                return Task.CompletedTask;
+            if (stream.RpcDrained is null)
+            {
+                stream.RpcDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                Interlocked.Increment(ref _rpcDrainPending);
+            }
+            _session.SignalReadyWriterExperiment();
+            return stream.RpcDrained.Task;
+        }
+    }
+
+    private void TryCompleteRpcDrain(Stream stream)
+    {
+        if (Volatile.Read(ref stream.RpcDrained) is null) return;
+        lock (stream.Gate)
+        {
+            if (stream.RpcDrained is null || stream.Frames.Count != 0 || stream.ProducerBusy != 0 ||
+                stream.Taken != stream.Released) return;
+            var completion = stream.RpcDrained;
+            stream.RpcDrained = null;
+            Interlocked.Decrement(ref _rpcDrainPending);
+            completion.TrySetResult();
+        }
+    }
+
+    private void FailRpcDrainLocked(Stream stream, Exception error)
+    {
+        if (stream.RpcDrained is not { } completion) return;
+        stream.RpcDrained = null;
+        Interlocked.Decrement(ref _rpcDrainPending);
+        completion.TrySetException(error);
+    }
+
+    private void ReleaseRpcBudget(int bytes)
+    {
+        if (_rpcBudget is not null) _rpcBudget.Release(bytes);
+    }
+
+    internal void CompleteRpcStream(long requestId, ushort streamId, Exception? error)
+    {
+        if (!_identities.TryGetValue(new StreamIdentity(requestId, streamId), out var stream)) return;
+        StreamHandle handle;
+        lock (stream.Gate)
+        {
+            if (stream.Retired || stream.RequestId != requestId || stream.StreamId != streamId) return;
+            handle = new StreamHandle(this, stream.Index, stream.Generation);
+        }
+        if (error is not null) SafeAbortRpcStream(handle, error);
+        else _ = ObserveRpcCloseAsync(CloseStreamAsync(handle));
+    }
+
+    private async Task ObserveRpcCloseAsync(Task<bool> close)
+    {
+        try { await close.ConfigureAwait(false); }
+        catch (OperationCanceledException) when (_stopToken.IsCancellationRequested) { }
+        catch (Exception error) { _settled.TrySetException(error); }
+    }
+
+    internal void SafeAbortRpcStream(StreamHandle handle, Exception error)
+    {
+        try { RequestStreamAbort(handle, error); }
+        catch (Exception cleanupError) { _settled.TrySetException(cleanupError); }
+    }
+
+    internal void AbortRpcRequest(long requestId, Exception error)
+    {
+        foreach (var pair in _identities)
+        {
+            if (pair.Key.RequestId != requestId) continue;
+            var stream = pair.Value;
+            StreamHandle handle;
+            lock (stream.Gate)
+            {
+                if (stream.Retired || stream.RequestId != requestId || stream.StreamId != pair.Key.StreamId) continue;
+                handle = new StreamHandle(this, stream.Index, stream.Generation);
+            }
+            SafeAbortRpcStream(handle, error);
+        }
+    }
+
+    // One queued notification per live generation bounds control memory independently of
+    // the peer's WindowUpdate frequency. No queue task is created per wire update.
+    internal void PostRpcWindowUpdate(long requestId, ushort streamId, int credit)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
+        if (_stopToken.IsCancellationRequested || Volatile.Read(ref _stopped) != 0) return;
+        if (!_identities.TryGetValue(new StreamIdentity(requestId, streamId), out var stream)) return;
+        var notify = false;
+        long generation;
+        lock (stream.Gate)
+        {
+            if (stream.Retired || stream.RequestId != requestId || stream.StreamId != streamId) return;
+            generation = stream.Generation;
+            // Any larger sum has the same result after the two independent window clamps.
+            stream.RpcPendingWireCredit = Math.Min(2L * int.MaxValue,
+                stream.RpcPendingWireCredit + credit);
+            if (!stream.RpcWirePending)
+            {
+                stream.RpcWirePending = true;
+                notify = true;
+            }
+        }
+        if (!notify) return;
+        if (!_rpcWireQueue!.Writer.TryWrite(new WireNotice(stream, generation)))
+        {
+            if (_stopToken.IsCancellationRequested || Volatile.Read(ref _stopped) != 0) return;
+            throw new InvalidOperationException("The bounded wire notification invariant was violated.");
+        }
+        Interlocked.Increment(ref _rpcWirePending);
+        _session.SignalReadyWriterExperiment();
+    }
+
+    private void DrainRpcWireUpdates()
+    {
+        var budget = 256;
+        while (budget-- > 0 && Volatile.Read(ref _rpcWirePending) != 0)
+        {
+            if (!_rpcWireQueue!.Reader.TryRead(out var notice))
+                throw new InvalidOperationException("Published wire notification has no item.");
+            Interlocked.Decrement(ref _rpcWirePending);
+            var stream = notice.Stream;
+            long credit;
+            lock (stream.Gate)
+            {
+                if (stream.Retired || stream.Generation != notice.Generation)
+                    throw new InvalidOperationException("A pending wire notification was recycled.");
+                credit = stream.RpcPendingWireCredit;
+                stream.RpcPendingWireCredit = 0;
+                stream.RpcWirePending = false;
+            }
+            ApplyRpcWireUpdate(stream, credit);
+        }
+    }
+
+    private void ApplyRpcWireUpdate(Stream stream, long credit)
+    {
+        if (credit <= 0 || !stream.WireAttached || stream.RpcAbortRefunded)
+        {
+            _ignoredWireUpdates++;
+            TryRetireStream(stream);
+            return;
+        }
+        // Advertised permission and DATA settlement remain separate, matching the
+        // original active-stream protocol. Only attributable DATA reduces Outstanding.
+        var settled = Math.Min(stream.Outstanding, credit);
+        stream.Outstanding -= settled;
+        _returned += settled;
+        _wireCreditBytesObserved += credit;
+        _excessWireCreditBytes += credit - settled;
+        stream.Credit = Math.Min(checked(stream.Credit + credit), _window);
+        _connectionCredit = Math.Min(checked(_connectionCredit + credit), _connectionWindow);
+        if (stream.Closed && stream.Credit == _window) stream.WireAttached = false;
+        _blocked = false;
+        TryRetireStream(stream);
+    }
+
+    // Owner-only. Local cancellation has already discarded prepared frames. Refund
+    // remaining permission exactly once, while retaining all writer-owned buffer pins.
+    private void RefundRpcAbort(Stream stream)
+    {
+        if (!_rpcMode || stream.RpcAbortRefunded) return;
+        _connectionCredit = Math.Min(_connectionWindow,
+            checked(_connectionCredit + (_window - stream.Credit)));
+        stream.Credit = _window;
+        stream.Outstanding = 0;
+        stream.RpcAbortRefunded = true;
+        stream.WireAttached = false;
+        _blocked = false;
+    }
+}
