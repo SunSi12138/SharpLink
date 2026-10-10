@@ -9,6 +9,78 @@ public class ReadOwnershipPipeReaderDispatchTests
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     [Test]
+    [Arguments(0, false)]
+    [Arguments(0, true)]
+    [Arguments(1, false)]
+    [Arguments(1, true)]
+    [Arguments(2, false)]
+    [Arguments(2, true)]
+    public async Task DetachedNotificationShouldPreserveStateAndRejectReregistration(int mode, bool nullState)
+    {
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publisher = new Thread(() =>
+        {
+            try
+            {
+                // Cover pending inline, pending queued, and late queued notification carriers directly.
+                var inner = new ControlledReader();
+                var reader = new ReadOwnershipPipeReader(inner) { RunContinuationsAsynchronously = mode == 1 };
+                var read = reader.ReadAsync();
+                var fields = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+                var token = (short)typeof(ReadOwnershipPipeReader).GetField("_readVersion", fields)!.GetValue(reader)!;
+                var gate = (Lock)typeof(ReadOwnershipPipeReader).GetField("_gate", fields)!.GetValue(reader)!;
+                var source = (IValueTaskSource<ReadResult>)reader;
+                object? expectedState = nullState ? null : new object();
+                var calls = 0;
+                var publishingThread = Environment.CurrentManagedThreadId;
+                if (mode == 2) inner.Publish();
+                source.OnCompleted(state =>
+                {
+                    try
+                    {
+                        Ensure(Interlocked.Increment(ref calls) == 1, "the detached callback must run exactly once");
+                        Ensure((Environment.CurrentManagedThreadId == publishingThread) == (mode == 0),
+                            "only the pending default-policy notification may run inline");
+                        Ensure(ReferenceEquals(state, expectedState), "null and non-null callback state must survive detachment");
+                        Ensure(!gate.IsHeldByCurrentThread, "detached callbacks must run outside the read gate");
+                        var rejected = false;
+                        try
+                        {
+                            source.OnCompleted(static _ => { }, null, token, ValueTaskSourceOnCompletedFlags.None);
+                        }
+                        catch (InvalidOperationException)
+                        {
+                            rejected = true;
+                        }
+                        Ensure(rejected, "detaching notification storage must not permit a second registration");
+                        var result = read.GetAwaiter().GetResult();
+                        reader.AdvanceTo(result.Buffer.End);
+                        completed.SetResult();
+                    }
+                    catch (Exception error)
+                    {
+                        completed.TrySetException(error);
+                    }
+                }, expectedState, token, ValueTaskSourceOnCompletedFlags.None);
+                if (mode != 2) inner.Publish();
+            }
+            catch (Exception error)
+            {
+                completed.TrySetException(error);
+            }
+        }) { IsBackground = true };
+        publisher.Start();
+        try
+        {
+            await completed.Task.WaitAsync(Timeout);
+        }
+        finally
+        {
+            Ensure(publisher.Join(Timeout), "the dedicated publisher must exit");
+        }
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task ConsumerChildrenMustNotAttachToThePublishingTask(bool compilerAwait)

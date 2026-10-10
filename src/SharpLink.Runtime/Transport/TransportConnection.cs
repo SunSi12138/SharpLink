@@ -113,8 +113,8 @@ internal class StreamTransportConnection : ITransportConnection
 /// The difference is <i>how</i> a suspended read is represented. Production returns the result of
 /// an <c>async ValueTask&lt;ReadResult&gt;</c> wrapper, so every true suspension allocates a
 /// compiler-generated state-machine box (measured: exactly one 248-byte object). Variant D
-/// instead makes this reader its own <see cref="IValueTaskSource{T}"/>, reusing one
-/// <see cref="ManualResetValueTaskSourceCore{T}"/> notification per reader and forwarding the
+/// instead makes this reader its own <see cref="IValueTaskSource{T}"/>, reusing a
+/// callback/state notification per reader and forwarding the
 /// inner completion through a single cached delegate. Successful default-context await does not
 /// allocate per read; explicit context/scheduler registrations and raw queued-callback backlog
 /// use separately measured BCL storage. Per-reader setup allocations are reported separately.
@@ -140,10 +140,9 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
     // Ordinary await reuses this notification. Explicit context/scheduler registrations use a
     // BCL Task notification, whose separately measured allocation is outside the zero-allocation
     // ordinary-await path. Neither notification carries the read buffer or read exception.
-    // Under _gate, completion
-    // detaches it by value before dispatching outside the gate. A reentrant consumer can therefore
-    // arm another read without resetting a core whose SetResult/continuation is still on the stack.
-    private ManualResetValueTaskSourceCore<bool> _readNotification;
+    // Under _gate, completion detaches and clears the pair before dispatching outside the gate.
+    // A reentrant consumer can therefore arm another read while the detached callback runs.
+    private (Action<object?>? Continuation, object? State) _readNotification;
     private ReadResult _readResult;
     private ExceptionDispatchInfo? _readError;
     // A status query validates the active bit and token from the same atomic snapshot. Results,
@@ -341,14 +340,14 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
             return;
         }
 
-        // SetResult can invoke user code inline. A consumer exception is not an inner-read
+        // Publication can invoke user code inline. A consumer exception is not an inner-read
         // failure, and a consumer may already have advanced and armed the next read.
         PublishRead(result, null);
     }
 
     private void PublishRead(ReadResult result, ExceptionDispatchInfo? error, bool fromQueue = false)
     {
-        ManualResetValueTaskSourceCore<bool> notification = default;
+        (Action<object?>? Continuation, object? State) notification = default;
         TaskCompletionSource? taskNotification = null;
         var queuePublication = false;
         lock (_gate)
@@ -385,7 +384,7 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         else if (taskNotification is not null)
             taskNotification.SetResult();
         else
-            DispatchNotification(ref notification);
+            DispatchNotification(notification);
     }
 
     void IThreadPoolWorkItem.Execute()
@@ -414,11 +413,11 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
         PublishRead(result, error, fromQueue: true);
     }
 
-    private static void DispatchNotification(ref ManualResetValueTaskSourceCore<bool> notification)
+    private static void DispatchNotification((Action<object?>? Continuation, object? State) notification)
     {
         try
         {
-            notification.SetResult(true);
+            notification.Continuation?.Invoke(notification.State);
         }
         catch (Exception exception)
         {
@@ -490,17 +489,15 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
                 }
                 else
                 {
-                    // Publication cannot detach this pending core under the gate. Its async
-                    // policy is implemented by our reusable publication work item, not a second
-                    // allocating queue operation in the core.
-                    _readNotification.OnCompleted(continuation, state, _readNotification.Version,
-                        ValueTaskSourceOnCompletedFlags.None);
+                    // The gate serializes registration with detachment. Scheduling policy is
+                    // owned by the reusable publication work item, not this callback/state pair.
+                    _readNotification = (continuation, state);
                 }
                 return;
             }
         }
 
-        // Reclassify after releasing the gate on the late path. Only a proven ordinary core
+        // Reclassify after releasing the gate on the late path. Only an ordinary notification
         // drops the redundant context scan; every BCL route retains the caller's original flags.
         if (RequiresTaskNotification(flags) || !_lateNotification.TryQueue(continuation, state))
         {
@@ -533,15 +530,14 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
 
     private sealed class LateReadNotification : IThreadPoolWorkItem
     {
-        private ManualResetValueTaskSourceCore<bool> _notification;
+        private (Action<object?>? Continuation, object? State) _notification;
         private int _queued;
 
         internal bool TryQueue(Action<object?> continuation, object? state)
         {
             if (Interlocked.CompareExchange(ref _queued, 1, 0) != 0)
                 return false;
-            _notification.OnCompleted(continuation, state, _notification.Version,
-                ValueTaskSourceOnCompletedFlags.None);
+            _notification = (continuation, state);
             ThreadPool.UnsafeQueueUserWorkItem(this, preferLocal: true);
             return true;
         }
@@ -553,7 +549,7 @@ internal sealed class ReadOwnershipPipeReader : PipeReader, IValueTaskSource<Rea
             Volatile.Write(ref _queued, 0);
             // Release the slot before arbitrary code; an inline rearm can safely reuse it while
             // this detached notification is still on the stack. No slot writes follow dispatch.
-            DispatchNotification(ref notification);
+            DispatchNotification(notification);
         }
     }
 
