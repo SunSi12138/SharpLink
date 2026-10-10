@@ -53,6 +53,64 @@ jobs:
             -c Release --no-restore -- \
             "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/artifacts/issue-801-audit"
 
+      - name: Ephemeral removal probe for unreferenced non-public methods
+        id: probe
+        run: |
+          dotnet run --project eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj \
+            -c Release --no-restore -- \
+            --probe-remove "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/artifacts/issue-801-audit"
+          git diff --stat -- src/ > artifacts/issue-801-audit/removal-diff-stat.txt
+          sed -n '1,100p' artifacts/issue-801-audit/removal-diff-stat.txt
+
+      - name: Compile entire solution after ephemeral dead-method removal
+        id: removal_build
+        if: steps.probe.outcome == 'success'
+        run: |
+          set +e
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal > artifacts/issue-801-audit/removal-build.log 2>&1
+          code=$?
+          set -e
+          tail -n 100 artifacts/issue-801-audit/removal-build.log
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      - name: Unit tests after removal
+        id: removal_unit
+        if: steps.removal_build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build \
+            > artifacts/issue-801-audit/removal-unit-tests.log 2>&1 || {
+              tail -n 120 artifacts/issue-801-audit/removal-unit-tests.log; exit 1;
+            }
+          tail -n 30 artifacts/issue-801-audit/removal-unit-tests.log
+
+      - name: Generator tests after removal
+        id: removal_generator
+        if: steps.removal_build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj \
+            -c Release --no-build > artifacts/issue-801-audit/removal-generator-tests.log 2>&1 || {
+              tail -n 120 artifacts/issue-801-audit/removal-generator-tests.log; exit 1;
+            }
+          tail -n 30 artifacts/issue-801-audit/removal-generator-tests.log
+
+      - name: Remove ephemeral production edits and record proof
+        if: always()
+        run: |
+          {
+            echo "# Issue 801 — ephemeral removal compilation proof"
+            echo
+            echo "- Audit baseline: `$AUDIT_DEV_SHA`"
+            echo "- Removal candidates selected from Tier A: `artifacts/issue-801-audit/removal-probe.json`"
+            echo "- Full solution compile result: `${{ steps.removal_build.outcome }}`"
+            echo "- Unit test result: `${{ steps.removal_unit.outcome }}`"
+            echo "- Generator test result: `${{ steps.removal_generator.outcome }}`"
+            echo
+            echo "This is a non-committed experimental deletion, not a merged code change."
+          } > artifacts/issue-801-audit/removal-validation.md
+          git restore -- src/
+          git status --short | head -n 50
+
       - name: Add short summary to run details
         if: always()
         run: |
@@ -72,12 +130,12 @@ jobs:
           retention-days: 30
 
       - name: Commit audit evidence on isolated branch
-        if: success()
+        if: always()
         continue-on-error: true
         run: |
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git add -f artifacts/issue-801-audit/report.json artifacts/issue-801-audit/report.md artifacts/issue-801-audit/tier-*.csv
+          git add -f artifacts/issue-801-audit/report.json artifacts/issue-801-audit/report.md artifacts/issue-801-audit/tier-*.csv artifacts/issue-801-audit/removal-*
           if ! git diff --cached --quiet; then
             git commit -m "audit(issue-801): record dev semantic reachability evidence [skip ci]"
             git push origin HEAD:refs/heads/audit/issue-801-dev-3x-deadcode
