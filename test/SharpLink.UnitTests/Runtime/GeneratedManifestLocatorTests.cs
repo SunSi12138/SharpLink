@@ -52,8 +52,9 @@ public sealed class GeneratedManifestLocatorTests
 
     [Test]
     [Arguments(3, 2)]
-    [Arguments(5, 2)]
-    [Arguments(4, 3)]
+    [Arguments(4, 2)]
+    [Arguments(6, 2)]
+    [Arguments(5, 3)]
     public void UnsupportedLocatorVersionShouldRejectBeforeManifestConstruction(
         int locatorApiVersion,
         int locatorProtocolVersion)
@@ -79,8 +80,8 @@ public sealed class GeneratedManifestLocatorTests
 
     [Test]
     [Arguments(3, 2, CurrentGeneratorVersion)]
-    [Arguments(4, 3, CurrentGeneratorVersion)]
-    [Arguments(4, 2, "phase17-other-generator")]
+    [Arguments(5, 3, CurrentGeneratorVersion)]
+    [Arguments(5, 2, "phase17-other-generator")]
     public void MaterializedMetadataMismatchShouldBeInvalidBeforeShapeValidation(
         int manifestApiVersion,
         int manifestProtocolVersion,
