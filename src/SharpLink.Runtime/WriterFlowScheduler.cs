@@ -30,7 +30,7 @@ internal sealed partial class WriterFlowScheduler : IWriterReadySource
     private long _generation;
     private long _connectionCredit;
     private int _activeStreams;
-    private int _producerCount;
+    private int _pendingStopProducers = 1;
     private int _cleanupCount;
     private bool _blocked;
     private bool _writerStopped;
@@ -69,7 +69,9 @@ internal sealed partial class WriterFlowScheduler : IWriterReadySource
         _connectionCredit = connectionWindow;
         _signal = signal ?? throw new ArgumentNullException(nameof(signal));
         _returnPacket = returnPacket ?? throw new ArgumentNullException(nameof(returnPacket));
-        _preparedBudget = new PreCreditSerializedBudget(preparedByteLimit, maxStreams);
+        var maxWaiters = checked((int)Math.Min(maxStreams,
+            Math.Max(1L, preparedByteLimit / ((long)maxCreditBytes + sizeof(ushort)))));
+        _preparedBudget = new PreCreditSerializedBudget(preparedByteLimit, maxWaiters);
     }
 
     private readonly record struct StreamKey(long RequestId, ushort StreamId);
@@ -77,6 +79,7 @@ internal sealed partial class WriterFlowScheduler : IWriterReadySource
     internal readonly record struct PreparedFrame(
         IRpcByteBufferWriter Packet,
         int SerializedBytes,
+        int BudgetBytes,
         int CreditBytes,
         bool Terminal,
         bool ForceFlush);
@@ -90,12 +93,20 @@ internal sealed partial class WriterFlowScheduler : IWriterReadySource
         internal readonly Lock Gate = new();
         internal readonly LinkedListNode<StreamLease> ReadyNode;
         internal readonly Queue<PreparedFrame> Frames;
+        internal readonly RpcDeadline Deadline;
+        internal readonly TimeProvider? DeadlineClock;
         internal CancellationTokenRegistration Cancellation;
         internal TaskCompletionSource? SpaceChanged;
+        internal TaskCompletionSource? PreparedDrained;
         internal bool ProducerBusy;
+        internal bool JoinProducerOnExit;
+        internal bool PreparationReleaseClaimed;
+        internal long PreparationVersion;
+        internal int ProducerBudgetBytes;
         internal bool CleanupInProgress;
         internal bool NotificationQueued;
         internal bool Scheduled;
+        internal bool Finishing;
         internal bool Sealed;
         internal bool Active = true;
         internal bool Retired;
@@ -109,13 +120,15 @@ internal sealed partial class WriterFlowScheduler : IWriterReadySource
         internal int WriterPins;
 
         internal StreamLease(WriterFlowScheduler owner, long requestId, ushort streamId,
-            long generation, bool startAllowed)
+            long generation, bool startAllowed, RpcDeadline deadline, TimeProvider? deadlineClock)
         {
             Owner = owner;
             RequestId = requestId;
             StreamId = streamId;
             Generation = generation;
             StartAllowed = startAllowed;
+            Deadline = deadline;
+            DeadlineClock = deadlineClock;
             Credit = owner._streamWindow;
             Frames = new Queue<PreparedFrame>(owner._slots);
             ReadyNode = new LinkedListNode<StreamLease>(this);
@@ -157,8 +170,6 @@ internal sealed partial class WriterFlowScheduler : IWriterReadySource
             throw terminal;
     }
 
-    // The lifecycle gate never nests a stream gate. Retirement may safely
-    // remove the identity while holding the stream gate, in that order.
     private void NotifyLocked(StreamLease stream)
     {
         if (stream.NotificationQueued || stream.Retired || Volatile.Read(ref _writerStopped))
@@ -183,7 +194,7 @@ internal sealed partial class WriterFlowScheduler : IWriterReadySource
 
     private void TryFinishStopped()
     {
-        if (!Volatile.Read(ref _writerStopped) || Volatile.Read(ref _producerCount) != 0 ||
+        if (!Volatile.Read(ref _writerStopped) || Volatile.Read(ref _pendingStopProducers) != 0 ||
             Volatile.Read(ref _cleanupCount) != 0)
             return;
         lock (_lifecycleGate)

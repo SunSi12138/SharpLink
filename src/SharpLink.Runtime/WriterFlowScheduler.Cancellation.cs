@@ -2,16 +2,17 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class WriterFlowScheduler
 {
-    // Cancellation may run while transport FlushAsync is blocked. It discards
-    // prepared ownership only; admitted frames and credit remain writer-owned.
     internal void Abort(StreamLease stream, Exception error)
+        => AbortCore(stream, error, producerCancellation: false);
+
+    private void AbortCore(StreamLease stream, Exception error, bool producerCancellation)
     {
         ValidateLease(stream);
         ArgumentNullException.ThrowIfNull(error);
         List<PreparedFrame>? discarded = null;
         lock (stream.Gate)
         {
-            if (stream.Retired || stream.AbortError is not null)
+            if (stream.Retired || stream.AbortError is not null || (producerCancellation && stream.Sealed))
                 return;
             stream.AbortError = error;
             stream.CleanupInProgress = true;
@@ -21,12 +22,11 @@ internal sealed partial class WriterFlowScheduler
                 (discarded ??= new()).Add(frame);
             stream.QueuedBytes = 0;
             PulseSpaceLocked(stream);
+            PulseDrainLocked(stream);
             NotifyLocked(stream);
         }
         try
         {
-            // Do not release the lifecycle key while key-based budget cleanup
-            // can still reject a successor's waiter.
             ReleaseDiscarded(discarded);
             _preparedBudget.CompleteStream(stream.RequestId, stream.StreamId, error);
         }
@@ -94,7 +94,7 @@ internal sealed partial class WriterFlowScheduler
             {
                 try
                 {
-                    _preparedBudget.Release(frame.SerializedBytes);
+                    _preparedBudget.Release(frame.BudgetBytes);
                 }
                 catch (Exception error)
                 {
@@ -124,13 +124,16 @@ internal sealed partial class WriterFlowScheduler
                 ApplyAbortLocked(stream);
                 if (stream.WriterPins != 0)
                     RecordCleanupFailure(new InvalidOperationException("Writer stopped before frame settlement."));
+                if (stream.ProducerBusy)
+                {
+                    stream.JoinProducerOnExit = true;
+                    Interlocked.Increment(ref _pendingStopProducers);
+                }
                 stream.Retired = true;
                 stream.Cancellation.Unregister();
                 stream.Cancellation = default;
             }
         }
-        // Producers may still be completing canceled waits. The immutable
-        // lease remains safe, while durable completion joins their cleanup.
         lock (_lifecycleGate)
             _streams.Clear();
         _ready.Clear();
@@ -138,6 +141,7 @@ internal sealed partial class WriterFlowScheduler
         while (_notifications.TryDequeue(out _))
         {
         }
+        Interlocked.Decrement(ref _pendingStopProducers);
         TryFinishStopped();
     }
 }

@@ -2,17 +2,22 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class WriterFlowScheduler
 {
-    private sealed class OpenWaiter(long requestId, ushort streamId, bool startAllowed)
+    private sealed class OpenWaiter(long requestId, ushort streamId, bool startAllowed,
+        RpcDeadline deadline, TimeProvider? deadlineClock)
     {
         internal readonly long RequestId = requestId;
         internal readonly ushort StreamId = streamId;
         internal readonly bool StartAllowed = startAllowed;
+        internal readonly RpcDeadline Deadline = deadline;
+        internal readonly TimeProvider? DeadlineClock = deadlineClock;
         internal readonly TaskCompletionSource<StreamLease> Completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     internal ValueTask<StreamLease> OpenAsync(long requestId, ushort streamId,
-        CancellationToken cancellationToken = default, bool startAllowed = true)
+        CancellationToken cancellationToken = default, bool startAllowed = true,
+        RpcDeadline deadline = default, TimeProvider? deadlineClock = null,
+        bool bindCancellation = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         StreamLease? stream = null;
@@ -25,34 +30,38 @@ internal sealed partial class WriterFlowScheduler
             if (_openWaiter is not null)
                 throw Capacity("The connection already has a pending stream-capacity admission.");
             if (_streams.Count < _maxStreams)
-                stream = CreateStreamLocked(requestId, streamId, startAllowed);
+                stream = CreateStreamLocked(requestId, streamId, startAllowed, deadline, deadlineClock);
             else if (Volatile.Read(ref _activeStreams) >= _maxStreams)
                 throw Capacity("The connection reached its active stream limit.");
             else
-                waiter = _openWaiter = new OpenWaiter(requestId, streamId, startAllowed);
+                waiter = _openWaiter = new OpenWaiter(requestId, streamId, startAllowed, deadline, deadlineClock);
         }
         if (stream is not null)
         {
-            BindCancellation(stream, cancellationToken);
+            if (bindCancellation)
+                BindCancellation(stream, cancellationToken);
             return new ValueTask<StreamLease>(stream);
         }
-        return AwaitOpenAsync(waiter!, cancellationToken);
+        return AwaitOpenAsync(waiter!, cancellationToken, bindCancellation);
     }
 
-    private StreamLease CreateStreamLocked(long requestId, ushort streamId, bool startAllowed)
+    private StreamLease CreateStreamLocked(long requestId, ushort streamId, bool startAllowed,
+        RpcDeadline deadline, TimeProvider? deadlineClock)
     {
         var generation = checked(++_generation);
-        var stream = new StreamLease(this, requestId, streamId, generation, startAllowed);
+        var stream = new StreamLease(this, requestId, streamId, generation, startAllowed, deadline, deadlineClock);
         _streams.Add(new StreamKey(requestId, streamId), stream);
         Interlocked.Increment(ref _activeStreams);
         return stream;
     }
 
-    private async ValueTask<StreamLease> AwaitOpenAsync(OpenWaiter waiter, CancellationToken token)
+    private async ValueTask<StreamLease> AwaitOpenAsync(OpenWaiter waiter, CancellationToken token,
+        bool bindCancellation)
     {
         using var registration = token.UnsafeRegister(_ => CancelOpen(waiter, token), null);
         var stream = await waiter.Completion.Task.ConfigureAwait(false);
-        BindCancellation(stream, token);
+        if (bindCancellation)
+            BindCancellation(stream, token);
         return stream;
     }
 
@@ -71,7 +80,8 @@ internal sealed partial class WriterFlowScheduler
     {
         if (!token.CanBeCanceled)
             return;
-        var registration = token.UnsafeRegister(_ => Abort(stream, new OperationCanceledException(token)), null);
+        var registration = token.UnsafeRegister(
+            _ => AbortCore(stream, new OperationCanceledException(token), producerCancellation: true), null);
         var unregister = false;
         lock (stream.Gate)
         {
@@ -79,8 +89,6 @@ internal sealed partial class WriterFlowScheduler
             if (!unregister)
                 stream.Cancellation = registration;
         }
-        // Synchronous cancellation can retire the identity before registration
-        // returns. Do not leave a late registration rooted in that case.
         if (unregister)
             registration.Unregister();
     }
@@ -120,8 +128,6 @@ internal sealed partial class WriterFlowScheduler
         _signal();
     }
 
-    // Writer-only, stream gate held. The immutable lease is never a reused
-    // slot; cleanup also pins the key until all key-based budget work finishes.
     private void TryRetireLocked(StreamLease stream)
     {
         if (stream.Retired || (!stream.TerminalTaken && !stream.AbortApplied) ||
@@ -144,8 +150,8 @@ internal sealed partial class WriterFlowScheduler
                 _openWaiter = null;
                 try
                 {
-                    waiter.Completion.TrySetResult(
-                        CreateStreamLocked(waiter.RequestId, waiter.StreamId, waiter.StartAllowed));
+                    waiter.Completion.TrySetResult(CreateStreamLocked(waiter.RequestId, waiter.StreamId,
+                        waiter.StartAllowed, waiter.Deadline, waiter.DeadlineClock));
                 }
                 catch (Exception error)
                 {

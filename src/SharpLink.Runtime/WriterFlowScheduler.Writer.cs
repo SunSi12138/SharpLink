@@ -2,8 +2,6 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class WriterFlowScheduler
 {
-    // Only SendPump calls HasWork/TryTake/Released/Stopped. A producer signal
-    // publishes work, not permission to mutate the writer's connection credit.
     public bool HasWork => !_writerStopped &&
         (!_notifications.IsEmpty || (!_blocked && _ready.Count != 0));
 
@@ -48,16 +46,13 @@ internal sealed partial class WriterFlowScheduler
                         node = next;
                         continue;
                     }
-                    if (connectionHeadBlocked ||
-                        !CanReserve(_connectionCredit, _connectionWindow, prepared.CreditBytes))
+                    if (connectionHeadBlocked || !CanReserve(_connectionCredit, _connectionWindow, prepared.CreditBytes))
                     {
                         connectionHeadBlocked = true;
                         node = next;
                         continue;
                     }
                 }
-                // Transient queue pressure leaves packet, credit and ready node
-                // untouched. In particular this never debits then refunds a probe.
                 if (!admission.TryReserve(prepared.SerializedBytes))
                     return false;
                 stream.Frames.Dequeue();
@@ -72,9 +67,10 @@ internal sealed partial class WriterFlowScheduler
                 else
                     AdvanceTurnLocked(stream);
                 PulseSpaceLocked(stream);
+                PulseDrainLocked(stream);
                 try
                 {
-                    _preparedBudget.Release(prepared.SerializedBytes);
+                    _preparedBudget.Release(prepared.BudgetBytes);
                 }
                 catch (Exception error)
                 {
@@ -123,8 +119,6 @@ internal sealed partial class WriterFlowScheduler
         stream.PendingReturn = 0;
         if (pending == 0 || stream.AbortApplied)
             return;
-        // Couple both accounts to the SAME effective refund. A clamped late
-        // update must never manufacture credit occupied by a different stream.
         var returned = Math.Min(pending, _streamWindow - stream.Credit);
         stream.Credit += returned;
         _connectionCredit += returned;

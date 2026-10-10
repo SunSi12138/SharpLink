@@ -2,85 +2,65 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class WriterFlowScheduler
 {
-    // Packet ownership transfers on entry, including validation/cancellation
-    // failure. Callers finish codecs and compression before this boundary.
-    internal ValueTask EnqueueAsync(StreamLease stream, IRpcByteBufferWriter packet,
-        int creditBytes, CancellationToken token = default)
-        => PrepareAsync(stream, packet, creditBytes, terminal: false, forceFlush: false, token);
-
-    internal ValueTask SealAsync(StreamLease stream, IRpcByteBufferWriter terminalPacket,
-        CancellationToken token = default, bool forceFlush = false)
-        => PrepareAsync(stream, terminalPacket, 0, terminal: true, forceFlush, token);
-
-    private async ValueTask PrepareAsync(StreamLease stream, IRpcByteBufferWriter packet,
-        int creditBytes, bool terminal, bool forceFlush, CancellationToken token)
+    internal readonly struct Preparation : IDisposable
     {
-        ArgumentNullException.ThrowIfNull(packet);
-        var ownsPacket = true;
+        internal readonly WriterFlowScheduler? Owner;
+        internal readonly StreamLease? Stream;
+        internal readonly long Version;
+        internal readonly int Bytes;
+
+        internal Preparation(WriterFlowScheduler owner, StreamLease stream, long version, int bytes)
+        {
+            Owner = owner;
+            Stream = stream;
+            Version = version;
+            Bytes = bytes;
+        }
+
+        public void Dispose() => Owner?.ReleasePreparation(this);
+    }
+
+    // Exact-size codecs acquire this local memory reservation BEFORE they
+    // allocate or serialize. No protocol credit is taken on this producer.
+    internal async ValueTask<Preparation> ReservePreparationAsync(StreamLease stream, int bytes,
+        CancellationToken token = default)
+    {
+        ValidateLease(stream);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
+        token.ThrowIfCancellationRequested();
+        ThrowIfProducerDeadlineExpired(stream);
+        long version;
+        lock (stream.Gate)
+        {
+            ThrowIfPublicationRejectedLocked(stream);
+            if (stream.ProducerBusy)
+                throw new InvalidOperationException("A stream supports one active producer.");
+            version = checked(stream.PreparationVersion + 1);
+            stream.PreparationVersion = version;
+            stream.PreparationReleaseClaimed = false;
+            stream.ProducerBusy = true;
+        }
         var ownsBudget = false;
-        var ownsProducer = false;
-        var bytes = 0;
+        var returned = false;
         try
         {
-            ValidateLease(stream);
-            token.ThrowIfCancellationRequested();
-            ThrowIfStopped();
-            bytes = packet.WrittenCount;
-            if (bytes <= 0 || bytes > _maxNormalFrameBytes || packet.WrittenMemory.Length != bytes)
-                throw Capacity("Prepared frame cannot fit the normal send-queue allowance.");
-            if ((!terminal && (creditBytes <= 0 || creditBytes > _maxCreditBytes)) ||
-                (terminal && creditBytes != 0))
-            {
-                throw Capacity("Invalid encoded stream-item credit size.");
-            }
-            lock (stream.Gate)
-            {
-                ThrowIfPublicationRejectedLocked(stream);
-                if (stream.ProducerBusy)
-                    throw new InvalidOperationException("A stream supports one active producer.");
-                stream.ProducerBusy = true;
-                Interlocked.Increment(ref _producerCount);
-                ownsProducer = true;
-            }
             await _preparedBudget.AcquireAsync(stream.RequestId, stream.StreamId, bytes, token)
                 .ConfigureAwait(false);
             ownsBudget = true;
-            while (true)
+            ThrowIfProducerDeadlineExpired(stream);
+            lock (stream.Gate)
             {
-                Task space;
-                lock (stream.Gate)
-                {
-                    token.ThrowIfCancellationRequested();
-                    ThrowIfPublicationRejectedLocked(stream);
-                    if (CanFitLocked(stream, bytes))
-                    {
-                        stream.Frames.Enqueue(new PreparedFrame(packet, bytes, creditBytes, terminal, forceFlush));
-                        stream.QueuedBytes += bytes;
-                        ownsPacket = false;
-                        ownsBudget = false;
-                        if (terminal)
-                        {
-                            stream.Sealed = true;
-                            MarkInactiveLocked(stream);
-                        }
-                        NotifyLocked(stream);
-                        break;
-                    }
-                    stream.SpaceChanged ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    space = stream.SpaceChanged.Task;
-                }
-                await space.WaitAsync(token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+                ThrowIfPublicationRejectedLocked(stream);
+                stream.ProducerBudgetBytes = bytes;
+                returned = true;
+                ownsBudget = false;
             }
-            _signal();
+            return new Preparation(this, stream, version, bytes);
         }
         finally
         {
-            try
-            {
-                if (ownsPacket)
-                    _returnPacket(packet);
-            }
-            finally
+            if (!returned)
             {
                 try
                 {
@@ -89,38 +69,84 @@ internal sealed partial class WriterFlowScheduler
                 }
                 finally
                 {
-                    if (ownsProducer)
-                    {
-                        var notify = false;
-                        lock (stream.Gate)
-                        {
-                            stream.ProducerBusy = false;
-                            notify = stream.Sealed || stream.AbortError is not null;
-                            if (notify)
-                                NotifyLocked(stream);
-                        }
-                        Interlocked.Decrement(ref _producerCount);
-                        if (notify)
-                            _signal();
-                        TryFinishStopped();
-                    }
+                    ExitProducer(stream, version);
                 }
             }
         }
     }
 
-    private bool CanFitLocked(StreamLease stream, int bytes)
-        => stream.Frames.Count < _slots &&
-            (stream.Frames.Count == 0 || bytes <= _perStreamPreparedBytes - stream.QueuedBytes);
+    private void ReleasePreparation(Preparation preparation)
+    {
+        var stream = preparation.Stream!;
+        int bytes;
+        lock (stream.Gate)
+        {
+            if (!stream.ProducerBusy || stream.PreparationVersion != preparation.Version ||
+                stream.PreparationReleaseClaimed)
+                return;
+            stream.PreparationReleaseClaimed = true;
+            bytes = stream.ProducerBudgetBytes;
+            stream.ProducerBudgetBytes = 0;
+        }
+        try
+        {
+            if (bytes != 0)
+                _preparedBudget.Release(bytes);
+        }
+        finally
+        {
+            ExitProducer(stream, preparation.Version);
+        }
+    }
+
+    private void ExitProducer(StreamLease stream, long version)
+    {
+        bool notify;
+        bool joined;
+        lock (stream.Gate)
+        {
+            if (!stream.ProducerBusy || stream.PreparationVersion != version)
+                return;
+            stream.ProducerBusy = false;
+            joined = stream.JoinProducerOnExit;
+            stream.JoinProducerOnExit = false;
+            notify = stream.Sealed || stream.AbortError is not null;
+            if (notify)
+                NotifyLocked(stream);
+            PulseDrainLocked(stream);
+        }
+        // No connection-wide producer counter on the ordinary item path.
+        // Shutdown enrolls only the producers that were still active at its cut.
+        if (joined)
+        {
+            Interlocked.Decrement(ref _pendingStopProducers);
+            TryFinishStopped();
+        }
+        if (notify)
+            _signal();
+    }
+
+    private static void ThrowIfProducerDeadlineExpired(StreamLease stream)
+    {
+        if (stream.DeadlineClock is { } clock && stream.Deadline.IsExpired(clock))
+        {
+            throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded,
+                "RPC deadline exceeded before stream publication.");
+        }
+    }
 
     private void ThrowIfPublicationRejectedLocked(StreamLease stream)
     {
         ThrowIfStopped();
         if (stream.AbortError is { } abort)
             throw abort;
-        if (stream.Retired || stream.Sealed)
+        if (stream.Retired || stream.Sealed || stream.Finishing)
             throw Closed();
     }
+
+    private bool CanFitLocked(StreamLease stream, int bytes)
+        => stream.Frames.Count < _slots &&
+            (stream.Frames.Count == 0 || bytes <= _perStreamPreparedBytes - stream.QueuedBytes);
 
     private static void PulseSpaceLocked(StreamLease stream)
     {
