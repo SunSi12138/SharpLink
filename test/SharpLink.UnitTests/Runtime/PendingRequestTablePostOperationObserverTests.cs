@@ -236,6 +236,28 @@ public sealed class PendingRequestTablePostOperationObserverTests
         Ensure(owner.TerminalCount == 1, "owner terminal exception must be observed once");
     }
 
+    [Test]
+    public async Task StreamingRegistrationFailureMustCleanupAndStillPropagateRegistrationException()
+    {
+        using var owner = new ThrowingRegistrationOwner(blockUntilReleased: false, throwOnTerminal: false);
+        using var table = PendingRequestTableTestFixture.Create(8, owner);
+        var failure = await CaptureFailureAsync(Task.Run(() =>
+        {
+            _ = table.RegisterStream(
+                PendingCallKind.ServerStreaming,
+                new NoopStreamDispatcher(),
+                default,
+                CancellationToken.None);
+        }).WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Ensure(failure is InvalidOperationException { Message: "injected registration owner failure" },
+            "non-unary registration failure must not be silently converted to a successful stream lease");
+        Ensure(table.Count == 0 && table.ActiveCount == 0 && owner.ActiveCount == 0,
+            "failed streaming registration must not retain a pending slot or owner");
+        Ensure(owner.TerminalCount == 1,
+            "failed streaming registration must still take the authoritative terminal path once");
+    }
+
     private static async Task<Exception?> CaptureFailureAsync(Task operation)
     {
         try
@@ -296,6 +318,19 @@ public sealed class PendingRequestTablePostOperationObserverTests
     {
         if (!condition)
             throw new Exception(message);
+    }
+
+    private sealed class NoopStreamDispatcher : IStreamDispatcher
+    {
+        public ValueTask DispatchAsync(ReadOnlySequence<byte> payload) => ValueTask.CompletedTask;
+
+        public void Complete(bool isError, string? errorMessage)
+        {
+        }
+
+        public void Complete(Exception? exception)
+        {
+        }
     }
 
     private sealed class NoopPostOperationObserver : IPendingCallPostOperationObserver
