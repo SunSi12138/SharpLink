@@ -100,11 +100,11 @@ jobs:
           {
             echo "# Issue 801 — ephemeral removal compilation proof"
             echo
-            echo "- Audit baseline: `$AUDIT_DEV_SHA`"
-            echo "- Removal candidates selected from Tier A: `artifacts/issue-801-audit/removal-probe.json`"
-            echo "- Full solution compile result: `${{ steps.removal_build.outcome }}`"
-            echo "- Unit test result: `${{ steps.removal_unit.outcome }}`"
-            echo "- Generator test result: `${{ steps.removal_generator.outcome }}`"
+            echo "- Audit baseline: $AUDIT_DEV_SHA"
+            echo "- Removal candidates selected from Tier A: artifacts/issue-801-audit/removal-probe.json"
+            echo "- Full solution compile result: ${{ steps.removal_build.outcome }}"
+            echo "- Unit test result: ${{ steps.removal_unit.outcome }}"
+            echo "- Generator test result: ${{ steps.removal_generator.outcome }}"
             echo
             echo "This is a non-committed experimental deletion, not a merged code change."
           } > artifacts/issue-801-audit/removal-validation.md
