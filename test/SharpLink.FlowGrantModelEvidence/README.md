@@ -124,3 +124,12 @@ corrected to model the existing connection-consumption threshold described
 above. Neither the production windows nor load were increased or reduced.
 This was a pre-execution harness defect, not evidence of a production deadlock.
 
+The first actual Actions run, `38164657442`, failed during compilation with
+`CS9124`: the primary-constructor parameter `connectionWindow` was both captured
+as state and used to initialize `Free`. The repository's warnings-as-errors
+policy remained enabled. The follow-up replaces that primary constructor with
+an explicit constructor and readonly configuration fields; no analyzer or
+warning is disabled. The original failing build log is retained as
+`evidence/new/38164657442/grant-model/build.log`. That failed run executed no
+model scenarios and provides no model-success evidence.
+

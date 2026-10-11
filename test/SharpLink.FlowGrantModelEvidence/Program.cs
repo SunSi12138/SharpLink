@@ -183,14 +183,27 @@ void InvalidControls()
 static bool Throws(Action action) { try { action(); return false; } catch (InvalidOperationException) { return true; } }
 static void Need(bool condition, string reason) { if (!condition) throw new InvalidOperationException(reason); }
 
-sealed class GrantModel(long streamWindow, long connectionWindow, int grantSize, bool reclaimParkedGrants = true)
+sealed class GrantModel
 {
+    readonly long streamWindow;
+    readonly long connectionWindow;
+    readonly int grantSize;
+    readonly bool reclaimParkedGrants;
     readonly List<State> states = [];
     readonly List<Pending> waiters = [];
     long lease;
-    public long Free = connectionWindow;
+    public long Free;
     public long AuthorityVisits, Refills, LocalDebits, WindowUpdates, PressureScans;
     public long ReclaimedBytes, PeakGrantBytes, ProgressOperations;
+
+    public GrantModel(long streamWindow, long connectionWindow, int grantSize, bool reclaimParkedGrants = true)
+    {
+        this.streamWindow = streamWindow;
+        this.connectionWindow = connectionWindow;
+        this.grantSize = grantSize;
+        this.reclaimParkedGrants = reclaimParkedGrants;
+        Free = connectionWindow;
+    }
 
     public Handle Open()
     {
