@@ -198,7 +198,7 @@ internal static class Program
     {
         Require(args.Length == 4, "Usage: <mode> <candidate-sha> <controller-sha256> <output.tsv>");
         Require(ModeIdentity.BaselineSha == Baseline, "compiled baseline mismatch");
-        Require(ModeIdentity.Mode is "baseline" or "split-gate" or "D-split-direction-gates", "compiled mode");
+        Require(args[0] is "baseline" or "split-gate" or "D-split-direction-gates", "requested mode");
         Require(ModeIdentity.Mode == args[0] && ModeIdentity.CandidateSha == args[1] &&
                 ModeIdentity.ControllerSourceSha256 == args[2], "CLI cannot relabel compiled identity");
         ValidateSha(ModeIdentity.CandidateSha, 40);
