@@ -8,6 +8,6 @@
     <EnablePackageValidation>false</EnablePackageValidation>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="../../../src/SharpLink.Server/SharpLink.Server.csproj" />
   </ItemGroup>
 </Project>
