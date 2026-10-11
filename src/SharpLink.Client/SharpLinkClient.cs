@@ -243,11 +243,6 @@ internal sealed partial class SharpLinkClient :
         ThrowStopCleanupFailures(cleanupFailures);
     }
 
-    internal static int[] GetShutdownDependencyOrder(
-        string[] identities,
-        string[][] dependencies)
-        => ClientAssemblyRegistry.GetShutdownDependencyOrder(identities, dependencies);
-
     private static void ThrowStopCleanupFailures(List<Exception> failures)
     {
         if (failures.Count == 0)
