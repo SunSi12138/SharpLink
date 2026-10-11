@@ -430,7 +430,7 @@ public partial class RpcSessionLifecycleTests
             output.Writer);
         var session = new RpcSession(transport, RpcSessionTestFixture.ClientOptions());
         var sibling = new TrackingCompletionDispatcher();
-        session.StreamManager.Register(1, new ThrowingCompletionDispatcher());
+        session.StreamManager.Register(1, 0, new ThrowingCompletionDispatcher());
         session.StreamManager.Register(1, 1, sibling);
 
         var failure = await CaptureExceptionAsync(session.DisposeAsync().AsTask());

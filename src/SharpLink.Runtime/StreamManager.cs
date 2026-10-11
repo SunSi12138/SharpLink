@@ -61,9 +61,6 @@ internal sealed class StreamManager
     }
 
     /// <inheritdoc />
-    internal void Register(long requestId, IStreamDispatcher dispatcher) => Register(requestId, 0, dispatcher);
-
-    /// <inheritdoc />
     internal void Register(long requestId, ushort streamId, IStreamDispatcher dispatcher)
         => Register(requestId, streamId, dispatcher, ignoreExisting: false);
 
@@ -176,10 +173,6 @@ internal sealed class StreamManager
             }
         }
     }
-
-    /// <inheritdoc />
-    internal ValueTask DispatchChunkAsync(long requestId, ReadOnlySequence<byte> payload)
-        => DispatchChunkAsync(requestId, 0, payload);
 
     /// <inheritdoc />
     internal ValueTask DispatchChunkAsync(long requestId, ushort streamId, ReadOnlySequence<byte> payload)
