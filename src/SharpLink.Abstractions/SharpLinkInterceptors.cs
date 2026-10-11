@@ -88,7 +88,9 @@ public interface ISharpLinkClientInterceptor
 public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnapshot
 {
     internal SharpLinkServerInvocationContext(
-        RpcMethodDescriptor method,
+        IRpcStub stub,
+        long methodId,
+        RpcMethodShape shape,
         long requestId,
         string connectionId,
         EndPoint? localEndPoint,
@@ -102,12 +104,16 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
         : base(connectionId, authentication, deadline, deadlineTimeProvider, metadata)
     {
         InterceptorGeneration = interceptorGeneration;
-        Method = method;
+        stub.DescribeMethod(methodId, shape, out var descriptor);
+        Method = descriptor;
+        _shape = shape;
         RequestId = requestId;
         LocalEndPoint = localEndPoint;
         RemoteEndPoint = remoteEndPoint;
         CancellationToken = cancellationToken;
     }
+
+    private readonly RpcMethodShape _shape;
 
     internal object? InterceptorGeneration { get; }
     internal bool InterceptorTerminalReached { get; set; }
@@ -120,7 +126,13 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
     internal TimeProvider? InterceptorTimeProvider { get; set; }
     internal long InterceptorStarted { get; set; }
 
-    /// <summary>Gets generated method metadata.</summary>
+    /// <summary>Gets the packed generated method facts resolved once for this call.</summary>
+    public RpcMethodShape Shape => _shape;
+
+    /// <summary>
+    /// Gets immutable generated method metadata projected only when an observer context is needed.
+    /// The context retains scalar facts, not the generated stub or its collectible module.
+    /// </summary>
     public RpcMethodDescriptor Method { get; }
     /// <summary>Gets the request identifier.</summary>
     public long RequestId { get; }

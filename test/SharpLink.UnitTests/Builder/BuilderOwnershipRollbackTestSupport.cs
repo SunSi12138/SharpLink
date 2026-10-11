@@ -359,6 +359,8 @@ public partial class BuilderOwnershipRollbackTests
 
     private sealed class RegistrationStub : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash) => RpcMethodShape.UnknownMethod;
+
         internal static readonly RegistrationStub Instance = new();
 
         public long InterfaceHash => 91_000;

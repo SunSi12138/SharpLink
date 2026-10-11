@@ -48,7 +48,7 @@ public partial class SharpLinkServerInvocationTests
             var context = CreateInterceptedContext(server, connection, stub, requestId: 42);
 
             Ensure(stub.LookupCount == 1,
-                "interceptor context must reuse the descriptor resolved for stream reservation");
+                "interceptor context must project the already-resolved shape exactly once");
             Ensure(context.Method == descriptor,
                 "interceptor context must expose the exact previously resolved descriptor");
             Ensure(context.RequestId == 42 && context.ConnectionId == session.Id,
@@ -56,16 +56,16 @@ public partial class SharpLinkServerInvocationTests
             Ensure(context.InterceptorGeneration is not null,
                 "interceptor context must retain its captured generation");
 
-            // An unresolved custom stub still produces the established conservative
-            // Unary descriptor; the refactor must not turn that into a second lookup.
             var missing = new CallContextCountingStub(descriptor, found: false);
-            var fallback = CreateInterceptedContext(server, connection, missing, requestId: 43);
-            Ensure(missing.LookupCount == 1,
-                "missing-descriptor fallback must query the stub exactly once");
-            Ensure(fallback.Method.Kind == RpcMethodKind.Unary &&
-                fallback.Method.ContractId == missing.InterfaceHash &&
-                fallback.Method.MethodId == descriptor.MethodId,
-                "missing-descriptor fallback must preserve method identity and Unary kind");
+            try
+            {
+                _ = CreateInterceptedContext(server, connection, missing, requestId: 43);
+                throw new Exception("unknown method must not produce an observer descriptor");
+            }
+            catch (TargetInvocationException exception) when (exception.InnerException is ArgumentException)
+            {
+            }
+
         }
         finally
         {
@@ -105,8 +105,7 @@ public partial class SharpLinkServerInvocationTests
                 server,
                 [
                     connection,
-                    stub,
-                    17L,
+                    ResolveContextTestMethod(stub),
                     44L,
                     default(RpcDeadline),
                     null,
@@ -133,13 +132,17 @@ public partial class SharpLinkServerInvocationTests
             server,
             [
                 connection,
-                stub,
-                17L,
+                ResolveContextTestMethod(stub),
                 requestId,
                 default(RpcDeadline),
                 null,
                 CancellationToken.None
             ]) ?? throw new Exception("CreateCallContext returned null"));
+
+    private static ResolvedMethodCall ResolveContextTestMethod(IRpcStub stub)
+        => new(ServiceRegistration.CreateSingleton(
+            typeof(object), stub, new object(), ownsService: false),
+            17L, stub.ResolveMethodShape(17L));
 
     private sealed class CallContextTestInterceptor : ISharpLinkServerInterceptor
     {
@@ -156,16 +159,20 @@ public partial class SharpLinkServerInvocationTests
         internal int LookupCount => Volatile.Read(ref _lookupCount);
         public long InterfaceHash => descriptor.ContractId;
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor method)
+        public RpcMethodShape ResolveMethodShape(long methodHash)
+            => found && methodHash == descriptor.MethodId
+                ? new RpcMethodShape(descriptor.Kind, descriptor.ClientStreamCount,
+                    supportsCancellation: true, descriptor.HasResponsePayload,
+                    descriptor.ResponseNullable, descriptor.HasMethodTimeout,
+                    descriptor.IsIdempotent, descriptor.MethodTimeout.HasValue)
+                : RpcMethodShape.UnknownMethod;
+
+        public void DescribeMethod(long methodHash, RpcMethodShape shape, out RpcMethodDescriptor method)
         {
             Interlocked.Increment(ref _lookupCount);
-            if (found && methodHash == descriptor.MethodId)
-            {
-                method = descriptor;
-                return true;
-            }
-            method = default;
-            return false;
+            method = shape.IsKnown
+                ? descriptor
+                : RpcMethodDescriptor.FromShape(InterfaceHash, methodHash, shape);
         }
 
         public ValueTask InvokeNoReturnAsync(

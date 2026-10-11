@@ -255,6 +255,11 @@ public partial class SharpLinkServerInvocationTests
 
     private sealed class ThrowingStub : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash)
+            => methodHash == 1
+                ? new RpcMethodShape(RpcMethodKind.Unary, 0, true, false)
+                : RpcMethodShape.UnknownMethod;
+
         public long InterfaceHash => 1;
 
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
@@ -278,17 +283,16 @@ public partial class SharpLinkServerInvocationTests
     {
         public long InterfaceHash => 7;
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        // Legacy facts: Unary, no response payload, no client streams, cancellable (the removed
+        // SupportsCancellation had no override, so its default of true was observed).
+        public RpcMethodShape ResolveMethodShape(long methodHash)
         {
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash,
-                methodHash,
+            _ = methodHash;
+            return new RpcMethodShape(
                 RpcMethodKind.Unary,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return true;
+                clientStreamCount: 0,
+                supportsCancellation: true,
+                hasResponsePayload: false);
         }
 
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
@@ -313,17 +317,14 @@ public partial class SharpLinkServerInvocationTests
         internal const byte ResponseByte = 0x2A;
         public long InterfaceHash => 8;
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public RpcMethodShape ResolveMethodShape(long methodHash)
         {
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash,
-                methodHash,
+            _ = methodHash;
+            return new RpcMethodShape(
                 RpcMethodKind.Unary,
-                HasResponsePayload: true,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return true;
+                clientStreamCount: 0,
+                supportsCancellation: true,
+                hasResponsePayload: true);
         }
 
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
@@ -357,17 +358,14 @@ public partial class SharpLinkServerInvocationTests
 
         public long InterfaceHash => 9;
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public RpcMethodShape ResolveMethodShape(long methodHash)
         {
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash,
-                methodHash,
+            _ = methodHash;
+            return new RpcMethodShape(
                 RpcMethodKind.Unary,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return true;
+                clientStreamCount: 0,
+                supportsCancellation: true,
+                hasResponsePayload: false);
         }
 
         public ValueTask InvokeNoReturnAsync(
@@ -503,6 +501,9 @@ public partial class SharpLinkServerInvocationTests
                 null,
                 null,
                 (flags & ProtocolV2FrameFlags.Cancellable) != 0,
+                null,
+                // The dispatch path resolves the method shape from the stub when no pre-resolved
+                // call is supplied, which is the behavior these doubles were written against.
                 null
             ])!;
         }

@@ -144,7 +144,7 @@ public class CompressionPersistentDecodeReviewTests
             harness.InterfaceHash);
         System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
             requestPrefix[sizeof(long)..],
-            1L);
+            harness.MethodHash);
         frames.Write(requestPrefix);
         Span<byte> originalLength = stackalloc byte[sizeof(uint)];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
@@ -368,17 +368,20 @@ public class CompressionPersistentDecodeReviewTests
             Task serverTask,
             ISharpLinkServer server,
             int port,
-            long interfaceHash)
+            long interfaceHash,
+            long methodHash)
             : base(server)
         {
             _serverCts = serverCts;
             _serverTask = serverTask;
             Port = port;
             InterfaceHash = interfaceHash;
+            MethodHash = methodHash;
         }
 
         internal int Port { get; }
         internal long InterfaceHash { get; }
+        internal long MethodHash { get; }
 
         internal static Task<RawInputHarness> CreateAsync(ISharpLinkCompressionProvider provider)
         {
@@ -396,14 +399,15 @@ public class CompressionPersistentDecodeReviewTests
                 .UseTcp(0, IPAddress.Loopback.ToString());
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
-            var interfaceHash = ReadAnyInterfaceHash(server);
+            var (interfaceHash, methodHash) = ReadCancellableMethodIdentity(server);
             var serverTask = RunServerAsync(server, serverCts.Token);
             return Task.FromResult(new RawInputHarness(
                 serverCts,
                 serverTask,
                 server,
                 port,
-                interfaceHash));
+                interfaceHash,
+                methodHash));
         }
 
         public async ValueTask DisposeAsync()
@@ -417,11 +421,19 @@ public class CompressionPersistentDecodeReviewTests
             _serverCts.Dispose();
         }
 
-        private static long ReadAnyInterfaceHash(ISharpLinkServer server)
+        private static (long ContractId, long MethodId) ReadCancellableMethodIdentity(ISharpLinkServer server)
         {
-            foreach (var key in ServerRegistryTestAccessor.Services((SharpLinkServer)server).Keys)
-                return key;
-            throw new Exception("server has no registered service hash");
+            var contractType = typeof(IPersistentDecodeReviewService);
+            var manifest = GlobalCatalogManifestSource.Instance.CreateSnapshot().Single(candidate =>
+                candidate.Contracts.Any(contract => contract.ContractType == contractType));
+            var contract = manifest.Contracts.Single(candidate => candidate.ContractType == contractType);
+            var method = contract.Methods.Single(candidate =>
+                candidate.Name == nameof(IPersistentDecodeReviewService.MeasureAsync));
+            var registration = ServerRegistryTestAccessor.Services((SharpLinkServer)server)[contract.ContractId];
+            var shape = registration.Stub.ResolveMethodShape(method.MethodId);
+            Ensure(shape.IsKnown && shape.SupportsCancellation && shape.Kind == RpcMethodKind.Unary,
+                "raw-input decode probe must address a known cancellable unary method");
+            return (contract.ContractId, method.MethodId);
         }
     }
 

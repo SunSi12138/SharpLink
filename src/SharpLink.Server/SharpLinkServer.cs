@@ -168,10 +168,17 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             System.IO.IOException or SocketException or
             SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
 
+    /// <summary>
+    /// Resolves the immutable method facts once for one RPC. Every later stage (admission,
+    /// cancellation, stream reservation, telemetry, invocation orchestration) consumes the returned
+    /// state instead of asking the generated stub again.
+    /// </summary>
+    private static ResolvedMethodCall ResolveMethodCall(ServiceRegistration registration, long methodHash)
+        => new(registration, methodHash, registration.Stub.ResolveMethodShape(methodHash));
+
     private SharpLinkCallContextSnapshot CreateCallContext(
         ServerConnectionState connection,
-        IRpcStub stub,
-        long methodId,
+        in ResolvedMethodCall resolved,
         long requestId,
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
@@ -182,19 +189,20 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         if (interceptors.Count == 0)
             return connection.GetCallContextSnapshot(deadline, metadata);
 
-        var method = GetMethodDescriptor(stub, methodId);
-        if (method.Kind != RpcMethodKind.OneWay)
+        if (resolved.Shape.Kind != RpcMethodKind.OneWay)
         {
             ReservePreInvocationRequestStreams(
                 session,
-                method.ClientStreamCount,
+                resolved.ClientStreamCount,
                 requestId,
                 cancellationToken);
         }
 
         return CreateServerInvocationContext(
             session,
-            method,
+            resolved.Stub,
+            resolved.MethodHash,
+            resolved.Shape,
             requestId,
             connection.AuthenticationContext,
             deadline,
@@ -206,7 +214,9 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     private static SharpLinkServerInvocationContext CreateServerInvocationContext(
         RpcSession session,
-        RpcMethodDescriptor method,
+        IRpcStub stub,
+        long methodId,
+        RpcMethodShape shape,
         long requestId,
         SharpLinkAuthenticationContext? authenticationContext,
         RpcDeadline deadline,
@@ -214,9 +224,10 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken,
         ServerInterceptorGeneration? interceptors = null)
-    {
-        return new SharpLinkServerInvocationContext(
-            method,
+        => new(
+            stub,
+            methodId,
+            shape,
             requestId,
             session.Id,
             session.LocalEndPoint,
@@ -227,23 +238,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             metadata,
             cancellationToken,
             interceptors);
-    }
-
-    private static RpcMethodDescriptor GetMethodDescriptor(IRpcStub stub, long methodId)
-    {
-        if (!stub.TryGetMethodDescriptor(methodId, out var method))
-        {
-            method = new RpcMethodDescriptor(
-                stub.InterfaceHash,
-                methodId,
-                RpcMethodKind.Unary,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-        }
-        return method;
-    }
 
     internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)
         => _callAdmission.TryAcquireCall(connection);

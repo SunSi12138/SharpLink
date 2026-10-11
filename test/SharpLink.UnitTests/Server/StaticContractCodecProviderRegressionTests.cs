@@ -153,6 +153,8 @@ public class StaticContractCodecProviderRegressionTests
 
     private sealed class StubMarker(long interfaceHash) : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash) => RpcMethodShape.UnknownMethod;
+
         public long InterfaceHash => interfaceHash;
 
         public ValueTask InvokeNoReturnAsync(

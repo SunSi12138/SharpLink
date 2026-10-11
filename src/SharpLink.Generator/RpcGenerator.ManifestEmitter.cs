@@ -2,7 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-v1";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -180,8 +180,7 @@ public partial class RpcGenerator
                 sb.AppendLine("                new SharpLinkGeneratedMethodDescriptor(");
                 sb.AppendLine($"                    \"{EscapeString(method.Name)}\",");
                 sb.AppendLine($"                    {method.Hash}L,");
-                sb.AppendLine($"                    RpcMethodKind.{GetMethodKind(method)},");
-                sb.AppendLine($"                    {(method.HasCancellationToken || method.IsStreamReturn || method.Parameters.Any(static parameter => parameter.IsStream) ? "true" : "false")},");
+                sb.AppendLine($"                    {GetMethodShapeExpression(method)},");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
                 sb.AppendLine($"                    \"{method.Fingerprint}\"),");

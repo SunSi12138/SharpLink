@@ -30,7 +30,7 @@ public interface IServerStubCodecService : SharpLink.Sdk.IService
             .Single(static text => text.Contains("private sealed class __Stub_", StringComparison.Ordinal));
         var constructorStart = stub.IndexOf("internal __Stub_", StringComparison.Ordinal);
         var constructorEnd = stub.IndexOf(
-            "public bool SupportsCancellation",
+            "public RpcMethodShape ResolveMethodShape",
             constructorStart,
             StringComparison.Ordinal);
         Ensure(constructorStart > 0 && constructorEnd > constructorStart,
