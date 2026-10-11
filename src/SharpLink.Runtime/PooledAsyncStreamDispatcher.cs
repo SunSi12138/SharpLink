@@ -49,13 +49,13 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     // already completed without observing fields from a later rental.
     private long _disposeFinalizedLeaseState;
     private DisposeCompletion? _disposeCompletion;
-    private TaskCompletionSource? _remoteTerminalPublication;
+    private TaskCompletionSource? _terminalPublication;
     // Test hooks allocate storage only when a test installs a callback.
     private Action?[]? _testHooks;
     private int _terminalDispatchStateClosed;
-    // 0 = no remote terminal, 1 = terminal publication still owns dispatch-state close,
-    // 2 = remote terminal publication is complete.
-    private int _remoteTerminalPublicationState;
+    // 0 = no completion publisher, 1 = remote/local receive terminal publication still
+    // owns the first dispatch-state close, 2 = its publication is complete.
+    private int _terminalPublicationState;
 
     // GetAsyncEnumerator 原子防御（审核 #4）：0/1
     private int _enumeratorTaken;
@@ -95,7 +95,10 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     private const int ShrinkThreshold = 256;
     private const int MaxBufferedElements = 4096;
     private const int MaxRetainedDispatchers = 1024;
+    private const int ConsumerTerminalRemoteComplete = 1;
+    private const int ConsumerTerminalAbandoned = 2;
     private const int ConsumerTerminalLocalAbort = 3;
+    private const int ConsumerTerminalLocalReceiveFailure = 4;
     private const int LocalAbortClaimed = 0b01;
     private const int LocalAbortDelivery = 0b10;
     private const long LeaseStatusMask = 0b11L;
@@ -233,9 +236,9 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _localAbortBufferRetired, 0);
         Volatile.Write(ref _consumerTerminal, 0);
         Volatile.Write(ref _terminalDispatchStateClosed, 0);
-        Volatile.Write(ref _remoteTerminalPublication, null);
+        Volatile.Write(ref _terminalPublication, null);
         Volatile.Write(ref _testHooks, null);
-        Volatile.Write(ref _remoteTerminalPublicationState, 0);
+        Volatile.Write(ref _terminalPublicationState, 0);
     }
 
     /// <inheritdoc />
@@ -294,7 +297,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         if (Interlocked.Increment(ref _bufferedCount) > MaxBufferedElements)
         {
             Interlocked.Decrement(ref _bufferedCount);
-            Complete(new SharpLinkException(
+            CompleteLocalReceiveFailure(new SharpLinkException(
                 SharpLinkErrorCode.ResourceExhausted,
                 $"Stream receive buffer exceeded {MaxBufferedElements} elements."));
             NotifyBytesConsumed(encodedByteCount);
@@ -400,8 +403,8 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     internal void SetBeforeConcurrentDisposeCompletionInstallForTests(Action? callback)
         => SetTestHook(0, callback);
 
-    // Gates the remote-terminal publication in Complete's finally so a racing DisposeAsync can
-    // deterministically install its completion while the publication state is still 1 (issue #206).
+    // Gates completion publication in CompleteCore's finally so a racing DisposeAsync can
+    // install its completion while publication is still in flight (issue #206).
     internal void SetBeforeRemoteTerminalPublicationPublishForTests(Action? callback)
         => SetTestHook(1, callback);
 
@@ -710,14 +713,22 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     /// <inheritdoc />
     public void Complete(Exception? exception)
+        => CompleteCore(exception, ConsumerTerminalRemoteComplete);
+
+    // Receive-buffer exhaustion is a local terminal, not a peer StreamComplete. Keep the
+    // admitted-buffer draining semantics, but retain abandonment ownership for DisposeAsync.
+    private void CompleteLocalReceiveFailure(Exception exception)
+        => CompleteCore(exception, ConsumerTerminalLocalReceiveFailure);
+
+    private void CompleteCore(Exception? exception, int terminal)
     {
-        if (Interlocked.CompareExchange(ref _consumerTerminal, 1, 0) != 0)
+        if (Interlocked.CompareExchange(ref _consumerTerminal, terminal, 0) != 0)
             return;
 
         // The no-state path is the regular server-stream lifecycle. Keep it free of locks and
-        // allocations; a consumer that catches the narrow remote-publication race joins through
+        // allocations; a consumer that catches the narrow terminal-publication race joins through
         // the lazy completion below instead of observing a partially published terminal state.
-        Volatile.Write(ref _remoteTerminalPublicationState, 1);
+        Volatile.Write(ref _terminalPublicationState, 1);
         _error = exception;
         Volatile.Write(ref _completed, true);
         try
@@ -740,9 +751,9 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         {
             InvokeTestHook(1);
 
-            // Publish only after the first remote Close and Signal are complete. A racing
+            // Publish only after the first terminal Close and Signal are complete. A racing
             // consumer DisposeAsync then performs its own second Close in sequence.
-            Volatile.Write(ref _remoteTerminalPublicationState, 2);
+            Volatile.Write(ref _terminalPublicationState, 2);
 
             // Fenced re-read (issue #206): a Volatile.Read here can be performed before the
             // release store above becomes globally visible (x86 store-buffer reordering against
@@ -752,7 +763,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             // NotInParallel constraint key in the test engine. Interlocked.CompareExchange
             // with equal operands is a full-fence read that returns the latest value and
             // writes nothing, so it cannot observe the field before the state store commits.
-            Interlocked.CompareExchange(ref _remoteTerminalPublication, null, null)?.TrySetResult();
+            Interlocked.CompareExchange(ref _terminalPublication, null, null)?.TrySetResult();
         }
     }
 
@@ -947,24 +958,30 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         }
 
         var terminal = Volatile.Read(ref _consumerTerminal);
-        if (terminal == 0 && Interlocked.CompareExchange(ref _consumerTerminal, 2, 0) == 0)
+        if (terminal == 0 && Interlocked.CompareExchange(
+                ref _consumerTerminal, ConsumerTerminalAbandoned, 0) == 0)
         {
             _error ??= new OperationCanceledException(
                 "The response stream consumer stopped before remote completion.");
             Volatile.Write(ref _completed, true);
             return MarkDisposedAndFinishDisposeAsync(
                 notifyConsumerAbandoned: true,
-                remoteTerminalPublished: false,
+                terminalPublished: false,
                 disposingLeaseState: disposingLeaseState);
         }
 
         terminal = Volatile.Read(ref _consumerTerminal);
-        if (terminal == 1 && Volatile.Read(ref _remoteTerminalPublicationState) != 2)
-            return AwaitRemoteTerminalPublicationAndFinishDisposeAsync(disposingLeaseState);
+        var localReceiveFailure = terminal == ConsumerTerminalLocalReceiveFailure;
+        var terminalPublished = terminal is ConsumerTerminalRemoteComplete or
+            ConsumerTerminalLocalReceiveFailure;
+        if (terminalPublished && Volatile.Read(ref _terminalPublicationState) != 2)
+            return AwaitTerminalPublicationAndFinishDisposeAsync(
+                localReceiveFailure,
+                disposingLeaseState);
 
         return MarkDisposedAndFinishDisposeAsync(
-            notifyConsumerAbandoned: false,
-            remoteTerminalPublished: terminal == 1,
+            notifyConsumerAbandoned: localReceiveFailure,
+            terminalPublished: terminalPublished,
             disposingLeaseState: disposingLeaseState);
     }
 
@@ -1021,27 +1038,29 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         }
     }
 
-    private async ValueTask AwaitRemoteTerminalPublicationAndFinishDisposeAsync(long disposingLeaseState)
+    private async ValueTask AwaitTerminalPublicationAndFinishDisposeAsync(
+        bool notifyConsumerAbandoned,
+        long disposingLeaseState)
     {
-        await WaitForRemoteTerminalPublicationAsync().ConfigureAwait(false);
+        await WaitForTerminalPublicationAsync().ConfigureAwait(false);
         await MarkDisposedAndFinishDisposeAsync(
-            notifyConsumerAbandoned: false,
-            remoteTerminalPublished: true,
+            notifyConsumerAbandoned,
+            terminalPublished: true,
             disposingLeaseState: disposingLeaseState).ConfigureAwait(false);
     }
 
-    private ValueTask WaitForRemoteTerminalPublicationAsync()
+    private ValueTask WaitForTerminalPublicationAsync()
     {
-        if (Volatile.Read(ref _remoteTerminalPublicationState) == 2)
+        if (Volatile.Read(ref _terminalPublicationState) == 2)
             return ValueTask.CompletedTask;
 
         InvokeTestHook(2);
 
-        var completion = Volatile.Read(ref _remoteTerminalPublication);
+        var completion = Volatile.Read(ref _terminalPublication);
         if (completion is null)
         {
             var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            completion = Interlocked.CompareExchange(ref _remoteTerminalPublication, created, null) ?? created;
+            completion = Interlocked.CompareExchange(ref _terminalPublication, created, null) ?? created;
         }
 
         InvokeTestHook(3);
@@ -1049,7 +1068,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         // Fenced re-read (issue #206): mirrors the publisher-side fence in Complete. The
         // install CAS above is already a full barrier, but a fenced read keeps the two sides
         // symmetric so neither half of the double-check can observe a stale publication state.
-        if (Interlocked.CompareExchange(ref _remoteTerminalPublicationState, 0, 0) == 2)
+        if (Interlocked.CompareExchange(ref _terminalPublicationState, 0, 0) == 2)
             completion.TrySetResult();
 
         return new ValueTask(completion.Task);
@@ -1057,7 +1076,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     private ValueTask MarkDisposedAndFinishDisposeAsync(
         bool notifyConsumerAbandoned,
-        bool remoteTerminalPublished,
+        bool terminalPublished,
         long disposingLeaseState)
     {
         Volatile.Write(ref _disposed, true);
@@ -1074,10 +1093,10 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             {
                 if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
                 {
-                    if (remoteTerminalPublished)
+                    if (terminalPublished)
                     {
-                        // A remote terminal close is already published. Consumer abandonment
-                        // intentionally performs the second close only after that close ended.
+                        // A terminal close is already published. Consumer disposal
+                        // performs the second close only after that close ended.
                         boundDispatchState.Close();
                     }
                     else
@@ -1486,7 +1505,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _localAbortBufferRetired, 0);
         Volatile.Write(ref _dispatchState, null);
         Volatile.Write(ref _disposeCompletion, null);
-        Volatile.Write(ref _remoteTerminalPublication, null);
+        Volatile.Write(ref _terminalPublication, null);
         Volatile.Write(ref _testHooks, null);
 
         // 复位枚举器占用标记
@@ -1563,7 +1582,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
                 !_enumerationCancellationRegistration.Equals(default) ||
                 !_additionalEnumerationCancellationRegistration.Equals(default) ||
                 Volatile.Read(ref _disposeCompletion) is not null ||
-                Volatile.Read(ref _remoteTerminalPublication) is not null ||
+                Volatile.Read(ref _terminalPublication) is not null ||
                 HasTestHooks())
             {
                 return true;
