@@ -1,0 +1,98 @@
+name: Issue 801 Current Dev Semantic and Test State Evidence
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'eng/SharpLink.SemanticAudit/**'
+      - 'test/SharpLink.Benchmarks/ClientServerTestStateBenchmarks.cs'
+      - 'test/SharpLink.Benchmarks/Program.cs'
+      - '.github/workflows/issue-801-semantic-and-state-evidence.yml'
+      - 'Directory.Packages.props'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-index:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact audit source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+      - name: Record immutable source and environment
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-801-current-audit
+          git rev-parse HEAD > artifacts/issue-801-current-audit/checkout-sha.txt
+          git rev-parse origin/dev > artifacts/issue-801-current-audit/dev-sha.txt
+          dotnet --info > artifacts/issue-801-current-audit/dotnet-info.txt
+      - name: Restore and build the full solution
+        shell: bash
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal
+      - name: Restore the exact-version Roslyn semantic auditor
+        run: dotnet restore eng/SharpLink.SemanticAudit/SharpLink.SemanticAudit.csproj
+      - name: Scan every project, generated document and src declaration
+        shell: bash
+        run: |
+          export AUDIT_CHECKOUT_SHA="$(cat artifacts/issue-801-current-audit/checkout-sha.txt)"
+          export AUDIT_SOURCE_DEV_SHA="$(cat artifacts/issue-801-current-audit/dev-sha.txt)"
+          dotnet run --project eng/SharpLink.SemanticAudit/SharpLink.SemanticAudit.csproj -c Release --no-restore -- . artifacts/issue-801-current-audit
+          cat artifacts/issue-801-current-audit/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload full CSV / JSON / coverage even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-current-semantic-index
+          path: artifacts/issue-801-current-audit
+          if-no-files-found: warn
+          retention-days: 30
+
+  test-state-benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout exact audit source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+      - name: Restore and Release-build production benchmark
+        shell: bash
+        run: |
+          dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -v minimal
+      - name: Inspect Client and Server test-only fields in a real connected runtime
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-801-test-state
+          git rev-parse HEAD > artifacts/issue-801-test-state/checkout-sha.txt
+          dotnet --info > artifacts/issue-801-test-state/dotnet-info.txt
+          lscpu > artifacts/issue-801-test-state/cpu.txt
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --client-server-test-state-inspection artifacts/issue-801-test-state/fields.json
+      - name: Real BDN B/op and ns/op with hooks disabled versus enabled
+        shell: bash
+        run: |
+          dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build -- --filter '*TestHook*Benchmarks*' --exporters json
+      - name: Copy raw BenchmarkDotNet evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-801-test-state/BenchmarkDotNet
+          if [ -d BenchmarkDotNet.Artifacts ]; then cp -R BenchmarkDotNet.Artifacts/. artifacts/issue-801-test-state/BenchmarkDotNet/; fi
+      - name: Upload measured evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-client-server-test-state
+          path: artifacts/issue-801-test-state
+          if-no-files-found: warn
+          retention-days: 30
