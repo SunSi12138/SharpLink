@@ -2,21 +2,7 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    internal ValueTask SendClientStreamChunkAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
-        RpcDeadline deadline,
-        TimeProvider timeProvider,
-        CancellationToken terminalToken)
-        => SendClientStreamChunkAsync(
-            requestId,
-            streamId,
-            item,
-            RuntimeContext.Codecs.GetCodec<T>(),
-            deadline,
-            timeProvider,
-            terminalToken);
+
 
     internal ValueTask SendClientStreamChunkAsync<T>(
         long requestId,

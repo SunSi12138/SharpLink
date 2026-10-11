@@ -83,9 +83,7 @@ internal sealed class GeneratedManifestSnapshot
         return new GeneratedManifestSnapshot(manifests);
     }
 
-    internal static GeneratedManifestSnapshot FromManifests(
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
-        => Capture(new FixedGeneratedManifestSource(manifests));
+
 
     /// <summary>
     /// Performs pure API/Protocol, descriptor-shape, and ownership validation without creating

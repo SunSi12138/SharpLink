@@ -270,8 +270,7 @@ internal sealed partial class SharpLinkClient :
     internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
         => _frameworkTasks.CaptureSnapshot();
 
-    private static SharpLinkException CreateAuthenticationRejectedException(string message)
-        => new(SharpLinkErrorCode.AuthenticationRejected, message);
+
 
     private static SharpLinkException CreateConnectionClosedException(string message, Exception? innerException = null)
         => new(SharpLinkErrorCode.ConnectionClosed, message, innerException);

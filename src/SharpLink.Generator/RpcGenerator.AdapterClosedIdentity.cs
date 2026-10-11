@@ -4,18 +4,7 @@ public partial class RpcGenerator
 {
     private sealed partial class DtoAnalysisState
     {
-        private RpcHashValue GetAdapterTargetLogicalIdentity(GeneratedCodecModel model)
-        {
-            if (!TryResolveReachableType(model.TypeName, out var targetType))
-            {
-                throw new InvalidOperationException(
-                    $"Final RPC Codec graph cannot resolve adapter target '{model.TypeName}' while hashing its closed Codec semantics.");
-            }
 
-            var parts = new List<string> { "adapter-target/v2" };
-            AppendClosedTargetLogicalIdentity(targetType, parts);
-            return Hashing.GetSemanticHash(parts.ToArray());
-        }
 
         private static void AppendClosedTargetLogicalIdentity(ITypeSymbol type, List<string> parts)
         {
