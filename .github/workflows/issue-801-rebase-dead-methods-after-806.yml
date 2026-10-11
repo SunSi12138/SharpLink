@@ -1,0 +1,103 @@
+name: Issue 801 - Rebase 44 pending dead method removals onto merged PR 806
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-rebase-dead-methods-after-806.yml
+permissions:
+  contents: write
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Checkout exact merged 3.0 dev source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: d4cddbb17ba4dd3fc28046658db9fceafcac8d9f
+          persist-credentials: true
+      - name: Validate baseline and .NET SDK
+        run: |
+          test "$(git rev-parse HEAD)" = d4cddbb17ba4dd3fc28046658db9fceafcac8d9f
+          echo "rebased-on=$(git rev-parse HEAD)"
+      - name: Set up .NET 10
+        uses: ./.github/actions/setup-dotnet
+      - name: Load frozen audit candidate symbols
+        run: |
+          git fetch --no-tags --depth=1 origin refs/heads/audit/issue-801-dev-3x-deadcode
+          mkdir -p eng/SharpLink.DeadCodeAudit artifacts/issue-801-dead-methods
+          for f in Program.cs RemovalProbe.cs SharpLink.DeadCodeAudit.csproj; do
+            git show "FETCH_HEAD:eng/SharpLink.DeadCodeAudit/$f" > "eng/SharpLink.DeadCodeAudit/$f"
+          done
+          git show FETCH_HEAD:artifacts/issue-801-audit/tier-A.csv > artifacts/issue-801-dead-methods/tier-A.csv
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+          p=Path("artifacts/issue-801-dead-methods/tier-A.csv")
+          with p.open(newline="",encoding="utf-8") as f: rows=list(csv.reader(f))
+          changes={
+              ("src/SharpLink.Runtime/Codec/RpcCodecProvider.cs","RpcGeneratedManifestRegistration.ValidateCodec("):"416",
+              ("src/SharpLink.Runtime/SharpLinkDynamicModule.cs","SharpLinkAssemblyManifestLoader.ValidateManifest("):"179",
+              ("src/SharpLink.Runtime/SharpLinkDynamicModule.cs","SharpLinkDynamicModule.WaitForDrainAsync(System.Threading.Tasks.Task, System.TimeSpan)"):"511",
+          }
+          removed=[]
+          for row in rows[1:]:
+              if "RpcCodecProvider.TryGetExplicitCodec<" in row[5]:
+                  removed.append(row)
+          assert len(removed)==1,"Expected exactly one method already removed by #806"
+          rows=[rows[0]]+[r for r in rows[1:] if r not in removed]
+          found=set()
+          for row in rows[1:]:
+              for (path,signature),line in changes.items():
+                  if row[0]==path and signature in row[5]:
+                      row[1]=line
+                      found.add((path,signature))
+          assert found==set(changes),f"Unmatched relocation candidates {set(changes)-found}"
+          with p.open("w",newline="",encoding="utf-8") as f: csv.writer(f).writerows(rows)
+          print("Frozen audit candidates after subtracting #806 overlap:",len(rows)-1)
+          PY
+      - name: Remove only 44 still-existing non-public method bodies
+        run: |
+          dotnet run --project eng/SharpLink.DeadCodeAudit -c Release -- --probe-remove "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/artifacts/issue-801-dead-methods"
+          python3 - <<'PY'
+          import json,subprocess
+          from pathlib import Path
+          j=json.loads(Path("artifacts/issue-801-dead-methods/removal-probe.json").read_text())
+          print("Rebased methods",j["Requested"],j["Removed"],j["Skipped"])
+          print("Excluded bodyless candidate",j["SkippedSymbols"])
+          assert (j["Requested"],j["Removed"],j["Skipped"])==(45,44,1)
+          assert "lacks body" in j["SkippedSymbols"][0]
+          changed=subprocess.check_output(["git","diff","--name-only","--","src/"],text=True).splitlines()
+          for name in changed:
+              p=Path(name)
+              s=p.read_text(encoding="utf-8")
+              cleaned="\n".join(line.rstrip() for line in s.split("\n"))
+              if cleaned!=s: p.write_text(cleaned,encoding="utf-8",newline="\n")
+          print("Modified production files",len(changed))
+          PY
+          git diff --check
+          git diff --stat -- src/
+      - name: Compile entire Release solution on merged dev
+        run: |
+          dotnet restore Sharplink.slnx -v minimal
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal
+      - name: Full UnitTests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+      - name: Full Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+      - name: Full IntegrationTests
+        run: dotnet run --project test/SharpLink.IntegrationTests -c Release --no-build --no-restore -- --maximum-parallel-tests 1 --timeout 120s
+      - name: Commit reviewed 44-method remaining deletion on new dev
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u -- src/
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m "refactor(3.0): remove 44 remaining unused non-public methods after #806 (#801)"
+          git push origin HEAD:refs/heads/audit/issue-801-dead-methods-rebased-806
