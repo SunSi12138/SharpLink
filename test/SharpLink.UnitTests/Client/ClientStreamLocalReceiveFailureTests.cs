@@ -1,5 +1,7 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.IO.Pipelines;
+using System.Linq;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
 
@@ -29,8 +31,8 @@ public class ClientStreamLocalReceiveFailureTests
         RpcSessionTestFixture.CompleteHandshake(
             session,
             ProtocolV2Capabilities.FlowControl | ProtocolV2Capabilities.CancellationReason,
-            streamReceiveWindowBytes: 65_536,
-            connectionReceiveWindowBytes: 65_536);
+            streamReceiveWindowBytes: 32_768,
+            connectionReceiveWindowBytes: 32_768);
         using var connectionCancellation = new CancellationTokenSource();
         await using var connection = new ClientConnection(
             client,
@@ -46,6 +48,35 @@ public class ClientStreamLocalReceiveFailureTests
             cancellationToken: CancellationToken.None);
         dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
         session.StreamManager.Register(requestId, 0, dispatcher);
+
+        // Exercise the actual published-request path: local abandonment must send Cancel
+        // only after returning receive credit, not merely drop an untransmitted pending slot.
+        var request = session.RentFrameWriter();
+        using (request.BeginPacketScope(
+                   ProtocolV2FrameType.Request,
+                   ProtocolV2FrameFlags.None,
+                   unchecked((ulong)requestId)))
+        {
+            var prefix = request.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
+            BinaryPrimitives.WriteInt64LittleEndian(prefix, 1);
+            BinaryPrimitives.WriteInt64LittleEndian(prefix[8..], 1);
+            request.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        }
+        var preparedRequest = session.PrepareOutboundFrame(request, CancellationToken.None);
+        if (!connection.PendingCalls.TryPublishRequest(
+                requestId,
+                session,
+                preparedRequest,
+                observeEmission: false,
+                cancellationToken: CancellationToken.None,
+                failureObserver: null,
+                out _,
+                out var rejection))
+        {
+            if (rejection is null)
+                runtimeContext.Buffers.Return(preparedRequest);
+            throw new Exception($"test Request was not published: {rejection}");
+        }
 
         for (var index = 0; index <= ReceiveBufferLimit; index++)
             await session.StreamManager.DispatchChunkAsync(requestId, 0, Payload);
@@ -69,6 +100,15 @@ public class ClientStreamLocalReceiveFailureTests
         await enumerator.DisposeAsync();
         Ensure(connection.ActiveCallCount == 0 && session.StreamManager.ActiveStreamCount == 0,
             "repeated disposal must not release an owner or route twice");
+
+        var requestFrames = await ReadRequestFramesAsync(session, output, requestId);
+        var requestIndex = requestFrames.IndexOf(ProtocolV2FrameType.Request);
+        var creditIndex = requestFrames.IndexOf(ProtocolV2FrameType.WindowUpdate);
+        var cancelIndex = requestFrames.IndexOf(ProtocolV2FrameType.Cancel);
+        Ensure(requestIndex >= 0 && requestIndex < creditIndex && creditIndex < cancelIndex,
+            "a published Request must be followed by final receive-credit WindowUpdate before its ConsumerAbandoned Cancel");
+        Ensure(requestFrames.Count(frame => frame == ProtocolV2FrameType.Cancel) == 1,
+            "the published locally failed request must be cancelled exactly once");
         PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
     }
 
@@ -202,6 +242,29 @@ public class ClientStreamLocalReceiveFailureTests
         Ensure(Volatile.Read(ref abandonments) == 0,
             "a genuine remote stream completion must not be converted to consumer abandonment");
         PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+    }
+
+    private static async Task<List<ProtocolV2FrameType>> ReadRequestFramesAsync(
+        RpcSession session,
+        Pipe output,
+        long requestId)
+    {
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(RaceCoordinationTimeout);
+        var read = await output.Reader.ReadAsync().AsTask().WaitAsync(RaceCoordinationTimeout);
+        var remaining = read.Buffer;
+        var frames = new List<ProtocolV2FrameType>();
+        while (ProtocolV2FrameParser.TryReadFrame(
+                   ref remaining,
+                   session.RuntimeContext.Protocol,
+                   out var header,
+                   out _))
+        {
+            if (header.RequestId == unchecked((ulong)requestId))
+                frames.Add(header.Type);
+        }
+        Ensure(remaining.IsEmpty, "the flushed send queue must contain complete frames");
+        output.Reader.AdvanceTo(read.Buffer.End);
+        return frames;
     }
 
     private static ReadOnlySequence<byte> Encode(int item)
