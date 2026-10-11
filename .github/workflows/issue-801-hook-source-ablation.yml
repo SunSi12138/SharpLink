@@ -1,0 +1,111 @@
+name: Issue 801 Paired Client and Server Hook Source Ablation
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'eng/perf/issue-801-hook-ablation.py'
+      - 'eng/perf/issue-801-hook-ablation.md'
+      - 'test/SharpLink.Benchmarks/Issue801SourceAblationBenchmarks.cs'
+      - '.github/workflows/issue-801-hook-source-ablation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-abba-source-ablation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Checkout evidence harness (never the ablated source)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up the pinned .NET SDK
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Create two detached worktrees on the exact same dev SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/issue-801-source-ablation
+          BASE_SHA="${{ github.event.pull_request.base.sha || github.sha }}"
+          echo "$BASE_SHA" > artifacts/issue-801-source-ablation/dev-sha.txt
+          git rev-parse HEAD > artifacts/issue-801-source-ablation/harness-checkout-sha.txt
+          dotnet --info > artifacts/issue-801-source-ablation/dotnet-info.txt
+          lscpu > artifacts/issue-801-source-ablation/cpu.txt
+          git worktree add --detach "$RUNNER_TEMP/issue801-source-base" "$BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/issue801-source-stripped" "$BASE_SHA"
+          for label in base stripped; do
+            cp test/SharpLink.Benchmarks/Issue801SourceAblationBenchmarks.cs \
+               "$RUNNER_TEMP/issue801-source-$label/test/SharpLink.Benchmarks/Issue801SourceAblationBenchmarks.cs"
+            test "$(git -C "$RUNNER_TEMP/issue801-source-$label" rev-parse HEAD)" = "$BASE_SHA"
+          done
+
+      - name: Perform fail-closed experimental source ablation only in second worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/perf/issue-801-hook-ablation.py apply \
+            "$RUNNER_TEMP/issue801-source-stripped" \
+            "$(cat artifacts/issue-801-source-ablation/dev-sha.txt)" \
+            artifacts/issue-801-source-ablation/ablation-manifest.json
+          git -C "$RUNNER_TEMP/issue801-source-stripped" diff -- src/ \
+            > artifacts/issue-801-source-ablation/experimental-only.patch
+          test -s artifacts/issue-801-source-ablation/experimental-only.patch
+
+      - name: Independently restore and build exact dev and stripped benchmark binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for label in base stripped; do
+            tree="$RUNNER_TEMP/issue801-source-$label"
+            dotnet restore "$tree/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"
+            dotnet build "$tree/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj" \
+              -c Release --no-restore -v minimal \
+              2>&1 | tee "artifacts/issue-801-source-ablation/build-$label.log"
+          done
+
+      - name: Run ABBA sequence on same host with identical BDN classes
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$GITHUB_WORKSPACE/artifacts/issue-801-source-ablation"
+          for round in "01:base" "02:stripped" "03:stripped" "04:base"; do
+            index="$(echo "$round" | cut -d: -f1)"
+            variant="$(echo "$round" | cut -d: -f2)"
+            tree="$RUNNER_TEMP/issue801-source-$variant"
+            folder="$output/round-$index-$variant"
+            mkdir -p "$folder/results"
+            (
+              cd "$tree"
+              export SHARPLINK_ABLATION_VARIANT="$variant"
+              dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
+                -c Release --no-build -- --filter '*Issue801*AblationBenchmarks*' --exporters json
+            ) 2>&1 | tee "$folder/benchmark.log"
+            cp "$tree"/BenchmarkDotNet.Artifacts/results/* "$folder/results/"
+            rm -rf "$tree/BenchmarkDotNet.Artifacts"
+          done
+
+      - name: Validate all four rounds and publish raw statistics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/perf/issue-801-hook-ablation.py summarize \
+            artifacts/issue-801-source-ablation
+          cat artifacts/issue-801-source-ablation/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload all results even if experiment fails
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-source-ablation-abba
+          path: artifacts/issue-801-source-ablation
+          if-no-files-found: warn
+          retention-days: 30
