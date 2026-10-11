@@ -313,7 +313,7 @@ stop_new = """    [Test]
 
 def migrate_main_tests(s: str) -> str:
     s = replace_exact(s, "executor.EnqueueAsync(", "EnqueueProduction(executor, ",
-                      "test-only enqueue API", expected=20)
+                      "test-only enqueue API", expected=23)
     s = replace_region(
         s, "    [Test]\n    public async Task BlockedWriterCancellationShouldRollbackPendingDepthWithoutPublication()",
         "    [Test]\n    public async Task WorkerWinningCancellationRaceShouldKeepCallerJoinedUntilProviderReturns()",
