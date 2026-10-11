@@ -39,12 +39,23 @@ jobs:
           dotnet build Sharplink.slnx -c Release --no-restore -v minimal
       - name: Restore the exact-version Roslyn semantic auditor
         run: dotnet restore eng/SharpLink.SemanticAudit/SharpLink.SemanticAudit.csproj
-      - name: Scan every project, generated document and src declaration
+      - name: Materialize pristine pinned dev checkout for source and test classification
+        shell: bash
+        run: |
+          AUDITED_DEV_SHA="$(cat artifacts/issue-801-current-audit/dev-sha.txt)"
+          git worktree add --detach "$RUNNER_TEMP/issue801-pristine-dev" "$AUDITED_DEV_SHA"
+          test "$(git -C "$RUNNER_TEMP/issue801-pristine-dev" rev-parse HEAD)" = "$AUDITED_DEV_SHA"
+      - name: Compile all projects at the exact unmodified dev tree
+        shell: bash
+        run: |
+          dotnet restore "$RUNNER_TEMP/issue801-pristine-dev/Sharplink.slnx"
+          dotnet build "$RUNNER_TEMP/issue801-pristine-dev/Sharplink.slnx" -c Release --no-restore -v minimal
+      - name: Scan every project, generated document and src declaration from pristine dev
         shell: bash
         run: |
           export AUDIT_CHECKOUT_SHA="$(cat artifacts/issue-801-current-audit/checkout-sha.txt)"
           export AUDIT_SOURCE_DEV_SHA="$(cat artifacts/issue-801-current-audit/dev-sha.txt)"
-          dotnet run --project eng/SharpLink.SemanticAudit/SharpLink.SemanticAudit.csproj -c Release --no-restore -- . artifacts/issue-801-current-audit
+          dotnet run --project eng/SharpLink.SemanticAudit/SharpLink.SemanticAudit.csproj -c Release --no-restore -- "$RUNNER_TEMP/issue801-pristine-dev" artifacts/issue-801-current-audit
           cat artifacts/issue-801-current-audit/report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload full CSV / JSON / coverage even on failure
         if: always()
