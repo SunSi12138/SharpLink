@@ -1,7 +1,7 @@
 namespace SharpLink.Runtime;
 
 /// <summary>Provides concurrent request-scoped routing for active RPC streams.</summary>
-internal sealed class StreamManager
+internal sealed partial class StreamManager
 {
     private StripedLongMap<RequestDispatchers>? _dispatchersByRequestId;
     private readonly RuntimeConcurrencyOptions _concurrencyOptions;

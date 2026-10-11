@@ -574,25 +574,20 @@ namespace SharpLink.Abstractions
     public readonly struct RpcMethodShape : System.IEquatable<SharpLink.Abstractions.RpcMethodShape>
     {
         public const int MaxClientStreamCount = 127;
-        public const int UnknownClientStreamCount = -1;
-        public RpcMethodShape(uint packed) { }
         public RpcMethodShape(SharpLink.Abstractions.RpcMethodKind kind, int clientStreamCount, bool supportsCancellation, bool hasResponsePayload, bool responseNullable = false, bool hasMethodTimeout = false, bool isIdempotent = false, bool hasMethodTimeoutValue = false) { }
         public int ClientStreamCount { get; }
         public bool HasClientStreams { get; }
-        public bool HasKnownClientStreamCount { get; }
         public bool HasMethodTimeout { get; }
         public bool HasMethodTimeoutValue { get; }
         public bool HasResponsePayload { get; }
         public bool IsIdempotent { get; }
+        public bool IsInvalid { get; }
         public bool IsKnown { get; }
         public bool IsUnknownMethod { get; }
-        public bool IsUnresolvable { get; }
         public SharpLink.Abstractions.RpcMethodKind Kind { get; }
-        public uint Packed { get; }
         public bool ResponseNullable { get; }
         public bool SupportsCancellation { get; }
         public static SharpLink.Abstractions.RpcMethodShape UnknownMethod { get; }
-        public static SharpLink.Abstractions.RpcMethodShape Unresolvable { get; }
         public bool Equals(SharpLink.Abstractions.RpcMethodShape other) { }
         public override bool Equals(object? obj) { }
         public override int GetHashCode() { }

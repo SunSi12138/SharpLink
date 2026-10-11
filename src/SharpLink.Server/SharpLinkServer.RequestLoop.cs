@@ -95,6 +95,9 @@ internal sealed partial class SharpLinkServer
                                 streamRequestId,
                                 out hasOwningStreamCallState))
                         {
+                            await DrainTerminalStreamProgressAsync(
+                                session, header.Type, header.Flags, streamRequestId, payload, decoded: false)
+                                .ConfigureAwait(false);
                             continue;
                         }
 
@@ -179,6 +182,9 @@ internal sealed partial class SharpLinkServer
                                             failedRequestId,
                                             out _))
                                     {
+                                        await DrainTerminalStreamProgressAsync(
+                                            session, header.Type, header.Flags, failedRequestId, payload, decoded: false)
+                                            .ConfigureAwait(false);
                                         continue;
                                     }
 
@@ -202,8 +208,17 @@ internal sealed partial class SharpLinkServer
                                 streamRequestId,
                                 out _))
                         {
-                            session.ReturnDecodedPayload(decodedOwner);
-                            decodedOwner = null;
+                            try
+                            {
+                                await DrainTerminalStreamProgressAsync(
+                                    session, header.Type, header.Flags, streamRequestId, payload, decoded: true)
+                                    .ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                session.ReturnDecodedPayload(decodedOwner);
+                                decodedOwner = null;
+                            }
                             continue;
                         }
 
