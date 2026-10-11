@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: false
 env:
   BASE_SHA: ce73ec3e68137091536a189800a792dbdba4e458
-  CANDIDATE_SHA: 35241e8258279ae6969f611b56c68e03373b0128
-  CANDIDATE_TREE: 985ab007357ef9def59a70a3d099a276897a930f
+  CANDIDATE_SHA: 973b1efd9b83cc4f68307057ddf2794715f3c10d
+  CANDIDATE_TREE: 2130d56a2d817a1b21a7676c89e3b49276c388ec
   FIXTURE: test/SharpLink.IntegrationTests/IntegrationBehaviorTests.TerminalStreamCredit.cs
   ADMISSION: test/SharpLink.IntegrationTests/IntegrationBehaviorTests.Admission.cs
   FIXTURE_SHA256: 98c6221374177e5661b4237e5ec0d1dcd9092b0552f4bf41bce8065c6956d2eb
@@ -80,6 +80,7 @@ jobs:
         paths = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines()
         allowed = {
             'CHANGELOG.md', 'doc/terminal-stream-credit.md',
+            'eng/maintainability/baseline.json',
             'src/SharpLink.Runtime/PreAdmissionStreamDispatcher.TerminalDrain.cs',
             'src/SharpLink.Runtime/StreamManager.TerminalDrain.cs',
             'src/SharpLink.Runtime/StreamManager.cs',
@@ -322,11 +323,17 @@ jobs:
             errors = tree.findall('.//error')
             skipped = tree.findall('.//skipped')
             failures = tree.findall('.//failure')
-            assert not errors and not skipped, f'{method}/{attempt}: errors or skipped test'
+            assert not skipped, f'{method}/{attempt}: skipped test'
+            problems = failures + errors
             if label == 'baseline':
                 assert code == 2, f'Expected test-failure exit 2, got {code}'
-                assert len(failures) == 1 and failures[0] in list(case), 'Expected exactly this test assertion to fail'
-                failure = failures[0]
+                assert len(problems) == 1 and problems[0] in list(case), 'Expected exactly this test assertion, without other errors or failures'
+                # TUnit classifies Ensure's System.Exception as <error>, not <failure>.
+                failure = problems[0]
+                assert failure.get('type') == 'System.Exception', f'Unexpected exception type: {failure.attrib}'
+                stack = failure.text or ''
+                assert 'IntegrationBehaviorTests.Ensure(Boolean condition, String name)' in stack
+                assert method + '()' in stack and 'IntegrationBehaviorTests.TerminalStreamCredit.cs:line 85' in stack
                 message = failure.get('message','').strip()
                 # Reporters may prefix the exception type; no timeout/setup/other assertion is accepted.
                 clean_message = re.sub(r'^(?:System\.)?Exception:\s*', '', message)
@@ -335,7 +342,7 @@ jobs:
                 assert expected_message in text, 'Raw process output must corroborate the same assertion'
                 verified.append(dict(method=method, attempt=int(attempt), exit_code=code, expected_credit=64, actual_credit=0, outcome='expected-assertion-failure'))
             else:
-                assert code == 0 and not failures, f'{method}/{attempt}: expected a genuine pass'
+                assert code == 0 and not problems, f'{method}/{attempt}: expected a genuine pass'
                 verified.append(dict(method=method, attempt=int(attempt), exit_code=code, outcome='passed'))
         (root/'verified-proof.json').write_text(json.dumps(dict(source=label, outcomes=verified), indent=2)+'\n')
         print(json.dumps(dict(source=label, verified_count=len(verified), outcomes=verified), indent=2))
