@@ -104,15 +104,21 @@ public class ServerRegistryTests
             registry.GenerationStorage++;
         }
 
-        var published = registry.CaptureSnapshot();
-        Ensure(ReferenceEquals(published.Services, services),
-            "service snapshot must retain the published immutable table");
-        Ensure(published.Generation == 1,
-            "correlated registry mutation must advance its generation");
-        Ensure(published.DynamicAssemblies is [var assembly] && ReferenceEquals(assembly, manifest.OwnerAssembly),
-            "dynamic module snapshot must retain the exact Assembly identity");
-        Ensure(published.UnregisterOperationCount == 1 && published.DetachedModuleServiceCount == 1,
-            "in-flight unregister and detached-service ownership must be visible in one snapshot");
+        // The production registry already exposes its mutable state under Gate; no
+        // separate test-only snapshot API is needed on the release assembly.
+        lock (registry.Gate)
+        {
+            Ensure(ReferenceEquals(registry.ServicesStorage, services),
+                "service snapshot must retain the published immutable table");
+            Ensure(registry.GenerationStorage == 1,
+                "correlated registry mutation must advance its generation");
+            Ensure(registry.DynamicModules.Count == 1 &&
+                   ReferenceEquals(registry.DynamicModules.Keys.Single(), manifest.OwnerAssembly),
+                "dynamic module snapshot must retain the exact Assembly identity");
+            Ensure(registry.UnregisterOperations.Count == 1 &&
+                   registry.DetachedModuleServices.Count == 1,
+                "in-flight unregister and detached-service ownership must be visible together");
+        }
 
         lock (registry.Gate)
         {
@@ -127,12 +133,14 @@ public class ServerRegistryTests
             registry.GenerationStorage++;
         }
 
-        var released = registry.CaptureSnapshot();
-        Ensure(released.Generation == 2 &&
-               released.DynamicAssemblies.Length == 0 &&
-               released.UnregisterOperationCount == 0 &&
-               released.DetachedModuleServiceCount == 0,
-            "cleanup must release all module-related registry ownership");
+        lock (registry.Gate)
+        {
+            Ensure(registry.GenerationStorage == 2 &&
+                   registry.DynamicModules.Count == 0 &&
+                   registry.UnregisterOperations.Count == 0 &&
+                   registry.DetachedModuleServices.Count == 0,
+                "cleanup must release all module-related registry ownership");
+        }
     }
 
     private static ServerConnectionState CreateState()
