@@ -530,8 +530,8 @@ public class ServerCallCancellationStateTests
             var streams = new StreamManager();
             var dispatcher = new CountingDispatcher();
             streams.Register(requestId, dispatcher);
-            streams.CompleteStream(requestId, exception: null);
-            streams.CompleteStream(requestId, exception: null);
+            streams.CompleteStream(requestId, 0, exception: null);
+            streams.CompleteStream(requestId, 0, exception: null);
             await streams.DispatchChunkAsync(
                 requestId,
                 new ReadOnlySequence<byte>(new byte[] { checked((byte)iteration) }));
