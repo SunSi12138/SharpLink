@@ -95,7 +95,8 @@ public sealed class SharpLinkClientLogicalCallAllocationTests
             MethodTimeout: TimeSpan.FromSeconds(5),
             IsIdempotent: kind is RpcMethodKind.Unary);
         return client.ResolveCallControlForInvocation(
-            method, metadata: null, includeClientDefault: false, interceptors);
+            method, metadata: null, includeClientDefault: false, interceptors,
+            new ContractRequirement(1, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL)));
     }
 
     private static SharpLinkClient.ClientInterceptorGeneration CaptureInterceptorGeneration(

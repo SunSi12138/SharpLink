@@ -37,7 +37,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var streams = default(SilentClientStreams);
         await DrainSentFramesAsync(transport);
@@ -83,7 +83,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         await client.ConnectAsync();
 
         var method = MethodWithTimeout(RpcMethodKind.Unary, methodId: 312, TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
 
         var connection = GetOnlyReadyConnection(client);
@@ -148,7 +148,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
                 }));
         await client.ConnectAsync();
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         await DrainSentFramesAsync(transport);
@@ -195,7 +195,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var probe = new ProducerProbe();
         var streams = new BlockingClientStreams(probe);
@@ -263,7 +263,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var probe = new ProducerProbe();
         var streams = new BlockingClientStreams(probe);
@@ -329,7 +329,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var probe = new ProducerProbe();
         var streams = new BlockingClientStreams(probe);
@@ -402,7 +402,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         await client.ConnectAsync();
 
         var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 311, TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 
@@ -445,7 +445,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         await client.ConnectAsync();
 
         var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 306, TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 
@@ -504,7 +504,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         await client.ConnectAsync();
 
         var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 307, TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
         var codec = new DeadlineAdvancingPayloadCodec(timeProvider, TimeSpan.FromSeconds(5));
@@ -541,7 +541,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         await client.ConnectAsync();
 
         var method = MethodWithTimeout(RpcMethodKind.OneWay, methodId: 301, TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 
@@ -595,7 +595,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
         await client.ConnectAsync();
 
         var method = MethodWithTimeout(RpcMethodKind.Unary, methodId: 302, TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var codec = new DeadlineAdvancingCodec(timeProvider, TimeSpan.FromSeconds(5));
 
         var connection = GetOnlyReadyConnection(client);
@@ -642,7 +642,7 @@ public sealed class SharpLinkClientDeadlinePublicationTests
 
     private static TimeSpan ReadTimeBudget(TestSentFrame sent)
         => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
-            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes + ProtocolV2Constants.ContractAdmissionPrefixBytes, sizeof(long))));
 
     private static Task<int> InvokeTimedUnaryAsync(IRpcChannel channel, RpcMethodDescriptor method)
     {

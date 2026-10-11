@@ -37,7 +37,7 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 

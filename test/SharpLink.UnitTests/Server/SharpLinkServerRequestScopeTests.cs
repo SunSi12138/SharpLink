@@ -342,7 +342,8 @@ public class SharpLinkServerRequestScopeTests
                 "request-scope-evidence",
                 _input.Reader,
                 _output.Writer,
-                RpcSessionTestFixture.ServerOptions(runtimeContext));
+                RpcSessionTestFixture.ServerOptions(runtimeContext), completeHandshake: false);
+            RpcSessionTestFixture.CompleteHandshake(Session, ProtocolV2Capabilities.ContractAdmission);
             Connection = new ServerConnectionState(
                 Session,
                 new RpcSessionGeneratedServerBridge(Session),
@@ -353,7 +354,7 @@ public class SharpLinkServerRequestScopeTests
                 throw new Exception("connection must become ready");
 
             var registration = ServiceRegistration.CreateSingleton(
-                typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
+                typeof(EvidenceService), stub, new EvidenceService(), ownsService: false, contractHash: new RpcHash128(1, 2));
             ((ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!).PublishServices(new Dictionary<long, ServiceRegistration>
@@ -377,7 +378,7 @@ public class SharpLinkServerRequestScopeTests
             [
                 Connection,
                 requestId,
-                ProtocolV2FrameFlags.None,
+                ProtocolV2FrameFlags.HasContractIdentity,
                 CreateRequestPayload(),
                 Connection.CallCancellations,
                 CancellationToken.None,
@@ -392,7 +393,7 @@ public class SharpLinkServerRequestScopeTests
             [
                 Connection,
                 requestId,
-                ProtocolV2FrameFlags.OneWay,
+                ProtocolV2FrameFlags.OneWay | ProtocolV2FrameFlags.HasContractIdentity,
                 CreateRequestPayload(),
                 Connection.CallCancellations,
                 CancellationToken.None,
@@ -408,9 +409,12 @@ public class SharpLinkServerRequestScopeTests
 
         private ReadOnlySequence<byte> CreateRequestPayload()
         {
-            var request = new byte[sizeof(long) * 2];
+            var request = new byte[16 + ProtocolV2Constants.ContractAdmissionPrefixBytes];
             BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
             BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
+            BinaryPrimitives.WriteUInt64LittleEndian(request.AsSpan(16), 1);
+            BinaryPrimitives.WriteUInt64LittleEndian(request.AsSpan(24), 2);
+            request[32] = ProtocolV2ContractAdmissionCodec.Version;
             return new ReadOnlySequence<byte>(request);
         }
 

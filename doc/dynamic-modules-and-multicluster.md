@@ -125,7 +125,7 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 ### Proxy 与 endpoint 语义
 
-- Add 后新 `Get<T>()` 选择新 slot；若调用要求立即远端可用，应先显式 `WaitForReadyAsync(cluster)`。
+- Add 后新 `Get<T>()` 选择新 slot；可用 `WaitForContractAsync` 显式观察目标契约；实际调用仍独立准入。
 - Replace 后新 `Get<T>()` 绑定新 child；Replace 前缓存的 Proxy 继续绑定旧 child，并在旧 child开始停止后拒绝新调用。
 - Remove 后新 `Get<T>()` 立即失败；旧 Proxy 最终观察到 child 已停止。
 - 不自动重绑定旧 Proxy，因此 RPC 热路径没有 coordinator 查询或额外的 slot indirection。
@@ -138,29 +138,27 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 替换不是覆盖字典：新 generation 先完整验证并发布，旧 generation 进入 draining；已开始调用继续使用旧服务/Codec，新的调用路由到新 generation。注销等待 active calls/streams 和 adapter scope 释放，超时不会假装成功。
 
-## 远端 wire contract 可见性
+## 远端 wire contract 可见性与调用准入
 
-本地 `RegisterAssembly` / `ReplaceAssemblyAsync` 成功不代表另一条已 Ready 连接已收到新的 ContractManifest。
-调用方用公开 generated Manifest 的 `Contracts[].ContractId` 和 `RpcAssemblyHash` 建立显式屏障：
+3.0 的 `Get<T>()` / `CreateProxy<T>()` 只检查本地注册，不根据远端清单拒绝代理，也不隐式连接或等待。
+每次调用独立检查当前 topology 中实际预留连接的 ContractId/hash，默认 FailFast；需要等待部署时，
+可用 `CreateProxy<T>(new RpcProxyOptions { Availability = RpcAvailability.WaitForCompatible })`。
+等待占用有界配额，与调用共享原始 deadline；取消、client 停止和本地 registration retirement 会结束等待。
 
-```csharp
-await client.WaitForRemoteContractAsync(contractId, expectedHash, cancellationToken);
-var proxy = client.Get<IContract>();
-// 多集群只等待目标 slot：
-await clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, cancellationToken);
-```
+`GetContractReadiness(requirement)` 和 `WaitForContractAsync(requirement, options, cancellationToken)`
+提供当前观察与协调，不是调用前必须建立的屏障。多集群重载显式指定目标 cluster，不跨 slot 寻找兼容服务。
+观察按不同 EndpointId 计数，允许只有部分 endpoint 支持目标契约；成功不代表之后的调用可跳过准入。
 
-普通屏障在所有当前 Ready 连接都广告目标 ID 和完全相同哈希时完成，至少需要一条 Ready 连接。
-缺少 contract 继续等清单；存在但哈希不同立即 `FailedPrecondition`，不重试 RPC 或异常文本。
-如果业务明确发起旧 wire identity 到新 identity 的替换，可使用额外 `previousRpcAssemblyHash`
-参数的重载。只有完全匹配的旧哈希允许等待传播，任何第三种哈希仍立即拒绝；调用方的取消
-只结束自己的等待。初次等待加入连接生命周期，重连重新观察新连接的清单，停机终止等待。
-注销后的缺失合同等待后续注册或取消，不保留代理、Type 或 Assembly。
+服务端 `RegisterAssembly` / `ReplaceAssemblyAsync` 的结果包含每个可调用契约的 scalar `Receipts`。
+用 `new ContractRequirement(receipt, ContractRegistrationMatch.ExactRegistration)` 可要求同一 server instance、
+registry epoch、不小于 receipt 的 generation 和相同 RegistrationId；同 hash 的替换也会区分。
+`MinimumVersion` 保留同一 timeline 的 generation 下界，`Compatible` 只要求 ContractId/hash。
+不同 server/epoch 的 generation 不可比较。把 requirement 放入 `RpcProxyOptions.Requirement`，
+调用会等待或拒绝尚未观察到该 receipt 的连接，服务端再在业务反序列化与 activation 前做最终校验。
 
-每条连接独立按 manifest generation 排序，不能比较不同连接的 generation。成功是当前观察，
-不是 lease，随后重连、注销或替换仍可能使同步 `Get` 失败。相同 ID/hash 已可见时立即成功，
-包括哈希相同的替换；它不证明业务实现或 Artifact generation 已发布。`Get` 继续保持同步，
-不会偷偷发起网络调用。自定义客户端默认明确抛出 `NotSupportedException`，不会伪装成已支持。
+旧的 `WaitForRemoteContractAsync` 保留其所有 Ready 连接严格匹配的观察语义（包括可选 previous hash 过渡），
+不作为新调用准入的判断条件。清单广播不证明跨连接顺序，持有的 proxy 也不会因清单刷新重新绑定本地 Codec。
+完整模型与线协议见 [wire identity](rpc-wire-identity.md) 和 [protocol v2](protocol-v2.md)。
 
 ## AssemblyLoadContext 所有权
 

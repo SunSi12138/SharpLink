@@ -198,7 +198,9 @@ public class DynamicModuleTests
             typeof(DynamicModuleTests).Assembly,
             manifest,
             registration);
-        var channel = new SharpLinkModuleRpcChannel(client, module);
+        var channel = new SharpLinkModuleRpcChannel(client, module,
+            new ContractRequirement(1, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL))
+            { LocalRetirement = module.Retirement });
 
         var provider = new ManualTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);

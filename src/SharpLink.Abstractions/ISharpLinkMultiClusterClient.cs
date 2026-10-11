@@ -129,6 +129,45 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     /// <summary>Creates a proxy by looking up the contract's cluster route exactly once.</summary>
     TContract Get<TContract>() where TContract : IService;
 
+    /// <summary>Creates a locally routed proxy with immutable contract-admission options.</summary>
+    /// <typeparam name="TContract">The locally registered generated RPC contract interface.</typeparam>
+    /// <param name="options">The invocation availability policy and optional registration requirement; null uses the default local proxy.</param>
+    TContract CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+    {
+        options ??= new RpcProxyOptions();
+        if (options is { Availability: RpcAvailability.FailFast, Requirement: null })
+            return Get<TContract>();
+        throw new NotSupportedException("This ISharpLinkMultiClusterClient implementation does not support contract-admission proxy options.");
+    }
+
+    /// <summary>Observes contract compatibility only in the specified cluster's current lifetime.</summary>
+    /// <param name="cluster">The configured cluster to observe.</param>
+    /// <param name="requirement">The scalar wire identity and optional registration constraint.</param>
+    /// <returns>A point-in-time observation that does not reserve future call admission.</returns>
+    ContractReadinessSnapshot GetContractReadiness(SharpLinkClusterKey cluster, ContractRequirement requirement)
+    {
+        ArgumentNullException.ThrowIfNull(requirement);
+        throw new NotSupportedException("This ISharpLinkMultiClusterClient implementation does not expose contract-readiness observations.");
+    }
+
+    /// <summary>Waits for distinct compatible endpoints only in the selected cluster's current lifetime.</summary>
+    /// <remarks>Removing the selected cluster terminates its waits; a replacement under the same key is not joined.</remarks>
+    /// <param name="cluster">The configured cluster to observe.</param>
+    /// <param name="requirement">The scalar wire identity and optional registration constraint.</param>
+    /// <param name="options">The endpoint threshold and optional timeout; null uses the defaults.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <returns>The satisfying point-in-time observation, without leasing future availability.</returns>
+    ValueTask<ContractReadinessSnapshot> WaitForContractAsync(
+        SharpLinkClusterKey cluster,
+        ContractRequirement requirement,
+        ContractWaitOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requirement);
+        return ValueTask.FromException<ContractReadinessSnapshot>(new NotSupportedException(
+            "This ISharpLinkMultiClusterClient implementation does not support contract-readiness waits."));
+    }
+
     /// <summary>Creates a routed proxy that attaches one immutable metadata snapshot to every invocation.</summary>
     TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
 

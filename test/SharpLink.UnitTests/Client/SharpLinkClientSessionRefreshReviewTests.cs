@@ -6,6 +6,61 @@ namespace SharpLink.UnitTests.Client;
 public sealed class SharpLinkClientSessionRefreshReviewTests
 {
     [Test]
+    public async Task StaleCompatibleSnapshotMustRejectIncompatibleRedirectAndReleaseReservation()
+    {
+        var factory = new ReviewRefreshTransportFactory(new RpcHash128(1, 2));
+        await using var client = ClientBuilderTestHelper.Build(factory, builder => builder.UseConnectionPool(options =>
+        {
+            options.MinConnections = 1;
+            options.MaxConnections = 1;
+        }));
+        await client.ConnectAsync();
+        var source = SharpLinkClientLifecycleSharedSupport.GetOnlyReadyConnection(client);
+        var cutEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseCut = new ManualResetEventSlim(false);
+        var redirected = new TaskCompletionSource<ClientConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client._afterSessionRefreshEligibilitySwapTestHook = () =>
+        {
+            cutEntered.TrySetResult();
+            if (!releaseCut.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("incompatible refresh cut was not released");
+        };
+        client._callAdmissionReservedTestHook = connection => redirected.TrySetResult(connection);
+        try
+        {
+            await InjectRefreshAsync(factory.GetConnection(0), Guid.NewGuid(), 2);
+            await factory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(5));
+            factory.ReleaseReplacement();
+            await cutEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var invocation = Task.Run(async () => await ClientInvokerTestHelper.InvokeUnaryAsync(client));
+            var reserved = await redirected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // Once reservation has followed the stale snapshot's redirect, release the topology
+            // gate so diagnostic observation can complete without relying on the hook timeout.
+            releaseCut.Set();
+            Exception? failure = null;
+            try
+            {
+                _ = await invocation.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception exception) { failure = exception; }
+            Ensure(failure is SharpLinkContractAdmissionException { Code: SharpLinkErrorCode.Unavailable },
+                "a compatible stale snapshot must not authorize an incompatible physical replacement");
+            Ensure(!ReferenceEquals(reserved, source),
+                "the admission attempt must actually follow the source's blue-green redirect");
+            Ensure(reserved.CallAdmissionReservationCount == 0 && reserved.ActiveCallCount == 0 && client.PendingCallCount == 0,
+                "rejected redirected admission must release its exact physical reservation");
+            Ensure(factory.GetConnection(0).SentRequestCount == 0 && factory.GetConnection(1).SentRequestCount == 0,
+                "neither the retired source nor its incompatible replacement may receive a Request");
+        }
+        finally
+        {
+            releaseCut.Set();
+            client._afterSessionRefreshEligibilitySwapTestHook = null;
+            client._callAdmissionReservedTestHook = null;
+        }
+    }
+
+    [Test]
     public async Task FixedEligibilityCutShouldRouteConcurrentUnaryToReplacement()
     {
         var factory = new ReviewRefreshTransportFactory();
@@ -370,7 +425,7 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
             throw new InvalidOperationException(message);
     }
 
-    private sealed class ReviewRefreshTransportFactory : IClientTransportFactory
+    private sealed class ReviewRefreshTransportFactory(RpcHash128? replacementHash = null) : IClientTransportFactory
     {
         private readonly Lock _gate = new();
         private readonly List<TestTransportConnection> _connections = [];
@@ -400,6 +455,8 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
 
                 await connection.InjectSuccessfulHandshakeAsync(
                     ProtocolV2Capabilities.SessionRefresh,
+                    contractManifest: ordinal == 2 && replacementHash is { } hash
+                        ? [new KeyValuePair<long, RpcHash128>(1, hash)] : null,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
                 return connection;
             }

@@ -325,19 +325,37 @@ internal sealed partial class SharpLinkClient
         }
     }
 
+    public T CreateProxy<T>(RpcProxyOptions? options = null) where T : IService
+    {
+        if (options is null)
+            return Get<T>();
+        if (!Enum.IsDefined(options.Availability))
+            throw new ArgumentOutOfRangeException(nameof(options));
+        if (options is { Availability: RpcAvailability.FailFast, Requirement: null })
+            return Get<T>();
+        if (!Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
+            throw new InvalidOperationException($"Proxy for service interface {typeof(T).FullName} is not registered.");
+        var local = GetLocalContractRequirement(registration);
+        var requirement = options.Requirement ?? local;
+        if (requirement.ContractId != local.ContractId || requirement.RpcAssemblyHash != local.RpcAssemblyHash)
+            throw new ArgumentException("The requirement must match the local generated contract.", nameof(options));
+        requirement = requirement with { Availability = options.Availability, LocalRetirement = local.LocalRetirement };
+        return (T)registration.Descriptor.ProxyFactory(
+            CreateBoundContractChannel(registration, requirement), registration.Codecs);
+    }
+
     public T Get<T>() where T : IService
     {
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
-            ValidateRemoteContractAssembly(registration);
+            ValidateLocalContractLifetime(registration);
             var existing = Volatile.Read(ref registration.Proxy);
             if (existing is not null)
                 return (T)existing;
 
-            var channel = registration.Module is null
-                ? (IRpcChannel)this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
-            var created = registration.Descriptor.ProxyFactory(channel, registration.Codecs);
+            var requirement = GetLocalContractRequirement(registration);
+            var created = registration.Descriptor.ProxyFactory(
+                CreateBoundContractChannel(registration, requirement), registration.Codecs);
             var published = Interlocked.CompareExchange(ref registration.Proxy, created, null);
             return (T)(published ?? created);
         }
@@ -353,11 +371,9 @@ internal sealed partial class SharpLinkClient
 
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
-            ValidateRemoteContractAssembly(registration);
-            IRpcChannel channel = registration.Module is null
-                ? this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
-            channel = new SharpLinkMetadataRpcChannel(channel, metadata);
+            var requirement = GetLocalContractRequirement(registration);
+            var channel = new SharpLinkMetadataRpcChannel(
+                CreateBoundContractChannel(registration, requirement), metadata);
             return (T)registration.Descriptor.ProxyFactory(channel, registration.Codecs);
         }
 
@@ -385,7 +401,7 @@ internal sealed partial class SharpLinkClient
         var handshakePreference = CaptureResponseCompressionPreference();
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,
-            ProtocolV2Capabilities.ContractManifest,
+            ProtocolV2Capabilities.ContractManifest | ProtocolV2Capabilities.ContractAdmission,
             authPayload,
             handshakePreference.Generation,
             handshakePreference.Allowed);

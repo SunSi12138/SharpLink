@@ -82,6 +82,10 @@ internal sealed partial class SharpLinkClient
                 attemptScope.Complete(exception);
                 if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
                     _ = control.LogicalCall?.TryClaimDeadline();
+                if (exception is SharpLinkContractAdmissionException &&
+                    (GetErrorCode(exception) is SharpLinkErrorCode.DeadlineExceeded or SharpLinkErrorCode.ConnectionClosed ||
+                     control.ContractRequirement?.LocalRetirement?.IsCompleted == true))
+                    throw;
                 EnsureLogicalCallProgress(control);
 
                 lastFailure = exception;
@@ -162,6 +166,8 @@ internal sealed partial class SharpLinkClient
         if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
             _ = control.LogicalCall?.TryClaimDeadline();
 
+        if (exception is SharpLinkContractAdmissionException { Code: SharpLinkErrorCode.DeadlineExceeded })
+            return exception;
         if (control.LogicalCall is { } logicalCall)
         {
             return logicalCall.TryEnterProgress(control.Deadline, control.TimeProvider!)
@@ -232,13 +238,25 @@ internal sealed partial class SharpLinkClient
         ResolvedCallControl control,
         EndpointRetrySelectionState? selection,
         AttemptOutcomeState? outcome,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ClientConnection? admittedConnection = null)
     {
         ClientConnection? connection = null;
         try
         {
-            EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, selection, outcome);
+            if (admittedConnection is null)
+                EnsureLogicalCallProgress(control);
+            if (admittedConnection is null)
+            {
+                var admission = AdmitContractCallAsync(method, control, selection, outcome, cancellationToken);
+                if (!admission.IsCompletedSuccessfully)
+                    return AwaitRetryAdmissionAsync(admission, method, contractId, methodId,
+                        hasResponsePayload, request, requestCodec, responseCodec, control,
+                        selection, outcome, cancellationToken);
+                connection = admission.Result;
+            }
+            else
+                connection = admittedConnection;
             try
             {
                 EnsureLogicalCallProgress(control);
@@ -287,5 +305,24 @@ internal sealed partial class SharpLinkClient
             outcome?.CompleteLocalFailure(exception);
             return ValueTask.FromException<TResponse>(exception);
         }
+    }
+
+    private async ValueTask<TResponse> AwaitRetryAdmissionAsync<TRequest, TResponse>(
+        ValueTask<ClientConnection> admission, RpcMethodDescriptor method,
+        long contractId, long methodId, bool hasResponsePayload, TRequest request,
+        IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+        ResolvedCallControl control, EndpointRetrySelectionState? selection,
+        AttemptOutcomeState? outcome, CancellationToken cancellationToken)
+    {
+        ClientConnection connection;
+        try { connection = await admission.ConfigureAwait(false); }
+        catch (Exception exception)
+        {
+            outcome?.CompleteLocalFailure(exception);
+            throw;
+        }
+        return await InvokeUnaryRetryAttemptAsync(method, contractId, methodId,
+            hasResponsePayload, request, requestCodec, responseCodec, control,
+            selection, outcome, cancellationToken, connection).ConfigureAwait(false);
     }
 }

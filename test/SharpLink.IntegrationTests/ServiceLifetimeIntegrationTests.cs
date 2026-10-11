@@ -183,15 +183,17 @@ public sealed class ServiceLifetimeIntegrationTests
         await using var firstClient = CreateClient(firstPort);
         await firstClient.ConnectAsync();
         _ = await firstClient.Get<ICallLifetimeProbe>().GetInstanceIdAsync();
+        var filteredService = firstClient.Get<IConnectionLifetimeProbe>();
         try
         {
-            _ = await firstClient.Get<IConnectionLifetimeProbe>().GetInstanceIdAsync();
+            _ = await filteredService.GetInstanceIdAsync();
             throw new Exception("assert failed: disabled automatic registration must hide non-enabled services");
         }
-        catch (SharpLinkException exception)
+        catch (SharpLinkContractAdmissionException exception)
         {
-            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
-                "filtered service contract acquisition");
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable &&
+                   exception.Snapshot.State == ContractObservationState.Absent,
+                "local proxy construction succeeds, but the filtered service call is not admitted");
         }
         await firstClient.StopAsync();
         await firstServer.StopAsync(TimeSpan.FromSeconds(2));

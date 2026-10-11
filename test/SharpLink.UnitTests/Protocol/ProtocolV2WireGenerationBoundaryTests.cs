@@ -5,9 +5,11 @@ public class ProtocolV2WireGenerationBoundaryTests
     [Test]
     public void PreviousMinorShouldBeRejectedDuringHandshake()
     {
+        Ensure(ProtocolV2Constants.MinorVersion == 5,
+            "3.0 increments actual published 2.0.3 minor 4 once for contract admission");
         Ensure(
             ProtocolV2Constants.MinimumCompatibleMinorVersion == ProtocolV2Constants.MinorVersion,
-            "the intentional DTO wire break must advance the current minor and compatibility floor together");
+            "the admission wire break advances current minor and floor together");
         var previousMinor = checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1));
         var policy = ProtocolV2Negotiator.CreateImplementedPolicy(
             SharpLinkProtocolOptions.MinMaxFramePayloadBytes,

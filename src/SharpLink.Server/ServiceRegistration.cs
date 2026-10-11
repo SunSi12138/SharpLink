@@ -30,7 +30,8 @@ internal sealed class ServiceRegistrationDefinition
 
     internal ServiceRegistration Build(
         IServiceProvider serviceProvider,
-        SharpLinkDynamicModule? module = null)
+        SharpLinkDynamicModule? module = null,
+        RpcHash128 contractHash = default)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
         if (_instance is not null)
@@ -40,7 +41,7 @@ internal sealed class ServiceRegistrationDefinition
                 Stub,
                 _instance,
                 ownsService: !_callerOwned,
-                module);
+                module, contractHash);
         }
 
         var factory = _factory ?? throw new InvalidOperationException("Service factory is not configured.");
@@ -52,7 +53,7 @@ internal sealed class ServiceRegistrationDefinition
                 serviceProvider,
                 factory,
                 ownsService: true,
-                module);
+                module, contractHash);
         }
 
         var scopeFactory = serviceProvider.GetService<IServiceScopeFactory>() ??
@@ -60,9 +61,9 @@ internal sealed class ServiceRegistrationDefinition
                 "Connection and Call SharpLink services require an IServiceScopeFactory.");
         return Lifetime == SharpLinkServiceLifetime.Connection
             ? ServiceRegistration.CreateConnection(
-                ContractType, Stub, scopeFactory, factory, disposeService: true, module)
+                ContractType, Stub, scopeFactory, factory, disposeService: true, module, contractHash)
             : ServiceRegistration.CreatePerCall(
-                ContractType, Stub, scopeFactory, factory, disposeService: true, module);
+                ContractType, Stub, scopeFactory, factory, disposeService: true, module, contractHash);
     }
 }
 
@@ -88,9 +89,11 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         IServiceScopeFactory? scopeFactory,
         Func<IServiceProvider, object>? factory,
         bool disposeScopedService,
-        SharpLinkDynamicModule? module)
+        SharpLinkDynamicModule? module,
+        RpcHash128 contractHash)
     {
         ContractType = contractType;
+        ContractHash = contractHash;
         Stub = stub;
         Lifetime = lifetime;
         _singleton = singleton;
@@ -108,6 +111,8 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal IRpcStub Stub { get; }
     internal SharpLinkServiceLifetime Lifetime { get; }
     internal SharpLinkDynamicModule? Module { get; }
+    internal RpcHash128 ContractHash { get; }
+    internal Guid RegistrationId { get; } = Guid.NewGuid();
     internal bool HasModule => _hasModule;
     internal CancellationToken ModuleCancellation => _hasModule ? Module!.ForcedCancellation : CancellationToken.None;
     internal bool AcceptsCalls => !_hasModule || Module!.State == SharpLinkDynamicModuleState.Running;
@@ -178,9 +183,10 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         IRpcStub stub,
         object service,
         bool ownsService,
-        SharpLinkDynamicModule? module = null)
+        SharpLinkDynamicModule? module = null,
+        RpcHash128 contractHash = default)
         => new(contractType, stub, SharpLinkServiceLifetime.Singleton, service, ownsService,
-            null, null, null, false, module);
+            null, null, null, false, module, contractHash);
 
     internal static ServiceRegistration CreateSingletonFactory(
         Type contractType,
@@ -188,9 +194,10 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         IServiceProvider serviceProvider,
         Func<IServiceProvider, object> factory,
         bool ownsService,
-        SharpLinkDynamicModule? module = null)
+        SharpLinkDynamicModule? module = null,
+        RpcHash128 contractHash = default)
         => new(contractType, stub, SharpLinkServiceLifetime.Singleton, null, ownsService,
-            serviceProvider, null, factory, false, module);
+            serviceProvider, null, factory, false, module, contractHash);
 
     internal static ServiceRegistration CreateConnection(
         Type contractType,
@@ -198,9 +205,10 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         IServiceScopeFactory scopeFactory,
         Func<IServiceProvider, object> factory,
         bool disposeService,
-        SharpLinkDynamicModule? module = null)
+        SharpLinkDynamicModule? module = null,
+        RpcHash128 contractHash = default)
         => new(contractType, stub, SharpLinkServiceLifetime.Connection, null, false,
-            null, scopeFactory, factory, disposeService, module);
+            null, scopeFactory, factory, disposeService, module, contractHash);
 
     internal static ServiceRegistration CreatePerCall(
         Type contractType,
@@ -208,9 +216,10 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         IServiceScopeFactory scopeFactory,
         Func<IServiceProvider, object> factory,
         bool disposeService,
-        SharpLinkDynamicModule? module = null)
+        SharpLinkDynamicModule? module = null,
+        RpcHash128 contractHash = default)
         => new(contractType, stub, SharpLinkServiceLifetime.Call, null, false,
-            null, scopeFactory, factory, disposeService, module);
+            null, scopeFactory, factory, disposeService, module, contractHash);
 
     internal ValueTask<ServiceLease> AcquireAsync(ServerConnectionState connection, bool isStream)
         => AcquireAsync(connection, isStream, generatedBridge: null, requestId: 0);

@@ -154,7 +154,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
             ContractId: 1, MethodId: 297, Kind: RpcMethodKind.OneWay,
             HasResponsePayload: false, HasClientStreams: true,
             HasMethodTimeout: true, MethodTimeout: TimeSpan.FromSeconds(5), ClientStreamCount: 1);
-        return ((IRpcChannel)client).InvokeOneWayAsync(
+        return ClientContractTestBinding.Bind(client).InvokeOneWayAsync(
             method, in request, RpcEmptyRequestCodec.Instance, in streams, metadata: null, token).AsTask();
     }
 

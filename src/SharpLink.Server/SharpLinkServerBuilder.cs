@@ -563,7 +563,7 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 var registration = transaction.Own(
                     entry.Registration.Materialize(
                         RpcGeneratedCodecResolver.GetProvider(runtimeContext, entry.Registration.ContractType))
-                        .Build(serviceProvider),
+                        .Build(serviceProvider, contractHash: entry.Registration.ContractHash),
                     static value => SharpLinkAsyncCleanup.DisposeSynchronously(value),
                     SynchronousBuildResourceMetadata.FrameworkOwned("Server service registration"));
                 registrationsByContract.Add(entry.ContractId, registration);
@@ -681,7 +681,8 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     service.Activator,
                     instance: null,
                     callerOwned: false,
-                    service.Dependencies)));
+                    service.Dependencies,
+                    contract.Manifest.RpcAssemblyHash)));
         }
 
         for (var replacementIndex = 0; replacementIndex < replacementServices.Count; replacementIndex++)
@@ -705,7 +706,8 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     value.Factory,
                     value.Instance,
                     value.CallerOwned,
-                    [])));
+                    [],
+                    contract.Manifest.RpcAssemblyHash)));
             foundEnabled.Add(replacement.Key);
         }
 

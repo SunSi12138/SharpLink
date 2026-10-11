@@ -104,7 +104,7 @@ public class SharpLinkClientLifetimeTelemetryTests
             deadline,
             provider));
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         SharpLinkException? failure = null;
         try
@@ -218,7 +218,7 @@ public class SharpLinkClientLifetimeTelemetryTests
         TestClientTransportFactory transport,
         RpcMethodDescriptor method)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             method,

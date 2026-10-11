@@ -11,7 +11,8 @@ internal static class ProtocolV2ContractManifestNegotiation
     {
         ArgumentNullException.ThrowIfNull(compressionProviders);
         var capabilities = ProtocolV2Negotiator.AlwaysImplementedCapabilities |
-                           ProtocolV2Capabilities.ContractManifest;
+                           ProtocolV2Capabilities.ContractManifest |
+                           ProtocolV2Capabilities.ContractAdmission;
         if (enableSessionRefresh)
             capabilities |= ProtocolV2Capabilities.SessionRefresh;
         if (compressionProviders.Count != 0)

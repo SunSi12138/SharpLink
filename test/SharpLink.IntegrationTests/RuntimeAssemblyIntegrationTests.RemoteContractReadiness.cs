@@ -114,19 +114,20 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var wait = harness.Client.WaitForRemoteContractAsync(
                 contractId, module.Manifest.RpcAssemblyHash, timeout.Token).AsTask();
             Ensure(!wait.IsCompleted, "ordinary Ready and registration success do not complete the contract barrier");
+            var heldProxy = GetProxy(harness.Client, plugin.ContractType);
             try
             {
-                _ = GetProxy(harness.Client, plugin.ContractType);
-                throw new Exception("Get must fail while the remote manifest is still missing");
+                _ = await InvokeValueTaskAsync<int>(heldProxy, plugin.ContractType, "UnaryAsync", 4, timeout.Token);
+                throw new Exception("call must fail while the remote manifest is missing");
             }
-            catch (System.Reflection.TargetInvocationException exception)
-                when (exception.InnerException is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition })
+            catch (SharpLinkContractAdmissionException exception)
             {
+                Ensure(exception.Code == SharpLinkErrorCode.Unavailable && exception.Snapshot.State == ContractObservationState.Absent,
+                    "local proxy creation succeeds while the actual call reports observed absence");
             }
             releaseBroadcast.TrySetResult();
             await wait;
-            var proxy = GetProxy(harness.Client, plugin.ContractType);
-            Ensure(await InvokeValueTaskAsync<int>(proxy, plugin.ContractType,
+            Ensure(await InvokeValueTaskAsync<int>(heldProxy, plugin.ContractType,
                     "UnaryAsync", 4, timeout.Token) == 5,
                 "the public barrier permits a real TCP call without polling or reconnect");
         }

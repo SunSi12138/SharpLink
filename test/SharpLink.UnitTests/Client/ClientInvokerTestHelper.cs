@@ -49,7 +49,7 @@ internal static class ClientInvokerTestHelper
         SharpLinkMetadata? metadata = null,
         CancellationToken cancellationToken = default)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SUnaryMethod,
@@ -65,7 +65,7 @@ internal static class ClientInvokerTestHelper
         SharpLinkMetadata? metadata = null,
         CancellationToken cancellationToken = default)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SIdempotentUnaryMethod,
@@ -78,7 +78,7 @@ internal static class ClientInvokerTestHelper
 
     public static ValueTask InvokeOneWayAsync(SharpLinkClient client)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
         return channel.InvokeOneWayAsync(
@@ -93,7 +93,7 @@ internal static class ClientInvokerTestHelper
         SharpLinkClient client,
         CancellationToken cancellationToken = default)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeServerStreamingAsync(
             SServerStreamingMethod,

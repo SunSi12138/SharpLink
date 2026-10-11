@@ -456,7 +456,8 @@ public partial class SharpLinkServerInvocationTests
                 "response-capacity",
                 _input.Reader,
                 output,
-                RpcSessionTestFixture.ServerOptions(runtimeContext));
+                RpcSessionTestFixture.ServerOptions(runtimeContext), completeHandshake: false);
+            RpcSessionTestFixture.CompleteHandshake(Session, ProtocolV2Capabilities.ContractAdmission);
             Connection = new ServerConnectionState(
                 Session,
                 new RpcSessionGeneratedServerBridge(Session),
@@ -468,7 +469,7 @@ public partial class SharpLinkServerInvocationTests
                 typeof(ThrowingService),
                 stub,
                 new ThrowingService(),
-                ownsService: false);
+                ownsService: false, contractHash: new RpcHash128(1, 2));
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry",
                     BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -489,14 +490,17 @@ public partial class SharpLinkServerInvocationTests
 
         internal ValueTask Dispatch(long requestId, ProtocolV2FrameFlags flags)
         {
-            var request = new byte[sizeof(long) * 2];
+            var request = new byte[16 + ProtocolV2Constants.ContractAdmissionPrefixBytes];
             BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
             BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 1);
+            BinaryPrimitives.WriteUInt64LittleEndian(request.AsSpan(16), 1);
+            BinaryPrimitives.WriteUInt64LittleEndian(request.AsSpan(24), 2);
+            request[32] = ProtocolV2ContractAdmissionCodec.Version;
             return (ValueTask)DispatchMethod.Invoke(Server,
             [
                 Connection,
                 requestId,
-                flags,
+                flags | ProtocolV2FrameFlags.HasContractIdentity,
                 new ReadOnlySequence<byte>(request),
                 Connection.CallCancellations,
                 CancellationToken.None,

@@ -27,7 +27,7 @@ public sealed class SharpLinkClientDeadlineClockReadTests
         await PrepareAsync(client);
 
         var method = UnaryMethod(TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var before = timeProvider.TimestampReadCount;
 

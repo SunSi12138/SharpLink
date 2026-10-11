@@ -17,9 +17,13 @@ internal static class ServerRequestEnvelopeReader
         // Plain requests already allocate nothing; do not add a byte comparison to that path.
         // A changed or fragmented prefix takes the original parser, including all validation.
         if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0 &&
-            (session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) != 0)
+            (session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) != 0 &&
+            ((flags & ProtocolV2FrameFlags.HasContractIdentity) == 0 ||
+             (session.NegotiatedCapabilities & ProtocolV2Capabilities.ContractAdmission) != 0))
         {
             var metadataOffset = ProtocolV2Constants.RequestPrefixBytes +
+                ((flags & ProtocolV2FrameFlags.HasContractIdentity) != 0
+                    ? ProtocolV2ContractAdmissionCodec.EncodedLength(original.ContractConstraint.Match) : 0) +
                 ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0 ? sizeof(long) : 0);
             var prefixLength = encodedPayload.Length - original.Arguments.Length;
             if (prefixLength >= ProtocolV2Constants.RequestPrefixBytes &&
@@ -55,6 +59,19 @@ internal static class ServerRequestEnvelopeReader
             throw new SharpLinkProtocolViolationException(
                 ProtocolViolationReason.MalformedFrame,
                 "Request routing prefix is truncated.");
+        }
+
+        var contractHash = default(RpcHash128);
+        var constraint = default(ProtocolV2ContractConstraint);
+        if ((flags & ProtocolV2FrameFlags.HasContractIdentity) != 0)
+        {
+            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.ContractAdmission) == 0)
+            {
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.ProtocolState,
+                    "Request contract admission was not negotiated during handshake.");
+            }
+            contractHash = ProtocolV2ContractAdmissionCodec.Read(ref reader, out constraint);
         }
 
         var deadline = resolvedDeadline;
@@ -103,7 +120,9 @@ internal static class ServerRequestEnvelopeReader
             methodHash,
             reader.UnreadSequence,
             deadline,
-            metadata);
+            metadata,
+            contractHash,
+            constraint);
     }
 }
 
@@ -112,4 +131,6 @@ internal readonly record struct ServerRequestEnvelope(
     long MethodHash,
     ReadOnlySequence<byte> Arguments,
     RpcDeadline RpcDeadline,
-    SharpLinkMetadata? Metadata);
+    SharpLinkMetadata? Metadata,
+    RpcHash128 ContractHash = default,
+    ProtocolV2ContractConstraint ContractConstraint = default);

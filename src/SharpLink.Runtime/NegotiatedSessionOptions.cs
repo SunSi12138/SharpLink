@@ -50,7 +50,8 @@ internal static class RpcSessionProtocolRules
         ProtocolV2Capabilities.HealthCheck |
         ProtocolV2Capabilities.CancellationReason |
         ProtocolV2Capabilities.ContractManifest |
-        ProtocolV2Capabilities.SessionRefresh;
+        ProtocolV2Capabilities.SessionRefresh |
+        ProtocolV2Capabilities.ContractAdmission;
 
     internal static bool IsFrameAllowed(
         RpcSessionProtocolPhase phase,

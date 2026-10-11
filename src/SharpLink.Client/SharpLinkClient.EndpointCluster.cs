@@ -21,7 +21,8 @@ internal sealed partial class SharpLinkClient
         ClientConnection GetReadyConnection(
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
-            AttemptOutcomeState? attemptOutcome);
+            AttemptOutcomeState? attemptOutcome,
+            ContractRequirement? requirement = null);
         bool TryGetEndpointCandidate(ClientConnection connection, out SharpLinkEndpointCandidate candidate);
         void HandleConnectionFailure(ClientConnection connection, Exception exception);
         void MarkConnectionDraining(ClientConnection connection);

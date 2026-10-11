@@ -30,8 +30,8 @@ public partial class TransportConnectionIntegrationTests
                 frames,
                 new ProtocolV2HandshakeRequest(
                     ProtocolV2Constants.MinorVersion,
-                    ProtocolV2Capabilities.HealthCheck,
-                    ProtocolV2Capabilities.None,
+                    ProtocolV2Capabilities.HealthCheck | ProtocolV2Capabilities.ContractAdmission,
+                    ProtocolV2Capabilities.ContractAdmission,
                     SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
                     1024 * 1024,
                     16 * 1024 * 1024,
@@ -91,7 +91,9 @@ public partial class TransportConnectionIntegrationTests
     }
 
     [Test]
-    public async Task TcpServerShouldRejectLegacyProtocolMinorBeforeRpcTraffic()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task TcpServerShouldRejectIncompatibleProtocolBeforeRpcTraffic(bool legacyMinor)
     {
         using var serverCts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
@@ -116,7 +118,7 @@ public partial class TransportConnectionIntegrationTests
             ProtocolV2PayloadCodec.WriteHandshakeRequest(
                 frame,
                 new ProtocolV2HandshakeRequest(
-                    checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1)),
+                    legacyMinor ? checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1)) : ProtocolV2Constants.MinorVersion,
                     ProtocolV2Capabilities.None,
                     ProtocolV2Capabilities.None,
                     SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
@@ -145,8 +147,8 @@ public partial class TransportConnectionIntegrationTests
                 payload,
                 header.Flags,
                 limits.MaxErrorMessageBytes);
-            Ensure(error.Code == SharpLinkErrorCode.Unimplemented,
-                "pre-TimeBudget protocol minor should be rejected as incompatible");
+            Ensure(error.Code == (legacyMinor ? SharpLinkErrorCode.Unimplemented : SharpLinkErrorCode.ProtocolViolation),
+                "legacy minors and peers without admission must fail before RPC traffic");
         }
         finally
         {
@@ -181,8 +183,8 @@ public partial class TransportConnectionIntegrationTests
                 frames,
                 new ProtocolV2HandshakeRequest(
                     ProtocolV2Constants.MinorVersion,
-                    ProtocolV2Capabilities.None,
-                    ProtocolV2Capabilities.None,
+                    ProtocolV2Capabilities.ContractAdmission,
+                    ProtocolV2Capabilities.ContractAdmission,
                     SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
                     1024 * 1024,
                     16 * 1024 * 1024,
@@ -554,7 +556,7 @@ public partial class TransportConnectionIntegrationTests
                 0);
             ProtocolV2PayloadCodec.WriteHandshakeResponse(handshake, new ProtocolV2HandshakeResponse(
                 ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.ContractManifest,
+                ProtocolV2Capabilities.ContractManifest | ProtocolV2Capabilities.ContractAdmission,
                 maxFramePayloadBytes,
                 1024 * 1024,
                 16 * 1024 * 1024));

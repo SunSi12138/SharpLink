@@ -265,6 +265,9 @@ public readonly struct RpcNoClientStreams : IRpcClientStreamWriter
 }
 
 /// <summary>Client channel consumed by generated proxies.</summary>
+/// <remarks>The built-in client requires a locally bound generated proxy for calls. Invoking
+/// the unbound client channel directly fails with FailedPrecondition: method IDs and arbitrary
+/// codecs do not identify a safe local contract generation.</remarks>
 public interface IRpcChannel : IRpcClientStreamSink
 {
     /// <summary>Gets the runtime context owned by this channel.</summary>

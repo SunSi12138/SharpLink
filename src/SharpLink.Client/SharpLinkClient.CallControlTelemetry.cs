@@ -12,9 +12,14 @@ internal sealed partial class SharpLinkClient
         RpcMethodDescriptor method,
         SharpLinkMetadata? metadata,
         bool includeClientDefault,
-        ClientInterceptorGeneration interceptors)
+        ClientInterceptorGeneration interceptors,
+        ContractRequirement requirement)
     {
         ArgumentNullException.ThrowIfNull(interceptors);
+        ArgumentNullException.ThrowIfNull(requirement);
+        if (requirement.ContractId != method.ContractId)
+            throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                "The proxy invoked a method outside its bound local contract.");
         var lifetimeSource = ClientCallLifetimeSource.None;
         try
         {
@@ -25,6 +30,7 @@ internal sealed partial class SharpLinkClient
                 method.MethodTimeout,
                 ref lifetimeSource,
                 allocateSharedLogicalCall: MayObserveSharedLogicalCallAcrossParticipants(method, interceptors));
+            control = control with { ContractRequirement = requirement };
             return CaptureRetryGenerationForInvocation(method, control);
         }
         catch (SharpLinkException exception)

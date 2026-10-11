@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 
 namespace SharpLink.UnitTests.Protocol;
@@ -50,6 +51,41 @@ public sealed class ProtocolV2ContractManifestTests
                 new KeyValuePair<long, RpcHash128>(1, validHash),
                 new KeyValuePair<long, RpcHash128>(1, validHash)
             ]));
+    }
+
+    [Test]
+    public void VersionOneManifestShouldRejectMalformedWireIdentitiesAndCounts()
+    {
+        const int headerBytes = 45;
+        const int entryBytes = 40;
+        var manifest = new ProtocolV2ContractManifest(Guid.NewGuid(), Guid.NewGuid(), 7,
+            [new(3, new RpcHash128(1, 2)), new(42, new RpcHash128(3, 4))],
+            [new(3, Guid.NewGuid()), new(42, Guid.NewGuid())]);
+        using var writer = new PooledByteBufferWriter();
+        ProtocolV2ContractManifestCodec.Write(writer, manifest, Limits);
+        var original = writer.WrittenMemory.ToArray();
+        Ensure(original.Length == headerBytes + 2 * entryBytes, "v1 header and entry sizes");
+        Ensure(original[0] == 1 && BinaryPrimitives.ReadInt32LittleEndian(original.AsSpan(41)) == 2, "v1 count offset");
+        RejectMutation(bytes => BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(33), -1));
+        RejectMutation(bytes => BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(41), -1));
+        RejectMutation(bytes => BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(41), 3));
+        RejectMutation(bytes => BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(headerBytes), 0));
+        RejectMutation(bytes => BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(headerBytes + entryBytes), 3));
+        RejectMutation(bytes => BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(headerBytes + entryBytes), 2));
+        RejectMutation(bytes => bytes.AsSpan(headerBytes + 8, 16).Clear());
+        RejectMutation(bytes => bytes.AsSpan(headerBytes + 24, 16).Clear());
+        RejectMutation(bytes => bytes.AsSpan(1, 16).Clear());
+        for (var length = 0; length < original.Length; length++)
+        {
+            var truncated = original[..length];
+            EnsureThrows<SharpLinkException>(() => ProtocolV2ContractManifestCodec.Read(new(truncated), Limits));
+        }
+        void RejectMutation(Action<byte[]> mutate)
+        {
+            var bytes = (byte[])original.Clone();
+            mutate(bytes);
+            EnsureThrows<SharpLinkException>(() => ProtocolV2ContractManifestCodec.Read(new(bytes), Limits));
+        }
     }
 
     private static void EnsureThrows<TException>(Action action) where TException : Exception

@@ -29,7 +29,7 @@ public sealed class SharpLinkClientOneWayShapeTests
             HasMethodTimeout: false,
             MethodTimeout: null,
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
 
         // Use the same concrete writer in both cases: the descriptor's method shape,

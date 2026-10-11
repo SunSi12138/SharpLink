@@ -330,7 +330,8 @@ public class SharpLinkServerRequestScopeReviewTests
                 "request-scope-review",
                 _input.Reader,
                 _output.Writer,
-                RpcSessionTestFixture.ServerOptions(runtimeContext));
+                RpcSessionTestFixture.ServerOptions(runtimeContext), completeHandshake: false);
+            RpcSessionTestFixture.CompleteHandshake(Session, ProtocolV2Capabilities.ContractAdmission);
             Connection = new ServerConnectionState(
                 Session,
                 new RpcSessionGeneratedServerBridge(Session),
@@ -341,7 +342,7 @@ public class SharpLinkServerRequestScopeReviewTests
                 throw new Exception("connection must become ready");
 
             var registration = ServiceRegistration.CreateSingleton(
-                typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
+                typeof(EvidenceService), stub, new EvidenceService(), ownsService: false, contractHash: new RpcHash128(1, 2));
             ((ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!).PublishServices(new Dictionary<long, ServiceRegistration>
@@ -369,7 +370,7 @@ public class SharpLinkServerRequestScopeReviewTests
             [
                 Connection,
                 requestId,
-                flags,
+                flags | ProtocolV2FrameFlags.HasContractIdentity,
                 CreateRequestPayload(timeBudget),
                 Connection.CallCancellations,
                 serverLoopToken
@@ -377,13 +378,16 @@ public class SharpLinkServerRequestScopeReviewTests
 
         private ReadOnlySequence<byte> CreateRequestPayload(TimeSpan? timeBudget)
         {
-            var request = new byte[sizeof(long) * (timeBudget.HasValue ? 3 : 2)];
+            var request = new byte[16 + ProtocolV2Constants.ContractAdmissionPrefixBytes + (timeBudget.HasValue ? 8 : 0)];
             BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
             BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
+            BinaryPrimitives.WriteUInt64LittleEndian(request.AsSpan(16), 1);
+            BinaryPrimitives.WriteUInt64LittleEndian(request.AsSpan(24), 2);
+            request[32] = ProtocolV2ContractAdmissionCodec.Version;
             if (timeBudget is { } value)
             {
                 BinaryPrimitives.WriteInt64LittleEndian(
-                    request.AsSpan(sizeof(long) * 2),
+                    request.AsSpan(16 + ProtocolV2Constants.ContractAdmissionPrefixBytes),
                     value.Ticks);
             }
             return new ReadOnlySequence<byte>(request);

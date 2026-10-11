@@ -12,11 +12,20 @@ public static class ProtocolV2Constants
     /// <summary>Fixed request routing prefix size in bytes.</summary>
     public const int RequestPrefixBytes = 16;
 
+    /// <summary>Fixed request contract-assembly identity size in bytes.</summary>
+    public const int ContractIdentityBytes = 16;
+
+    /// <summary>Fixed admission identity, version, and match-mode prefix size.</summary>
+    public const int ContractAdmissionPrefixBytes = 18;
+
+    /// <summary>Additional bytes carried by a registration-constrained request.</summary>
+    public const int ContractRegistrationConstraintBytes = 56;
+
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 4;
+    public const ushort MinorVersion = 5;
 
     /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 4;
+    public const ushort MinimumCompatibleMinorVersion = 5;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -68,6 +77,8 @@ public enum ProtocolV2FrameFlags : byte
     Error = 1 << 0,
     /// <summary>The payload was truncated to remain within a configured limit.</summary>
     Truncated = 1 << 1,
+    /// <summary>The Request routing prefix is followed by its required contract-assembly identity.</summary>
+    HasContractIdentity = 1 << 1,
     /// <summary>The request prefix contains a remaining RPC time budget.</summary>
     HasTimeBudget = 1 << 2,
     /// <summary>The request contains metadata.</summary>
@@ -101,7 +112,9 @@ public enum ProtocolV2Capabilities : ulong
     /// <summary>Publishes deterministic contract-assembly identities for bind-time compatibility checks.</summary>
     ContractManifest = 1UL << 5,
     /// <summary>Supports server-requested blue-green physical-session replacement.</summary>
-    SessionRefresh = 1UL << 6
+    SessionRefresh = 1UL << 6,
+    /// <summary>Validates each request against the selected service registration before business decode.</summary>
+    ContractAdmission = 1UL << 7
 }
 
 /// <summary>Identifies why a client abandoned an active RPC call.</summary>

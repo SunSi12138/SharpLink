@@ -405,6 +405,9 @@ internal sealed class SharpLinkDynamicModule
     private readonly PaddedCounter[] _callCounters;
     private readonly PaddedCounter[] _streamCounters;
     private readonly int _stripeMask;
+    private readonly TaskCompletionSource _retirement = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal Task Retirement => _retirement.Task;
+
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly CancellationTokenSource _forcedCancellation = new();
     private readonly CancellationToken _forcedCancellationToken;
@@ -490,6 +493,8 @@ internal sealed class SharpLinkDynamicModule
             ref _state,
             (int)SharpLinkDynamicModuleState.Draining,
             (int)SharpLinkDynamicModuleState.Running) == (int)SharpLinkDynamicModuleState.Running;
+        if (changed)
+            _retirement.TrySetResult();
         if ((changed || State == SharpLinkDynamicModuleState.Draining) && RemainingCalls == 0)
             _drained.TrySetResult();
         return changed;

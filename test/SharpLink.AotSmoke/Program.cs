@@ -212,6 +212,8 @@ public static class Program
             throw new Exception($"unexpected Client readiness snapshot: {readiness}");
         }
 
+        await ContractAdmissionSmoke.VerifyAsync(client, cancellationToken).ConfigureAwait(false);
+
         var health = await client.CheckHealthAsync(cancellationToken).ConfigureAwait(false);
         if (health.Status != SharpLinkHealthStatus.Ready)
             throw new Exception($"unexpected health status: {health.Status}");

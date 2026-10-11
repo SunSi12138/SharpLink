@@ -29,7 +29,7 @@ public sealed class SharpLinkClientLogicalDeadlineTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             method,
@@ -78,7 +78,7 @@ public sealed class SharpLinkClientLogicalDeadlineTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var enumerator = channel.InvokeServerStreamingAsync(
             method,

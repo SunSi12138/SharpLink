@@ -77,9 +77,11 @@ internal sealed class ServerServiceRegistrationPlan
         Func<IServiceProvider, object>? factory,
         object? instance,
         bool callerOwned,
-        IReadOnlyList<Type> dependencies)
+        IReadOnlyList<Type> dependencies,
+        RpcHash128 contractHash = default)
     {
         ContractType = contractType ?? throw new ArgumentNullException(nameof(contractType));
+        ContractHash = contractHash;
         ImplementationName = implementationName ?? throw new ArgumentNullException(nameof(implementationName));
         StubFactory = stubFactory ?? throw new ArgumentNullException(nameof(stubFactory));
         Lifetime = lifetime;
@@ -93,6 +95,7 @@ internal sealed class ServerServiceRegistrationPlan
     }
 
     internal Type ContractType { get; }
+    internal RpcHash128 ContractHash { get; }
     internal string ImplementationName { get; }
     internal Func<IRpcCodecProvider, IRpcStub> StubFactory { get; }
     internal SharpLinkServiceLifetime Lifetime { get; }

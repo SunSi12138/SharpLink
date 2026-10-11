@@ -123,8 +123,8 @@ public class CompressionPersistentDecodeReviewTests
             frames,
             new ProtocolV2HandshakeRequest(
                 ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.Compression,
-                ProtocolV2Capabilities.Compression,
+                ProtocolV2Capabilities.Compression | ProtocolV2Capabilities.ContractAdmission,
+                ProtocolV2Capabilities.Compression | ProtocolV2Capabilities.ContractAdmission,
                 SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
                 1024 * 1024,
                 16 * 1024 * 1024,
@@ -136,7 +136,7 @@ public class CompressionPersistentDecodeReviewTests
         var request = ProtocolV2FrameWriter.BeginFrame(
             frames,
             ProtocolV2FrameType.Request,
-            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable,
+            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable | ProtocolV2FrameFlags.HasContractIdentity,
             requestId);
         Span<byte> requestPrefix = stackalloc byte[ProtocolV2Constants.RequestPrefixBytes];
         System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
@@ -146,6 +146,12 @@ public class CompressionPersistentDecodeReviewTests
             requestPrefix[sizeof(long)..],
             1L);
         frames.Write(requestPrefix);
+        var ownerManifest = GlobalCatalogManifestSource.Instance.CreateSnapshot().Single(candidate =>
+            candidate.Contracts.Any(contract => contract.ContractId == harness.InterfaceHash));
+        var requirement = new ContractRequirement(harness.InterfaceHash, ownerManifest.RpcAssemblyHash);
+        var identity = frames.GetSpan(ProtocolV2ContractAdmissionCodec.GetPayloadLength(requirement));
+        ProtocolV2ContractAdmissionCodec.Write(identity, requirement);
+        frames.Advance(ProtocolV2ContractAdmissionCodec.GetPayloadLength(requirement));
         Span<byte> originalLength = stackalloc byte[sizeof(uint)];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
             originalLength,

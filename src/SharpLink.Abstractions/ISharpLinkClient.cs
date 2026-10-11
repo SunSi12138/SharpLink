@@ -442,6 +442,41 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     TContract Get<TContract>() where TContract : IService;
 
+    /// <summary>Creates a local proxy with immutable contract-admission options without waiting for remote readiness.</summary>
+    /// <typeparam name="TContract">The locally registered generated RPC contract interface.</typeparam>
+    /// <param name="options">The invocation availability policy and optional registration requirement; null uses the default local proxy.</param>
+    TContract CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+    {
+        options ??= new RpcProxyOptions();
+        if (options is { Availability: RpcAvailability.FailFast, Requirement: null })
+            return Get<TContract>();
+        throw new NotSupportedException("This ISharpLinkClient implementation does not support contract-admission proxy options.");
+    }
+
+    /// <summary>Observes contract compatibility on the current active endpoint topology without starting connectivity.</summary>
+    /// <param name="requirement">The scalar wire identity and optional registration constraint to observe.</param>
+    /// <returns>A point-in-time observation that does not reserve future call admission.</returns>
+    ContractReadinessSnapshot GetContractReadiness(ContractRequirement requirement)
+    {
+        ArgumentNullException.ThrowIfNull(requirement);
+        throw new NotSupportedException("This ISharpLinkClient implementation does not expose contract-readiness observations.");
+    }
+
+    /// <summary>Waits for a minimum number of distinct compatible endpoints without invoking application work.</summary>
+    /// <param name="requirement">The scalar wire identity and optional registration constraint to observe.</param>
+    /// <param name="options">The endpoint threshold and optional timeout; null uses the defaults.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <returns>The satisfying point-in-time observation; it is not a lease on later availability.</returns>
+    ValueTask<ContractReadinessSnapshot> WaitForContractAsync(
+        ContractRequirement requirement,
+        ContractWaitOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requirement);
+        return ValueTask.FromException<ContractReadinessSnapshot>(new NotSupportedException(
+            "This ISharpLinkClient implementation does not support contract-readiness waits."));
+    }
+
     /// <summary>Creates a generated proxy that attaches one immutable metadata snapshot to every invocation.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     /// <param name="metadata">Envelope metadata attached without adding a business-contract parameter.</param>

@@ -82,15 +82,16 @@ public class SharpLinkServerRequestScopeAmbientTests
         IRpcStub stub,
         long requestId)
     {
-        var payload = new byte[sizeof(long) * 2];
+        var payload = new byte[ProtocolV2Constants.RequestPrefixBytes + ProtocolV2Constants.ContractAdmissionPrefixBytes];
         BinaryPrimitives.WriteInt64LittleEndian(payload, stub.InterfaceHash);
         BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(sizeof(long)), 1);
+        ProtocolV2ContractAdmissionCodec.Write(payload.AsSpan(16), new ContractRequirement(stub.InterfaceHash, new RpcHash128(1, 2)));
         return (Task)DispatchRequestMethod.Invoke(
             server,
             [
                 connection,
                 requestId,
-                ProtocolV2FrameFlags.None,
+                ProtocolV2FrameFlags.HasContractIdentity,
                 new ReadOnlySequence<byte>(payload),
                 connection.CallCancellations,
                 CancellationToken.None

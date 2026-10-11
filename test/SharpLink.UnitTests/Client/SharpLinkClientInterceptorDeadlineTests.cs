@@ -84,7 +84,7 @@ public class SharpLinkClientInterceptorDeadlineTests
         probeInvocation.Value = false;
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         var budgetTicks = BinaryPrimitives.ReadInt64LittleEndian(
-            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes + ProtocolV2Constants.ContractAdmissionPrefixBytes, sizeof(long)));
         Ensure(Volatile.Read(ref advanced) == 1,
             "the targeted logical call must start client telemetry");
         Ensure(budgetTicks == TimeSpan.FromSeconds(2).Ticks,
@@ -107,7 +107,7 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.AddInterceptor(new BlockingStreamShortCircuitInterceptor());
             });
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -157,7 +157,7 @@ public class SharpLinkClientInterceptorDeadlineTests
         var invocation = InvokeUnary(client).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         var budgetTicks = BinaryPrimitives.ReadInt64LittleEndian(
-            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long)));
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes + ProtocolV2Constants.ContractAdmissionPrefixBytes, sizeof(long)));
         Ensure(budgetTicks == TimeSpan.FromSeconds(2).Ticks,
             "the terminal invoker must reuse the pre-interceptor RpcDeadline");
 
@@ -167,7 +167,7 @@ public class SharpLinkClientInterceptorDeadlineTests
 
     private static ValueTask<int> InvokeUnary(SharpLinkClient client)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SMethod,

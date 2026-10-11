@@ -29,7 +29,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
                 throw new TimeoutException("test did not release request emission");
         });
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var method = new RpcMethodDescriptor(
             ContractId: 1, MethodId: 292, Kind: RpcMethodKind.Unary,
@@ -77,7 +77,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
 
         // Drain output already owned by ConnectAsync (notably the first heartbeat Ping) before
@@ -139,7 +139,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         try
         {
@@ -170,7 +170,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
 
     private static TimeSpan ReadTimeBudget(TestSentFrame sent)
         => TimeSpan.FromTicks(BinaryPrimitives.ReadInt64LittleEndian(
-            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes, sizeof(long))));
+            sent.Payload.AsSpan(ProtocolV2Constants.RequestPrefixBytes + ProtocolV2Constants.ContractAdmissionPrefixBytes, sizeof(long))));
 
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)
     {

@@ -23,7 +23,7 @@ internal sealed partial class SharpLinkServer
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
             var request = ReadRequestEnvelope(
                 session, payload, flags, admittedCallState?.Deadline ?? default);
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            if (!TryResolveContractRegistration(in request, out var serviceInfo, out var identityMatches))
             {
                 if (admittedCallState is not null)
                 {
@@ -40,7 +40,7 @@ internal sealed partial class SharpLinkServer
             // be resolved on the immediate path, terminate the connection rather than guess a stream
             // count; an admission-resume path already owns the exact reserved stream count and can
             // safely drain those routes instead.
-            if (!serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var descriptor))
+            if (!identityMatches || !serviceInfo.Stub.TryGetMethodDescriptor(request.MethodHash, out var descriptor))
             {
                 if (admittedCallState is not null)
                 {

@@ -51,6 +51,12 @@ internal sealed partial class SharpLinkServer
                             negotiation = ProtocolV2Negotiator.NegotiateServer(
                                 request,
                                 negotiationPolicy);
+                            if ((negotiation.Options.Capabilities & ProtocolV2Capabilities.ContractAdmission) == 0)
+                            {
+                                throw new SharpLinkProtocolViolationException(
+                                    ProtocolViolationReason.ProtocolState,
+                                    "The client must negotiate ContractAdmission.");
+                            }
                             authResult = await _authentication.AuthenticateAsync(
                                 new SharpLinkAuthenticationRequest(
                                     session.Id,

@@ -1,5 +1,3 @@
-using System.Reflection;
-
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
@@ -15,20 +13,19 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(manifest);
 
-        var isInitial = false;
         lock (_remoteContractManifestGate)
         {
             PruneDisconnectedRemoteContractManifestsLocked();
             if (_remoteContractManifests.TryGetValue(session, out var current))
             {
-                if (manifest.Generation < current.Generation)
+                if (manifest.ServerInstanceId == current.ServerInstanceId &&
+                    manifest.RegistryEpoch == current.RegistryEpoch && manifest.Generation < current.Generation)
                     return;
                 _remoteContractManifests[session] = manifest;
             }
             else
             {
                 _remoteContractManifests.Add(session, manifest);
-                isInitial = true;
             }
 
             var snapshot = new RemoteContractManifestBinding[_remoteContractManifests.Count];
@@ -39,12 +36,6 @@ internal sealed partial class SharpLinkClient
         }
         PulseRemoteContractWaiters();
 
-        // Get<T>() historically supports pre-connection proxy acquisition. The first manifest
-        // for a session validates every proxy that already escaped to user code before that
-        // connection is published as callable. Later manifest refreshes intentionally do not
-        // rebind or invalidate held proxy references; later Get<T>() calls validate the refresh.
-        if (isInitial)
-            ValidateAcquiredContractAssemblies();
     }
 
     private void PruneDisconnectedRemoteContractManifestsLocked()
@@ -65,82 +56,110 @@ internal sealed partial class SharpLinkClient
             _remoteContractManifests.Remove(disconnected[index]);
     }
 
-    private void ValidateAcquiredContractAssemblies()
+    private void ValidateLocalContractLifetime(ClientProxyRegistration registration)
     {
-        foreach (var registration in _assemblyRegistry.CaptureProxySnapshot().Values)
-        {
-            if (Volatile.Read(ref registration.Proxy) is null)
-                continue;
-            ValidateRemoteContractAssembly(registration);
-        }
+        if (Volatile.Read(ref _stopStarted) != 0 ||
+            State is SharpLinkConnectionState.Stopped or SharpLinkConnectionState.Faulted)
+            throw CreateConnectionClosedException("Client is not accepting new proxies.");
+        if (registration.Module is { State: not SharpLinkDynamicModuleState.Running })
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The local RPC module is retiring.");
     }
 
-    private void ValidateRemoteContractAssembly(ClientProxyRegistration registration)
+    private ContractRequirement GetLocalContractRequirement(ClientProxyRegistration registration)
     {
-        var contract = registration.Descriptor;
-        var localManifest = FindOwningManifest(registration);
-        var localHash = localManifest.RpcAssemblyHash;
-        if (localHash.IsEmpty)
-        {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.FailedPrecondition,
-                $"RPC contract '{contract.ContractName}' ({contract.ContractId}) is owned by assembly " +
-                $"'{localManifest.OwnerAssembly.FullName}', but its local RpcAssemblyHash is empty.");
-        }
-
-        var manifests = Volatile.Read(ref _remoteContractManifestSnapshot);
-        for (var index = 0; index < manifests.Length; index++)
-        {
-            var binding = manifests[index];
-            var session = binding.Session;
-            if (!session.IsConnected || session.ProtocolPhase != RpcSessionProtocolPhase.Ready)
-                continue;
-
-            ValidateRemoteContractAssembly(
-                registration,
-                localManifest,
-                localHash,
-                session,
-                binding.Manifest);
-        }
-
-        // With no ready remote identity yet, preserve the existing synchronous API: callers may
-        // acquire a proxy before ConnectAsync. Initial-manifest publication validates such proxies
-        // before the connection becomes available to calls.
+        ValidateLocalContractLifetime(registration);
+        var manifest = _assemblyRegistry.FindOwningManifest(registration);
+        return new ContractRequirement(registration.Descriptor.ContractId, manifest.RpcAssemblyHash)
+        { LocalRetirement = registration.Module?.Retirement };
     }
 
-    private ISharpLinkGeneratedAssemblyManifest FindOwningManifest(ClientProxyRegistration registration)
-        => _assemblyRegistry.FindOwningManifest(registration);
+    private IRpcChannel CreateBoundContractChannel(ClientProxyRegistration registration, ContractRequirement requirement)
+        => registration.Module is null
+            ? new SharpLinkContractRpcChannel(this, requirement)
+            : new SharpLinkModuleRpcChannel(this, registration.Module, requirement);
 
-    private static void ValidateRemoteContractAssembly(
-        ClientProxyRegistration registration,
-        ISharpLinkGeneratedAssemblyManifest localManifest,
-        RpcHash128 localHash,
-        RpcSession session,
-        ProtocolV2ContractManifest remoteManifest)
+    private bool IsContractCompatible(RpcSession session, ContractRequirement requirement)
     {
-        var contract = registration.Descriptor;
-        if (!remoteManifest.Contracts.TryGetValue(contract.ContractId, out var remoteHash))
+        if (!session.IsConnected || session.ProtocolPhase != RpcSessionProtocolPhase.Ready ||
+            (session.NegotiatedCapabilities & ProtocolV2Capabilities.ContractAdmission) == 0)
+            return false;
+        foreach (var binding in Volatile.Read(ref _remoteContractManifestSnapshot))
         {
-            throw new SharpLinkException(
-                SharpLinkErrorCode.FailedPrecondition,
-                $"Remote contract manifest does not advertise RPC contract '{contract.ContractName}' " +
-                $"({contract.ContractId}). Local assembly='{localManifest.OwnerAssembly.FullName}', " +
-                $"local RpcAssemblyHash='{localHash}', session='{session.Id}', " +
-                $"remote manifest generation={remoteManifest.Generation}. " +
-                "Contract acquisition was rejected before any RPC payload exchange.");
+            if (ReferenceEquals(binding.Session, session))
+                return binding.Manifest.Contracts.TryGetValue(requirement.ContractId, out var hash) &&
+                    hash == requirement.RpcAssemblyHash &&
+                    requirement.Matches(binding.Manifest.ServerInstanceId, binding.Manifest.RegistryEpoch,
+                        binding.Manifest.Generation, binding.Manifest.RegistrationIds.GetValueOrDefault(requirement.ContractId));
         }
+        return false;
+    }
 
-        if (remoteHash == localHash)
-            return;
+    private ClientConnection? SelectContractConnection(
+        ClientConnection[] connections, ContractRequirement? requirement)
+    {
+        if (requirement is null)
+            return EndpointSelectionKernel.SelectConnection(connections);
+        // Reservoir sampling keeps the established power-of-two least-loaded choice without
+        // allocating a filtered array on the no-options path.
+        ClientConnection? first = null;
+        ClientConnection? second = null;
+        var seen = 0;
+        foreach (var candidate in connections)
+        {
+            if (!IsContractCompatible(candidate.Session, requirement))
+                continue;
+            seen++;
+            if (seen == 1) first = candidate;
+            else if (seen == 2) second = candidate;
+            else
+            {
+                var slot = Random.Shared.Next(seen);
+                if (slot == 0) first = candidate;
+                else if (slot == 1) second = candidate;
+            }
+        }
+        var selected = second is not null && second.ActiveCallCount < first!.ActiveCallCount ? second : first;
+        if (selected is not null && TryReserveCompatible(selected, requirement, out var admitted))
+            return admitted;
+        foreach (var candidate in connections)
+            if (!ReferenceEquals(candidate, selected) && IsContractCompatible(candidate.Session, requirement) &&
+                TryReserveCompatible(candidate, requirement, out admitted))
+                return admitted;
+        return null;
+    }
 
-        throw new SharpLinkException(
-            SharpLinkErrorCode.FailedPrecondition,
-            $"RPC assembly compatibility mismatch for contract '{contract.ContractName}' ({contract.ContractId}). " +
-            $"Local assembly='{localManifest.OwnerAssembly.FullName}', local RpcAssemblyHash='{localHash}'; " +
-            $"remote RpcAssemblyHash='{remoteHash}', session='{session.Id}', " +
-            $"remote manifest generation={remoteManifest.Generation}. " +
-            "Contract acquisition was rejected before any RPC payload exchange.");
+    private bool TryReserveCompatible(ClientConnection candidate, ContractRequirement requirement,
+        out ClientConnection admitted)
+    {
+        if (!candidate.TryReserveCallAdmission(out admitted))
+            return false;
+        // Reservation may redirect across a blue/green replacement. Send uses this exact binding.
+        if (IsContractCompatible(admitted.Session, requirement))
+            return true;
+        admitted.ReleaseCallAdmissionReservation();
+        return false;
+    }
+
+    private ulong ApplyContractExclusions<TEndpoint>(TEndpoint[] endpoints, ulong excluded,
+        ContractRequirement? requirement, Func<TEndpoint, ClientConnection[]> connections)
+    {
+        if (requirement is null)
+            return excluded;
+        ulong incompatible = 0;
+        for (var index = 0; index < endpoints.Length; index++)
+        {
+            var compatible = false;
+            foreach (var connection in connections(endpoints[index]))
+                if (IsContractCompatible(connection.Session, requirement))
+                {
+                    compatible = true;
+                    break;
+                }
+            if (!compatible) incompatible |= 1UL << index;
+        }
+        var all = endpoints.Length == 64 ? ulong.MaxValue : (1UL << endpoints.Length) - 1;
+        // A retry may revisit the only compatible endpoint once its eligible cycle is exhausted.
+        return ((excluded | incompatible) & all) == all ? incompatible : excluded | incompatible;
     }
 
     private readonly record struct RemoteContractManifestBinding(

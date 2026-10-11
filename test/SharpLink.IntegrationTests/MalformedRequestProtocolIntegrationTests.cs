@@ -29,8 +29,8 @@ public class MalformedRequestProtocolIntegrationTests
                 frames,
                 new ProtocolV2HandshakeRequest(
                     ProtocolV2Constants.MinorVersion,
-                    ProtocolV2Capabilities.None,
-                    ProtocolV2Capabilities.None,
+                    ProtocolV2Capabilities.ContractAdmission,
+                    ProtocolV2Capabilities.ContractAdmission,
                     SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
                     1024 * 1024,
                     16 * 1024 * 1024,

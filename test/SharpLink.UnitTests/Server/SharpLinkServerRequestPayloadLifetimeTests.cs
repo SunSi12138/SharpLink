@@ -64,13 +64,14 @@ public class SharpLinkServerRequestPayloadLifetimeTests
         var payload = new byte[1024 * 1024];
         BinaryPrimitives.WriteInt64LittleEndian(payload, stub.InterfaceHash);
         BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(sizeof(long)), 1);
+        ProtocolV2ContractAdmissionCodec.Write(payload.AsSpan(16), new ContractRequirement(stub.InterfaceHash, new RpcHash128(1, 2)));
         var backing = new WeakReference<byte[]>(payload);
         var dispatch = (Task)DispatchRequestMethod.Invoke(
             server,
             [
                 connection,
                 RequestId,
-                ProtocolV2FrameFlags.None,
+                ProtocolV2FrameFlags.HasContractIdentity,
                 new ReadOnlySequence<byte>(payload),
                 connection.CallCancellations,
                 CancellationToken.None

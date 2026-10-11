@@ -41,7 +41,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            if (!TryResolveContractRegistration(in request, out var serviceInfo, out var identityMatches))
             {
                 ValueTask responseSend;
                 try
@@ -60,7 +60,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!serviceInfo.AcceptsCalls)
+            if (!identityMatches || !serviceInfo.AcceptsCalls)
             {
                 ValueTask responseSend;
                 try
@@ -68,8 +68,9 @@ internal sealed partial class SharpLinkServer
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
                         new SharpLinkException(
-                            SharpLinkErrorCode.Unavailable,
-                            "RPC module is draining"),
+                            identityMatches ? SharpLinkErrorCode.Unavailable : SharpLinkErrorCode.FailedPrecondition,
+                            identityMatches ? "RPC module is draining" :
+                                "Request contract identity does not match the selected service registration."),
                         connection.ConnectionToken);
                 }
                 finally

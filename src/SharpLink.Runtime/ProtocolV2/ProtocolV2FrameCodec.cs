@@ -167,7 +167,8 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.HandshakeResponse => ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             ProtocolV2FrameType.Ping => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.Pong => ProtocolV2FrameFlags.None,
-            ProtocolV2FrameType.Request => ProtocolV2FrameFlags.HasTimeBudget |
+            ProtocolV2FrameType.Request => ProtocolV2FrameFlags.HasContractIdentity |
+                                           ProtocolV2FrameFlags.HasTimeBudget |
                                            ProtocolV2FrameFlags.HasMetadata |
                                            ProtocolV2FrameFlags.Compressed |
                                            ProtocolV2FrameFlags.Cancellable |
@@ -191,7 +192,8 @@ public static class ProtocolV2FrameParser
         };
         if ((flags & ~allowed) != 0)
             throw Violation($"Frame {type} does not allow flags {flags}.");
-        if ((flags & ProtocolV2FrameFlags.Truncated) != 0 && (flags & ProtocolV2FrameFlags.Error) == 0)
+        if (type != ProtocolV2FrameType.Request &&
+            (flags & ProtocolV2FrameFlags.Truncated) != 0 && (flags & ProtocolV2FrameFlags.Error) == 0)
             throw Violation("Truncated is valid only on an error frame.");
         if ((flags & (ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Compressed)) ==
             (ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Compressed))
@@ -318,6 +320,12 @@ public static class ProtocolV2FrameParser
         if (payload.Length < ProtocolV2Constants.RequestPrefixBytes)
             throw Violation("Request payload is shorter than its routing prefix.");
         var prefixBytes = ProtocolV2Constants.RequestPrefixBytes;
+        if ((flags & ProtocolV2FrameFlags.HasContractIdentity) != 0)
+        {
+            var identityReader = new SequenceReader<byte>(payload.Slice(prefixBytes));
+            ProtocolV2ContractAdmissionCodec.Read(ref identityReader, out var constraint);
+            prefixBytes += ProtocolV2ContractAdmissionCodec.EncodedLength(constraint.Match);
+        }
         if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
             prefixBytes += sizeof(long);

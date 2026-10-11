@@ -8,6 +8,13 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         RpcDeadline resolvedDeadline = default)
     {
+        if ((flags & ProtocolV2FrameFlags.HasContractIdentity) == 0 ||
+            (session.NegotiatedCapabilities & ProtocolV2Capabilities.ContractAdmission) == 0)
+        {
+            throw new SharpLinkProtocolViolationException(
+                ProtocolViolationReason.ProtocolState,
+                "Every request must carry a negotiated contract identity.");
+        }
         return ServerRequestEnvelopeReader.Read(
             session,
             payload,

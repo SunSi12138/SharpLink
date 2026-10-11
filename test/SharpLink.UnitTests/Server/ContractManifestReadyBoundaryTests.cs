@@ -57,8 +57,8 @@ public class ContractManifestReadyBoundaryTests
             var requestPayload = new PooledByteBufferWriter();
             var request = new ProtocolV2HandshakeRequest(
                 ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.ContractManifest,
-                ProtocolV2Capabilities.ContractManifest,
+                ProtocolV2Capabilities.ContractManifest | ProtocolV2Capabilities.ContractAdmission,
+                ProtocolV2Capabilities.ContractManifest | ProtocolV2Capabilities.ContractAdmission,
                 4 * 1024 * 1024,
                 1024 * 1024,
                 16 * 1024 * 1024,
@@ -95,6 +95,10 @@ public class ContractManifestReadyBoundaryTests
 
             Ensure(refresh.Generation > bootstrap.Generation,
                 "a registry mutation after the Ready/bootstrap boundary must be published as a later generation");
+            Ensure(registrationResult.Receipts.Count == 0,
+                "a codec-only module exports no callable contract receipts");
+            Ensure(refresh.ServerInstanceId == bootstrap.ServerInstanceId && refresh.RegistryEpoch == bootstrap.RegistryEpoch,
+                "a registry update preserves its server and epoch scope");
         }
         finally
         {

@@ -229,7 +229,8 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 target.Value.Stub,
                 new OneWayInboundDrainService(),
                 ownsService: false,
-                module: module);
+                module: module,
+                contractHash: target.Value.ContractHash);
             var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
             updated[target.Key] = replacement;
             ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
@@ -247,7 +248,8 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 target.Value.ContractType,
                 new UnknownMethodShapeStub(target.Value.Stub.InterfaceHash),
                 new OneWayInboundDrainService(),
-                ownsService: false);
+                ownsService: false,
+                contractHash: target.Value.ContractHash);
             var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
             updated[target.Key] = replacement;
             ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());

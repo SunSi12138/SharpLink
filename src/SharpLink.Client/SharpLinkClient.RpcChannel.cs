@@ -2,75 +2,6 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    private void SendRpcCall(
-        RpcSession session,
-        long interfaceHash,
-        long methodHash,
-        long requestId,
-        ProtocolV2FrameFlags flags,
-        Action<IBufferWriter<byte>>? payloadWriter,
-        RpcDeadline deadline = default,
-        SharpLinkMetadata? metadata = null)
-    {
-        var hasMetadata = metadata is { Count: > 0 };
-        var metadataLength = 0;
-        if (deadline.HasValue)
-            flags |= ProtocolV2FrameFlags.HasTimeBudget;
-        if (hasMetadata)
-        {
-            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) == 0)
-            {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.Unimplemented,
-                    "The connected server did not negotiate request metadata support.");
-            }
-            metadataLength = ProtocolV2PayloadCodec.GetMetadataPayloadLength(metadata!);
-            if (metadataLength > _protocolOptions.MaxMetadataBytes)
-            {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.ResourceExhausted,
-                    $"Request metadata exceeds {_protocolOptions.MaxMetadataBytes} bytes.");
-            }
-            flags |= ProtocolV2FrameFlags.HasMetadata;
-        }
-
-        var writer = session.RentFrameWriter();
-        var ownsWriter = true;
-        try
-        {
-            using (writer.BeginPacketScope(
-                       ProtocolV2FrameType.Request, flags, unchecked((ulong)requestId)))
-            {
-                var prefixLength = ProtocolV2Constants.RequestPrefixBytes +
-                    (deadline.HasValue ? sizeof(long) : 0);
-                var span = writer.GetSpan(prefixLength);
-                BinaryPrimitives.WriteInt64LittleEndian(span, interfaceHash);
-                BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodHash);
-                if (deadline.HasValue)
-                {
-                    BinaryPrimitives.WriteInt64LittleEndian(
-                        span[ProtocolV2Constants.RequestPrefixBytes..],
-                        deadline.GetRemaining(_runtimeContext.TimeProvider).Ticks);
-                }
-                writer.Advance(prefixLength);
-                if (hasMetadata)
-                {
-                    ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));
-                    ProtocolV2PayloadCodec.WriteMetadata(writer, metadata!);
-                }
-                payloadWriter?.Invoke(writer);
-            }
-
-            ownsWriter = false;
-            session.SendPacket(writer);
-        }
-        finally
-        {
-            if (ownsWriter)
-                _runtimeContext.Buffers.Return(writer);
-        }
-    }
-
     public Task SendClientStreamAsync<T>(
         long requestId,
         ushort streamId,
@@ -269,10 +200,10 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    private ClientConnection GetReadyConnection()
+    private ClientConnection GetReadyConnection(ContractRequirement? requirement = null)
     {
         if (_cluster is not null)
-            return _cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null);
+            return _cluster.GetReadyConnection(method: null, retrySelection: null, attemptOutcome: null, requirement);
 
         for (var snapshotAttempt = 0; snapshotAttempt < 2; snapshotAttempt++)
         {
@@ -280,6 +211,17 @@ internal sealed partial class SharpLinkClient
             if (_shutdownCts.IsCancellationRequested || connections.Length == 0)
                 break;
 
+            if (requirement is not null)
+            {
+                var compatible = SelectContractConnection(connections, requirement);
+                if (compatible is not null)
+                {
+                    if (compatible.ActiveCallCount != 0)
+                        EnsureExpansion();
+                    return compatible;
+                }
+                break;
+            }
             ClientConnection selected;
             if (connections.Length == 1)
             {
@@ -304,22 +246,25 @@ internal sealed partial class SharpLinkClient
 
         if (_shutdownCts.IsCancellationRequested || State == SharpLinkConnectionState.Stopped)
             throw CreateConnectionClosedException("Client is not accepting new calls.");
+        if (requirement is not null)
+            throw new ContractAdmissionMissException();
         throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink connection is ready.");
     }
 
     private ClientConnection GetReadyConnection(
         RpcMethodDescriptor method,
         EndpointRetrySelectionState? retrySelection,
-        AttemptOutcomeState? attemptOutcome)
+        AttemptOutcomeState? attemptOutcome,
+        ContractRequirement? requirement)
     {
         if (_cluster is not null)
-            return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome);
+            return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome, requirement);
 
         if (attemptOutcome is null || _fixedEndpoint is null)
-            return GetReadyConnection();
+            return GetReadyConnection(requirement);
 
         if (ReadyConnectionCount == 0)
-            return GetReadyConnection();
+            return GetReadyConnection(requirement);
 
         var candidate = new SharpLinkEndpointCandidate(
             _fixedEndpoint,
@@ -330,7 +275,7 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
         try
         {
-            return GetReadyConnection();
+            return GetReadyConnection(requirement);
         }
         catch (Exception exception)
         {

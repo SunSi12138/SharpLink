@@ -5,9 +5,8 @@ public class ProtocolV2ErrorCompatibilityTests
     [Test]
     public async Task StructuredErrorShapeShouldRejectPublishedMinorThreePeers()
     {
-        Ensure(ProtocolV2Constants.MinorVersion == 4, "2.0 increments the published minor 3 once");
         Ensure(
-            ProtocolV2Constants.MinimumCompatibleMinorVersion == 4,
+            ProtocolV2Constants.MinimumCompatibleMinorVersion > 3,
             "published minor-3 peers must be rejected before decoding the structured error shape");
 
         var policy = ProtocolV2Negotiator.CreateImplementedPolicy(
@@ -15,7 +14,7 @@ public class ProtocolV2ErrorCompatibilityTests
             1024 * 1024,
             16 * 1024 * 1024,
             Array.Empty<SharpLinkCompressionProviderBinding>());
-        var legacyMinor = checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1));
+        const ushort legacyMinor = 3;
         var legacyOffer = new ProtocolV2HandshakeRequest(
             legacyMinor,
             ProtocolV2Capabilities.None,

@@ -87,7 +87,7 @@ public class SharpLinkClientCallControlTests
 
         var occupied = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var occupiedRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
         var oneWayFailure = await CaptureSharpLinkException(channel.InvokeOneWayAsync(

@@ -102,19 +102,26 @@ internal sealed partial class SharpLinkClient
         public ClientConnection GetReadyConnection(
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
-            AttemptOutcomeState? attemptOutcome)
+            AttemptOutcomeState? attemptOutcome,
+            ContractRequirement? requirement = null)
         {
             var snapshot = _topology.SelectionSnapshot;
             var selectionPolicy = _topology.CaptureSelectionPolicy();
             var endpoints = snapshot.Endpoints;
             if (endpoints.Length == 0)
             {
+                if (requirement is not null)
+                    throw new ContractAdmissionMissException();
                 SharpLinkTelemetry.RecordSelectionFailure("no_ready_endpoint");
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint is ready.");
             }
 
             var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
-            for (var attempt = 0; attempt < endpoints.Length; attempt++)
+            excluded = _client.ApplyContractExclusions(endpoints, excluded, requirement,
+                static endpoint => endpoint.ReadyConnections);
+            var all = endpoints.Length == 64 ? ulong.MaxValue : (1UL << endpoints.Length) - 1;
+            var contractMiss = requirement is not null && (excluded & all) == all;
+            for (var attempt = 0; attempt < endpoints.Length && (excluded & all) != all; attempt++)
             {
                 var selectedIndex = _topology.SelectEndpoint(snapshot, selectionPolicy, excluded);
                 if ((uint)selectedIndex >= (uint)endpoints.Length || (excluded & (1UL << selectedIndex)) != 0)
@@ -130,7 +137,7 @@ internal sealed partial class SharpLinkClient
                     excluded |= 1UL << selectedIndex;
                     continue;
                 }
-                var connection = SelectConnection(endpoints[selectedIndex]);
+                var connection = _client.SelectContractConnection(endpoints[selectedIndex].ReadyConnections, requirement);
                 retrySelection?.Exclude(snapshot, selectedIndex);
                 if (connection is not null)
                 {
@@ -138,12 +145,15 @@ internal sealed partial class SharpLinkClient
                         EnsureExpansion(endpoints[selectedIndex]);
                     return connection;
                 }
+                contractMiss |= requirement is not null;
                 attemptOutcome?.CompleteWithoutPending(
                     PendingCallCompletionReason.ConnectionClosed,
                     CreateConnectionClosedException("The selected static endpoint connection is no longer ready."));
                 excluded |= 1UL << selectedIndex;
             }
 
+            if (contractMiss)
+                throw new ContractAdmissionMissException();
             SharpLinkTelemetry.RecordSelectionFailure("no_admitted_connection");
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint connection is ready.");
         }

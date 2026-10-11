@@ -6,6 +6,16 @@ namespace SharpLink.UnitTests.Abstractions;
 public class RpcMethodDescriptorTests
 {
     [Test]
+    public async Task DescriptorMustRemainUnmanagedAndReferenceFree()
+    {
+        AssertUnmanaged<RpcMethodDescriptor>();
+        await Assert.That(RuntimeHelpers.IsReferenceOrContainsReferences<RpcMethodDescriptor>()).IsFalse();
+        await Assert.That(Unsafe.SizeOf<RpcMethodDescriptor>()).IsEqualTo(32);
+    }
+
+    private static void AssertUnmanaged<T>() where T : unmanaged { }
+
+    [Test]
     public async Task FlagsMustRemainPackedAndBothDeconstructionShapesMustRemainCompatible()
     {
         var timeout = TimeSpan.FromSeconds(3);

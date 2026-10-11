@@ -10,8 +10,9 @@ namespace SharpLink.UnitTests;
 
 internal sealed class TestClientTransportFactory : IClientTransportFactory
 {
-    private static readonly KeyValuePair<long, RpcHash128>[] DefaultContractManifest =
+    internal static readonly KeyValuePair<long, RpcHash128>[] DefaultContractManifest =
     [
+        new(1, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL)),
         new(8_101, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL))
     ];
 
@@ -57,6 +58,9 @@ internal sealed class TestTransportConnection : ITransportConnection
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _observeOutputTask;
     private int _disposed;
+    private int _sentRequestCount;
+
+    internal int SentRequestCount => Volatile.Read(ref _sentRequestCount);
 
     public TestTransportConnection()
     {
@@ -79,7 +83,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         string? compressionProfile = null,
         CancellationToken cancellationToken = default)
     {
-        negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest;
+        negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest | ProtocolV2Capabilities.ContractAdmission;
         var responsePayload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, new ProtocolV2HandshakeResponse(
             ProtocolV2Constants.MinorVersion,
@@ -98,7 +102,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         var manifestPayload = new PooledByteBufferWriter();
         ProtocolV2ContractManifestCodec.Write(
             manifestPayload,
-            new ProtocolV2ContractManifest(0, contractManifest ?? []),
+            new ProtocolV2ContractManifest(0, contractManifest ?? TestClientTransportFactory.DefaultContractManifest),
             ProtocolLimits);
         await InjectFrameAsync(
             ProtocolV2FrameType.ContractManifest,
@@ -232,7 +236,11 @@ internal sealed class TestTransportConnection : ITransportConnection
                     new SharpLinkProtocolOptions(),
                     out var header,
                     out var payload))
+                {
+                    if (header.Type == ProtocolV2FrameType.Request)
+                        Interlocked.Increment(ref _sentRequestCount);
                     _sentPackets.Writer.TryWrite(new TestSentFrame(header, payload.ToArray()));
+                }
                 if (result.IsCompleted)
                     return;
             }

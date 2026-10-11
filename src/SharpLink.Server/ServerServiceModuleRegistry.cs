@@ -34,6 +34,10 @@ internal sealed class ServerServiceModuleRegistry
     /// </summary>
     internal Lock Gate => _gate;
 
+    internal Guid ServerInstanceId { get; } = Guid.NewGuid();
+
+    internal Guid RegistryEpoch { get; } = Guid.NewGuid();
+
     internal ref FrozenDictionary<long, ServiceRegistration> ServicesStorage => ref _services;
 
     internal ref long GenerationStorage => ref _generation;

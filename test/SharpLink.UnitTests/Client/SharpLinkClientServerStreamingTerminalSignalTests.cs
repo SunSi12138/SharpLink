@@ -25,7 +25,7 @@ public sealed class SharpLinkClientServerStreamingTerminalSignalTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientContractTestBinding.Bind(client);
         var request = default(RpcEmptyRequest);
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();

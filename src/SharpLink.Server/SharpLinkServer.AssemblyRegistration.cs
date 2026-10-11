@@ -100,6 +100,7 @@ internal sealed partial class SharpLinkServer
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
 
+                        var receipts = CreateRegistrationReceiptsLocked(module, candidate.Services, checked(_registryGeneration + 1));
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         Volatile.Write(ref _services, candidate.Services);
@@ -107,7 +108,7 @@ internal sealed partial class SharpLinkServer
                         _registryGeneration++;
                         ScheduleContractManifestPublish();
                         published = true;
-                        return SharpLinkAssemblyRegistrationResult.Success();
+                        return SharpLinkAssemblyRegistrationResult.Success(receipts);
                     }
                 }
                 if (retry)
@@ -172,6 +173,7 @@ internal sealed partial class SharpLinkServer
         Task<SharpLinkAssemblyUnregisterResult>? drainOperation = null;
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
+        ContractRegistrationReceipt[] receipts = [];
         SharpLinkDynamicModule? newModule = null;
         RpcGeneratedManifestRegistration? codecRegistration = null;
         IReadOnlyDictionary<long, ServiceRegistration>? candidateServices = null;
@@ -286,6 +288,7 @@ internal sealed partial class SharpLinkServer
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
+                        receipts = CreateRegistrationReceiptsLocked(newModule, candidate.Services, checked(_registryGeneration + 1));
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _dynamicModules.Add(newAssembly, newModule);
                         _detachedModuleServices.Add(oldModule, detachedServices);
@@ -342,16 +345,17 @@ internal sealed partial class SharpLinkServer
             "DynamicAssemblyReplacementDrain",
             TaskObservationMode.ExternallyObserved);
         _ = CompleteUnregisterOperationAsync(oldAssembly, oldModule!, gracefulTimeout, drainCompletion!);
-        return WaitForReplacementAsync(drainOperation!, cancellationToken);
+        return WaitForReplacementAsync(drainOperation!, receipts, cancellationToken);
     }
 
     private static async ValueTask<SharpLinkAssemblyReplacementResult> WaitForReplacementAsync(
         Task<SharpLinkAssemblyUnregisterResult> operation,
+        ContractRegistrationReceipt[] receipts,
         CancellationToken cancellationToken)
     {
         var drain = await new SharpLinkRetirementHandle<SharpLinkAssemblyUnregisterResult>(operation)
             .WaitAsync(cancellationToken).ConfigureAwait(false);
-        return SharpLinkAssemblyReplacementResult.Published(drain);
+        return SharpLinkAssemblyReplacementResult.Published(drain, receipts);
     }
 
     private RegistrationCandidate BuildRegistrationCandidate(
@@ -465,7 +469,8 @@ internal sealed partial class SharpLinkServer
                     service.Activator,
                     instance: null,
                     callerOwned: false);
-                var registration = definition.Build(_serviceProvider, module);
+                var registration = definition.Build(
+                    _serviceProvider, module, contract.Manifest.RpcAssemblyHash);
                 createdServices.Add(registration);
                 nextServices.Add(service.ContractId, registration);
             }

@@ -158,7 +158,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
         await PublishAndFenceAsync(missing.Connection, 1, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
         Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "all Ready endpoint identities must agree before synchronous acquisition is accepted");
+            "a local proxy remains available after the explicit all-endpoint readiness observation completes");
     }
 
     [Test]
@@ -180,19 +180,25 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
     }
 
     [Test]
-    public async Task ACompletedObservationShouldNotPromiseLaterGetSurvivesUnregister()
+    public async Task ACompletedObservationShouldNotPromiseLaterCallSurvivesUnregister()
     {
         var transport = new TestClientTransportFactory();
         await using var client = CreateBuilder().UseTransport(transport).Build();
         await client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash);
         await PublishAndFenceAsync(transport.Connection, 1, []);
 
-        Exception? failure = null;
-        try { _ = client.Get<IOrdersContract>(); }
-        catch (SharpLinkException exception) { failure = exception; }
+        var proxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var method = new RpcMethodDescriptor(OrdersContractId, 1, RpcMethodKind.Unary, true, false, false, null);
+        var request = default(RpcEmptyRequest);
+        var failure = await CaptureExceptionAsync(proxy.Channel.InvokeUnaryAsync(method, request,
+            RpcEmptyRequestCodec.Instance, proxy.Channel.RuntimeContext.Codecs.GetCodec<int>(), null)
+            .AsTask().WaitAsync(RaceCoordinationTimeout));
 
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
-            "readiness is an observation rather than an identity lease; later Get must still reject unregister");
+        Ensure(failure is SharpLinkContractAdmissionException
+        { Code: SharpLinkErrorCode.Unavailable, Snapshot.State: ContractObservationState.Absent },
+            "readiness is an observation rather than an identity lease; the later call must reject remote unregister");
+        Ensure(transport.Connection.SentRequestCount == 0,
+            "an expired observation must not authorize a business Request");
     }
 
     [Test]

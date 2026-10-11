@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Compare the API of the actual shipping packages with the reviewed 2.0 surface."""
+"""Compare actual shipping packages with the reviewed API surface for their major release."""
 
 import argparse
 import difflib
 from pathlib import Path
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 
 PACKAGES = (
@@ -24,11 +25,14 @@ def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("packages", type=Path)
-    parser.add_argument("--version", default="2.0.0")
-    parser.add_argument("--baseline", type=Path, default=root / "eng/public-api/2.0.0")
+    parser.add_argument("--version", default=ET.parse(root / "Directory.Build.props").findtext(".//VersionPrefix"))
+    parser.add_argument("--baseline", type=Path, help="Reviewed API directory; defaults to eng/public-api/<major>.0.0")
     parser.add_argument("--output", type=Path, default=root / "artifacts/public-api/current")
     parser.add_argument("--update", action="store_true", help="Write a candidate baseline for explicit review")
     options = parser.parse_args()
+    if options.baseline is None:
+        major = int(options.version.split(".", 1)[0])
+        options.baseline = root / f"eng/public-api/{major}.0.0"
     options.output.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="sharplink-public-api-") as temporary:

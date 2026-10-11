@@ -82,7 +82,7 @@ if ! unzip -p "$ARTIFACT_DIR/SharpLink.Hosting.$EXPECTED_VERSION.nupkg" SharpLin
   exit 1
 fi
 
-# Full public/protected signatures are checked by verify-public-api.sh against eng/public-api/2.0.0.
+# Full public/protected signatures are checked by verify-public-api.sh against the major-release baseline in eng/public-api.
 # Keep this independent packed XML documentation check for the documented Runtime configuration.
 unzip -p "$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg" lib/net10.0/SharpLink.Runtime.xml |
   grep -F '<member name="P:SharpLink.Runtime.SharpLinkFlowControlOptions.MaxPreCreditSerializedBytes">' >/dev/null

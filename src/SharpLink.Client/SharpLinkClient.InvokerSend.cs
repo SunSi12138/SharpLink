@@ -12,11 +12,17 @@ internal sealed partial class SharpLinkClient
         IRpcCodec<TRequest> requestCodec,
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
+        ContractRequirement? requirement,
         bool observeEmission = false,
         CancellationToken cancellationToken = default,
         IRequestEmissionFailureObserver? failureObserver = null,
         PendingRequestTable? publicationTable = null)
     {
+        if (requirement is null || requirement.ContractId != contractId)
+            throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "A bound contract identity is required.");
+        if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.ContractAdmission) == 0)
+            throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "The peer does not support contract admission.");
+        flags |= ProtocolV2FrameFlags.HasContractIdentity;
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
         if (deadline.HasValue)
@@ -48,13 +54,14 @@ internal sealed partial class SharpLinkClient
                        flags,
                        unchecked((ulong)requestId)))
             {
-                var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
+                var prefixLength = ProtocolV2Constants.RequestPrefixBytes + ProtocolV2ContractAdmissionCodec.GetPayloadLength(requirement) + (deadline.HasValue ? sizeof(long) : 0);
                 var span = writer.GetSpan(prefixLength);
                 BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
                 BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
+                ProtocolV2ContractAdmissionCodec.Write(span[ProtocolV2Constants.RequestPrefixBytes..], requirement);
                 if (deadline.HasValue)
                     BinaryPrimitives.WriteInt64LittleEndian(
-                        span[ProtocolV2Constants.RequestPrefixBytes..],
+                        span[(ProtocolV2Constants.RequestPrefixBytes + ProtocolV2ContractAdmissionCodec.GetPayloadLength(requirement))..],
                         deadline.GetRemaining(_runtimeContext.TimeProvider).Ticks);
                 writer.Advance(prefixLength);
                 if (hasMetadata)

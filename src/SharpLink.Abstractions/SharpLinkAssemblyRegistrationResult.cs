@@ -77,7 +77,17 @@ public readonly record struct SharpLinkAssemblyRegistrationResult
     /// <summary>Gets the rejection reason, or <see langword="null"/> after success.</summary>
     public SharpLinkAssemblyRegistrationError? Error { get; }
 
-    internal static SharpLinkAssemblyRegistrationResult Success() => new(true, null);
+    /// <summary>Gets immutable, reference-free receipts for contracts exported by this publication.</summary>
+    public IReadOnlyList<ContractRegistrationReceipt> Receipts
+    {
+        get => _receipts ?? Array.Empty<ContractRegistrationReceipt>();
+        internal init => _receipts = value;
+    }
+
+    private readonly IReadOnlyList<ContractRegistrationReceipt>? _receipts;
+
+    internal static SharpLinkAssemblyRegistrationResult Success(ContractRegistrationReceipt[]? receipts = null)
+        => new(true, null) { Receipts = Array.AsReadOnly(receipts ?? []) };
 
     internal static SharpLinkAssemblyRegistrationResult Failure(SharpLinkAssemblyRegistrationError error)
         => new(false, error ?? throw new ArgumentNullException(nameof(error)));
@@ -118,13 +128,24 @@ public readonly record struct SharpLinkAssemblyReplacementResult
     /// <summary>Gets the number of old streams still running when the bounded drain returned.</summary>
     public int RemainingStreams { get; init; }
 
+    /// <summary>Gets immutable, reference-free receipts for contracts exported by this publication.</summary>
+    public IReadOnlyList<ContractRegistrationReceipt> Receipts
+    {
+        get => _receipts ?? Array.Empty<ContractRegistrationReceipt>();
+        internal init => _receipts = value;
+    }
+
+    private readonly IReadOnlyList<ContractRegistrationReceipt>? _receipts;
+
     internal static SharpLinkAssemblyReplacementResult Failure(SharpLinkAssemblyRegistrationError error)
         => new() { Error = error ?? throw new ArgumentNullException(nameof(error)) };
 
-    internal static SharpLinkAssemblyReplacementResult Published(SharpLinkAssemblyUnregisterResult drain)
+    internal static SharpLinkAssemblyReplacementResult Published(
+        SharpLinkAssemblyUnregisterResult drain, ContractRegistrationReceipt[]? receipts = null)
         => new()
         {
             Succeeded = true,
+            Receipts = Array.AsReadOnly(receipts ?? []),
             ReferencesReleased = drain.ReferencesReleased,
             RemainingCalls = drain.RemainingCalls,
             RemainingStreams = drain.RemainingStreams
