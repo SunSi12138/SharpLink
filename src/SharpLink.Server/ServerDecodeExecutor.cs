@@ -10,23 +10,16 @@ namespace SharpLink.Server;
 /// </summary>
 internal sealed class ServerDecodeExecutor : IAsyncDisposable
 {
-    private static readonly object s_compatibilitySchedulingKey = new();
-
     private readonly Lock _schedulerGate = new();
     private readonly Dictionary<object, ConnectionQueue> _connectionQueues =
         new(ReferenceKeyComparer.Instance);
     private readonly LinkedList<ConnectionQueue> _readyConnections = [];
     private readonly SemaphoreSlim _readySignal = new(0);
-    private readonly SemaphoreSlim _compatibilitySlots;
-    private readonly CancellationTokenSource _compatibilityStop = new();
-    private readonly TaskCompletionSource _compatibilityOperationsDrained =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Task[] _workers;
     private readonly Task _completion;
     private readonly int _queueCapacity;
     private int _completionRequested;
     private int _disposeRequested;
-    private int _compatibilityOperations;
     private int _queueReservations;
     private int _queueDepth;
     private int _skippedBeforeStart;
@@ -38,7 +31,6 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(queueCapacity);
 
         _queueCapacity = queueCapacity;
-        _compatibilitySlots = new SemaphoreSlim(queueCapacity, queueCapacity);
         _workers = new Task[workerCount];
         for (var index = 0; index < _workers.Length; index++)
             _workers[index] = Task.Run(WorkerLoopAsync);
@@ -48,8 +40,8 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     internal int WorkerCount => _workers.Length;
 
     /// <summary>
-    /// Number of published operations waiting for worker service, plus compatibility-path writers
-    /// blocked by queue capacity. Production reserved publication never blocks on scheduler capacity.
+    /// Number of published operations waiting for worker service. Reserved publication
+    /// never blocks while retaining decoded request resources.
     /// </summary>
     internal int QueueDepth => Volatile.Read(ref _queueDepth);
 
@@ -126,8 +118,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         var entry = new ServerDecodeQueueEntry(
             schedulingKey,
             workItem,
-            queuePermit,
-            releaseCompatibilitySlot: false);
+            queuePermit);
         workItem.EnableQueuedCancellation(
             cancellationToken,
             () => RemoveCancelledBeforeStart(entry));
@@ -155,61 +146,23 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         return new ValueTask(workItem.Completion);
     }
 
-    /// <summary>
-    /// Compatibility/test publication path retained for executor-local race tests. Production D
-    /// dispatch uses <see cref="TryReserveQueueSlot"/> plus the connection-keyed reserved overload.
-    /// </summary>
-    internal ValueTask EnqueueAsync(
-        ServerDecodeWorkItem workItem,
-        CancellationToken cancellationToken)
-        => EnqueueAsync(s_compatibilitySchedulingKey, workItem, cancellationToken);
-
-    /// <summary>Executor-local keyed path used by deterministic fairness tests.</summary>
-    internal ValueTask EnqueueAsync(
-        object schedulingKey,
-        ServerDecodeWorkItem workItem,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(schedulingKey);
-        ArgumentNullException.ThrowIfNull(workItem);
-
-        lock (_schedulerGate)
-        {
-            if (Volatile.Read(ref _completionRequested) != 0)
-            {
-                return cancellationToken.IsCancellationRequested
-                    ? ValueTask.FromCanceled(cancellationToken)
-                    : ValueTask.FromException(new ServerDecodeExecutorClosedException());
-            }
-
-            _compatibilityOperations++;
-        }
-
-        return EnqueueTrackedCompatibilityAsync(schedulingKey, workItem, cancellationToken);
-    }
-
     internal void StopAccepting()
     {
-        var compatibilityDrained = false;
         lock (_schedulerGate)
         {
             if (Volatile.Read(ref _completionRequested) != 0)
                 return;
 
             Volatile.Write(ref _completionRequested, 1);
-            compatibilityDrained = _compatibilityOperations == 0;
         }
 
-        _compatibilityStop.Cancel();
-        if (compatibilityDrained)
-            _compatibilityOperationsDrained.TrySetResult();
         _readySignal.Release(_workers.Length);
     }
 
     internal async ValueTask CompleteAsync()
     {
         StopAccepting();
-        await Task.WhenAll(_completion, _compatibilityOperationsDrained.Task).ConfigureAwait(false);
+        await _completion.ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -218,8 +171,6 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposeRequested, 1) != 0)
             return;
 
-        _compatibilityStop.Dispose();
-        _compatibilitySlots.Dispose();
         _readySignal.Dispose();
     }
 
@@ -233,83 +184,6 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         throw new InvalidOperationException("Server decode queue reservation accounting underflowed.");
     }
 
-    private async ValueTask EnqueueTrackedCompatibilityAsync(
-        object schedulingKey,
-        ServerDecodeWorkItem workItem,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            await EnqueueCoreAsync(schedulingKey, workItem, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            CompleteCompatibilityOperation();
-        }
-    }
-
-    private async ValueTask EnqueueCoreAsync(
-        object schedulingKey,
-        ServerDecodeWorkItem workItem,
-        CancellationToken cancellationToken)
-    {
-        Interlocked.Increment(ref _queueDepth);
-        var slotAcquired = false;
-        var published = false;
-        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            _compatibilityStop.Token);
-        try
-        {
-            await _compatibilitySlots.WaitAsync(linkedCancellation.Token).ConfigureAwait(false);
-            slotAcquired = true;
-
-            var entry = new ServerDecodeQueueEntry(
-                schedulingKey,
-                workItem,
-                queuePermit: null,
-                releaseCompatibilitySlot: true);
-            workItem.EnableQueuedCancellation(
-                cancellationToken,
-                () => RemoveCancelledBeforeStart(entry));
-
-            lock (_schedulerGate)
-            {
-                if (Volatile.Read(ref _completionRequested) == 0 && !workItem.IsCancelledBeforeStart)
-                {
-                    PublishEntryLocked(entry, queueDepthAlreadyOwned: true);
-                    published = true;
-                }
-            }
-
-            if (!published)
-            {
-                workItem.AbandonBeforePublication();
-                if (cancellationToken.IsCancellationRequested)
-                    throw new OperationCanceledException(cancellationToken);
-                throw new ServerDecodeExecutorClosedException();
-            }
-
-            await workItem.Completion.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!published)
-        {
-            workItem.AbandonBeforePublication();
-            if (_compatibilityStop.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-                throw new ServerDecodeExecutorClosedException();
-            throw;
-        }
-        finally
-        {
-            if (!published)
-            {
-                DecrementQueueDepth();
-                if (slotAcquired)
-                    _compatibilitySlots.Release();
-            }
-        }
-    }
-
     private async Task WorkerLoopAsync()
     {
         while (true)
@@ -318,9 +192,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
             if (!TryTakeNextEntry(out var entry))
             {
-                // Stop seals publication and cancels compatibility writers that have not published.
-                // With no ready connection left there is therefore no work a worker can still own,
-                // even if QueueDepth transiently includes a blocked writer rolling back its count.
+                // Stop has sealed publication; no ready connection means no worker-owned work remains.
                 if (Volatile.Read(ref _completionRequested) != 0)
                     return;
                 continue;
@@ -341,9 +213,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
         }
     }
 
-    private void PublishEntryLocked(
-        ServerDecodeQueueEntry entry,
-        bool queueDepthAlreadyOwned = false)
+    private void PublishEntryLocked(ServerDecodeQueueEntry entry)
     {
         if (!_connectionQueues.TryGetValue(entry.SchedulingKey, out var queue))
         {
@@ -353,8 +223,7 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
 
         entry.Owner = queue;
         entry.PendingNode = queue.Pending.AddLast(entry);
-        if (!queueDepthAlreadyOwned)
-            Interlocked.Increment(ref _queueDepth);
+        Interlocked.Increment(ref _queueDepth);
 
         if (queue.ReadyNode is null)
             AddReadyConnectionLocked(queue);
@@ -463,33 +332,8 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
             _readySignal.Wait(0);
     }
 
-    private void ReleaseQueuedOwnership(ServerDecodeQueueEntry entry)
-    {
-        if (entry.QueuePermit is not null)
-            entry.QueuePermit.Dispose();
-        if (entry.ReleaseCompatibilitySlot)
-            _compatibilitySlots.Release();
-    }
-
-    private void CompleteCompatibilityOperation()
-    {
-        var drained = false;
-        lock (_schedulerGate)
-        {
-            _compatibilityOperations--;
-            if (_compatibilityOperations < 0)
-            {
-                _compatibilityOperations++;
-                throw new InvalidOperationException("Compatibility decode operation accounting underflowed.");
-            }
-
-            drained = _compatibilityOperations == 0 &&
-                Volatile.Read(ref _completionRequested) != 0;
-        }
-
-        if (drained)
-            _compatibilityOperationsDrained.TrySetResult();
-    }
+    private static void ReleaseQueuedOwnership(ServerDecodeQueueEntry entry)
+        => entry.QueuePermit.Dispose();
 
     private void DecrementQueueDepth()
     {
@@ -513,16 +357,13 @@ internal sealed class ServerDecodeExecutor : IAsyncDisposable
     private sealed class ServerDecodeQueueEntry(
         object schedulingKey,
         ServerDecodeWorkItem workItem,
-        ServerDecodeQueuePermit? queuePermit,
-        bool releaseCompatibilitySlot)
+        ServerDecodeQueuePermit queuePermit)
     {
         internal object SchedulingKey { get; } = schedulingKey;
 
         internal ServerDecodeWorkItem WorkItem { get; } = workItem;
 
-        internal ServerDecodeQueuePermit? QueuePermit { get; } = queuePermit;
-
-        internal bool ReleaseCompatibilitySlot { get; } = releaseCompatibilitySlot;
+        internal ServerDecodeQueuePermit QueuePermit { get; } = queuePermit;
 
         internal ConnectionQueue? Owner { get; set; }
 
