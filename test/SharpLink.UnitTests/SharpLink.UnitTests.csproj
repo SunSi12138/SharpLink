@@ -15,6 +15,7 @@
     <ProjectReference Include="..\SharpLink.MultiClusterTest.Contracts\SharpLink.MultiClusterTest.Contracts.csproj" />
     <ProjectReference Include="..\SharpLink.RollbackPlugin\SharpLink.RollbackPlugin.csproj" />
     <ProjectReference Include="..\SharpLink.StaticCodecOwnerTest.Contracts\SharpLink.StaticCodecOwnerTest.Contracts.csproj" />
+    <ProjectReference Include="..\SharpLink.WriterOwnedTest.Contracts\SharpLink.WriterOwnedTest.Contracts.csproj" />
   </ItemGroup>
 
   <!-- Link only the isolated credit model to exercise it at the real SendPump
