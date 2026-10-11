@@ -1,0 +1,150 @@
+name: Issue 801 - Lazy Client Session Test Hook Storage Validation
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-client-session-hook-validation.yml
+      - eng/issue801/compact-client-session-hooks.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-client-test-hook-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  client-race-hooks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      SHARPLINK_AOT_RID: linux-x64
+      SHARPLINK_AOT_SHM_NAME: issue801-client-test-hook-storage
+
+    steps:
+      - name: Checkout dev-based audit branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore solution
+        run: dotnet restore Sharplink.slnx -v minimal
+
+      - name: Compact ten test-only client instance fields to one lazy array
+        id: edit
+        run: |
+          mkdir -p artifacts/issue-801-client-hooks
+          python3 eng/issue801/compact-client-session-hooks.py artifacts/issue-801-client-hooks
+          git diff --check
+          git diff --stat -- src/ > artifacts/issue-801-client-hooks/diff-stat.txt
+          cat artifacts/issue-801-client-hooks/diff-stat.txt
+
+      - name: Release solution build after compaction
+        id: build
+        if: steps.edit.outcome == 'success'
+        run: |
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-client-hooks/release-build.log 2>&1 || {
+              tail -n 160 artifacts/issue-801-client-hooks/release-build.log; exit 1;
+            }
+          tail -n 22 artifacts/issue-801-client-hooks/release-build.log
+
+      - name: Run all UnitTests including session refresh race injections
+        id: unit
+        if: steps.build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-client-hooks/unit.log 2>&1 || {
+              tail -n 160 artifacts/issue-801-client-hooks/unit.log; exit 1;
+            }
+          tail -n 32 artifacts/issue-801-client-hooks/unit.log
+
+      - name: Run Generator Tests
+        id: generator
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-client-hooks/generator.log 2>&1 || {
+              tail -n 120 artifacts/issue-801-client-hooks/generator.log; exit 1;
+            }
+          tail -n 25 artifacts/issue-801-client-hooks/generator.log
+
+      - name: Run all dynamic module and transport IntegrationTests
+        id: integration
+        if: always() && steps.unit.outcome == 'success' && steps.generator.outcome == 'success'
+        run: |
+          dotnet run -c Release --no-build --no-restore \
+            --project test/SharpLink.IntegrationTests -- \
+            --maximum-parallel-tests 1 --timeout 120s \
+            > artifacts/issue-801-client-hooks/integration.log 2>&1 || {
+              tail -n 160 artifacts/issue-801-client-hooks/integration.log; exit 1;
+            }
+          tail -n 35 artifacts/issue-801-client-hooks/integration.log
+
+      - name: Publish and execute Linux NativeAOT including client streaming
+        id: nativeaot
+        if: always() && steps.unit.outcome == 'success' && steps.generator.outcome == 'success'
+        env:
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/issue-801-client-hooks/aot
+        run: |
+          set -o pipefail
+          bash eng/run-shared-memory-aot-process-smoke.sh 2>&1 \
+            | tee artifacts/issue-801-client-hooks/nativeaot.log
+
+      - name: Restore only temporary src modifications
+        if: always()
+        run: |
+          git restore -- src/
+          git diff --exit-code -- src/
+          echo 'This experiment never commits production source changes.'
+
+      - name: Rebuild original pristine dev-based sources
+        id: clean
+        if: always()
+        continue-on-error: true
+        run: |
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-client-hooks/pristine-build.log 2>&1 || {
+              tail -n 100 artifacts/issue-801-client-hooks/pristine-build.log; exit 1;
+            }
+          tail -n 19 artifacts/issue-801-client-hooks/pristine-build.log
+
+      - name: Record outcomes
+        if: always()
+        run: |
+          {
+            echo '# Issue 801 — lazy Client test-hook storage'
+            echo
+            echo "- Script edit: ${{ steps.edit.outcome }}"
+            echo "- Release build: ${{ steps.build.outcome }}"
+            echo "- UnitTests: ${{ steps.unit.outcome }}"
+            echo "- Generator Tests: ${{ steps.generator.outcome }}"
+            echo "- IntegrationTests: ${{ steps.integration.outcome }}"
+            echo "- Linux NativeAOT: ${{ steps.nativeaot.outcome }}"
+            echo "- Pristine rebuild: ${{ steps.clean.outcome }}"
+          } > artifacts/issue-801-client-hooks/validation.md
+
+      - name: Upload build/test/native evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-client-session-test-hooks
+          path: |
+            artifacts/issue-801-client-hooks/*.json
+            artifacts/issue-801-client-hooks/*.md
+            artifacts/issue-801-client-hooks/*.txt
+            artifacts/issue-801-client-hooks/*.log
+            artifacts/issue-801-client-hooks/aot/*.log
+            artifacts/issue-801-client-hooks/aot/sharppack-sidecar/*.log
+            artifacts/issue-801-client-hooks/aot/precredit/*.log
+          if-no-files-found: warn
+          retention-days: 30
