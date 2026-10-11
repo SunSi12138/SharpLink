@@ -1,0 +1,49 @@
+name: Method Facts Paired OneWay Drain
+on:
+  push:
+    branches: [validate/754-oneway-drain-paired]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired-drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: dev-baseline
+            source: a1f9ee2a7addfdf2bc86ae0598d99d5e5596cfe5
+          - label: combined-candidate
+            source: cc31c1f79315d8c6f3ad6f8be0c25f3bd965e507
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.source }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build pinned integration source
+        run: |
+          git rev-parse HEAD
+          dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal
+      - name: Five independent processes without timeout changes
+        shell: bash
+        run: |
+          mkdir -p artifacts/paired-drain
+          git rev-parse HEAD > artifacts/paired-drain/source.txt
+          status=0
+          for attempt in 1 2 3 4 5; do
+            set +e
+            dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter '/*/*/IntegrationBehaviorTests/QueuedOneWayStubFailureShouldDrainReservedStreams' --maximum-parallel-tests 1 2>&1 | tee artifacts/paired-drain/run-$attempt.log
+            result=${PIPESTATUS[0]}
+            set -e
+            echo "$attempt,$result" >> artifacts/paired-drain/results.csv
+            if [ "$result" != 0 ]; then status=1; fi
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: method-facts-drain-${{ matrix.label }}
+          path: artifacts/paired-drain
+          if-no-files-found: warn
