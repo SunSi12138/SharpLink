@@ -124,7 +124,7 @@ public class Issue801WireRpcAblationBenchmarks
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3,
-    invocationCount: 1, unrollFactor: 1, iterationCount: 10)]
+    invocationCount: 16, iterationCount: 10)]
 public class Issue801ReconnectAblationBenchmarks
 {
     private BenchmarkEnvironment _environment = null!;
