@@ -31,7 +31,7 @@ public class UnsizedStreamingPreCreditTests
             streamReceiveWindowBytes: 1,
             connectionReceiveWindowBytes: 1);
 
-        await session.SendStreamChunkAsync(
+        await session.SendTestStreamChunkAsync(
             requestId: 1,
             streamId: 1,
             new UnsizedPayload(payloadBytes));
@@ -40,7 +40,7 @@ public class UnsizedStreamingPreCreditTests
         var blocked = new Task[blockedStreams];
         for (var index = 0; index < blocked.Length; index++)
         {
-            blocked[index] = session.SendStreamChunkAsync(
+            blocked[index] = session.SendTestStreamChunkAsync(
                 requestId: index + 2,
                 streamId: 1,
                 new UnsizedPayload(payloadBytes)).AsTask();
@@ -110,13 +110,13 @@ public class UnsizedStreamingPreCreditTests
             streamReceiveWindowBytes: 1,
             connectionReceiveWindowBytes: 1);
 
-        await session.SendStreamChunkAsync(
+        await session.SendTestStreamChunkAsync(
             requestId: 11,
             streamId: 1,
             new SizedPayload(payloadBytes));
         Ensure(codec.SerializeCount == 1, "the first exact-size item should serialize after acquiring credit");
 
-        var blocked = session.SendStreamChunkAsync(
+        var blocked = session.SendTestStreamChunkAsync(
             requestId: 12,
             streamId: 1,
             new SizedPayload(payloadBytes)).AsTask();

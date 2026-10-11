@@ -61,7 +61,7 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
         var sends = new Task[Streams];
         for (var index = 0; index < sends.Length; index++)
         {
-            sends[index] = session.SendStreamChunkAsync(
+            sends[index] = session.SendTestStreamChunkAsync(
                 index + 1,
                 1,
                 new UnsizedPayload(payloadBytes),
@@ -177,7 +177,7 @@ internal static class PreCreditStarvedMemoryEvidenceRunner
 
         for (var index = 0; index < 64; index++)
         {
-            await session.SendStreamChunkAsync(
+            await session.SendTestStreamChunkAsync(
                 1,
                 1,
                 new UnsizedPayload(1024),

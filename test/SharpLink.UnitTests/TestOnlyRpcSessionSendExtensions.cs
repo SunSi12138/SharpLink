@@ -8,7 +8,7 @@ namespace SharpLink.Runtime;
 
 internal static class TestOnlyRpcSessionSendExtensions
 {
-    internal static async ValueTask SendStreamChunkAsync<T>(
+    internal static async ValueTask SendTestStreamChunkAsync<T>(
         this RpcSession session,
         long requestId,
         ushort streamId,
