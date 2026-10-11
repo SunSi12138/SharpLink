@@ -276,7 +276,7 @@ internal sealed partial class SharpLinkClient :
     private static SharpLinkException CreateProtocolViolationException(string message)
         => new(SharpLinkErrorCode.ProtocolViolation, message);
 
-    private void TransitionTo(SharpLinkConnectionState state)
+    internal void TransitionTo(SharpLinkConnectionState state)
     {
         TaskCompletionSource? changed;
         lock (_readinessGate)
