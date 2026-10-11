@@ -110,8 +110,8 @@ public partial class SharpLinkServerInvocationTests
         {
             loopCancellation.Cancel();
             await heartbeat;
-            connections.TryRemove(healthySession.Id, out _);
-            connections.TryRemove(staleSession.Id, out _);
+            connections.TryRemove(new KeyValuePair<string, ServerConnectionState>(healthySession.Id, healthy));
+            connections.TryRemove(new KeyValuePair<string, ServerConnectionState>(staleSession.Id, stale));
             await stale.CloseAsync();
             await healthy.CloseAsync();
             await stale.ServiceCleanupTask;
