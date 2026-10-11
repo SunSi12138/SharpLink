@@ -50,8 +50,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     private long _disposeFinalizedLeaseState;
     private DisposeCompletion? _disposeCompletion;
     private TaskCompletionSource? _remoteTerminalPublication;
-    // Per-instance test instrumentation is dormant by default.
-    // The array is allocated only when a unit test installs an active callback.
+    // Test hooks allocate storage only when a test installs a callback.
     private Action?[]? _testHooks;
     private int _terminalDispatchStateClosed;
     // 0 = no remote terminal, 1 = terminal publication still owns dispatch-state close,
@@ -426,9 +425,6 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
 
     internal void SetAfterReturnTransitionForTests(Action? callback)
         => SetTestHook(8, callback);
-
-    // A single pointer on every dispatcher instead of nine test-only pointers.
-    // No array is allocated for ordinary production streams.
     private void SetTestHook(int index, Action? callback)
     {
         var hooks = Volatile.Read(ref _testHooks);
@@ -459,7 +455,6 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
                 return true;
         return false;
     }
-
 
     private static ValueTask RejectedDispatch()
     {
