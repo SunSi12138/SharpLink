@@ -937,7 +937,7 @@ public class PooledAsyncStreamDispatcherTests
         var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, blockingCodec);
         var manager = new StreamManager();
         manager.Register(77, first);
-        first.SetConsumerAbandonedCallback(_ => manager.Unregister(77), 77);
+        first.SetConsumerAbandonedCallback(_ => manager.Unregister(77, 0), 77);
 
         var producer = Task.Run(async () => await manager.DispatchChunkAsync(77, Payload));
         Ensure(entered.Wait(TimeSpan.FromSeconds(3)), "producer must enter decode");
@@ -1000,7 +1000,7 @@ public class PooledAsyncStreamDispatcherTests
                 Interlocked.Increment(ref abandonmentCallbackCount);
                 events.Add("consumer-abandoned");
                 abandonmentCallback.TrySetResult(drainedDispatchState);
-                manager.Unregister(abandonedRequestId);
+                manager.Unregister(abandonedRequestId, 0);
                 return ValueTask.CompletedTask;
             },
             requestId);
@@ -1149,7 +1149,7 @@ public class PooledAsyncStreamDispatcherTests
         Ensure(!ReferenceEquals(first, second),
             "a delayed pending completion must not share its dispatcher with a new lease");
 
-        manager.Unregister(91);
+        manager.Unregister(91, 0);
         Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
             "detaching the old entry should make its disposed dispatcher reusable");
         second.Complete(exception: null);
@@ -1176,7 +1176,7 @@ public class PooledAsyncStreamDispatcherTests
                 callbackEntered.TrySetResult(dispatchState ?? throw new Exception(
                     "registered dispatcher must expose its dispatch state"));
                 await releaseCallback.Task.ConfigureAwait(false);
-                manager.Unregister(requestId);
+                manager.Unregister(requestId, 0);
             },
             92);
 
@@ -1467,7 +1467,7 @@ public class PooledAsyncStreamDispatcherTests
             Ensure(manager.ActiveStreamCount == 1,
                 "late registration must remain owned by StreamManager until its explicit detach");
 
-            manager.Unregister(requestId);
+            manager.Unregister(requestId, 0);
             Ensure(manager.ActiveStreamCount == 0 &&
                    PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
                 "detach alone must not pool the dispatcher while registration retention is still held");
@@ -1479,7 +1479,7 @@ public class PooledAsyncStreamDispatcherTests
         }
         finally
         {
-            manager.Unregister(requestId);
+            manager.Unregister(requestId, 0);
             if (!registrationReleased)
                 dispatcher.ReleaseRegistrationRetention(registrationLease);
             PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
