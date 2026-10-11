@@ -220,7 +220,7 @@ public partial class RpcGenerator
                 static group => new RpcHashValue(group.First().High, group.First().Low).ToHex(),
                 StringComparer.Ordinal);
         var contractCodecHashes = codecsByType
-            .Where(static pair => pair.Value.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter)
+            .Where(static pair => pair.Value.Kind is GeneratedCodecKind.Custom or GeneratedCodecKind.Adapter or GeneratedCodecKind.UnsafeBlit)
             .ToDictionary(
                 static pair => pair.Key,
                 static pair => GetCodecHash(pair.Value),
@@ -340,7 +340,7 @@ public partial class RpcGenerator
             document.Codecs.Add(new ContractManifestCodec
             {
                 Type = RemoveGlobalPrefix(codec.TypeName),
-                Kind = codec.Kind.ToString(),
+                Kind = codec.Kind == GeneratedCodecKind.UnsafeBlit ? "Final" : codec.Kind.ToString(),
                 CodecHash = GetCodecHash(codec),
                 SourceLocation = codec.Location
             });

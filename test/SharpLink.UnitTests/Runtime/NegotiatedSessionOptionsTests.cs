@@ -370,7 +370,7 @@ public class NegotiatedSessionOptionsTests
             output.Writer,
             RpcSessionTestFixture.ClientOptions());
         var firstDispatcher = new CompletionRecordingDispatcher();
-        session.StreamManager.Register(71, firstDispatcher);
+        session.StreamManager.Register(71, 0, firstDispatcher);
 
         // Create a real pump before stopping so the invariant must verify its stop request.
         session.SendPacket(CreateFrame(session, ProtocolV2FrameType.Response));
@@ -391,7 +391,7 @@ public class NegotiatedSessionOptionsTests
             "stopping must complete an already-registered receive stream with the terminal reason");
 
         var lateDispatcher = new CompletionRecordingDispatcher();
-        manager.Register(72, lateDispatcher);
+        manager.Register(72, 0, lateDispatcher);
         Ensure(lateDispatcher.CompleteCount == 1 && manager.ActiveStreamCount == 0,
             "a late stream registration must observe the published terminal state without incrementing accounting");
         var rejection = CaptureSharpLinkException(() =>

@@ -8,9 +8,6 @@ internal static class RpcWirePlatform
         => EnsureSupported(BitConverter.IsLittleEndian);
 #pragma warning restore CA2255
 
-    internal static bool IsSupported(bool isLittleEndian)
-        => isLittleEndian;
-
     internal static void EnsureSupported(bool isLittleEndian)
     {
         if (isLittleEndian)

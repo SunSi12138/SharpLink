@@ -6,61 +6,6 @@ internal sealed partial class RpcSession
         long requestId,
         ushort streamId,
         T item,
-        RpcDeadline deadline,
-        TimeProvider timeProvider,
-        CancellationToken terminalToken)
-        => SendClientStreamChunkAsync(
-            requestId,
-            streamId,
-            item,
-            RuntimeContext.Codecs.GetCodec<T>(),
-            deadline,
-            timeProvider,
-            terminalToken);
-
-    internal ValueTask SendClientStreamChunkAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
-        IRpcCodec<T> codec,
-        RpcDeadline deadline,
-        TimeProvider timeProvider,
-        CancellationToken terminalToken)
-    {
-        ArgumentNullException.ThrowIfNull(codec);
-        ArgumentNullException.ThrowIfNull(timeProvider);
-        ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
-
-        if (codec is IRpcSizedCodec<T> sizedCodec &&
-            sizedCodec.CanExactSize &&
-            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
-        {
-            return SendClientStreamChunkKnownSizeAsync(
-                requestId,
-                streamId,
-                item,
-                sizedCodec,
-                knownEncodedBytes,
-                sizedSnapshot,
-                deadline,
-                timeProvider,
-                terminalToken);
-        }
-
-        return SendClientUnsizedStreamChunkAsync(
-            requestId,
-            streamId,
-            item,
-            codec,
-            deadline,
-            timeProvider,
-            terminalToken);
-    }
-
-    internal ValueTask SendClientStreamChunkAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
         IRpcCodec<T> codec,
         IRpcSizedCodec<T>? exactSizeCodec,
         RpcDeadline deadline,

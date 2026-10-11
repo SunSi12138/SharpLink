@@ -131,25 +131,6 @@ internal static class ProtocolV2Negotiator
         ProtocolV2Capabilities.HealthCheck |
         ProtocolV2Capabilities.CancellationReason;
 
-    internal static ProtocolV2NegotiationPolicy CreateImplementedPolicy(
-        int maxFramePayloadBytes,
-        int streamReceiveWindowBytes,
-        int connectionReceiveWindowBytes,
-        IReadOnlyList<SharpLinkCompressionProviderBinding> compressionProviders)
-    {
-        ArgumentNullException.ThrowIfNull(compressionProviders);
-        var capabilities = AlwaysImplementedCapabilities;
-        if (compressionProviders.Count != 0)
-            capabilities |= ProtocolV2Capabilities.Compression;
-        return ProtocolV2NegotiationPolicy.Create(
-            ProtocolV2Constants.MinorVersion,
-            capabilities,
-            maxFramePayloadBytes,
-            streamReceiveWindowBytes,
-            connectionReceiveWindowBytes,
-            compressionProviders);
-    }
-
     internal static ProtocolV2HandshakeRequest CreateClientOffer(
         in ProtocolV2NegotiationPolicy policy,
         ProtocolV2Capabilities requiredCapabilities,

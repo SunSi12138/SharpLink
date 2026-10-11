@@ -118,28 +118,6 @@ internal sealed class ServerResourceGovernor
             _maxPreAdmissionStreamBytes);
     }
 
-    internal bool TryAcquirePreAdmissionStreamBytes(
-        long retainedBytes,
-        out ServerPreAdmissionStreamBytesPermit? permit)
-    {
-        if (!TryReservePreAdmissionStreamBytes(retainedBytes))
-        {
-            permit = null;
-            return false;
-        }
-
-        try
-        {
-            permit = new ServerPreAdmissionStreamBytesPermit(this, retainedBytes);
-            return true;
-        }
-        catch
-        {
-            ReleasePreAdmissionStreamBytes(retainedBytes);
-            throw;
-        }
-    }
-
     internal bool TryAcquireDecode(
         long retainedCompressedBytes,
         out ServerDecodePermit? permit)
@@ -288,36 +266,6 @@ internal sealed class ServerResourceGovernor
 
         Interlocked.Add(ref counter, amount);
         throw new InvalidOperationException($"Server {resourceName} accounting underflowed.");
-    }
-}
-
-/// <summary>
-/// Owns one physical pre-admission stream buffer's stable server-wide byte accounting. The buffer
-/// must be returned to its pool before this permit is disposed so accounting never under-reports
-/// physically retained memory.
-/// </summary>
-internal sealed class ServerPreAdmissionStreamBytesPermit : IDisposable
-{
-    private readonly ServerResourceGovernor _governor;
-    private readonly long _retainedBytes;
-    private int _disposed;
-
-    internal ServerPreAdmissionStreamBytesPermit(
-        ServerResourceGovernor governor,
-        long retainedBytes)
-    {
-        _governor = governor ?? throw new ArgumentNullException(nameof(governor));
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
-        _retainedBytes = retainedBytes;
-    }
-
-    internal long RetainedBytes => _retainedBytes;
-
-    public void Dispose()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            return;
-        _governor.ReleasePreAdmissionStreamBytes(_retainedBytes);
     }
 }
 

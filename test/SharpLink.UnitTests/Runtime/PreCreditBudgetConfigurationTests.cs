@@ -55,7 +55,7 @@ public class PreCreditBudgetConfigurationTests
             wireWindowBytes: 1024 * 1024);
         await using var firstSession = first.Session;
         using var firstContext = first.Context;
-        var firstSend = firstSession.SendStreamChunkAsync(1, 1, new Payload(1024)).AsTask();
+        var firstSend = firstSession.SendTestStreamChunkAsync(1, 1, new Payload(1024)).AsTask();
         Ensure(!firstSend.IsCompleted, "the first default-budget send should wait for exhausted wire credit");
         Ensure(firstSession.PreCreditSerializedByteLimit == DefaultBudgetBytes,
             "the default local budget must not derive from a 1 MiB negotiated window");
@@ -69,7 +69,7 @@ public class PreCreditBudgetConfigurationTests
             wireWindowBytes: 4 * 1024 * 1024);
         await using var secondSession = second.Session;
         using var secondContext = second.Context;
-        var secondSend = secondSession.SendStreamChunkAsync(2, 1, new Payload(1024)).AsTask();
+        var secondSend = secondSession.SendTestStreamChunkAsync(2, 1, new Payload(1024)).AsTask();
         Ensure(!secondSend.IsCompleted, "the second default-budget send should wait for exhausted wire credit");
         Ensure(secondSession.PreCreditSerializedByteLimit == DefaultBudgetBytes,
             "the default local budget must not derive from a 4 MiB negotiated window");
@@ -90,9 +90,9 @@ public class PreCreditBudgetConfigurationTests
         await using var session = fixture.Session;
         using var context = fixture.Context;
 
-        var owner = session.SendStreamChunkAsync(10, 1, new Payload(budgetBytes)).AsTask();
-        var waiter = session.SendStreamChunkAsync(11, 1, new Payload(budgetBytes)).AsTask();
-        var rejected = session.SendStreamChunkAsync(12, 1, new Payload(budgetBytes)).AsTask();
+        var owner = session.SendTestStreamChunkAsync(10, 1, new Payload(budgetBytes)).AsTask();
+        var waiter = session.SendTestStreamChunkAsync(11, 1, new Payload(budgetBytes)).AsTask();
+        var rejected = session.SendTestStreamChunkAsync(12, 1, new Payload(budgetBytes)).AsTask();
 
         Ensure(!owner.IsCompleted && !waiter.IsCompleted,
             "one configured-budget owner and one bounded waiter should remain pending");
@@ -126,7 +126,7 @@ public class PreCreditBudgetConfigurationTests
         await using var session = fixture.Session;
         using var context = fixture.Context;
 
-        var blocked = session.SendStreamChunkAsync(20, 1, new Payload(1024)).AsTask();
+        var blocked = session.SendTestStreamChunkAsync(20, 1, new Payload(1024)).AsTask();
         Ensure(!blocked.IsCompleted, "the send should wait after the independent wire credit is exhausted");
         Ensure(session.PreCreditSerializedByteLimit == budgetBytes,
             "the local byte limit should use the configured 8 MiB value");

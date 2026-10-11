@@ -10,7 +10,4 @@ internal sealed partial class SharpLinkServer
 
     internal ServerLifecycleCoordinator LifecycleForDiagnostics => _lifecycle;
 
-    // Compatibility forwarding seam for an existing shutdown-failure characterization probe.
-    private Task DisposeAllSessionsAsync()
-        => _lifecycle.DisposeAllSessionsForDiagnosticsAsync();
 }

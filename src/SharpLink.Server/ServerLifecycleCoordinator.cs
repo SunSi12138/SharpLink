@@ -632,16 +632,5 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        internal void ForceStop()
-        {
-            try
-            {
-                _forceStopCts.Cancel();
-            }
-            catch (ObjectDisposedException) when (_server.CurrentState == ServerState.Stopped)
-            {
-            }
-        }
-
     }
 }

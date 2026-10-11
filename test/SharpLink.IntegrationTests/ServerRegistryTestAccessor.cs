@@ -26,10 +26,6 @@ internal static class ServerRegistryTestAccessor
         RequireField(ServiceModuleRegistryField.FieldType, "_dynamicModules");
     private static readonly FieldInfo ClientAssemblyRegistryField =
         RequireField(typeof(SharpLinkClient), "_assemblyRegistry");
-    private static readonly MethodInfo PublishServicesMethod =
-        ServiceModuleRegistryField.FieldType.GetMethod("PublishServices", InstanceFlags)
-        ?? throw new MissingMethodException(ServiceModuleRegistryField.FieldType.FullName, "PublishServices");
-
     internal static int ActiveConnectionCount(SharpLinkServer server)
         => ActiveConnections(server).Count;
 
@@ -52,7 +48,10 @@ internal static class ServerRegistryTestAccessor
     internal static void PublishServices(
         SharpLinkServer server,
         FrozenDictionary<long, ServiceRegistration> services)
-        => PublishServicesMethod.Invoke(ServiceModuleRegistry(server), [services]);
+    {
+        var registry = (ServerServiceModuleRegistry)ServiceModuleRegistry(server);
+        Volatile.Write(ref registry.ServicesStorage, services);
+    }
 
     internal static IDictionary DynamicModules(object endpoint)
     {
