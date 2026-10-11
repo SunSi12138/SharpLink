@@ -1,0 +1,135 @@
+name: Issue 801 - Decode Executor Compatibility Queue Removal Probe
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-decode-queue-removal.yml
+      - eng/issue801/remove-decode-compatibility.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-decode-compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  executable-cleanup-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+    steps:
+      - name: Checkout isolated dev-based audit branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pinned repository .NET SDK
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore original solution
+        run: dotnet restore Sharplink.slnx -v minimal
+
+      - name: Apply ephemeral compatibility-queue removal and test migration
+        id: migration
+        run: |
+          mkdir -p artifacts/issue-801-decode-queue
+          python3 eng/issue801/remove-decode-compatibility.py artifacts/issue-801-decode-queue
+          git diff --check
+          git diff --stat -- src/ test/ > artifacts/issue-801-decode-queue/changed-files.txt
+          git diff --numstat -- src/ test/ > artifacts/issue-801-decode-queue/changed-lines.txt
+          cat artifacts/issue-801-decode-queue/changed-files.txt
+
+      - name: Full solution Release build after removing compatibility queue
+        id: build
+        if: steps.migration.outcome == 'success'
+        run: |
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-decode-queue/build.log 2>&1 || {
+              tail -n 150 artifacts/issue-801-decode-queue/build.log; exit 1;
+            }
+          tail -n 24 artifacts/issue-801-decode-queue/build.log
+
+      - name: Run complete UnitTests against reserved-only queue
+        id: unit
+        if: steps.build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-decode-queue/unit.log 2>&1 || {
+              tail -n 140 artifacts/issue-801-decode-queue/unit.log; exit 1;
+            }
+          tail -n 35 artifacts/issue-801-decode-queue/unit.log
+
+      - name: Run full Generator Tests
+        id: generator
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-decode-queue/generator.log 2>&1 || {
+              tail -n 140 artifacts/issue-801-decode-queue/generator.log; exit 1;
+            }
+          tail -n 30 artifacts/issue-801-decode-queue/generator.log
+
+      - name: Run persistent decode integration stress and lifecycle checks
+        id: integration
+        if: always() && steps.build.outcome == 'success' && steps.unit.outcome == 'success'
+        run: |
+          dotnet run --project test/SharpLink.IntegrationTests \
+            -c Release --no-build --no-restore -- \
+            --maximum-parallel-tests 1 --timeout 120s \
+            > artifacts/issue-801-decode-queue/integration.log 2>&1 || {
+              tail -n 160 artifacts/issue-801-decode-queue/integration.log; exit 1;
+            }
+          tail -n 50 artifacts/issue-801-decode-queue/integration.log
+
+      - name: Restore pristine dev sources and tests
+        if: always()
+        run: |
+          git restore -- src/ test/
+          git diff --exit-code -- src/ test/
+          echo 'Only Actions runner workspace modified; no src/test changes committed.'
+
+      - name: Rebuild pristine baseline to compare
+        id: pristine
+        if: always() && steps.migration.outcome == 'success'
+        continue-on-error: true
+        run: |
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-decode-queue/pristine-build.log 2>&1 || {
+              tail -n 100 artifacts/issue-801-decode-queue/pristine-build.log; exit 1;
+            }
+          tail -n 20 artifacts/issue-801-decode-queue/pristine-build.log
+
+      - name: Capture CI evidence and outcomes
+        if: always()
+        run: |
+          {
+            echo '# Issue 801 - test-only compatibility queue teardown'
+            echo
+            echo "- Source baseline: dev eb99fe887cf2129d9b88441245ca0a4a6406b6c2"
+            echo "- Script migration: ${{ steps.migration.outcome }}"
+            echo "- Release build: ${{ steps.build.outcome }}"
+            echo "- UnitTests: ${{ steps.unit.outcome }}"
+            echo "- Generator Tests: ${{ steps.generator.outcome }}"
+            echo "- Full Integration Tests: ${{ steps.integration.outcome }}"
+            echo "- Pristine rebuild: ${{ steps.pristine.outcome }}"
+            echo
+            echo 'No production or test sources committed.'
+          } > artifacts/issue-801-decode-queue/validation.md
+          cat artifacts/issue-801-decode-queue/validation.md
+
+      - name: Upload decode-queue validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-reserved-only-decode-queue-evidence
+          path: artifacts/issue-801-decode-queue
+          if-no-files-found: warn
+          retention-days: 30
