@@ -105,8 +105,11 @@ public class ClientStreamLocalReceiveFailureTests
         var requestIndex = requestFrames.IndexOf(ProtocolV2FrameType.Request);
         var creditIndex = requestFrames.IndexOf(ProtocolV2FrameType.WindowUpdate);
         var cancelIndex = requestFrames.IndexOf(ProtocolV2FrameType.Cancel);
-        Ensure(requestIndex >= 0 && requestIndex < creditIndex && creditIndex < cancelIndex,
-            $"a published Request must precede final WindowUpdate and ConsumerAbandoned Cancel; actual: [{string.Join(", ", requestFrames)}]");
+        // The send pump can prioritize WindowUpdate over Request, but both must enter
+        // the outbound stream before the local-abandonment Cancel.
+        Ensure(requestIndex >= 0 && creditIndex >= 0 &&
+               requestIndex < cancelIndex && creditIndex < cancelIndex,
+            $"final receive-credit WindowUpdate and the published Request must precede ConsumerAbandoned Cancel; actual: [{string.Join(", ", requestFrames)}]");
         Ensure(requestFrames.Count(frame => frame == ProtocolV2FrameType.Cancel) == 1,
             "the published locally failed request must be cancelled exactly once");
         PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
