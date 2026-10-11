@@ -43,7 +43,7 @@ public class GenerationRetirementTests
             "a bounded caller wait must not terminate framework-owned cleanup");
 
         completion.SetResult();
-        await retirement.WaitAsync();
+        await retirement.Completion;
         Ensure(retirement.Completion.IsCompletedSuccessfully,
             "the same retirement handle must observe eventual cleanup completion");
     }
