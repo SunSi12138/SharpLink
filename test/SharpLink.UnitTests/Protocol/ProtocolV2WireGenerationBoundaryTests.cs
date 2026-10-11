@@ -9,7 +9,9 @@ public class ProtocolV2WireGenerationBoundaryTests
             ProtocolV2Constants.MinimumCompatibleMinorVersion == ProtocolV2Constants.MinorVersion,
             "the intentional DTO wire break must advance the current minor and compatibility floor together");
         var previousMinor = checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1));
-        var policy = ProtocolV2Negotiator.CreateImplementedPolicy(
+        var policy = ProtocolV2NegotiationPolicy.Create(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Negotiator.AlwaysImplementedCapabilities,
             SharpLinkProtocolOptions.MinMaxFramePayloadBytes,
             1024,
             2048,
