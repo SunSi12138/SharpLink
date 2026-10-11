@@ -30,7 +30,7 @@ public sealed class StreamManagerLazyMapAllocationEvidence
             Runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription
         };
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
-        File.WriteAllText(output, JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(output, JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
     }
 
     private static double[] Measure(ushort streamId, IStreamDispatcher dispatcher)
