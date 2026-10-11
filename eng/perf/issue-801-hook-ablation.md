@@ -38,9 +38,24 @@ Release on one Ubuntu 24.04 runner. No test hook is enabled in either workload.
    This captures constructor/build and allocation footprint; it does NOT
    measure handshake/reconnect throughput.
 
-The order is **base, stripped, stripped, base** (ABBA). There are two independent
-BenchmarkDotNet runs per variant, 5 warmup and 12 measurement iterations each.
-The job records ns/op, B/op, environment and original BDN JSON/CSV/logs.
+
+3. Full Protocol v2 **real TCP loopback** AddAsync unary RPC. The Server has
+   Admission enabled. This covers transport, generated proxy, serialization,
+   dispatch, admission, and response handling; throughput/latency are still
+   localhost benchmarks, not a remote production SLA.
+4. Force-close an **already Ready TCP transport**, wait for the fixed-client
+   reconnect coordinator to negotiate a fresh transport after a deterministic
+   2-ms backoff, then complete a real unary RPC. Each benchmark invocation
+   asserts the connection count advanced and the result is correct, with a
+   bounded 10-second timeout. This is a connection-recovery measurement; it
+   includes OS socket and timer scheduling and cannot isolate field cost.
+
+The order is **base, stripped, stripped, base; stripped, base, base, stripped**
+(ABBA + BAAB). There are four independent BenchmarkDotNet processes per variant.
+The admission and Client-construction classes use 5 warmup / 12 measurement iterations;
+the real RPC class uses 4 / 12, and reconnect uses 3 / 10 with one invocation per
+measurement iteration. The job records ns/op, B/op, environment, run order,
+and original BDN JSON/CSV/logs.
 
 Results are exploratory, not a release performance assertion or a claim that
 all test probes should be deleted. Interpret small differences as inconclusive

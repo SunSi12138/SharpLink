@@ -16,7 +16,7 @@ permissions:
 jobs:
   paired-abba-source-ablation:
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 70
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
@@ -72,12 +72,12 @@ jobs:
               2>&1 | tee "artifacts/issue-801-source-ablation/build-$label.log"
           done
 
-      - name: Run ABBA sequence on same host with identical BDN classes
+      - name: Run ABBA + BAAB repetition on one host, including real TCP and reconnect
         shell: bash
         run: |
           set -euo pipefail
           output="$GITHUB_WORKSPACE/artifacts/issue-801-source-ablation"
-          for round in "01:base" "02:stripped" "03:stripped" "04:base"; do
+          for round in "01:base" "02:stripped" "03:stripped" "04:base" "05:stripped" "06:base" "07:base" "08:stripped"; do
             index="$(echo "$round" | cut -d: -f1)"
             variant="$(echo "$round" | cut -d: -f2)"
             tree="$RUNNER_TEMP/issue801-source-$variant"
@@ -93,7 +93,7 @@ jobs:
             rm -rf "$tree/BenchmarkDotNet.Artifacts"
           done
 
-      - name: Validate all four rounds and publish raw statistics
+      - name: Verify all eight rounds, four methods and publish raw statistics
         shell: bash
         run: |
           set -euo pipefail
