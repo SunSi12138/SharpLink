@@ -1,0 +1,19 @@
+{
+  "schema": "sharplink-send-grant-footprint-subject-policy-v1",
+  "initialDevSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+  "correctnessControlSha": "c7ba1768f31ce7219dc438dc6009347de6806ed5",
+  "correctnessControlCommitTreeSha": "329b02459ddc489fc17c2ed174e430ec29f30566",
+  "correctnessControlSrcTreeSha": "a44bd288d6e09db703208e4df00f8309ea564159",
+  "reviewedCandidateSourceCommit": "ba9dfedc3a769a14f03cb5c522f4921f5da655eb",
+  "executionStillRequiresPriorCorrectnessAcceptance": true,
+  "baselineChangedFilesFromInitialDev": {
+    "src/SharpLink.Runtime/StreamFlowController.cs": "0c1b1f2565697fb6dfa6097e16fdceda28d3ba4aba032ba28b3d8933ab223af4",
+    "src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs": "531753a3f2fb54f1a596b854d3af30cd4f3625eef3c2bcfc955794eb1dd64075"
+  },
+  "candidateChangedFilesFromCorrectnessControl": {
+    "src/SharpLink.Runtime/StreamFlowController.cs": "8f40d07367532bea3890c3a8015c29fc911ff7a49f349b1bfe5271ca30f1cd24",
+    "src/SharpLink.Runtime/StreamFlowController.SendGrants.cs": "df37087330c876d1ad91bc87966c983d2d633d5ca5fbead662c3097362f2071d",
+    "src/SharpLink.Runtime/RpcSession.GeneratedServerBridge.cs": "2604d69b91c0d67f62b71ad54ecb500c75dbdf66ed5c9e3dc2d7d9f4353ed396",
+    "src/SharpLink.Runtime/RpcSession.PreCreditStreaming.cs": "57d829c047ccf2098fd3789c69fb5d87d4fe9e73adcaff23a3e12a4ab190ecba"
+  }
+}

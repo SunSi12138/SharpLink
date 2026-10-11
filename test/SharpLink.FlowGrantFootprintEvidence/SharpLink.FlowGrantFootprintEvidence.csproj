@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>SharpLink.Benchmarks</AssemblyName>
+    <RootNamespace>SharpLink.Benchmarks</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <DefineConstants Condition="'$(FlowEvidenceB2)' == 'true'">$(DefineConstants);FLOW_EVIDENCE_B2</DefineConstants>
+    <DefineConstants Condition="'$(PublishAot)' == 'true'">$(DefineConstants);FLOW_FOOTPRINT_NATIVE_AOT</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+  </ItemGroup>
+</Project>

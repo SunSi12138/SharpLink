@@ -1,10 +1,21 @@
 # #735 bounded B2 producer-grant pilot
 
-This isolated research branch starts from dev `f8ba89121c87a6410a0139c44d7db30eab877f41`, with the independently reproduced send-lease capture correction `ae57b4a9ab432832faf7ca1c6a9e7a8b8b2d1015` as its parent. The snapshot ownership correction from `9b6951536d6d1451c694fcf49a1fc73b4994d9d8` is also present. These correctness changes are not performance gains attributed to B2. #840's effective WindowUpdate calculation and #841's route allocation logic remain intact.
+This isolated research branch starts from dev `f8ba89121c87a6410a0139c44d7db30eab877f41`, with the independently reproduced send-lease capture correction `ae57b4a9ab432832faf7ca1c6a9e7a8b8b2d1015` as its parent. The snapshot ownership correction from `9b6951536d6d1451c694fcf49a1fc73b4994d9d8` and the independently verified #851 terminal-credit correction are also present. The matched correctness-only control is `c7ba1768f31ce7219dc438dc6009347de6806ed5`; all three fixes appear in both A/B arms. These correctness changes are not performance gains attributed to B2. #840's effective WindowUpdate calculation and #841's route allocation logic remain intact.
 
 ## Stage and stop gate
 
-This first candidate is for compiling and executing 41 deterministic controller/bridge cases and the existing complete suites. It has not passed those gates and has no performance claim. A bridge case intentionally exercises a newly identified old-controller defect: an error Complete may precede a late refund from an admitted but never-published item, while AbortException wrongly implies that all debt was already refunded. The first candidate retains that defect to record the actual integration failure before the independent correction is applied.
+The pilot has actual red/green history; all failures are retained:
+
+- `4f564d31`, [run 38170726573](https://github.com/SunSi12138/SharpLink/actions/runs/38170726573): fixture `int` versus `uint` compile failure; no runtime race result.
+- `d472eee7`, [run 38171089212](https://github.com/SunSi12138/SharpLink/actions/runs/38171089212): built successfully, 40/41 focused passed. The deadline-after-admission case failed with F=0/D=64/G=0 rather than 64/0/0 after serializer and writer cleanup. Remaining suites were NotRun.
+- `ba9dfedc`, [run 38171674863](https://github.com/SunSi12138/SharpLink/actions/runs/38171674863): independent #851 full-abort settlement marker fixes the same deadline case. Focused 41, four full 2,123-case unit runs, generator 271, load 77 and integration 454 passed, then the unchanged whitespace gate failed. The run remains red and subsequent gates NotRun.
+- `754d723c`, [run 38172137769](https://github.com/SunSi12138/SharpLink/actions/runs/38172137769): only the reported initializer whitespace changed. Its workflow completed successfully; the exact raw reports, original gates and specified Disable-refund mutant are retained in artifact 11714691349. Production bytes remain ba9.
+
+The new measurement stage must run the same complete 25-step correctness collector
+again at the exact measured commit before starting either RPC or footprint jobs.
+It has no performance or production Go claim until actual samples are collected
+and reviewed. The deliberate mutant is required to fail with its exact credit
+symptom while its Dispose control passes; it is not an old-dev red test.
 
 `eng/issue735/run_b2_correctness.py` writes its complete plan before execution, retains every exit/report/binary identity, stops at the first unexpected failure and marks all remaining steps NotRun. It does not run performance. Its explicit Gi-refund mutant is a new-candidate mutation test, not an old-dev red test. Original tests, timeouts and CI gates remain unchanged.
 
@@ -23,3 +34,22 @@ The pilot deliberately includes its diagnostic cost: local counters update insid
 The existing generated `IBenchmarkRpc` byte-array streams use `BlitArrayCodec<byte>`, which does not implement `IRpcSizedCodec`. They therefore cannot establish that this server-sized-only pilot runs. A later performance stage must retain that fallback control and separately use an identical A/B, normally generated exact-size DTO contract. It must check actual codec, byte identity, roundtrip, and admission counters before reporting any B2 result. No serializer can be substituted in only one arm.
 
 This branch is a candidate experiment, not a production recommendation. Full RPC results, actual published/executed NativeAOT, CPU, allocations and tails must support a decision after correctness passes. A microkernel or one green run cannot establish Go.
+
+## Predeclared next measurement scope
+
+`flow-b2-rpc-screen.yml` requires the complete same-SHA correctness job, then runs
+JIT PGO OFF/ON and published/executed NativeAOT. Each runtime has TCP/SharedMemory,
+ABBA/BAAB and AA controls: 144 sized-DTO processes plus 72 byte-array fallback
+processes, 648 planned RPC processes across all six populations. Raw per-RPC
+latencies, CPU, allocation, GC, completion/settlement boundaries, worker fairness,
+source hashes, binary hashes and actual grant counters are retained. A failed
+process stops that population; no retry-until-green or acceptance threshold is
+built into the collector. This is a small falsification screen, not the full
+requested production matrix.
+
+The separate allocation appendix executes 12 ABBA processes across the three
+runtimes, five rounds and 32 stages (1,920 planned current-thread allocation rows).
+Its CPU, retained heap and real-RPC scope are explicitly excluded. All operations
+use the actual control/candidate controller; the same four reviewed production
+hashes govern the RPC and allocation collectors. Original dev, common correctness
+control, earlier D versions and the two payload populations are not pooled.

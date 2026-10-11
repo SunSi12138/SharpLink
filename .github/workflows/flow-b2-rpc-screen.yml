@@ -1,0 +1,94 @@
+name: Issue 735 B2 Gated Matched Generated RPC Screen
+
+on:
+  push:
+    branches: ['research/735-b2-server-grant-pilot-20261011']
+    paths:
+      - '.github/workflows/flow-b2-rpc-screen.yml'
+      - 'eng/issue735/run_b2_screen.py'
+      - 'eng/issue735/recompute_b2_screen.py'
+      - 'eng/issue735/run_b2_footprint.py'
+      - 'test/SharpLink.FlowArchitectureEvidence/**'
+      - 'test/SharpLink.FlowGrantFootprintEvidence/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every matrix arm depends on all 25 correctness/mutant gates at this exact SHA.
+# There is no cancellation-on-update or retry-until-green policy.
+jobs:
+  correctness-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Require every original suite and deterministic candidate gate at the measured SHA
+        run: >-
+          python3 eng/issue735/run_b2_correctness.py
+          --root "$GITHUB_WORKSPACE"
+          --output "$GITHUB_WORKSPACE/artifacts/issue735/b2-screen-correctness"
+          --expected-sha "$GITHUB_SHA"
+          --expected-focused 41 --expected-unit 2123
+          --expected-generator 271 --expected-load 77 --expected-integration 454
+      - name: Retain actual correctness results including any failure and all NotRun steps
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-b2-screen-correctness-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/b2-screen-correctness
+          if-no-files-found: error
+          retention-days: 30
+
+  allocation-footprint:
+    needs: correctness-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Measure synchronous allocation stages in fixed JIT and actual NativeAOT ABBA populations
+        run: >-
+          python3 eng/issue735/run_b2_footprint.py
+          --output 'artifacts/issue735/b2-footprint'
+          --candidate-sha "$GITHUB_SHA"
+          --runtime all
+      - name: Retain raw allocation rows, actual binaries, failures and exact source policies
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-b2-footprint-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/b2-footprint
+          if-no-files-found: error
+          retention-days: 30
+
+  rpc-screen:
+    needs: correctness-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [jit-pgo0, jit-pgo1, nativeaot]
+        payload: [sized-dto, byte-array]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Execute source-verified same-host ABBA and AA with actual codec and grant activation checks
+        run: >-
+          python3 eng/issue735/run_b2_screen.py
+          --runtime '${{ matrix.runtime }}'
+          --payload '${{ matrix.payload }}'
+          --out 'artifacts/issue735/b2-rpc-${{ matrix.runtime }}-${{ matrix.payload }}'
+      - name: Retain compiled binaries, every raw RPC sample, failure and complete source identities
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-b2-rpc-${{ matrix.runtime }}-${{ matrix.payload }}-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/b2-rpc-${{ matrix.runtime }}-${{ matrix.payload }}
+          if-no-files-found: error
+          retention-days: 30
