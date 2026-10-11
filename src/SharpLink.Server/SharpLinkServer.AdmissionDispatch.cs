@@ -386,8 +386,8 @@ internal sealed partial class SharpLinkServer
                             Status: SharpLinkInvocationStatus.Pending
                         } interceptorContext)
                         interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-                    TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken);
                     DrainCompletedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
+                    TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken);
                     ReleaseOneWayDispatchResources(
                         callState,
                         requestId,
@@ -435,50 +435,6 @@ internal sealed partial class SharpLinkServer
         {
             if (ownsAdmissionProgramUse)
                 admissionProgram!.ReleaseUse();
-        }
-    }
-
-    private async Task AwaitOneWayDispatchAsync(
-        ValueTask invokeTask,
-        ServerCallCancellationState callState,
-        long requestId,
-        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        ServerConnectionState connection,
-        SharpLinkCallContextSnapshot callContext,
-        RpcSession session,
-        IRpcStub stub,
-        long methodId,
-        int clientStreamCount,
-        CancellationToken cancellationToken,
-        ServerRequestPermit requestPermit)
-    {
-        try
-        {
-            await invokeTask.ConfigureAwait(false);
-            if (callContext is SharpLinkServerInvocationContext
-                {
-                    Status: SharpLinkInvocationStatus.Pending
-                } interceptorContext)
-                interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-            TryClaimCallCompletion(callState);
-        }
-        catch (Exception ex)
-        {
-            if (TryClaimCallCompletion(callState))
-            {
-                LogOnewayRpcDispatchFailed(_logger, MapServiceException(
-                    ex, callContext, session, stub, methodId, requestId, cancellationToken));
-            }
-        }
-        finally
-        {
-            DrainCompletedOneWayStreams(session, requestId, clientStreamCount);
-            ReleaseOneWayDispatchResources(
-                callState,
-                requestId,
-                requestCancellationMap,
-                connection,
-                requestPermit);
         }
     }
 
