@@ -1,0 +1,63 @@
+name: Issue 801 - Rebased PR 810 Windows macOS exact-head NativeAOT
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-rebased-810-nativeaot.yml
+permissions:
+  contents: read
+jobs:
+  exact-source-nativeaot:
+    name: PR 810 post-806 / ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_AOT_RID: ${{ matrix.rid }}
+    steps:
+      - name: Checkout rebased PR 810 exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: b07e85a5d9422dacd5c1fb7f03c298a257493b07
+          fetch-depth: 1
+      - name: Assert source-head identity
+        run: |
+          test "$(git rev-parse HEAD)" = b07e85a5d9422dacd5c1fb7f03c298a257493b07
+          echo "PR 810 HEAD=$(git rev-parse HEAD); rid=${{ matrix.rid }}"
+      - name: Set up .NET 10
+        uses: ./.github/actions/setup-dotnet
+      - name: Restore, build entire Release, and run real NativeAOT RPC
+        env:
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/issue-801-rebased-aot/out
+          SHARPLINK_AOT_SHM_NAME: issue801-pr810-rebased
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/issue-801-rebased-aot
+          dotnet restore Sharplink.slnx -v minimal
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal 2>&1 | tee artifacts/issue-801-rebased-aot/build.log
+          bash ./eng/run-shared-memory-aot-process-smoke.sh 2>&1 | tee artifacts/issue-801-rebased-aot/nativeaot.log
+          grep -q 'AOT_SMOKE_PASS transport=tcp' artifacts/issue-801-rebased-aot/nativeaot.log
+          grep -q 'SHARPPACK_SIDECAR_AOT_PASS' artifacts/issue-801-rebased-aot/nativeaot.log
+          grep -q 'PRE_CREDIT_AOT_PASS transport=sharedmemory' artifacts/issue-801-rebased-aot/nativeaot.log
+          grep -q 'Shared-memory process, local endpoint-topology' artifacts/issue-801-rebased-aot/nativeaot.log
+      - name: Upload exact rebased commit evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-pr810-rebased-${{ matrix.rid }}-nativeaot
+          path: artifacts/issue-801-rebased-aot/*.log
+          retention-days: 30
+          if-no-files-found: warn
