@@ -17,6 +17,11 @@ jobs:
       TUNIT_MAX_PARALLEL_TESTS: '8'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Record exact validation source
+        run: |
+          mkdir -p artifacts/public-api
+          git rev-parse HEAD > artifacts/public-api/source-commit.txt
+          git rev-parse HEAD^{tree} > artifacts/public-api/source-tree.txt
       - uses: ./.github/actions/setup-dotnet
       - name: Restore and build combined contract
         run: |
