@@ -13,6 +13,14 @@ Baseline `dev` @ `eb99fe887cf2129d9b88441245ca0a4a6406b6c2`. A/B/C/D are **refer
 
 The two test-hook refactors and the decode-queue overhaul are three **separate** implementation groups, and should have independent, reviewable PRs and benchmarking gates rather than being combined with the unrelated 45-method cleanup.
 
+## Clarification after reviewing unmerged PR #799 (2026-10-11)
+
+**Prior issue/backlog wording “runtime fallback” should not be read as the unmanaged reflection fallback.** PR [#799](https://github.com/SunSi12138/SharpLink/pull/799) removes *automatic* reflection-based `UnsafeBlitCodec<T>` resolution for arbitrary unregistered unmanaged types but explicitly retains the **application-supplied** `UseCodecResolver(Func<Type, IRpcCodec?>)` callback invoked by `RpcCodecProvider`. Generated RPC already uses owner-local compile-time Codec/Adapter bindings and intentionally ignores both endpoint `UseCodecResolver` and standalone `AddCodec`.
+
+Prioritize **removing misleading Server `UseSerializer`** in the major-version API review: it merely forwards an endpoint resolver unused by generated RPC.
+
+For standalone `SharpLinkRuntimeContextBuilder.AddCodec<T>` and `UseCodecResolver`, decide whether 3.0 retains any standalone `context.Codecs.GetCodec<T>()` extension policy. PR #799's own [3.0 migration guide](https://github.com/SunSi12138/SharpLink/blob/work/762-generated-unsafe-blit/doc/unsafe-blit-3.0-migration.md) currently uses `AddCodec(new MyPayloadCodec())` as the recommended standalone migration after removing unmanaged reflection fallback; deleting it would be a **deliberate feature withdrawal** rather than merely pruning an unused generated RPC knob. Coordinate this decision and its replacement/upgrade guidance with #799 (still open/unmerged), rather than leaving incompatible migration instructions and 3.0 public API baselines.
+
 ## Established implementation evidence
 
 | Candidate | Actual proof | Recommendation |
