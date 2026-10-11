@@ -51,7 +51,7 @@ public class ClientStreamPublicationDeadlineTests
         Ensure(errorFailure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
             "error client-stream EOF must be rejected at its enqueue boundary after expiry");
 
-        session.SendRpcErrorAsync(
+        await session.SendRpcErrorWithBackpressureAsync(
             999,
             new SharpLinkException(SharpLinkErrorCode.Internal, "marker"));
         var frames = await FlushAndReadFramesAsync(session, output);
@@ -97,7 +97,7 @@ public class ClientStreamPublicationDeadlineTests
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
             $"the {path} client-stream publication boundary must reject a chunk serialized after the deadline");
 
-        session.SendRpcErrorAsync(
+        await session.SendRpcErrorWithBackpressureAsync(
             999,
             new SharpLinkException(SharpLinkErrorCode.Internal, "marker"));
         var frames = await FlushAndReadFramesAsync(session, output);

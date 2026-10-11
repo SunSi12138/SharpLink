@@ -112,20 +112,6 @@ internal static class RpcSessionExtensions
             }
         }
 
-        /// <summary>Sends a bounded structured RPC response error.</summary>
-        internal void SendRpcErrorAsync(long requestId, SharpLinkException exception)
-        {
-            ArgumentNullException.ThrowIfNull(exception);
-            SendErrorFrame(
-                session,
-                ProtocolV2FrameType.Response,
-                requestId,
-                exception.Code,
-                exception.DetailCode,
-                exception.Message,
-                GetMaxErrorMessageBytes(session));
-        }
-
         internal ValueTask SendRpcErrorWithBackpressureAsync(
             long requestId,
             SharpLinkException exception,
@@ -538,41 +524,6 @@ internal static class RpcSessionExtensions
             await session
                 .SendPacketWithBackpressureAsync(writer, cancellationToken)
                 .ConfigureAwait(false);
-        }
-        finally
-        {
-            if (ownsWriter)
-                session.RuntimeContext.Buffers.Return(writer);
-        }
-    }
-
-    private static void SendErrorFrame(
-        RpcSession session,
-        ProtocolV2FrameType frameType,
-        long requestId,
-        SharpLinkErrorCode code,
-        ushort detailCode,
-        string? message,
-        int maxMessageBytes)
-    {
-        var writer = session.RentFrameWriter();
-        var ownsWriter = true;
-        try
-        {
-            var token = writer.BeginPacket(
-                frameType, ProtocolV2FrameFlags.Error, unchecked((ulong)requestId));
-            ProtocolV2PayloadCodec.WriteError(
-                writer,
-                code,
-                detailCode,
-                message,
-                maxMessageBytes,
-                out var truncated);
-            writer.EndPacket(token);
-            if (truncated)
-                SetTruncatedFlag(writer, token);
-            ownsWriter = false;
-            session.SendPacket(writer);
         }
         finally
         {

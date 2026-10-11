@@ -18,7 +18,7 @@ namespace SharpLink.Abstractions
         System.Span<byte> WrittenSpan { get; }
         void Clear();
     }
-    public interface IRpcChannel : SharpLink.Abstractions.IRpcClientStreamSink
+    public interface IRpcChannel
     {
         SharpLink.Abstractions.IRpcRuntimeContext RuntimeContext { get; }
         System.Threading.Tasks.ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(SharpLink.Abstractions.RpcMethodDescriptor method, in TRequest request, SharpLink.Abstractions.IRpcCodec<TRequest> requestCodec, SharpLink.Abstractions.IRpcCodec<TResponse> responseCodec, in TStreams streams, SharpLink.Sdk.SharpLinkMetadata? metadata, System.Threading.CancellationToken cancellationToken = default)
