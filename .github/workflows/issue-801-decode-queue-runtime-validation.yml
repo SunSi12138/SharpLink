@@ -1,0 +1,169 @@
+name: Issue 801 - Decode Executor Reserved-Only Runtime and Package Validation
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-decode-queue-runtime-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-reserved-queue-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nativeaot-matrix:
+    name: NativeAOT reserved decode - ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_AOT_RID: ${{ matrix.rid }}
+    steps:
+      - name: Checkout isolated dev-derived audit branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup repository .NET SDK
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore original solution
+        run: dotnet restore Sharplink.slnx -v minimal
+
+      - name: Reproduce compatibility branch cleanup with migrated tests
+        run: |
+          mkdir -p artifacts/issue-801-decode-native
+          if command -v python3 >/dev/null 2>&1; then PYTHON=python3; else PYTHON=python; fi
+          "$PYTHON" eng/issue801/remove-decode-compatibility.py artifacts/issue-801-decode-native
+          git diff --check
+          git diff --stat -- src/ test/ > artifacts/issue-801-decode-native/source-diff-stat.txt
+          cat artifacts/issue-801-decode-native/source-diff-stat.txt
+
+      - name: Compile complete reserved-only Release solution
+        run: |
+          set -o pipefail
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            2>&1 | tee artifacts/issue-801-decode-native/release-build.log
+
+      - name: Execute original complete NativeAOT smoke suite
+        env:
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/issue-801-decode-native/aot
+          SHARPLINK_AOT_SHM_NAME: issue801-reserved-decode-executor
+        run: |
+          set -o pipefail
+          bash ./eng/run-shared-memory-aot-process-smoke.sh \
+            2>&1 | tee artifacts/issue-801-decode-native/native-smoke.log
+          grep -q 'Shared-memory process, local endpoint-topology' \
+            artifacts/issue-801-decode-native/native-smoke.log
+
+      - name: Restore source to prove experimental isolation
+        if: always()
+        run: |
+          git restore -- src/ test/
+          git diff --exit-code -- src/ test/
+
+      - name: Upload per-platform evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-reserved-only-native-${{ matrix.rid }}
+          path: |
+            artifacts/issue-801-decode-native/*.json
+            artifacts/issue-801-decode-native/*.txt
+            artifacts/issue-801-decode-native/*.log
+            artifacts/issue-801-decode-native/aot/*.log
+            artifacts/issue-801-decode-native/aot/sharppack-sidecar/*.log
+            artifacts/issue-801-decode-native/aot/precredit/*.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  package-abi:
+    name: Full trim, NuGet ABI and external consumer
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_ALLOW_DIRTY_PACKAGE_VERIFY: 'true'
+    steps:
+      - name: Checkout isolated dev-derived audit branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup repository .NET SDK
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore solution
+        run: dotnet restore Sharplink.slnx -v minimal
+
+      - name: Apply reserved-only decode executor experiment
+        run: |
+          mkdir -p artifacts/issue-801-decode-package
+          python3 eng/issue801/remove-decode-compatibility.py artifacts/issue-801-decode-package
+          git diff --check
+
+      - name: Compile entire Release solution
+        run: |
+          set -o pipefail
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            2>&1 | tee artifacts/issue-801-decode-package/build.log
+
+      - name: Full project-reference trim smoke
+        env:
+          SHARPLINK_TRIM_RID: linux-x64
+        run: |
+          set -o pipefail
+          bash ./eng/run-project-reference-trim-smoke.sh \
+            2>&1 | tee artifacts/issue-801-decode-package/project-trim.log
+          grep -q 'PROJECT_REFERENCE_TRIM_SMOKE_PASS' \
+            artifacts/issue-801-decode-package/project-trim.log
+
+      - name: Pack all public NuGet packages
+        run: |
+          set -o pipefail
+          dotnet pack Sharplink.slnx -c Release --no-build --no-restore \
+            -o artifacts/nuget -v minimal \
+            2>&1 | tee artifacts/issue-801-decode-package/pack.log
+
+      - name: Check all eight package dependency / metadata contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Verify unchanged 2.0.0 public API baseline
+        run: |
+          set -o pipefail
+          bash eng/verify-public-api.sh artifacts/nuget 2.0.3 \
+            2>&1 | tee artifacts/issue-801-decode-package/verified-public-api.log
+
+      - name: Run external package trim/native and QuickStart consumers
+        uses: ./.github/actions/package-smoke
+
+      - name: Restore all experimental source and test edits
+        if: always()
+        run: |
+          git restore -- src/ test/
+          git diff --exit-code -- src/ test/
+
+      - name: Upload package evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-reserved-only-decode-package-proof
+          path: artifacts/issue-801-decode-package
+          if-no-files-found: warn
+          retention-days: 30
