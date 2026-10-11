@@ -485,65 +485,6 @@ internal sealed partial class ClientAssemblyRegistry
         ISharpLinkGeneratedAssemblyManifest manifest)
         => SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(manifest);
 
-    internal static int[] GetShutdownDependencyOrder(
-        string[] identities,
-        string[][] dependencies)
-    {
-        ArgumentNullException.ThrowIfNull(identities);
-        ArgumentNullException.ThrowIfNull(dependencies);
-        if (identities.Length != dependencies.Length)
-            throw new ArgumentException("Dependency rows must match the module identity count.", nameof(dependencies));
-
-        var remaining = new bool[identities.Length];
-        Array.Fill(remaining, true);
-        var order = new int[identities.Length];
-        for (var outputIndex = 0; outputIndex < order.Length; outputIndex++)
-        {
-            var selected = -1;
-            for (var candidate = 0; candidate < identities.Length; candidate++)
-            {
-                if (!remaining[candidate])
-                    continue;
-
-                var hasRemainingDependant = false;
-                for (var dependant = 0; dependant < identities.Length; dependant++)
-                {
-                    if (dependant == candidate || !remaining[dependant])
-                        continue;
-                    if (dependencies[dependant].Any(dependency =>
-                            string.Equals(dependency, identities[candidate], StringComparison.Ordinal)))
-                    {
-                        hasRemainingDependant = true;
-                        break;
-                    }
-                }
-
-                if (!hasRemainingDependant)
-                {
-                    selected = candidate;
-                    break;
-                }
-            }
-
-            if (selected < 0)
-            {
-                for (var candidate = identities.Length - 1; candidate >= 0; candidate--)
-                {
-                    if (remaining[candidate])
-                    {
-                        selected = candidate;
-                        break;
-                    }
-                }
-            }
-
-            order[outputIndex] = selected;
-            remaining[selected] = false;
-        }
-
-        return order;
-    }
-
     private bool RejectMutation(out SharpLinkConnectionState state)
     {
         state = _stateProvider();
