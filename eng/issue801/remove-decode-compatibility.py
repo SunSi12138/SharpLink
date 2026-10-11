@@ -38,6 +38,7 @@ def modify(relative: str, fn) -> None:
     file = ROOT / relative
     original = file.read_text(encoding="utf-8")
     adjusted = fn(original)
+    adjusted = "\n".join(line.rstrip() for line in adjusted.split("\n"))
     if adjusted == original:
         raise RuntimeError(f"{relative}: no changes applied")
     file.write_text(adjusted, encoding="utf-8", newline="\n")
