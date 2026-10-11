@@ -160,6 +160,7 @@ internal sealed partial class RpcSession
     {
         var writer = RentFrameWriter();
         var ownsWriter = true;
+        Exception? operationError = null;
         try
         {
             using (writer.BeginPacketScope(
@@ -301,8 +302,9 @@ internal sealed partial class RpcSession
                 sizedCodec.SerializeSized(item, writer, encodedBytes, sizedSnapshot);
                 if (sizedSnapshot is not null)
                 {
-                    sizedCodec.ReleaseSnapshot(sizedSnapshot);
+                    var snapshotToRelease = sizedSnapshot;
                     sizedSnapshot = null;
+                    sizedCodec.ReleaseSnapshot(snapshotToRelease);
                 }
             }
 
@@ -317,18 +319,36 @@ internal sealed partial class RpcSession
             ownsWriter = false;
             SendPacket(writer);
         }
-        catch
+        catch (Exception exception)
         {
+            operationError = exception;
             if (creditAcquired)
                 ReturnUnsentStreamCredit(requestId, streamId, creditBytes);
             throw;
         }
         finally
         {
-            if (sizedSnapshot is not null)
-                sizedCodec.ReleaseSnapshot(sizedSnapshot);
-            if (ownsWriter && writer is not null)
-                RuntimeContext.Buffers.Return(writer);
+            try
+            {
+                if (sizedSnapshot is not null)
+                {
+                    var snapshotToRelease = sizedSnapshot;
+                    sizedSnapshot = null;
+                    try
+                    {
+                        sizedCodec.ReleaseSnapshot(snapshotToRelease);
+                    }
+                    catch when (operationError is not null)
+                    {
+                        // Preserve the operation failure when snapshot cleanup also fails.
+                    }
+                }
+            }
+            finally
+            {
+                if (ownsWriter && writer is not null)
+                    RuntimeContext.Buffers.Return(writer);
+            }
         }
     }
 }
