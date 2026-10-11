@@ -18,6 +18,9 @@ internal static class Program
     private sealed class Record
     {
         public string Key { get; set; } = "";
+        public string Name { get; set; } = "";
+        public bool StaticField { get; set; }
+        public bool EnumConstant { get; set; }
         public string Path { get; set; } = "";
         public int Line { get; set; }
         public string Assembly { get; set; } = "";
@@ -179,12 +182,17 @@ internal static class Program
         foreach (var tier in new[] { "A", "B", "C", "D" })
             WriteCsv(Path.Combine(output, "tier-" + tier + ".csv"),
                 ordered.Where(r => r.Tier == tier));
-        var residentFields = ordered.Where(r => r.Kind == "Field" &&
+        // Match the actual FIELD NAME, not a fully-qualified type name. "RateState",
+        // "latest" and "RemoteStreamComplete" otherwise create false test-field positives.
+        // Enum constants are not per-instance/static reference slots.
+        var residentFields = ordered.Where(r => r.Kind == "Field" && !r.EnumConstant &&
                 (r.Path.StartsWith("src/SharpLink.Client/", StringComparison.Ordinal) ||
                  r.Path.StartsWith("src/SharpLink.Server/", StringComparison.Ordinal)) &&
-                (r.Signature.Contains("Test", StringComparison.OrdinalIgnoreCase) ||
-                 r.Signature.Contains("Hook", StringComparison.OrdinalIgnoreCase) ||
-                 r.Signature.Contains("Probe", StringComparison.OrdinalIgnoreCase))).ToArray();
+                (r.Name.Contains("Hook", StringComparison.OrdinalIgnoreCase) ||
+                 r.Name.Contains("Probe", StringComparison.OrdinalIgnoreCase) ||
+                 r.Name.Contains("ForTest", StringComparison.OrdinalIgnoreCase) ||
+                 r.Name.StartsWith("_test", StringComparison.OrdinalIgnoreCase) ||
+                 r.Name.StartsWith("s_test", StringComparison.OrdinalIgnoreCase))).ToArray();
         WriteCsv(Path.Combine(output, "client-server-resident-test-fields.csv"), residentFields);
 
         var counts = ordered.GroupBy(r => r.Tier).ToDictionary(g => g.Key, g => g.Count());
@@ -269,6 +277,10 @@ internal static class Program
                         symbols.Add(declaration, new Record
                         {
                             Key = key,
+                            Name = symbol.Name,
+                            StaticField = symbol is IFieldSymbol { IsStatic: true },
+                            EnumConstant = symbol is IFieldSymbol fieldSymbol &&
+                                           fieldSymbol.ContainingType?.TypeKind == TypeKind.Enum,
                             Path = path,
                             Line = model.SyntaxTree.GetLineSpan(node.Span).StartLinePosition.Line + 1,
                             Assembly = symbol.ContainingAssembly?.Name ?? projectName,
@@ -341,13 +353,14 @@ internal static class Program
     private static void WriteCsv(string path, IEnumerable<Record> records)
     {
         using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
-        writer.WriteLine("path,line,assembly,kind,visibility,signature,production,generated,tests,benchmarks,examples,root,samples");
+        writer.WriteLine("path,line,assembly,kind,visibility,name,static_field,enum_constant,signature,production,generated,tests,benchmarks,examples,root,samples");
         foreach (var record in records)
         {
             writer.WriteLine(string.Join(",", new[]
             {
                 record.Path, record.Line.ToString(), record.Assembly,
-                record.Kind, record.Access, record.Signature,
+                record.Kind, record.Access, record.Name, record.StaticField.ToString(),
+                record.EnumConstant.ToString(), record.Signature,
                 record.Production.ToString(), record.Generated.ToString(), record.Tests.ToString(),
                 record.Benchmarks.ToString(), record.Examples.ToString(),
                 record.RootRisk, record.ReferenceSamples
