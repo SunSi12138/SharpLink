@@ -89,12 +89,6 @@
       "reason": "Existing dev debt captured by issue #350."
     },
     {
-      "domain": "source",
-      "path": "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
-      "maxLoc": 835,
-      "reason": "Issue #640 keeps inline compressed decode, retained-owner disposal, decode-permit completion, and envelope rebind ordering in the existing admission-dispatch owner; splitting this safety-critical lifecycle sequence solely to recover 21 LOC would fragment one resource-release invariant. Broader Server dispatch decomposition remains tracked by issue #350."
-    },
-    {
       "domain": "test",
       "path": "test/SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherTests.cs",
       "maxLoc": 2155,
