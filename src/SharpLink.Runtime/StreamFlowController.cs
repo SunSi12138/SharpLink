@@ -156,11 +156,7 @@ internal sealed class StreamFlowController
         }
 
         return AcquireContendedSendCreditAsync(
-            key,
-            state,
-            expectedLease,
-            encodedBytes,
-            cancellationToken);
+            key, state, expectedLease, encodedBytes, cancellationToken);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
