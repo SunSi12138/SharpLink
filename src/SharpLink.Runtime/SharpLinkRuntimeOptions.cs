@@ -24,6 +24,10 @@ public sealed class SharpLinkFlowControlOptions
     private int _maxSendQueueBytes = DefaultMaxSendQueueBytes;
     private bool _maxSendQueueBytesConfigured;
 
+    // Instance-scoped staged sender selection. It is frozen with the ordinary runtime
+    // snapshot and not exposed as a supported public option before transport acceptance.
+    internal bool WriterOwnedStreams { get; set; }
+
     /// <summary>The hard maximum active Server calls on one physical connection.</summary>
     public const int MaximumConcurrentCallsPerConnection = 1024 * 1024;
 
@@ -154,6 +158,7 @@ public sealed class SharpLinkFlowControlOptions
         Validate();
         var clone = new SharpLinkFlowControlOptions
         {
+            WriterOwnedStreams = WriterOwnedStreams,
             MaxPreCreditSerializedBytes = MaxPreCreditSerializedBytes,
             StreamReceiveWindowBytes = StreamReceiveWindowBytes,
             ConnectionReceiveWindowBytes = ConnectionReceiveWindowBytes,
@@ -173,6 +178,7 @@ public sealed class SharpLinkFlowControlOptions
 
     internal void CopySnapshotTo(SharpLinkFlowControlOptions destination)
     {
+        destination.WriterOwnedStreams = WriterOwnedStreams;
         destination._maxSendQueueBytes = _maxSendQueueBytes;
         destination._maxSendQueueBytesConfigured = _maxSendQueueBytesConfigured;
         destination.MaxPreCreditSerializedBytes = MaxPreCreditSerializedBytes;

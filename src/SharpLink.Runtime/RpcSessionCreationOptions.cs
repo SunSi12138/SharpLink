@@ -14,7 +14,7 @@ internal sealed class RpcSessionCreationOptions
         SharpLinkRuntimeContext runtimeContext,
         RpcSessionFlushOptions? flushOptions = null,
         CompressionSendPolicyState? compressionSendPolicyState = null,
-        bool writerOwnedStreams = false)
+        bool? writerOwnedStreams = null)
     {
         if (!Enum.IsDefined(role))
             throw new ArgumentOutOfRangeException(nameof(role));
@@ -29,7 +29,7 @@ internal sealed class RpcSessionCreationOptions
         Role = role;
         RuntimeContext = runtimeContext;
         FlushOptions = flushOptions;
-        WriterOwnedStreams = writerOwnedStreams;
+        WriterOwnedStreams = writerOwnedStreams ?? runtimeContext.FlowControl.WriterOwnedStreams;
         CompressionSendPolicyState = compressionSendPolicyState ??
             SharpLink.Runtime.CompressionSendPolicyState.CreateInitial(new SharpLinkCompressionSendPolicy());
         FlushPolicyState = CompressionSendPolicyState.GetOrCreateSessionFlushPolicyState(
@@ -47,8 +47,8 @@ internal sealed class RpcSessionCreationOptions
 
     internal RpcSessionFlushPolicyState FlushPolicyState { get; }
 
-    // Internal, immutable opt-in while the production adapters are being validated.
-    // Never switch the send-credit authority after a connection has started publishing.
+    // The runtime snapshot is copied once into each connection. Neither later builder
+    // changes nor mutation of an Options clone can switch a live sender's credit ledger.
     internal bool WriterOwnedStreams { get; }
 
     internal string TelemetrySide => Role == RpcSessionRole.Client ? "client" : "server";
