@@ -7,40 +7,111 @@ internal sealed partial class SharpLinkClient
     private Task? _sessionRefreshTask;
 
     // Deterministic review-race hooks. They are null in production and stay off the ordinary RPC path.
-    internal Action? _afterSessionRefreshEligibilitySwapTestHook;
-    internal Action<ClientConnection>? _beforeSessionRefreshEligibilityCommitTestHook;
-    internal Action<ClientConnection>? _afterSessionRefreshCommitReservationTestHook;
-    internal Action<ClientConnection>? _beforeSessionRefreshCutLockTestHook;
-    internal Action<ClientConnection, ClientConnection>? _beforeSessionRefreshCutPublicationTestHook;
-    internal Action<ClientConnection, ClientConnection>? _afterSessionRefreshCutPublicationTestHook;
-    internal Action<ClientConnection>? _beforeFatalFailurePublicationTestHook;
-    internal Action<ClientConnection>? _afterFatalFailurePublicationTestHook;
-    internal Action? _beforeSessionRefreshWorkerReleaseTestHook;
-    internal Action<ClientConnection>? _callAdmissionReservedTestHook;
+    // Only one reference on a production client; hook slots are allocated on test use.
+    private Delegate?[]? _clientTestHookSlots;
+
+    internal Action? _afterSessionRefreshEligibilitySwapTestHook
+    {
+        get => ReadClientTestHook<Action>(0);
+        set => WriteClientTestHook(0, value);
+    }
+
+    internal Action<ClientConnection>? _beforeSessionRefreshEligibilityCommitTestHook
+    {
+        get => ReadClientTestHook<Action<ClientConnection>>(1);
+        set => WriteClientTestHook(1, value);
+    }
+
+    internal Action<ClientConnection>? _afterSessionRefreshCommitReservationTestHook
+    {
+        get => ReadClientTestHook<Action<ClientConnection>>(2);
+        set => WriteClientTestHook(2, value);
+    }
+
+    internal Action<ClientConnection>? _beforeSessionRefreshCutLockTestHook
+    {
+        get => ReadClientTestHook<Action<ClientConnection>>(3);
+        set => WriteClientTestHook(3, value);
+    }
+
+    internal Action<ClientConnection, ClientConnection>? _beforeSessionRefreshCutPublicationTestHook
+    {
+        get => ReadClientTestHook<Action<ClientConnection, ClientConnection>>(4);
+        set => WriteClientTestHook(4, value);
+    }
+
+    internal Action<ClientConnection, ClientConnection>? _afterSessionRefreshCutPublicationTestHook
+    {
+        get => ReadClientTestHook<Action<ClientConnection, ClientConnection>>(5);
+        set => WriteClientTestHook(5, value);
+    }
+
+    internal Action<ClientConnection>? _beforeFatalFailurePublicationTestHook
+    {
+        get => ReadClientTestHook<Action<ClientConnection>>(6);
+        set => WriteClientTestHook(6, value);
+    }
+
+    internal Action<ClientConnection>? _afterFatalFailurePublicationTestHook
+    {
+        get => ReadClientTestHook<Action<ClientConnection>>(7);
+        set => WriteClientTestHook(7, value);
+    }
+
+    internal Action? _beforeSessionRefreshWorkerReleaseTestHook
+    {
+        get => ReadClientTestHook<Action>(8);
+        set => WriteClientTestHook(8, value);
+    }
+
+    internal Action<ClientConnection>? _callAdmissionReservedTestHook
+    {
+        get => ReadClientTestHook<Action<ClientConnection>>(9);
+        set => WriteClientTestHook(9, value);
+    }
+
+    private T? ReadClientTestHook<T>(int index) where T : Delegate
+    {
+        var slots = Volatile.Read(ref _clientTestHookSlots);
+        return slots is null ? null : (T?)Volatile.Read(ref slots[index]);
+    }
+
+    private void WriteClientTestHook<T>(int index, T? callback) where T : Delegate
+    {
+        var slots = Volatile.Read(ref _clientTestHookSlots);
+        if (slots is null)
+        {
+            if (callback is null)
+                return;
+            var allocated = new Delegate?[10];
+            slots = Interlocked.CompareExchange(ref _clientTestHookSlots, allocated, null) ?? allocated;
+        }
+        Volatile.Write(ref slots[index], callback);
+    }
 
     internal void NotifyCallAdmissionReservedForTest(ClientConnection connection)
-        => Volatile.Read(ref _callAdmissionReservedTestHook)?.Invoke(connection);
+        => _callAdmissionReservedTestHook?.Invoke(connection);
 
     internal void NotifyBeforeSessionRefreshEligibilityCommitForTest(ClientConnection connection)
-        => Volatile.Read(ref _beforeSessionRefreshEligibilityCommitTestHook)?.Invoke(connection);
+        => _beforeSessionRefreshEligibilityCommitTestHook?.Invoke(connection);
 
     internal void NotifyAfterSessionRefreshCommitReservationForTest(ClientConnection connection)
-        => Volatile.Read(ref _afterSessionRefreshCommitReservationTestHook)?.Invoke(connection);
+        => _afterSessionRefreshCommitReservationTestHook?.Invoke(connection);
 
     internal void NotifyBeforeSessionRefreshCutLockForTest(ClientConnection connection)
-        => Volatile.Read(ref _beforeSessionRefreshCutLockTestHook)?.Invoke(connection);
+        => _beforeSessionRefreshCutLockTestHook?.Invoke(connection);
 
     internal void NotifyBeforeSessionRefreshCutPublicationForTest(ClientConnection source, ClientConnection replacement)
-        => Volatile.Read(ref _beforeSessionRefreshCutPublicationTestHook)?.Invoke(source, replacement);
+        => _beforeSessionRefreshCutPublicationTestHook?.Invoke(source, replacement);
 
     internal void NotifyAfterSessionRefreshCutPublicationForTest(ClientConnection source, ClientConnection replacement)
-        => Volatile.Read(ref _afterSessionRefreshCutPublicationTestHook)?.Invoke(source, replacement);
+        => _afterSessionRefreshCutPublicationTestHook?.Invoke(source, replacement);
 
     internal void NotifyBeforeFatalFailurePublicationForTest(ClientConnection connection)
-        => Volatile.Read(ref _beforeFatalFailurePublicationTestHook)?.Invoke(connection);
+        => _beforeFatalFailurePublicationTestHook?.Invoke(connection);
 
     internal void NotifyAfterFatalFailurePublicationForTest(ClientConnection connection)
-        => Volatile.Read(ref _afterFatalFailurePublicationTestHook)?.Invoke(connection);
+        => _afterFatalFailurePublicationTestHook?.Invoke(connection);
 
     internal void TryAdvancePlannedSessionRefreshRetirement(ClientConnection connection)
     {
@@ -148,7 +219,7 @@ internal sealed partial class SharpLinkClient
                     }
                     if (_sessionRefreshDebt.Count == 0)
                     {
-                        Volatile.Read(ref _beforeSessionRefreshWorkerReleaseTestHook)?.Invoke();
+                        _beforeSessionRefreshWorkerReleaseTestHook?.Invoke();
                         ReleaseFixedSessionRefreshWorkerLocked(owner);
                         return;
                     }
@@ -340,7 +411,7 @@ internal sealed partial class SharpLinkClient
                             // publication. A reader retaining the old source-only snapshot must redirect
                             // through source admission to this already-Ready replacement instead of seeing
                             // a transient Unavailable gap.
-                            Volatile.Read(ref _afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
+                            _afterSessionRefreshEligibilitySwapTestHook?.Invoke();
                             PublishReadySnapshotLocked();
                             published = true;
                         }
