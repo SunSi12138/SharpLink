@@ -53,6 +53,18 @@ public partial class SharpLinkServerInvocationTests
     }
 
     [Test]
+    public async Task FailedCallShouldProjectOnceForExceptionMapperWithoutResolvingAgain()
+    {
+        var stub = new CountingMethodFactStub(RpcMethodKind.Unary, throwOnInvoke: true);
+        var output = new Pipe().Writer;
+        await using var harness = new ServerDispatchHarness(stub, output, maxSendQueueBytes: 4096);
+        await harness.Dispatch(1, ProtocolV2FrameFlags.None)
+            .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.That(stub.ResolveCount).IsEqualTo(1);
+        await Assert.That(stub.DescribeCount).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task ServerShouldNotAskForAStreamShapeOnATwoWayRpcWithoutClientStreams()
     {
         var stub = new CountingMethodFactStub(RpcMethodKind.Unary);
@@ -102,7 +114,7 @@ public partial class SharpLinkServerInvocationTests
     }
 
     /// <summary>Counts every generated method-fact resolution a single dispatch performs.</summary>
-    private sealed class CountingMethodFactStub(RpcMethodKind kind) : IRpcStub
+    private sealed class CountingMethodFactStub(RpcMethodKind kind, bool throwOnInvoke = false) : IRpcStub
     {
         private int _resolveCount;
         private int _describeCount;
@@ -145,7 +157,9 @@ public partial class SharpLinkServerInvocationTests
             long methodHash,
             long requestId,
             ReadOnlySequence<byte> args)
-            => throw new InvalidOperationException("counting stub must not be invoked");
+            => throwOnInvoke
+                ? ValueTask.FromException(new InvalidOperationException("counting handler failure"))
+                : ValueTask.CompletedTask;
 
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
@@ -154,7 +168,9 @@ public partial class SharpLinkServerInvocationTests
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken)
-            => throw new InvalidOperationException("counting stub must not be invoked");
+            => throwOnInvoke
+                ? ValueTask.FromException(new InvalidOperationException("counting handler failure"))
+                : ValueTask.CompletedTask;
 
         public ValueTask InvokeAsync(
             object service,
@@ -163,7 +179,9 @@ public partial class SharpLinkServerInvocationTests
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output)
-            => throw new InvalidOperationException("counting stub must not be invoked");
+            => throwOnInvoke
+                ? ValueTask.FromException(new InvalidOperationException("counting handler failure"))
+                : ValueTask.CompletedTask;
 
         public ValueTask InvokeCancellableAsync(
             object service,
@@ -173,6 +191,8 @@ public partial class SharpLinkServerInvocationTests
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,
             CancellationToken cancellationToken)
-            => throw new InvalidOperationException("counting stub must not be invoked");
+            => throwOnInvoke
+                ? ValueTask.FromException(new InvalidOperationException("counting handler failure"))
+                : ValueTask.CompletedTask;
     }
 }

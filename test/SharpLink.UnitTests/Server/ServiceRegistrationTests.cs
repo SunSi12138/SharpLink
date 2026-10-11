@@ -97,7 +97,7 @@ public class ServiceRegistrationTests
     }
 
     [Test]
-    public async Task DynamicServiceDispatchShouldLookupMethodDescriptorOnlyOnce()
+    public async Task DynamicServiceDispatchShouldResolveMethodShapeOnlyOnce()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
@@ -127,8 +127,8 @@ public class ServiceRegistrationTests
             var singleton = ServiceRegistration.CreateSingleton(
                 typeof(object), successfulStub, new object(), ownsService: false, module);
             await InvokeRegisteredServiceAsync(server, singleton, connection, requestId: 101);
-            Ensure(successfulStub.DescriptorLookups == 1,
-                "successful dynamic singleton invocation must probe its descriptor exactly once");
+            Ensure(successfulStub.ShapeLookups == 1,
+                "successful dynamic singleton invocation must resolve its method shape exactly once");
             Ensure(module.RemainingCalls == 0, "successful invocation releases its module lease");
             await singleton.DisposeAsync();
 
@@ -143,8 +143,8 @@ public class ServiceRegistrationTests
                 "failed dynamic call must preserve its activation error");
             Ensure(ContainsMessage(failure, "scope cleanup failed"),
                 "failed dynamic call must preserve its cleanup error");
-            Ensure(failingStub.DescriptorLookups == 1,
-                "failed asynchronous acquisition must reuse its descriptor for telemetry");
+            Ensure(failingStub.ShapeLookups == 1,
+                "failed asynchronous acquisition must reuse its resolved shape for telemetry");
             Ensure(module.RemainingCalls == 0, "failed acquisition releases its module lease");
             await call.DisposeAsync();
         }
@@ -165,10 +165,9 @@ public class ServiceRegistrationTests
             ?? throw new MissingMethodException(nameof(SharpLinkServer), "InvokeServiceAsync");
         return (ValueTask)(method.Invoke(server,
         [
-            registration,
+            new ResolvedMethodCall(registration, 17L, registration.Stub.ResolveMethodShape(17L)),
             connection,
             connection.Session,
-            17L,
             requestId,
             ReadOnlySequence<byte>.Empty,
             null,
@@ -646,25 +645,15 @@ public class ServiceRegistrationTests
 
     private sealed class StubMarker(RpcMethodKind? descriptorKind = null) : IRpcStub
     {
-        private int _descriptorLookups;
-        internal int DescriptorLookups => Volatile.Read(ref _descriptorLookups);
+        private int _shapeLookups;
+        internal int ShapeLookups => Volatile.Read(ref _shapeLookups);
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        public RpcMethodShape ResolveMethodShape(long methodHash)
         {
-            Interlocked.Increment(ref _descriptorLookups);
-            if (descriptorKind is not { } kind)
-            {
-                descriptor = default;
-                return false;
-            }
-
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash, methodHash, kind,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return true;
+            Interlocked.Increment(ref _shapeLookups);
+            return descriptorKind is { } kind
+                ? new RpcMethodShape(kind, 0, supportsCancellation: true, hasResponsePayload: false)
+                : RpcMethodShape.Unresolvable;
         }
 
         public long InterfaceHash => 1;

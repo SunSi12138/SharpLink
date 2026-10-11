@@ -24,6 +24,7 @@ jobs:
           git rev-parse HEAD^{tree} > artifacts/public-api/source-tree.txt
       - uses: ./.github/actions/setup-dotnet
       - name: Restore and build combined contract
+        id: build
         run: |
           dotnet restore Sharplink.slnx
           dotnet build Sharplink.slnx --no-restore -c Release -v minimal
@@ -40,8 +41,10 @@ jobs:
       - name: Unit tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
       - name: Generator tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
       - name: Integration tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1
       - name: Preserve candidate API and evidence
         if: always()

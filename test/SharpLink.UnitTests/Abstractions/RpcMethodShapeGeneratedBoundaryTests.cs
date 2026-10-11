@@ -1,4 +1,5 @@
 using System.Linq;
+using SharpLink.StaticCodecOwnerTest.Contracts;
 
 namespace SharpLink.UnitTests.Abstractions;
 

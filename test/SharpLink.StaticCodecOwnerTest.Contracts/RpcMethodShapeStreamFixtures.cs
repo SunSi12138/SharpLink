@@ -1,8 +1,8 @@
 using SharpLink.Sdk;
 
-namespace SharpLink.UnitTests.Abstractions;
+namespace SharpLink.StaticCodecOwnerTest.Contracts;
 
-// These contracts compile through the real SDK generator, then execute above.
+// These contracts compile through the real SDK generator for runtime boundary tests.
 [RpcContract]
 public interface IShapeSixteenStreams : IService
 {

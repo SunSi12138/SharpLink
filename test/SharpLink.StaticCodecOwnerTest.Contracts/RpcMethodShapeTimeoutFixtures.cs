@@ -1,6 +1,6 @@
 using SharpLink.Sdk;
 
-namespace SharpLink.UnitTests.Abstractions;
+namespace SharpLink.StaticCodecOwnerTest.Contracts;
 
 [RpcContract]
 public interface IShapeManyTimeouts : IService

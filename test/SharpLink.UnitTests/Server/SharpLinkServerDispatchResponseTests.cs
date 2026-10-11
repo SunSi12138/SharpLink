@@ -54,8 +54,7 @@ public partial class SharpLinkServerInvocationTests
                 null,
                 CancellationToken.None,
                 new SharpLinkCallContextSnapshot(session.Id, authentication: null),
-                false,
-                null
+                false
             ])!;
             await invocation;
             throw new Exception("expected leased invocation failure");
