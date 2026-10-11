@@ -1,9 +1,13 @@
 using System;
 using System.Reflection;
+using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Engines;
 using SharpLink.Client;
+using SharpLink.Abstractions;
+using SharpLink.Runtime;
 using SharpLink.Server;
 
 namespace SharpLink.Benchmarks;
@@ -87,4 +91,115 @@ public class Issue801ClientAblationBenchmarks
             .Build();
         await client.DisposeAsync().ConfigureAwait(false);
     }
+}
+
+ 
+/// <summary>Real loopback TCP Protocol v2 request/response with Server admission enabled.</summary>
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 4, iterationCount: 12)]
+public class Issue801WireRpcAblationBenchmarks
+{
+    private BenchmarkEnvironment _environment = null!;
+
+    [GlobalSetup]
+    public async Task Setup()
+    {
+        _environment = await BenchmarkEnvironment.CreateAsync(
+            configureBuiltServer: server =>
+                server.EnableAdmissionControl(options => options.Global.UseConcurrency(1024)));
+        if (await _environment.Rpc.AddAsync(1, 41).ConfigureAwait(false) != 42)
+            throw new InvalidOperationException("A real loopback RPC did not return the expected result.");
+    }
+
+    [GlobalCleanup]
+    public async Task Cleanup() => await _environment.DisposeAsync();
+
+    [Benchmark]
+    public ValueTask<int> AddViaRealTcpAsync() => _environment.Rpc.AddAsync(1, 41);
+}
+
+/// <summary>
+/// Repeated real TCP transport loss, followed by the actual fixed-client reconnect
+/// owner re-establishing a negotiated Protocol v2 session and completing an RPC.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 3,
+    invocationCount: 1, unrollFactor: 1, iterationCount: 10)]
+public class Issue801ReconnectAblationBenchmarks
+{
+    private BenchmarkEnvironment _environment = null!;
+    private MonitoredClientTransportFactory _factory = null!;
+    private SharpLinkClient _client = null!;
+
+    [GlobalSetup]
+    public async Task Setup()
+    {
+        _environment = await BenchmarkEnvironment.CreateAsync(
+            configureBuiltServer: server =>
+                server.EnableAdmissionControl(options => options.Global.UseConcurrency(1024)),
+            createClientBuilder: port =>
+            {
+                _factory = new MonitoredClientTransportFactory(
+                    new SocketClientTransportFactory(new IPEndPoint(IPAddress.Loopback, port)));
+                return SharpClientBuilder.Create()
+                    .UseTransport(_factory)
+                    .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10))
+                    .UseReconnectPolicy(new SharpLinkReconnectPolicy(
+                        initialDelay: TimeSpan.FromMilliseconds(2),
+                        maxBackoff: TimeSpan.FromMilliseconds(2),
+                        backoffMultiplier: 1d,
+                        jitterMinimumFactor: 1d,
+                        jitterMaximumFactor: 1d,
+                        stableResetWindow: TimeSpan.Zero));
+            });
+        _client = (SharpLinkClient)_environment.Client;
+        if (_factory.ConnectCount != 1 || _client.ReadyConnectionCount != 1 ||
+            await _environment.Rpc.AddAsync(10, 32).ConfigureAwait(false) != 42)
+        {
+            throw new InvalidOperationException("Real fixed-client initial connection failed.");
+        }
+    }
+
+    [GlobalCleanup]
+    public async Task Cleanup() => await _environment.DisposeAsync();
+
+    [Benchmark]
+    public async Task<int> ForceTransportLossAndReconnectAsync()
+    {
+        var previousCount = _factory.ConnectCount;
+        var previous = _factory.LastConnection ??
+            throw new InvalidOperationException("No active connected TCP transport.");
+        await previous.DisposeAsync().ConfigureAwait(false);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (_factory.ConnectCount <= previousCount ||
+               _client.ReadyConnectionCount != 1)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(1), timeout.Token).ConfigureAwait(false);
+        }
+        var sum = await _environment.Rpc.AddAsync(10, 32).ConfigureAwait(false);
+        if (sum != 42)
+            throw new InvalidOperationException("Reconnected TCP RPC returned an invalid result.");
+        return sum;
+    }
+}
+
+internal sealed class MonitoredClientTransportFactory(IClientTransportFactory inner)
+    : IClientTransportFactory
+{
+    private ITransportConnection? _lastConnection;
+    private int _connectCount;
+
+    internal int ConnectCount => Volatile.Read(ref _connectCount);
+    internal ITransportConnection? LastConnection => Volatile.Read(ref _lastConnection);
+
+    public async ValueTask<ITransportConnection> ConnectAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var connected = await inner.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        Volatile.Write(ref _lastConnection, connected);
+        Interlocked.Increment(ref _connectCount);
+        return connected;
+    }
+
+    public ValueTask DisposeAsync() => inner.DisposeAsync();
 }
