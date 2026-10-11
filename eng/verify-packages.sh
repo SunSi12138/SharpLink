@@ -82,29 +82,15 @@ if ! unzip -p "$ARTIFACT_DIR/SharpLink.Hosting.$EXPECTED_VERSION.nupkg" SharpLin
   exit 1
 fi
 
-# Full public/protected signatures are checked by verify-public-api.sh against eng/public-api/2.0.0.
+# Full public/protected signatures are checked by verify-public-api.sh against eng/public-api/3.0.0.
 # Keep this independent packed XML documentation check for the documented Runtime configuration.
 unzip -p "$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg" lib/net10.0/SharpLink.Runtime.xml |
   grep -F '<member name="P:SharpLink.Runtime.SharpLinkFlowControlOptions.MaxPreCreditSerializedBytes">' >/dev/null
 
 runtime_package="$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg"
-unzip -Z1 "$runtime_package" |
-  grep -Fx "buildTransitive/SharpLink.Runtime.targets" >/dev/null
-unzip -Z1 "$runtime_package" |
-  grep -Fx "buildTransitive/SharpLink.Runtime.TrimSuppressions.xml" >/dev/null
-unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
-  grep -F 'RuntimeHostConfigurationOption Include="SharpLink.Runtime.UnsafeBlitReflectionFallback"' >/dev/null
-unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
-  grep -F 'Value="false"' >/dev/null
-unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
-  grep -F 'Trim="true"' >/dev/null
-unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
-  grep -F 'AfterTargets="_ComputePublishTrimmed"' >/dev/null
-unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
-  grep -F 'BeforeTargets="_GenerateRuntimeConfigurationFilesInputCache;_PrepareTrimConfiguration"' >/dev/null
-unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.targets |
-  grep -F '_ILLinkSuppressions Include="$(MSBuildThisFileDirectory)SharpLink.Runtime.TrimSuppressions.xml"' >/dev/null
-unzip -p "$runtime_package" buildTransitive/SharpLink.Runtime.TrimSuppressions.xml |
-  grep -F 'M:SharpLink.Runtime.RpcUnsafeBlitPlatform.EnsureSupported(System.Type)' >/dev/null
+if unzip -Z1 "$runtime_package" | grep -E '^buildTransitive/SharpLink.Runtime.(targets|TrimSuppressions.xml)$'; then
+  echo "Runtime must not ship the removed UnsafeBlit reflection feature switch or trim suppression." >&2
+  exit 1
+fi
 
 echo "Verified ${#PACKAGES[@]} package and symbol pairs for $EXPECTED_VERSION at $EXPECTED_COMMIT."

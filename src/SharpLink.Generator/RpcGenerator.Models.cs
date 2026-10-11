@@ -158,7 +158,8 @@ internal enum GeneratedCodecKind
     ReadOnlyMemory,
     ImmutableArray,
     Nullable,
-    Custom
+    Custom,
+    UnsafeBlit
 }
 
 internal enum GeneratedMemberKind
@@ -207,6 +208,7 @@ internal sealed record GeneratedCodecModel(
     ImmutableArray<string> AssemblyDependencies,
     Location? Location)
 {
+    public GeneratedUnsafeBlitRequirementModel? UnsafeBlitRequirement { get; init; }
     public bool ElementIsString { get; init; }
     public bool CustomCodecSupportsConcreteDispatch { get; init; }
     public ulong CodecHashHigh { get; init; }

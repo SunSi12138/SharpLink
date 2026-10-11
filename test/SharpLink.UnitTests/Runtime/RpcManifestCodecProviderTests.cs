@@ -8,7 +8,7 @@ using SharpLink.MultiClusterTest.Contracts;
 
 namespace SharpLink.UnitTests.Runtime;
 
-public class RpcManifestCodecProviderTests
+public partial class RpcManifestCodecProviderTests
 {
     [Test]
     public void ManifestScopedRouteShouldFlowIntoNativeDtoAndCollectionDependencies()
@@ -29,7 +29,7 @@ public class RpcManifestCodecProviderTests
             "a native DTO must resolve a routed nested member through its Contract owner provider");
         Ensure(listCodec is not null && ReferenceEquals(listCodec.ElementCodec, routedPoint),
             "a native collection must resolve a routed nested element through its Contract owner provider");
-        Ensure(!ReferenceEquals(context.Codecs.GetCodec<Point>(), routedPoint),
+        ExpectMissingUnsafeBlit(() => context.Codecs.GetCodec<Point>(),
             "the routed unmanaged Point Codec must remain absent from the context-global provider");
     }
 
@@ -77,8 +77,7 @@ public class RpcManifestCodecProviderTests
             "Contract owner A must resolve its own binding for the shared CLR type");
         Ensure(ReferenceEquals(RpcGeneratedCodecResolver.GetProvider(context, ownerB).GetCodec<ContractValue>(), codecB),
             "Contract owner B must resolve its own binding for the shared CLR type");
-        var global = context.Codecs.GetCodec<ContractValue>();
-        Ensure(!ReferenceEquals(global, codecA) && !ReferenceEquals(global, codecB),
+        ExpectMissingUnsafeBlit(() => context.Codecs.GetCodec<ContractValue>(),
             "Contract-owned bindings must never be published to the global Type -> Codec registry");
     }
 

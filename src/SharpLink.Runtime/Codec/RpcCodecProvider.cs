@@ -167,8 +167,9 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                 return EnumCodec<T>.Instance;
             if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
             {
-                RpcUnsafeBlitPlatform.EnsureSupported(targetType);
-                return UnsafeBlitCodec<T>.Instance;
+                throw new PlatformNotSupportedException(
+                    $"UnsafeBlit Codec for '{targetType.FullName}' requires source-generated ABI metadata. " +
+                    "Use a generated RPC contract or register an explicit Codec/Adapter.");
             }
 
             throw new NotSupportedException(
@@ -407,11 +408,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                     var adapterScope = factory.AdapterId is null
                         ? null
                         : scopeByAdapterId[factory.AdapterId].Scope;
+                    var targetType = factory.TargetType;
                     if (!registrations.TryAdd(
-                            factory.TargetType,
+                            targetType,
                             new RpcGeneratedCodecRegistration(
                                 ownerBox,
                                 factory,
+                                targetType,
                                 adapterScope,
                                 resolutionScope)))
                     {
@@ -521,17 +524,22 @@ internal sealed class RpcGeneratedCodecRegistration
     internal RpcGeneratedCodecRegistration(
         RpcGeneratedManifestRegistration.OwnerBox owner,
         IRpcGeneratedCodecFactory factory,
+        Type targetType,
         IRpcCodecAdapterScope? adapterScope,
         RpcGeneratedCodecResolutionScope resolutionScope)
     {
         _owner = owner;
         Factory = factory;
+        TargetType = targetType;
+        UnsafeBlitRequirement = (factory as IRpcGeneratedUnsafeBlitCodecFactory)?.Requirement;
         _adapterScope = adapterScope;
         _resolutionScope = resolutionScope;
     }
 
     internal RpcGeneratedManifestRegistration Owner => _owner.Value;
     internal IRpcGeneratedCodecFactory Factory { get; }
+    internal Type TargetType { get; }
+    internal SharpLinkGeneratedUnsafeBlitRequirement? UnsafeBlitRequirement { get; }
 
     internal void PrepareAdapterCodec()
     {
