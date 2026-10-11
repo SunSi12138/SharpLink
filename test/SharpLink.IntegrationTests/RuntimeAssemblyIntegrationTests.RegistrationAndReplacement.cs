@@ -344,14 +344,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [NotInParallel]
     public async Task Api4DynamicStreamExitShouldReleaseItsCollectibleContext(string exitMode)
     {
+        AbiDiagnosticStage($"{exitMode}: helper-before");
         var weakContext = await ExecuteDynamicStreamExitAndUnloadAsync(exitMode);
+        AbiDiagnosticStage($"{exitMode}: helper-after");
         for (var attempt = 0; attempt < 20 && weakContext.IsAlive; attempt++)
         {
+            AbiDiagnosticStage($"{exitMode}: gc-first-before-{attempt}");
             GC.Collect();
+            AbiDiagnosticStage($"{exitMode}: finalizers-before-{attempt}");
             GC.WaitForPendingFinalizers();
+            AbiDiagnosticStage($"{exitMode}: finalizers-after-{attempt}");
             GC.Collect();
+            AbiDiagnosticStage($"{exitMode}: gc-second-after-{attempt}");
             await Task.Delay(20);
         }
+        AbiDiagnosticStage($"{exitMode}: unload-assert-before");
         Ensure(!weakContext.IsAlive,
             $"API 4 dynamic stream '{exitMode}' must not retain its collectible ALC");
     }

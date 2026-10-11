@@ -1,0 +1,106 @@
+name: Diagnose 2.0.4 ABI consumer-break hang
+on:
+  push:
+    branches: [validation/2.0.4-abi-hang-diagnostics]
+permissions:
+  contents: read
+concurrency:
+  group: diagnose-204-abi-${{ github.sha }}
+  cancel-in-progress: false
+env:
+  SOURCE_SHA: 85f5f87c21056edc16af80d6c9c06cfca83d8cfa
+  TUNIT_MAX_PARALLEL_TESTS: '8'
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  diagnose:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [original, marked]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EVIDENCE: ${{ github.workspace }}/evidence/${{ matrix.variant }}
+      VARIANT: ${{ matrix.variant }}
+    steps:
+      - name: Checkout diagnostic tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Checkout exact release production source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 85f5f87c21056edc16af80d6c9c06cfca83d8cfa
+          path: source
+          persist-credentials: false
+      - name: Setup .NET
+        uses: ./tooling/.github/actions/setup-dotnet
+      - name: Record immutable provenance and apply optional test-only markers
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          printf 'source=%s\ntooling=%s\nrun=%s\nattempt=%s\nvariant=%s\n' "$SOURCE_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$VARIANT" > "$EVIDENCE/provenance.txt"
+          if [[ "$VARIANT" == marked ]]; then
+            for file in \
+              test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs \
+              test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.Support.cs \
+              test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.RegistrationAndReplacement.cs \
+              test/SharpLink.DynamicServices/DynamicPluginService.cs; do
+              cp "../tooling/$file" "$file"
+            done
+          fi
+          git diff --binary > "$EVIDENCE/test-instrumentation.patch"
+          python3 - <<'PY'
+          import os, subprocess
+          allowed={
+              'test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.cs',
+              'test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.Support.cs',
+              'test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.RegistrationAndReplacement.cs',
+              'test/SharpLink.DynamicServices/DynamicPluginService.cs'}
+          changed=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          assert changed == (allowed if os.environ['VARIANT']=='marked' else set()),changed
+          PY
+          dotnet --info > "$EVIDENCE/dotnet-info.txt"
+          python3 ../tooling/eng/diagnose-204-abi-hang.py "$PWD" "$EVIDENCE/watchdog-selftest" /unused "$VARIANT" --self-test
+      - name: Install repository-pinned dump collector
+        working-directory: source
+        shell: bash
+        run: dotnet tool install dotnet-dump --version 10.0.745401 --tool-path "$GITHUB_WORKSPACE/diagnostic-tools"
+      - name: Build integration assembly from unchanged production sources
+        working-directory: source
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -m:1 -p:UseSharedCompilation=false -nodeReuse:false -v minimal 2>&1 | tee "$EVIDENCE/build.log"
+          find test/{SharpLink.IntegrationTests,SharpLink.DynamicServices,SharpLink.DynamicContracts}/bin/Release -type f \( -name '*.dll' -o -name '*.pdb' -o -name '*.deps.json' -o -name '*.runtimeconfig.json' \) -print0 | sort -z | xargs -0 sha256sum > "$EVIDENCE/binary-sha256.txt"
+          git diff --exit-code -- src Directory.Build.props Directory.Build.targets Directory.Packages.props
+      - name: Run bounded original-order rounds and capture first hang
+        working-directory: source
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 ../tooling/eng/diagnose-204-abi-hang.py "$PWD" "$EVIDENCE" "$GITHUB_WORKSPACE/diagnostic-tools/dotnet-dump" "$VARIANT" 2>&1 | tee "$EVIDENCE/driver.log"
+      - name: Preserve final source diff
+        if: always()
+        working-directory: source
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE"
+          git status --short > "$EVIDENCE/final-status.txt"
+          git diff --binary > "$EVIDENCE/final-test-instrumentation.patch"
+          git diff --exit-code -- src Directory.Build.props Directory.Build.targets Directory.Packages.props
+      - name: Upload all diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: abi-hang-${{ matrix.variant }}-${{ github.sha }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 7

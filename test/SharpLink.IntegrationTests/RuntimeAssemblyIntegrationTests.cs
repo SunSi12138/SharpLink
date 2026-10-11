@@ -7,6 +7,22 @@ namespace SharpLink.IntegrationTests;
 
 public sealed partial class RuntimeAssemblyIntegrationTests
 {
+    private static void AbiDiagnosticStage(string stage)
+    {
+        try
+        {
+            if (Environment.GetEnvironmentVariable("SHARPLINK_ABI_DIAGNOSTIC") == "1")
+            {
+                var line = $"ABI_STAGE {DateTimeOffset.UtcNow:O} tick={Stopwatch.GetTimestamp()} pid={Environment.ProcessId} thread={Environment.CurrentManagedThreadId} {stage}";
+                File.AppendAllText(Environment.GetEnvironmentVariable("SHARPLINK_ABI_STAGE_FILE") + ".test.log", line + Environment.NewLine);
+            }
+        }
+        catch (Exception)
+        {
+            // Diagnostic I/O must never change lifecycle behavior; the external harness checks evidence.
+        }
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task<TrackedWeakReferences> LoadInvokeUnregisterAndUnloadAsync()
     {
@@ -48,9 +64,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task<WeakReference> ExecuteDynamicStreamExitAndUnloadAsync(string exitMode)
     {
+        AbiDiagnosticStage($"{exitMode}: harness-create-before");
         await using var harness = await DynamicHarness.CreateAsync();
+        AbiDiagnosticStage($"{exitMode}: harness-create-after");
+        AbiDiagnosticStage($"{exitMode}: plugin-load-before");
         using var plugin = PluginBundle.Load($"api4-stream-exit-{exitMode}");
+        AbiDiagnosticStage($"{exitMode}: plugin-load-after");
+        AbiDiagnosticStage($"{exitMode}: register-before");
         await RegisterAllAsync(harness, plugin);
+        AbiDiagnosticStage($"{exitMode}: register-after");
         object? proxy = GetProxy(harness.Client, plugin.ContractType);
 
         if (string.Equals(exitMode, "normal", StringComparison.Ordinal))
@@ -116,8 +138,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                     int.MaxValue,
                     token)
                 .GetAsyncEnumerator();
+            AbiDiagnosticStage($"{exitMode}: first-move-before");
             Ensure(await enumerator.MoveNextAsync(),
                 $"API 4 dynamic stream '{exitMode}' starts before exit");
+            AbiDiagnosticStage($"{exitMode}: first-move-after");
             if (string.Equals(exitMode, "cancellation-mid-stream", StringComparison.Ordinal))
             {
                 cancellation.Cancel();
@@ -136,31 +160,42 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             else
                 Ensure(string.Equals(exitMode, "consumer-break", StringComparison.Ordinal),
                     $"unknown dynamic stream exit mode '{exitMode}'");
+            AbiDiagnosticStage($"{exitMode}: enumerator-scope-exit-before");
         }
 
+        AbiDiagnosticStage($"{exitMode}: enumerator-scope-exit-after");
         if (!string.Equals(exitMode, "cancellation-before-first", StringComparison.Ordinal))
         {
             // Consumer disposal publishes abandonment locally and sends Cancel, but remote iterator
             // finalization remains asynchronous. Do not turn scheduler/transport latency into a
             // per-round two-second contract; the enclosing integration test timeout still catches
             // a genuinely lost cancellation or stuck server iterator.
+            AbiDiagnosticStage($"{exitMode}: remote-disposed-before");
             await plugin.GetStaticTask("ServerStreamDisposed");
+            AbiDiagnosticStage($"{exitMode}: remote-disposed-after");
         }
         proxy = null;
+        AbiDiagnosticStage($"{exitMode}: unregister-service-before");
         var service = await harness.Server.UnregisterAssemblyAsync(
             plugin.ServiceAssembly,
             TimeSpan.FromSeconds(2));
         Ensure(service.ReferencesReleased,
             $"API 4 dynamic stream '{exitMode}' releases its service module before dependants");
+        AbiDiagnosticStage($"{exitMode}: unregister-service-after");
+        AbiDiagnosticStage($"{exitMode}: unregister-server-contract-before");
         var serverContract = await harness.Server.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2));
+        AbiDiagnosticStage($"{exitMode}: unregister-server-contract-after");
+        AbiDiagnosticStage($"{exitMode}: unregister-client-contract-before");
         var clientContract = await harness.Client.UnregisterAssemblyAsync(
             plugin.ContractAssembly,
             TimeSpan.FromSeconds(2));
+        AbiDiagnosticStage($"{exitMode}: unregister-client-contract-after");
         Ensure(serverContract.ReferencesReleased && clientContract.ReferencesReleased,
             $"API 4 dynamic stream '{exitMode}' releases all module references");
         EnsureClientAndServerCountersAreZero(harness, $"API 4 dynamic stream '{exitMode}'");
+        AbiDiagnosticStage($"{exitMode}: unload-before-return-and-harness-dispose");
         return plugin.Unload();
     }
 

@@ -6,6 +6,20 @@ namespace SharpLink.DynamicPlugin;
 [RpcService]
 public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposable
 {
+    private static void AbiDiagnosticStage(string stage)
+    {
+        try
+        {
+            if (Environment.GetEnvironmentVariable("SHARPLINK_ABI_DIAGNOSTIC") == "1")
+                File.AppendAllText(Environment.GetEnvironmentVariable("SHARPLINK_ABI_STAGE_FILE") + ".service.log",
+                    $"ABI_STAGE {DateTimeOffset.UtcNow:O} pid={Environment.ProcessId} service: {stage}" + Environment.NewLine);
+        }
+        catch (Exception)
+        {
+            // Marker failure must not prevent the original finally signal from being published.
+        }
+    }
+
     private static TaskCompletionSource _blockStarted = NewSignal();
     private static TaskCompletionSource _blockRelease = NewSignal();
     private static TaskCompletionSource _synchronousBlockStarted = NewSignal();
@@ -93,6 +107,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         int count,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        AbiDiagnosticStage("iterator-enter");
         try
         {
             for (var index = 0; index < count; index++)
@@ -104,7 +119,9 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         }
         finally
         {
+            AbiDiagnosticStage("finally-before-signal");
             Volatile.Read(ref _serverStreamDisposed).TrySetResult();
+            AbiDiagnosticStage("finally-after-signal");
         }
     }
 

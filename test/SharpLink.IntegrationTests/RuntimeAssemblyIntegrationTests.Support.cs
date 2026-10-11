@@ -419,19 +419,27 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         public async ValueTask DisposeAsync()
         {
+            AbiDiagnosticStage("harness: client-stop-before");
             await Client.StopAsync();
+            AbiDiagnosticStage("harness: client-stop-after");
             try
             {
+                AbiDiagnosticStage("harness: server-stop-before");
                 await Server.StopAsync(TimeSpan.FromSeconds(2));
+                AbiDiagnosticStage("harness: server-stop-after");
             }
             catch (Exception exception) when (
                 _expectedServerStopFailure is { } message && ContainsMessage(exception, message))
             {
             }
+            AbiDiagnosticStage("harness: cancellation-before");
             await _serverCancellation.CancelAsync();
+            AbiDiagnosticStage("harness: cancellation-after");
             try
             {
+                AbiDiagnosticStage("harness: server-task-before");
                 await _serverTask.WaitAsync(TimeSpan.FromSeconds(2));
+                AbiDiagnosticStage("harness: server-task-after");
             }
             catch (Exception exception) when (
                 exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException ||
@@ -439,7 +447,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             {
             }
             _serverCancellation.Dispose();
+            AbiDiagnosticStage("harness: provider-dispose-before");
             await _serviceProvider.DisposeAsync();
+            AbiDiagnosticStage("harness: provider-dispose-after");
         }
     }
 }
