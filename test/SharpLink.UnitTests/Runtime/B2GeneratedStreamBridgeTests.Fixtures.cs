@@ -49,7 +49,7 @@ public partial class StreamFlowGrantGeneratedBridgeTests
                 contractId: 101, methodId: 202, cancellationToken).AsTask();
 
         internal void ReturnPeerCredit(int bytes)
-            => Session.ApplyWindowUpdate(BridgeRequestId, new ProtocolV2WindowUpdate(BridgeStreamId, bytes));
+            => Session.ApplyWindowUpdate(BridgeRequestId, new ProtocolV2WindowUpdate(BridgeStreamId, checked((uint)bytes)));
 
         internal void PublishError(SharpLinkErrorCode code = SharpLinkErrorCode.Internal)
             => Session.SendStreamErrorAsync(BridgeRequestId, BridgeStreamId,
