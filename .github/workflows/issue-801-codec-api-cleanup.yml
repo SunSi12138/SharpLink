@@ -63,6 +63,22 @@ jobs:
               exit 1
             }
           tail -n 30 artifacts/issue-801-codec-cleanup/integration.log
+      - name: Pack all eight 3.0 NuGet modules
+        run: |
+          dotnet pack Sharplink.slnx -c Release --no-build --no-restore -o artifacts/nuget -v minimal \
+            > artifacts/issue-801-codec-cleanup/pack.log 2>&1 || {
+              tail -n 80 artifacts/issue-801-codec-cleanup/pack.log
+              exit 1
+            }
+          tail -n 16 artifacts/issue-801-codec-cleanup/pack.log
+      - name: Compare complete public and protected API against reviewed 3.0 baseline
+        run: |
+          bash eng/verify-public-api.sh artifacts/nuget 3.0.0 \
+            > artifacts/issue-801-codec-cleanup/public-api.log 2>&1 || {
+              tail -n 110 artifacts/issue-801-codec-cleanup/public-api.log
+              exit 1
+            }
+          tail -n 18 artifacts/issue-801-codec-cleanup/public-api.log
       - name: Attach full validation logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
