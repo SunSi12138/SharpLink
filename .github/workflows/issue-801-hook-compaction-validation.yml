@@ -1,0 +1,139 @@
+name: Issue 801 - Lazy Test Hooks Runtime Footprint Probe
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-hook-compaction-validation.yml
+      - eng/issue801/compact-test-hooks.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-hook-compaction-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pooled-dispatcher:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+    steps:
+      - name: Checkout isolated dev-derived branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore full solution
+        run: dotnet restore Sharplink.slnx -v minimal
+
+      - name: Build pristine Release solution
+        run: |
+          mkdir -p artifacts/issue-801-hook-validation
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-hook-validation/baseline-build.log 2>&1 || {
+              tail -n 100 artifacts/issue-801-hook-validation/baseline-build.log; exit 1;
+            }
+          tail -n 15 artifacts/issue-801-hook-validation/baseline-build.log
+
+      - name: Ephemeral nine-to-one test-hook field compaction
+        run: |
+          python3 eng/issue801/compact-test-hooks.py artifacts/issue-801-hook-validation
+          git diff --check
+          git diff --stat -- src/ > artifacts/issue-801-hook-validation/modified-diff-stat.txt
+          cat artifacts/issue-801-hook-validation/modified-diff-stat.txt
+
+      - name: Release build with compacted test-only fields
+        id: modified_build
+        run: |
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-hook-validation/modified-build.log 2>&1 || {
+              tail -n 110 artifacts/issue-801-hook-validation/modified-build.log; exit 1;
+            }
+          tail -n 15 artifacts/issue-801-hook-validation/modified-build.log
+
+      - name: UnitTests with original race-hook APIs preserved
+        id: modified_unit
+        if: steps.modified_build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-hook-validation/modified-unit.log 2>&1 || {
+              tail -n 150 artifacts/issue-801-hook-validation/modified-unit.log; exit 1;
+            }
+          tail -n 25 artifacts/issue-801-hook-validation/modified-unit.log
+
+      - name: Generator tests after compaction
+        id: modified_generator
+        if: always() && steps.modified_build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-hook-validation/modified-generator.log 2>&1 || {
+              tail -n 110 artifacts/issue-801-hook-validation/modified-generator.log; exit 1;
+            }
+          tail -n 25 artifacts/issue-801-hook-validation/modified-generator.log
+
+      - name: Undo only temporary runtime edits and compare with pristine baseline
+        if: always()
+        run: |
+          git restore -- src/SharpLink.Runtime/PooledAsyncStreamDispatcher.cs
+          git diff --exit-code -- src/
+          echo "No runtime change committed to the audit branch or dev."
+
+      - name: Rebuild unchanged dev baseline for comparison
+        id: clean_build
+        if: always()
+        continue-on-error: true
+        run: |
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-hook-validation/restored-build.log 2>&1 || {
+              tail -n 90 artifacts/issue-801-hook-validation/restored-build.log; exit 1;
+            }
+          tail -n 20 artifacts/issue-801-hook-validation/restored-build.log
+
+      - name: UnitTests on untouched baseline
+        id: baseline_unit
+        if: always() && steps.clean_build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-hook-validation/pristine-unit.log 2>&1 || {
+              tail -n 90 artifacts/issue-801-hook-validation/pristine-unit.log; exit 1;
+            }
+          tail -n 24 artifacts/issue-801-hook-validation/pristine-unit.log
+
+      - name: Write validation result
+        if: always()
+        run: |
+          {
+            echo '# Issue 801 lazy test-only hook compaction trial'
+            echo
+            echo "- Modified full build: ${{ steps.modified_build.outcome }}"
+            echo "- Modified UnitTests: ${{ steps.modified_unit.outcome }}"
+            echo "- Modified GeneratorTests: ${{ steps.modified_generator.outcome }}"
+            echo "- Restored dev build: ${{ steps.clean_build.outcome }}"
+            echo "- Pristine dev UnitTests: ${{ steps.baseline_unit.outcome }}"
+            echo
+            echo 'Expected change: nine Action? instance fields become one nullable Action?[] field.'
+            echo 'No production code was committed.'
+          } > artifacts/issue-801-hook-validation/validation.md
+          cat artifacts/issue-801-hook-validation/validation.md
+
+      - name: Upload source-layout and test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-test-hook-compaction-evidence
+          path: artifacts/issue-801-hook-validation
+          if-no-files-found: warn
+          retention-days: 30
