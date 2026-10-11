@@ -4,6 +4,8 @@ permissions:
   contents: read
 
 on:
+  push:
+    branches: [validate/754-final-extended]
   pull_request:
     types: [ready_for_review]
   workflow_dispatch:
@@ -26,6 +28,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: c8f0f2d59d52b1ec4ccd2234f184c8403bc822f3
+
+      - name: Record exact production source
+        run: |
+          git rev-parse HEAD
+          git rev-parse HEAD^{tree}
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
