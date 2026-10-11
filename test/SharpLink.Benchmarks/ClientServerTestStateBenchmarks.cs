@@ -34,6 +34,11 @@ public class ServerAdmissionTestHookPathBenchmarks
             configureBuiltServer: server =>
                 server.EnableAdmissionControl(options => options.Global.UseConcurrency(1024)));
         _server = (SharpLinkServer)_environment.Server;
+        if (!InstallNoOpTestHooks &&
+            System.Environment.GetEnvironmentVariable("AUDIT_TEST_STATE_OUTPUT") is { Length: > 0 } evidenceFile)
+        {
+            ClientServerTestStateInspector.Capture(_environment, evidenceFile);
+        }
         if (InstallNoOpTestHooks)
         {
             SharpLinkServer.AfterAdmissionPublicationReadForTests = static (_, _, _) => { };
@@ -93,11 +98,8 @@ public class ClientTestHookBuildBenchmarks
 
 internal static class ClientServerTestStateInspector
 {
-    internal static async Task RunAsync(string file)
+    internal static void Capture(BenchmarkEnvironment environment, string file)
     {
-        var environment = await BenchmarkEnvironment.CreateAsync();
-        try
-        {
             var client = (SharpLinkClient)environment.Client;
             var server = (SharpLinkServer)environment.Server;
             var types = new[]
@@ -150,7 +152,5 @@ internal static class ClientServerTestStateInspector
             foreach (var field in fields)
                 Console.WriteLine($"FIELD: {field.type}.{field.name} static={field.staticField} " +
                                   $"observed={field.observedOnNormalRuntime} null={field.isNullInNormalRuntime}");
-        }
-        finally { await environment.DisposeAsync(); }
     }
 }
