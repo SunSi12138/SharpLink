@@ -15,10 +15,10 @@ public partial class StreamManagerTests
     {
         var manager = new StreamManager();
         var dispatcher = new RecordingDispatcher();
-        manager.Register(10, dispatcher);
+        manager.Register(10, 0, dispatcher);
 
         ReadOnlySequence<byte> payload = new([1, 2, 3]);
-        await manager.DispatchChunkAsync(10, payload);
+        await manager.DispatchChunkAsync(10, 0, payload);
 
         Ensure(dispatcher.DispatchCount == 1, "dispatch count");
         Ensure(dispatcher.LastPayloadLength == 3, "payload length");
@@ -62,7 +62,7 @@ public partial class StreamManagerTests
         var d2 = new RecordingDispatcher();
         var d3 = new RecordingDispatcher();
 
-        manager.Register(1, d1);
+        manager.Register(1, 0, d1);
         manager.Register(2, 1, d2);
         manager.Register(2, 2, d3);
 
@@ -83,10 +83,11 @@ public partial class StreamManagerTests
         var events = new List<string>();
         var manager = new StreamManager();
         var dispatcher = new GatedDispatcher(events);
-        manager.Register(51, dispatcher);
+        manager.Register(51, 0, dispatcher);
 
         var activeDispatch = manager.DispatchChunkAsync(
             51,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
         await dispatcher.Entered.WaitAsync(RaceCoordinationTimeout);
 
@@ -101,6 +102,7 @@ public partial class StreamManagerTests
 
         var lateDispatch = manager.DispatchChunkAsync(
             51,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 2 }));
         Ensure(lateDispatch.IsCompletedSuccessfully,
             "Close must reject a post-termination lookup without waiting for the old dispatch");
@@ -174,7 +176,7 @@ public partial class StreamManagerTests
             var register = Task.Run(() =>
             {
                 start.Wait();
-                manager.Register(iteration, dispatcher);
+                manager.Register(iteration, 0, dispatcher);
             });
             var complete = Task.Run(() =>
             {
@@ -197,7 +199,7 @@ public partial class StreamManagerTests
         var manager = new StreamManager();
         var dispatcher = new RecordingDispatcher();
         var exception = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "transport closed");
-        manager.Register(30, dispatcher);
+        manager.Register(30, 0, dispatcher);
 
         manager.CompleteStream(30, 0, exception);
 
@@ -275,10 +277,11 @@ public partial class StreamManagerTests
             null,
             (_, _) => events.Add("credit-flushed"));
         var dispatcher = new GatedDispatcher(events);
-        manager.Register(50, dispatcher);
+        manager.Register(50, 0, dispatcher);
 
         var dispatch = manager.DispatchChunkAsync(
             50,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 }));
         await dispatcher.Entered.WaitAsync(RaceCoordinationTimeout);
         var completion = manager.CompleteStreamAfterDispatchesAsync(
@@ -307,7 +310,7 @@ public partial class StreamManagerTests
     {
         var manager = new StreamManager();
         var dispatcher = new CapturingLeaseDispatcher();
-        manager.Register(60, dispatcher);
+        manager.Register(60, 0, dispatcher);
         var state = dispatcher.DispatchState;
 
         manager.Unregister(60, 0);
@@ -325,7 +328,7 @@ public partial class StreamManagerTests
     {
         var manager = new StreamManager();
         var dispatcher = new CapturingLeaseDispatcher();
-        manager.Register(61, dispatcher);
+        manager.Register(61, 0, dispatcher);
         var state = dispatcher.DispatchState;
 
         var first = state.WaitForDetachedAsync(CancellationToken.None).AsTask();
@@ -350,7 +353,7 @@ public partial class StreamManagerTests
             var manager = new StreamManager();
             var dispatcher = new CapturingLeaseDispatcher();
             var requestId = iteration + 2000;
-            manager.Register(requestId, dispatcher);
+            manager.Register(requestId, 0, dispatcher);
             var state = dispatcher.DispatchState;
             using var start = new ManualResetEventSlim();
             var wait = LongRunningTestWorker.RunAsync(async () =>
@@ -386,7 +389,7 @@ public partial class StreamManagerTests
     {
         var manager = new StreamManager();
         var dispatcher = new CapturingLeaseDispatcher();
-        manager.Register(62, dispatcher);
+        manager.Register(62, 0, dispatcher);
         var state = dispatcher.DispatchState;
         using var cancellation = new CancellationTokenSource();
         var waiting = state.WaitForDetachedAsync(cancellation.Token).AsTask();
@@ -416,7 +419,7 @@ public partial class StreamManagerTests
             var manager = new StreamManager();
             var dispatcher = new CapturingLeaseDispatcher();
             var requestId = iteration + 1000;
-            manager.Register(requestId, dispatcher);
+            manager.Register(requestId, 0, dispatcher);
             var state = dispatcher.DispatchState;
             using var cancellation = new CancellationTokenSource();
             using var start = new ManualResetEventSlim();
@@ -466,7 +469,7 @@ public partial class StreamManagerTests
                 releaseCredit.Task.GetAwaiter().GetResult();
             });
         var dispatcher = new CapturingLeaseDispatcher();
-        manager.Register(63, dispatcher);
+        manager.Register(63, 0, dispatcher);
         var detached = dispatcher.DispatchState.WaitForDetachedAsync(CancellationToken.None).AsTask();
 
         var unregister = LongRunningTestWorker.Run(() => manager.Unregister(63, 0));
@@ -495,11 +498,12 @@ public partial class StreamManagerTests
     {
         var manager = new StreamManager();
         var dispatcher = new GatedLeaseDispatcher();
-        manager.Register(64, dispatcher);
+        manager.Register(64, 0, dispatcher);
         var state = dispatcher.DispatchState;
 
         var dispatch = manager.DispatchChunkAsync(
             64,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
         await dispatcher.DispatchEntered.WaitAsync(RaceCoordinationTimeout);
 
@@ -532,11 +536,12 @@ public partial class StreamManagerTests
                 releaseFinalCredit.Task.GetAwaiter().GetResult();
             });
         var dispatcher = new GatedLeaseDispatcher();
-        manager.Register(65, dispatcher);
+        manager.Register(65, 0, dispatcher);
         var state = dispatcher.DispatchState;
 
         var dispatch = manager.DispatchChunkAsync(
             65,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
         await dispatcher.DispatchEntered.WaitAsync(RaceCoordinationTimeout);
 
