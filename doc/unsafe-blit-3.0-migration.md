@@ -8,7 +8,7 @@ Regenerate every contract/service assembly with the matching 3.0 SDK. Generated 
 
 For a custom wire representation, use the existing compile-time `[RpcCodec(typeof(MyCodec))]` or Codec/Adapter policy binding. Endpoint `UseCodecResolver` and standalone `AddCodec` do **not** override generated RPC owner policy. Missing generated metadata fails closed even if an endpoint resolver can handle that Type.
 
-Generated API 5 requires the exact identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`. API4 binaries, or a different API5 development identity, are rejected; a shared numeric API version alone is insufficient.
+Generated API 5 requires the exact identity `sharplink-3.0-api5-v1`. API4 binaries, or a different API5 development identity, are rejected; a shared numeric API version alone is insufficient.
 
 ## Standalone runtime codec use
 

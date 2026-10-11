@@ -45,8 +45,7 @@ public partial class RpcGenerator
         sb.AppendLine($"    public long InterfaceHash => {model.Hash}L;");
         AppendStubCodecFieldsAndConstructor(sb, model, concreteCodecTypes);
         AppendSizeFieldsByType(sb, model.Methods);
-        AppendCancellationSupport(sb, model.Methods);
-        AppendMethodDescriptors(sb, model);
+        AppendMethodShapeResolution(sb, model);
         AppendStubResponseAwaitHelpers(sb, responseMethods);
         sb.AppendLine($$"""
                             private static void __ValidateResponse<T>(T result, bool responseNullable)
@@ -234,54 +233,90 @@ public partial class RpcGenerator
     private static string GetStubResponseCodecField(RpcMethodModel method)
         => $"__responseCodec_{GetMethodSuffix(method)}";
 
-    private static void AppendCancellationSupport(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
+    /// <summary>
+    /// Emits the single generated method-fact table. Every compile-time fact about a method lives
+    /// here as one packed <c>RpcMethodShape</c> literal, so the server resolves a method once
+    /// per RPC instead of walking several per-method switches.
+    /// </summary>
+    private static void AppendMethodShapeResolution(StringBuilder sb, RpcInterfaceModel model)
     {
-        var cancellableMethods = methods
-            .Where(static method => method.HasCancellationToken ||
-                                    method.IsStreamReturn ||
-                                    method.Parameters.Any(static parameter => parameter.IsStream))
-            .ToArray();
-
-        if (cancellableMethods.Length == 0)
-        {
-            sb.AppendLine("    public bool SupportsCancellation(long methodHash) => false;");
-            return;
-        }
-
-        sb.AppendLine("    public bool SupportsCancellation(long methodHash)");
+        sb.AppendLine("    public RpcMethodShape ResolveMethodShape(long methodHash)");
         sb.AppendLine("        => methodHash switch");
-        sb.AppendLine("        {");
-        foreach (var method in cancellableMethods)
-            sb.AppendLine($"            {method.Hash}L => true,");
-        sb.AppendLine("            _ => false");
-        sb.AppendLine("        };");
-    }
-
-    private static void AppendMethodDescriptors(StringBuilder sb, RpcInterfaceModel model)
-    {
-        sb.AppendLine("    public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        switch (methodHash)");
         sb.AppendLine("        {");
         foreach (var method in model.Methods)
         {
-            var kind = GetMethodKind(method);
-            var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
-            var clientStreamCount = method.Parameters.Count(static parameter => parameter.IsStream);
-            var hasClientStreams = clientStreamCount != 0;
-            var methodTimeout = method.TimeoutTicks is { } ticks
-                ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
-                : "null";
-            sb.AppendLine($"            case {method.Hash}L:");
-            sb.AppendLine($"                descriptor = new RpcMethodDescriptor({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
-            sb.AppendLine("                return true;");
+            var packed = GetPackedMethodShape(method);
+            sb.AppendLine($"            {method.Hash}L => new RpcMethodShape(0x{packed:x8}u),");
         }
-        sb.AppendLine("            default:");
-        sb.AppendLine("                descriptor = default;");
-        sb.AppendLine("                return false;");
-        sb.AppendLine("        }");
-        sb.AppendLine("    }");
+        sb.AppendLine("            _ => RpcMethodShape.UnknownMethod");
+        sb.AppendLine("        };");
+        sb.AppendLine();
+
+        // Timeout values live on the cold descriptor path, keyed by the full method hash.
+        // The packed hot-path shape therefore imposes no limit on distinct timeout values.
+        sb.AppendLine("    public void DescribeMethod(long methodHash, RpcMethodShape shape, out RpcMethodDescriptor descriptor)");
+        sb.AppendLine("        => descriptor = RpcMethodDescriptor.FromShape(");
+        sb.AppendLine("            InterfaceHash,");
+        sb.AppendLine("            methodHash,");
+        sb.AppendLine("            shape,");
+        sb.AppendLine("            shape.HasMethodTimeout && shape.HasMethodTimeoutValue ? methodHash switch");
+        sb.AppendLine("            {");
+        foreach (var method in model.Methods)
+        {
+            if (method.TimeoutTicks is { } ticks)
+                sb.AppendLine($"                {method.Hash}L => TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L),");
+        }
+        sb.AppendLine("                _ => (TimeSpan?)null");
+        sb.AppendLine("            } : null);");
+        sb.AppendLine();
     }
+
+    /// <summary>Packs every generated fact about one method into its <c>RpcMethodShape</c> word.</summary>
+    private static uint GetPackedMethodShape(RpcMethodModel method)
+    {
+        const uint resolutionKnown = 2u;
+        const uint kindShift = 2;
+        const uint clientStreamCountShift = 5;
+        const uint supportsCancellationBit = 1u << 12;
+        const uint hasResponsePayloadBit = 1u << 13;
+        const uint responseNullableBit = 1u << 14;
+        const uint hasMethodTimeoutBit = 1u << 15;
+        const uint isIdempotentBit = 1u << 16;
+        const uint hasMethodTimeoutValueBit = 1u << 17;
+
+        var kind = (uint)GetMethodKindValue(method);
+        var clientStreamCount = (uint)method.Parameters.Count(static parameter => parameter.IsStream);
+        var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
+
+        return resolutionKnown
+            | ((kind & 0b111u) << (int)kindShift)
+            | ((clientStreamCount & 0b1111111u) << (int)clientStreamCountShift)
+            | (MethodSupportsCancellation(method) ? supportsCancellationBit : 0u)
+            | (hasPayloadResponse ? hasResponsePayloadBit : 0u)
+            | (method.ResponseNullable ? responseNullableBit : 0u)
+            | (method.HasTimeoutAttribute ? hasMethodTimeoutBit : 0u)
+            | (method.IsIdempotent ? isIdempotentBit : 0u)
+            | (method.TimeoutTicks is not null ? hasMethodTimeoutValueBit : 0u);
+    }
+
+    /// <summary>Maps the generated method kind name onto its packed numeric value.</summary>
+    private static int GetMethodKindValue(RpcMethodModel method) => GetMethodKind(method) switch
+    {
+        "OneWay" => 1,
+        "ClientStreaming" => 2,
+        "ServerStreaming" => 3,
+        "DuplexStreaming" => 4,
+        _ => 0
+    };
+
+    /// <summary>
+    /// Keeps the packed cancellation fact identical to the legacy standalone
+    /// <c>SupportsCancellation(long)</c> switch so generated tables cannot drift.
+    /// </summary>
+    private static bool MethodSupportsCancellation(RpcMethodModel method)
+        => method.HasCancellationToken ||
+           method.IsStreamReturn ||
+           method.Parameters.Any(static parameter => parameter.IsStream);
 
     private static void AppendStubDispatchCases(
         StringBuilder sb,

@@ -74,8 +74,7 @@ public sealed class SharpLinkGeneratedAssemblyManifestAttribute : Attribute
 public sealed record SharpLinkGeneratedMethodDescriptor(
     string Name,
     long MethodId,
-    RpcMethodKind Kind,
-    bool SupportsCancellation,
+    RpcMethodShape Shape,
     string RequestSchema,
     string ResponseSchema,
     string Fingerprint);
@@ -160,7 +159,7 @@ public static class SharpLinkGeneratedManifestVersions
     public const int Api = 5;
 
     /// <summary>Exact discriminator for the 3.0/API5 generated UnsafeBlit factory ABI.</summary>
-    public const string AbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
+    public const string AbiIdentity = "sharplink-3.0-api5-v1";
 
     /// <summary>The unchanged SharpLink wire protocol version.</summary>
     public const int Protocol = 2;

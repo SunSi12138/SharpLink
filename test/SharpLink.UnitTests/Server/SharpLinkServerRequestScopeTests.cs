@@ -384,6 +384,8 @@ public class SharpLinkServerRequestScopeTests
                 null,
                 null,
                 false,
+                null,
+                // No pre-resolved call: the dispatch path resolves the shape from the stub.
                 null
             ])!;
 
@@ -400,6 +402,8 @@ public class SharpLinkServerRequestScopeTests
                 null,
                 false,
                 0,
+                null,
+                // No pre-resolved call: the dispatch path resolves the shape from the stub.
                 null
             ])!;
 
@@ -437,18 +441,14 @@ public class SharpLinkServerRequestScopeTests
 
         public long InterfaceHash { get; } = interfaceHash;
 
-        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
-        {
-            descriptor = new RpcMethodDescriptor(
-                InterfaceHash,
-                methodHash,
-                kind,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-            return methodHash == MethodHash;
-        }
+        public RpcMethodShape ResolveMethodShape(long methodHash)
+            => methodHash == MethodHash
+                ? new RpcMethodShape(
+                    kind,
+                    clientStreamCount: 0,
+                    supportsCancellation: true,
+                    hasResponsePayload: false)
+                : RpcMethodShape.UnknownMethod;
 
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args)

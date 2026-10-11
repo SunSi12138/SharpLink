@@ -41,7 +41,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$EXE" sharedmemory --role client --shm-name "$NAME" | tee "$CLIENT_LOG"
+# Print the server's redirected startup/handshake diagnostics when NativeAOT cannot
+# establish the shared-memory session. Do not skip or downgrade the smoke test.
+if ! "$EXE" sharedmemory --role client --shm-name "$NAME" | tee "$CLIENT_LOG"; then
+  echo "NativeAOT client failed; server startup log follows:" >&2
+  if [[ -f "$SERVER_LOG" ]]; then
+    cat "$SERVER_LOG" >&2
+  fi
+  exit 1
+fi
 : >"$COMPLETION_FILE"
 wait "$SERVER_PID"
 grep -q "REFERENCED_SERVICE_PASS" "$CLIENT_LOG"

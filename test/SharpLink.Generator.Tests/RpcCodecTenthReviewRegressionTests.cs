@@ -221,7 +221,7 @@ public interface IAliasOnlyAdapterContract : IService
 using System;
 
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute(typeof(Referenced.Payload), 0x5555555555555555UL, {{low}}UL)]
-[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 5, 2, "3.0.0-test", "sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
+[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 5, 2, "3.0.0-test", "sharplink-3.0-api5-v1")]
 
 namespace SharpLink.Abstractions
 {
@@ -359,19 +359,25 @@ public interface IReferencedCodecContract : IService
 }
 """;
 
-        var stale = GeneratedPayloadReference(
-            "StaleGeneratedPayload",
-            "sharplink-2.0-api4-rpcchannel-codec-provider-v3");
-        var staleDiagnostics = RunGenerator(consumer, sdk, stale);
-        Ensure(
-            staleDiagnostics.Any(static diagnostic =>
-                diagnostic.GetMessage().Contains("incompatible SharpLink generated ABI", StringComparison.Ordinal) &&
-                diagnostic.GetMessage().Contains("Rebuild/regenerate", StringComparison.Ordinal)),
-            $"a referenced CodecHash with the same API number but a different exact ABI identity must be rejected with a rebuild/regenerate diagnostic. Actual: {FormatDiagnostics(staleDiagnostics)}");
+        foreach (var staleIdentity in new[]
+        {
+            "sharplink-2.0-api4-rpcchannel-codec-provider-v3",
+            "sharplink-3.0-api5-rpcchannel-codec-provider-v1",
+            "sharplink-3.0-api5-owner-bound-unsafe-blit-v1"
+        })
+        {
+            var stale = GeneratedPayloadReference("StaleGeneratedPayload", staleIdentity);
+            var staleDiagnostics = RunGenerator(consumer, sdk, stale);
+            Ensure(
+                staleDiagnostics.Any(static diagnostic =>
+                    diagnostic.GetMessage().Contains("incompatible SharpLink generated ABI", StringComparison.Ordinal) &&
+                    diagnostic.GetMessage().Contains("Rebuild/regenerate", StringComparison.Ordinal)),
+                $"referenced CodecHash identity {staleIdentity} must require regeneration. Actual: {FormatDiagnostics(staleDiagnostics)}");
+        }
 
         var current = GeneratedPayloadReference(
             "CurrentGeneratedPayload",
-            "sharplink-3.0-api5-owner-bound-unsafe-blit-v1");
+            "sharplink-3.0-api5-v1");
         var currentDiagnostics = RunGenerator(consumer, sdk, current);
         Ensure(
             !currentDiagnostics.Any(static diagnostic =>

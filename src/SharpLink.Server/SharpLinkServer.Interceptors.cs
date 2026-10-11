@@ -3,27 +3,26 @@ namespace SharpLink.Server;
 internal sealed partial class SharpLinkServer
 {
     private ValueTask InvokeServiceAsync(
-        ServiceRegistration registration,
+        in ResolvedMethodCall resolved,
         ServerConnectionState connection,
         RpcSession session,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
     {
+        var registration = resolved.Registration;
         if (registration.TryGetStaticSingleton(
                 connection.GeneratedBridge,
                 requestId,
                 out var singleton))
         {
             return InvokeServiceTrackedAsync(
-                registration.Stub,
+                resolved,
                 singleton,
                 session,
                 connection.GeneratedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
@@ -33,14 +32,12 @@ internal sealed partial class SharpLinkServer
 
         var isStream = false;
         var hasRequestStreams = false;
-        RpcMethodDescriptor? methodDescriptor = null;
-        if (registration.HasModule)
+        if (resolved.IsDynamicModule)
         {
-            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
-            methodDescriptor = descriptor;
-            isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
-                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
-            hasRequestStreams = descriptor.Kind is RpcMethodKind.ClientStreaming or
+            isStream = resolved.Shape.Kind is RpcMethodKind.ClientStreaming or
+                RpcMethodKind.ServerStreaming or
+                RpcMethodKind.DuplexStreaming;
+            hasRequestStreams = resolved.Shape.Kind is RpcMethodKind.ClientStreaming or
                 RpcMethodKind.DuplexStreaming;
         }
 
@@ -55,17 +52,15 @@ internal sealed partial class SharpLinkServer
                     out dynamicSingletonLease))
             {
                 var invocation = InvokeServiceTrackedAsync(
-                    registration.Stub,
+                    resolved,
                     dynamicSingleton,
                     session,
                     connection.GeneratedBridge,
-                    methodId,
                     requestId,
                     arguments,
                     output,
                     cancellationToken,
-                    context,
-                    methodDescriptor);
+                    context);
                 return CompleteDynamicSingletonInvocationAsync(
                     invocation,
                     dynamicSingletonLease,
@@ -77,7 +72,7 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
+                resolved.ContractId, resolved.MethodHash, resolved.Shape, requestId);
             failedTelemetry.Complete(exception);
             return CompleteDynamicSingletonInvocationAsync(
                 ValueTask.FromException(exception),
@@ -99,7 +94,7 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId), requestId);
+                resolved.ContractId, resolved.MethodHash, resolved.Shape, requestId);
             failedTelemetry.Complete(exception);
             throw;
         }
@@ -108,32 +103,28 @@ internal sealed partial class SharpLinkServer
         {
             return InvokeServiceAfterAcquisitionAsync(
                 acquisition,
-                registration.Stub,
+                resolved,
                 session,
                 connection.GeneratedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
                 cancellationToken,
                 context,
-                hasRequestStreams,
-                methodDescriptor);
+                hasRequestStreams);
         }
 
         return InvokeAcquiredServiceAsync(
-            registration.Stub,
+            resolved,
             acquisition.Result,
             session,
             connection.GeneratedBridge,
-            methodId,
             requestId,
             arguments,
             output,
             cancellationToken,
             context,
-            hasRequestStreams,
-            methodDescriptor);
+            hasRequestStreams);
     }
 
     private static async ValueTask CompleteDynamicSingletonInvocationAsync(
@@ -177,63 +168,55 @@ internal sealed partial class SharpLinkServer
     }
 
     private ValueTask InvokeAcquiredServiceAsync(
-        IRpcStub stub,
+        in ResolvedMethodCall resolved,
         ServiceLease lease,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor)
+        bool hasRequestStreams)
     {
         if (!lease.RequiresDisposal)
         {
             return InvokeServiceTrackedAsync(
-                stub,
+                resolved,
                 lease.Service,
                 session,
                 generatedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
                 cancellationToken,
-                context,
-                methodDescriptor);
+                context);
         }
 
         return InvokeServiceWithLeaseAsync(
-            stub,
+            resolved,
             lease,
             session,
             generatedBridge,
-            methodId,
             requestId,
             arguments,
             output,
             cancellationToken,
             context,
-            hasRequestStreams,
-            methodDescriptor);
+            hasRequestStreams);
     }
 
     private async ValueTask InvokeServiceAfterAcquisitionAsync(
         ValueTask<ServiceLease> acquisition,
-        IRpcStub stub,
+        ResolvedMethodCall resolved,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor)
+        bool hasRequestStreams)
     {
         ServiceLease lease;
         try
@@ -243,49 +226,45 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
-                methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+                resolved.ContractId, resolved.MethodHash, resolved.Shape, requestId);
             failedTelemetry.Complete(exception);
             throw;
         }
 
         await InvokeAcquiredServiceAsync(
-            stub,
+            resolved,
             lease,
             session,
             generatedBridge,
-            methodId,
             requestId,
             arguments,
             output,
             cancellationToken,
             context,
-            hasRequestStreams,
-            methodDescriptor).ConfigureAwait(false);
+            hasRequestStreams).ConfigureAwait(false);
     }
 
     private ValueTask InvokeServiceTrackedAsync(
-        IRpcStub stub,
+        in ResolvedMethodCall resolved,
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context,
-        RpcMethodDescriptor? methodDescriptor = null)
+        SharpLinkCallContextSnapshot context)
     {
         var telemetry = StartServerTelemetryCall(
-            methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
+            resolved.ContractId, resolved.MethodHash, resolved.Shape, requestId);
         try
         {
             var invocation = InvokeServiceCoreAsync(
-                stub,
+                resolved.Stub,
                 service,
                 session,
                 generatedBridge,
-                methodId,
+                resolved.MethodHash,
                 requestId,
                 arguments,
                 output,
@@ -308,34 +287,30 @@ internal sealed partial class SharpLinkServer
     }
 
     private async ValueTask InvokeServiceWithLeaseAsync(
-        IRpcStub stub,
+        ResolvedMethodCall resolved,
         ServiceLease lease,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams,
-        RpcMethodDescriptor? methodDescriptor)
+        bool hasRequestStreams)
     {
         Exception? terminalException = null;
         try
         {
             await InvokeServiceTrackedAsync(
-                stub,
+                resolved,
                 lease.Service,
                 session,
                 generatedBridge,
-                methodId,
                 requestId,
                 arguments,
                 output,
                 cancellationToken,
-                context,
-                methodDescriptor).ConfigureAwait(false);
+                context).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -559,13 +534,16 @@ internal sealed partial class SharpLinkServer
         RpcSession session,
         IRpcStub stub,
         long methodId,
+        RpcMethodShape shape,
         long requestId,
         CancellationToken cancellationToken)
     {
         var invocationContext = callContext as SharpLinkServerInvocationContext ??
             CreateServerInvocationContext(
                 session,
-                GetMethodDescriptor(stub, methodId),
+                stub,
+                methodId,
+                shape,
                 requestId,
                 callContext.Authentication,
                 callContext.LocalRpcDeadline,
@@ -636,6 +614,7 @@ internal sealed partial class SharpLinkServer
                 session,
                 serviceInfo.Stub,
                 methodId,
+                serviceInfo.Stub.ResolveMethodShape(methodId),
                 requestId,
                 CancellationToken.None);
         }

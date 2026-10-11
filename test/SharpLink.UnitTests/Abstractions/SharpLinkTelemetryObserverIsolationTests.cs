@@ -16,6 +16,12 @@ public sealed class SharpLinkTelemetryObserverIsolationTests
         HasMethodTimeout: false,
         MethodTimeout: null);
 
+    private static readonly RpcMethodShape MethodShape = new(
+        RpcMethodKind.Unary,
+        clientStreamCount: 0,
+        supportsCancellation: false,
+        hasResponsePayload: true);
+
     [Test]
     public void ThrowingMeterListenersShouldNotEscapeCallStartOrCompletion()
     {
@@ -24,7 +30,7 @@ public sealed class SharpLinkTelemetryObserverIsolationTests
         var success = SharpLinkTelemetry.StartClientCall(Method);
         success.Complete();
 
-        var failure = SharpLinkTelemetry.StartServerCall(Method, requestId: 7);
+        var failure = SharpLinkTelemetry.StartServerCall(Method.ContractId, Method.MethodId, MethodShape, requestId: 7);
         failure.Complete(new SharpLinkException(
             SharpLinkErrorCode.ResourceExhausted,
             "injected business failure"));
@@ -65,7 +71,7 @@ public sealed class SharpLinkTelemetryObserverIsolationTests
                    "sharplink.calls.failed",
                    measurements))
         {
-            var failure = SharpLinkTelemetry.StartServerCall(Method, requestId: 9);
+            var failure = SharpLinkTelemetry.StartServerCall(Method.ContractId, Method.MethodId, MethodShape, requestId: 9);
             measurements.Clear();
             failure.Complete(new SharpLinkException(
                 SharpLinkErrorCode.ResourceExhausted,
@@ -103,7 +109,7 @@ public sealed class SharpLinkTelemetryObserverIsolationTests
 
         var client = SharpLinkTelemetry.StartClientCall(Method);
         client.Complete();
-        var server = SharpLinkTelemetry.StartServerCall(Method, requestId: 8);
+        var server = SharpLinkTelemetry.StartServerCall(Method.ContractId, Method.MethodId, MethodShape, requestId: 8);
         server.Complete();
         var attempt = SharpLinkTelemetry.StartClientAttempt(Method, attempt: 1);
         attempt.Complete();
