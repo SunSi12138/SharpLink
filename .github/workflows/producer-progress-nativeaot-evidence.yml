@@ -1,0 +1,167 @@
+name: Producer Progress NativeAOT Attribution
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'test/SharpLink.ProducerProgressAotEvidence/**'
+      - 'src/SharpLink.Client/PendingRequestTable.cs'
+      - 'src/SharpLink.Client/ClientConnection.cs'
+      - '.github/workflows/producer-progress-nativeaot-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-rpc-ab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+      - name: Pin identical source on exact base
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/artifacts/performance/producer-progress-aot"
+          mkdir -p "$ROOT/raw" "$ROOT/builds"
+          git rev-parse HEAD > "$ROOT/candidate.txt"
+          echo "$BASE_SHA" > "$ROOT/base.txt"
+          dotnet --info > "$ROOT/dotnet-info.txt"
+          lscpu > "$ROOT/cpu.txt"
+          BASE_WORKTREE="$RUNNER_TEMP/issue737-native-base"
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git worktree add --detach "$BASE_WORKTREE" "$BASE_SHA"
+          cp -a test/SharpLink.ProducerProgressAotEvidence "$BASE_WORKTREE/test/"
+          cp test/SharpLink.Benchmarks/BenchmarkContracts.cs "$BASE_WORKTREE/test/SharpLink.Benchmarks/BenchmarkContracts.cs"
+          cp test/SharpLink.Benchmarks/BenchmarkService.cs "$BASE_WORKTREE/test/SharpLink.Benchmarks/BenchmarkService.cs"
+          echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
+      - name: Publish JIT and NativeAOT with the same probe source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/artifacts/performance/producer-progress-aot"
+          for mode in jit native; do
+            if [[ "$mode" == native ]]; then aot=true; selfcontained=true; else aot=false; selfcontained=false; fi
+            for revision in base candidate; do
+              if [[ "$revision" == base ]]; then source="$BASE_WORKTREE"; else source="$GITHUB_WORKSPACE"; fi
+              project="$source/test/SharpLink.ProducerProgressAotEvidence/SharpLink.ProducerProgressAotEvidence.csproj"
+              dotnet publish "$project" -c Release -r linux-x64 \
+                -p:PublishAot="$aot" --self-contained "$selfcontained" \
+                -o "$ROOT/builds/$mode-$revision" -v minimal \
+                > "$ROOT/build-$mode-$revision.log" 2>&1 || {
+                  cat "$ROOT/build-$mode-$revision.log"; exit 1;
+                }
+            done
+          done
+          stat -c '%s' "$ROOT/builds/native-base/SharpLink.Benchmarks" > "$ROOT/base-image-bytes.txt"
+          stat -c '%s' "$ROOT/builds/native-candidate/SharpLink.Benchmarks" > "$ROOT/candidate-image-bytes.txt"
+      - name: Run balanced equal-work A/B and A/A controls
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/artifacts/performance/producer-progress-aot"
+          for mode in jit native; do
+            for rep in 0 1 2 3; do
+              if (( rep % 2 == 0 )); then order="base candidate"; else order="candidate base"; fi
+              for transport in tcp sharedmemory; do
+                for scenario in Client100x16 ClientMulti2x100x4 ClientMulti2x1024x4Gated ClientMulti2x1024x4ConcurrentGated; do
+                  for revision in $order; do
+                    if [[ "$revision" == base ]]; then sha="$BASE_SHA"; else sha="$HEAD_SHA"; fi
+                    output="$ROOT/raw/$mode-$transport-$scenario-$revision-r$rep.txt"
+                    if [[ "$mode" == native ]]; then
+                      "$ROOT/builds/native-$revision/SharpLink.Benchmarks" "$transport" "$scenario" 40 300 "$sha" "$output" >> "$ROOT/probe.log"
+                    else
+                      dotnet "$ROOT/builds/jit-$revision/SharpLink.Benchmarks.dll" "$transport" "$scenario" 40 300 "$sha" "$output" >> "$ROOT/probe.log"
+                    fi
+                  done
+                done
+                for aaScenario in ClientMulti2x1024x4Gated ClientMulti2x1024x4ConcurrentGated; do
+                  for slot in baseA baseB; do
+                    output="$ROOT/raw/$mode-$transport-$aaScenario-$slot-r$rep.txt"
+                    if [[ "$mode" == native ]]; then
+                      "$ROOT/builds/native-base/SharpLink.Benchmarks" "$transport" "$aaScenario" 40 300 "$BASE_SHA" "$output" >> "$ROOT/probe.log"
+                    else
+                      dotnet "$ROOT/builds/jit-base/SharpLink.Benchmarks.dll" "$transport" "$aaScenario" 40 300 "$BASE_SHA" "$output" >> "$ROOT/probe.log"
+                    fi
+                  done
+                done
+              done
+            done
+          done
+      - name: Validate and summarize fixed-work evidence
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from collections import defaultdict
+          import statistics
+          root=Path('artifacts/performance/producer-progress-aot')
+          base=(root/'base.txt').read_text().strip()
+          head=(root/'candidate.txt').read_text().strip()
+          docs={}
+          for path in (root/'raw').glob('*.txt'):
+              mode,transport,scenario,revision,rep=path.stem.rsplit('-',4)
+              d=dict(s.split('=',1) for s in path.read_text().splitlines())
+              assert d['revision']==(head if revision=='candidate' else base),path
+              assert d['transport']==transport and d['scenario']==scenario,path
+              assert int(d['measuredOperations'])==300,path
+              docs[(mode,transport,scenario,revision,rep)]=d
+          if len(docs)!=192:
+              raise SystemExit(f'expected 192 exact-work reports, got {len(docs)}')
+          by_group=defaultdict(dict)
+          for (mode,tr,scenario,rev,rep),d in docs.items():
+              by_group[mode,tr,scenario,rep][rev]=d
+          rows=[]
+          for (mode,tr,sc,rep),group in sorted(by_group.items()):
+              for kind,first,second in (('A/B','base','candidate'),('A/A','baseA','baseB')):
+                  if first not in group and second not in group:
+                      continue
+                  if first not in group or second not in group:
+                      raise SystemExit(f'Incomplete pair {mode}/{tr}/{sc}/{rep}/{kind}')
+                  a,b=group[first],group[second]
+                  pct=lambda field:100*(float(b[field])/float(a[field])-1)
+                  rows.append((mode,tr,sc,kind,rep,pct('throughputOperationsPerSecond'),
+                               pct('cpuMicrosecondsPerOperation'),
+                               float(b['allocationBytesPerOperation'])-float(a['allocationBytesPerOperation']),
+                               pct('p99Microseconds')))
+          lines=['# #737 equal-work JIT / NativeAOT evidence','',
+                 '40 warmup and exactly 300 measured streams per process; 4 balanced AB/BA repeats.',
+                 'A/A controls replay identical base binary to estimate run-to-run noise.',
+                 'Separate NativeAOT images may still have code-layout differences.','',
+                 '| Runtime | Transport | Scenario | Pair | Throughput median [min,max] | CPU median | Allocation B/op median | P99 median |',
+                 '|---|---|---|---|---:|---:|---:|---:|']
+          for key in sorted(set(row[:4] for row in rows)):
+              group=[row for row in rows if row[:4]==key]
+              assert len(group)==4
+              q=[row[5] for row in group]
+              median=lambda i:statistics.median(row[i] for row in group)
+              lines.append(f'| {key[0]} | {key[1]} | {key[2]} | {key[3]} | '
+                           f'{median(5):+.2f}% [{min(q):+.2f},{max(q):+.2f}] | '
+                           f'{median(6):+.2f}% | {median(7):+.1f} | {median(8):+.2f}% |')
+          (root/'summary.md').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          PY
+          cat artifacts/performance/producer-progress-aot/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload measurements and build diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: producer-progress-aot-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/performance/producer-progress-aot/*.txt
+            artifacts/performance/producer-progress-aot/*.md
+            artifacts/performance/producer-progress-aot/*.log
+            artifacts/performance/producer-progress-aot/raw/*.txt
+          if-no-files-found: warn
+          retention-days: 30

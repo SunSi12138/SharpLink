@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Runtime;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -96,6 +98,7 @@ internal static class GeneratedAbiStreamingEvidenceRunner
         var resultDocument = new GeneratedAbiStreamingEvidenceResult
         {
             Commit = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_SHA") ?? "unknown",
+            Transport = benchmark.Transport,
             Scenario = scenario.ToString(),
             Shape = benchmark.Shape,
             ItemCount = benchmark.ItemCount,
@@ -175,13 +178,16 @@ internal static class GeneratedAbiStreamingEvidenceRunner
         markdown.AppendLine($"- Tiered compilation / PGO: `{SingleValue(results.Select(static item => $"{item.TieredCompilation}/{item.TieredPgo}"))}`");
         markdown.AppendLine($"- Raw runs: {results.Count}; validation failures: {results.Sum(static item => item.ValidationFailures)}");
         markdown.AppendLine();
-        markdown.AppendLine("| Scenario | Runs | Items | Item bytes | Ops/s | Items/s | P50 us | P99 us | CPU us/op | Alloc B/op | Alloc B/item |");
-        markdown.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
-        foreach (var group in results.GroupBy(static item => item.Scenario).OrderBy(static group => group.Key))
+        markdown.AppendLine("| Transport | Scenario | Runs | Items | Item bytes | Ops/s | Items/s | P50 us | P99 us | CPU us/op | Alloc B/op | Alloc B/item |");
+        markdown.AppendLine("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+        foreach (var group in results
+                     .GroupBy(static item => (item.Transport, item.Scenario))
+                     .OrderBy(static group => group.Key.Transport, StringComparer.Ordinal)
+                     .ThenBy(static group => group.Key.Scenario, StringComparer.Ordinal))
         {
             var items = group.ToArray();
             markdown.AppendLine(
-                $"| {group.Key} | {items.Length} | {SingleValue(items.Select(static item => item.ItemCount))} | " +
+                $"| {group.Key.Transport} | {group.Key.Scenario} | {items.Length} | {SingleValue(items.Select(static item => item.ItemCount))} | " +
                 $"{SingleValue(items.Select(static item => item.ItemBytes))} | " +
                 $"{Median(items.Select(static item => item.ThroughputOperationsPerSecond)):F1} | " +
                 $"{Median(items.Select(static item => item.ThroughputItemsPerSecond)):F1} | " +
@@ -266,6 +272,9 @@ internal enum GeneratedAbiStreamingScenario
     Server100x4096,
     Client100x16,
     Client100x4096,
+    ClientMulti2x100x4,
+    ClientMulti2x1024x4Gated,
+    ClientMulti2x1024x4ConcurrentGated,
     Duplex100x16,
     Duplex100x4096
 }
@@ -276,22 +285,25 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
 
     private GeneratedAbiStreamingCase(
         BenchmarkEnvironment environment,
+        string transport,
         GeneratedAbiStreamingScenario scenario,
         string shape,
         int itemCount,
         int itemBytes,
+        long expectedResult,
         Func<ValueTask<long>> invokeAsync)
     {
         _environment = environment;
+        Transport = transport;
         Scenario = scenario;
         Shape = shape;
         ItemCount = itemCount;
         ItemBytes = itemBytes;
+        ExpectedResult = expectedResult;
         InvokeAsync = invokeAsync;
-        ExpectedResult = itemCount * BenchmarkRpcService.GetPayloadScore(
-            BenchmarkRpcService.GetPayload(itemBytes));
     }
 
+    public string Transport { get; }
     public GeneratedAbiStreamingScenario Scenario { get; }
     public string Shape { get; }
     public int ItemCount { get; }
@@ -302,12 +314,64 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
     public static async Task<GeneratedAbiStreamingCase> CreateAsync(
         GeneratedAbiStreamingScenario scenario)
     {
-        var environment = await BenchmarkEnvironment.CreateAsync().ConfigureAwait(false);
+        var transport = (Environment.GetEnvironmentVariable("SHARPLINK_STREAMING_TRANSPORT") ?? "tcp")
+            .Trim()
+            .ToLowerInvariant();
+        var environment = transport switch
+        {
+            "tcp" => await BenchmarkEnvironment.CreateAsync().ConfigureAwait(false),
+            "sharedmemory" => await BenchmarkEnvironment.CreateSharedMemoryAsync().ConfigureAwait(false),
+            _ => throw new ArgumentException(
+                $"Unsupported SHARPLINK_STREAMING_TRANSPORT '{transport}'.")
+        };
         try
         {
             var (shape, itemCount, itemBytes) = GetDimensions(scenario);
+            if (shape is "ClientMultiStream" or "ClientMultiStreamGated" or "ClientMultiStreamConcurrent")
+            {
+                var left = Enumerable.Range(0, itemCount / 2).ToArray();
+                var right = Enumerable.Range(itemCount / 2, itemCount / 2).ToArray();
+                var expected = left.Sum(static value => (long)value) +
+                               right.Sum(static value => (long)value);
+                Func<ValueTask<long>> invokeMulti;
+                if (shape is "ClientMultiStreamGated" or "ClientMultiStreamConcurrent")
+                {
+                    // A fast synchronous iterator can run its first stream to completion before
+                    // the generated Task.WhenAll writer even starts the second stream. Gate only
+                    // the first MoveNext for each producer so this controls that false-serial case
+                    // without imposing a scheduler hop on every item.
+                    invokeMulti = async () =>
+                    {
+                        var gate = new TwoProducerStartGate();
+                        var leftSource = ToGatedStream(left, gate);
+                        var rightSource = ToGatedStream(right, gate);
+                        return shape == "ClientMultiStreamConcurrent"
+                            ? await environment.Rpc.MergeConcurrentStreamsAsync(
+                                leftSource, rightSource).ConfigureAwait(false)
+                            : await environment.Rpc.MergeStreamsAsync(
+                                leftSource, rightSource).ConfigureAwait(false);
+                    };
+                }
+                else
+                {
+                    invokeMulti = async () => await environment.Rpc.MergeStreamsAsync(
+                        BenchmarkEnvironment.ToStream(left),
+                        BenchmarkEnvironment.ToStream(right)).ConfigureAwait(false);
+                }
+                return new GeneratedAbiStreamingCase(
+                    environment,
+                    transport,
+                    scenario,
+                    shape,
+                    itemCount,
+                    itemBytes,
+                    expected,
+                    invokeMulti);
+            }
+
             var payload = BenchmarkRpcService.GetPayload(itemBytes);
             var payloads = Enumerable.Repeat(payload, itemCount).ToArray();
+            var expectedResult = itemCount * BenchmarkRpcService.GetPayloadScore(payload);
             Func<ValueTask<long>> invoke = shape switch
             {
                 "ServerStreaming" => () => InvokeServerStreamingAsync(
@@ -321,10 +385,12 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
             };
             return new GeneratedAbiStreamingCase(
                 environment,
+                transport,
                 scenario,
                 shape,
                 itemCount,
                 itemBytes,
+                expectedResult,
                 invoke);
         }
         catch
@@ -361,6 +427,35 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
         return score;
     }
 
+    private sealed class TwoProducerStartGate
+    {
+        private readonly TaskCompletionSource _bothEntered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _entered;
+
+        internal Task WaitAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _entered) == 2)
+                _bothEntered.TrySetResult();
+            // If either producer fails to enter, fail the measured RPC instead of hanging CI.
+            return _bothEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        }
+    }
+
+    private static async IAsyncEnumerable<int> ToGatedStream(
+        IReadOnlyList<int> items,
+        TwoProducerStartGate gate,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var item in items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return item;
+            await Task.CompletedTask;
+        }
+    }
+
     private static (string Shape, int ItemCount, int ItemBytes) GetDimensions(
         GeneratedAbiStreamingScenario scenario) => scenario switch
         {
@@ -369,6 +464,9 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
             GeneratedAbiStreamingScenario.Server100x4096 => ("ServerStreaming", 100, 4096),
             GeneratedAbiStreamingScenario.Client100x16 => ("ClientStreaming", 100, 16),
             GeneratedAbiStreamingScenario.Client100x4096 => ("ClientStreaming", 100, 4096),
+            GeneratedAbiStreamingScenario.ClientMulti2x100x4 => ("ClientMultiStream", 200, 4),
+            GeneratedAbiStreamingScenario.ClientMulti2x1024x4Gated => ("ClientMultiStreamGated", 2 * 1024, 4),
+            GeneratedAbiStreamingScenario.ClientMulti2x1024x4ConcurrentGated => ("ClientMultiStreamConcurrent", 2 * 1024, 4),
             GeneratedAbiStreamingScenario.Duplex100x16 => ("Duplex", 100, 16),
             GeneratedAbiStreamingScenario.Duplex100x4096 => ("Duplex", 100, 4096),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario), scenario, null)
@@ -378,6 +476,7 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
 internal sealed class GeneratedAbiStreamingEvidenceResult
 {
     public string Commit { get; init; } = string.Empty;
+    public string Transport { get; init; } = string.Empty;
     public string Scenario { get; init; } = string.Empty;
     public string Shape { get; init; } = string.Empty;
     public int ItemCount { get; init; }
