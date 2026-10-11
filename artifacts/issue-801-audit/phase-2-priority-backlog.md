@@ -4,20 +4,20 @@ Baseline `dev` @ `eb99fe887cf2129d9b88441245ca0a4a6406b6c2`. A/B/C/D are **refer
 
 ## Implementation progress on merged-#799 3.0 dev (2026-10-11)
 
-Initial semantic/experiment evidence below was captured on pre-#799 dev `eb99fe88`. The actual implementation PRs are based on the later **dev `a1f9ee2a` (which already includes merged #799)**. **None of the #801 PRs has been merged into dev.**
+Historical semantic/experiment evidence below was captured on pre-#799 dev `eb99fe88`. The initial implementation branches were based on `dev` `a1f9ee2a` (with #799 already merged). **PR #806 was subsequently merged into dev** as `d4cddbb17ba4dd3fc28046658db9fceafcac8d9f`. All other #801 cleanup PRs remain unmerged; PR #810 was rebuilt to remove the overlap with #806.
 
-- [#806 — retire standalone/endpoint dynamic Codec APIs](https://github.com/SunSi12138/SharpLink/pull/806), Ready; exact public API/package/desktop AOT checks passed.
+- [#806 — retire standalone/endpoint dynamic Codec APIs](https://github.com/SunSi12138/SharpLink/pull/806), **MERGED** into dev at `d4cddbb1`; exact public API/package/desktop AOT checks passed.
 - [#807 — remove ServerDecodeExecutor compatibility queue](https://github.com/SunSi12138/SharpLink/pull/807), Ready; 3 source/test files, `+137/-318`, full Unit/Gen/Integration and PR gates passed.
 - [#808 — compact SharpLinkClient 10 test-only callback fields](https://github.com/SunSi12138/SharpLink/pull/808), Ready; source and tests, Full Release/Unit/Gen/Integration, PR gates passed.
 - [#809 — compact PooledAsyncStreamDispatcher 9 test-only callback fields](https://github.com/SunSi12138/SharpLink/pull/809), Ready; corrected initial file-LOC gate regression; current exact-head PR Fast/Package Smoke/CodeQL passed.
-- [#810 — delete exact 45 verified unused non-public methods](https://github.com/SunSi12138/SharpLink/pull/810), Draft pending final mobile evidence + overlap with #806. The frozen method index's **three stale source-line coordinates** were matched to the same declarations on merged #799; 45 removed, one bodyless logger partial skipped. Full Release/Unit 2038/Gen 271/Integration 453 passed. Note one `RpcCodecProvider.TryGetExplicitCodec` overlap with #806 requires ordering/rebase.
+- [#810 — delete 44 remaining verified unused non-public methods](https://github.com/SunSi12138/SharpLink/pull/810), **rebased Draft** on dev `d4cddbb1` after #806 merged. Of the original 45 deletion candidates, `RpcCodecProvider.TryGetExplicitCodec<T>` was already removed by #806 and is now deliberately omitted. The frozen 45 remaining candidates removed 44 bodies, retaining one bodyless logger partial. [Merged-base exact-source validation #38116153659](https://github.com/SunSi12138/SharpLink/actions/runs/38116153659): full Release 0W/0E; UnitTests 2034, Generator 271, IntegrationTests 453 passed. New PR Fast/Package/Codec/Mobile checks running, and [fresh Windows/macOS exact-head NativeAOT #38116397841](https://github.com/SunSi12138/SharpLink/actions/runs/38116397841) scheduled. Older 45-method cross-platform evidence is historical and not attributed to this new SHA.
 - [#811 — remove IRpcChannel's fake client stream sink inheritance](https://github.com/SunSi12138/SharpLink/pull/811), Ready; 3.0 Abstractions ABI snapshot + migration guide; Release/Unit/Gen/Integration and PR gates passed.
 - [#812 — remove Server reflection-only lifecycle alias](https://github.com/SunSi12138/SharpLink/pull/812), Ready; migrate test to existing coordinator diagnostic method; PR gates passed.
 - [#813 — remove test-only unbounded RPC error sender](https://github.com/SunSi12138/SharpLink/pull/813), Ready; deadline tests now await the production backpressure method; PR gates passed.
 
 **Exact-head cross-platform NativeAOT:** [Windows x64 + macOS ARM64 GitHub Actions matrix #38115419654](https://github.com/SunSi12138/SharpLink/actions/runs/38115419654) **10/10 PASS** on the pinned source SHA of #807–#811. Each job ran real NativeAOT TCP, shared memory, SharpPack and pre-credit scenarios. Individual PR comments link job logs and artifacts. These claims concern desktops, not mobile physical hardware. #810's mobile CoreCLR matrix remains separate.
 
-All these PRs require human review before merge. [#805](https://github.com/SunSi12138/SharpLink/issues/805) covers public→internal and sealed design separately; do not mix it into these implementation PRs.
+The remaining PRs require human review before merge. PR #806 has already been merged via repository review and is no longer pending. [#805](https://github.com/SunSi12138/SharpLink/issues/805) covers public→internal and sealed design separately; do not mix it into these implementation PRs.
 
 ## Status update: executed next priority groups
 
