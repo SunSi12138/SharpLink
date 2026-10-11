@@ -60,7 +60,7 @@ jobs:
           --output artifacts/codec-compat/corpus
 
       - name: Upload codec corpus
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-corpus-${{ matrix.id }}
           path: artifacts/codec-compat/corpus
@@ -105,7 +105,7 @@ jobs:
           "$SHARPLINK_SDK_VERSION"
 
       - name: Upload browser WASM corpus
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-corpus-browser-wasm
           path: artifacts/codec-compat/browser-corpus
@@ -168,7 +168,7 @@ jobs:
           "$SHARPLINK_SDK_VERSION"
 
       - name: Upload Browser CoreCLR corpus
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-corpus-browser-coreclr-net11
           path: artifacts/codec-compat/browser-coreclr-corpus
@@ -209,7 +209,7 @@ jobs:
         run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
 
       - name: Download desktop producer corpora
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: codec-corpus-*
           path: artifacts/codec-compat/producers
@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload verification diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-verification-${{ matrix.id }}
           path: |
@@ -257,14 +257,14 @@ jobs:
         run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
 
       - name: Download desktop producer corpora
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: codec-corpus-*
           path: artifacts/codec-compat/producers
           merge-multiple: false
 
       - name: Download browser producer corpus
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-evidence-corpus-browser-wasm
           path: artifacts/codec-compat/producers/codec-evidence-corpus-browser-wasm
@@ -305,7 +305,7 @@ jobs:
 
       - name: Upload browser WASM verification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-verification-browser-wasm
           path: artifacts/codec-compat/browser-verification/verification.json
@@ -342,13 +342,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download browser producer corpus
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-evidence-corpus-browser-wasm
           path: artifacts/codec-compat/browser-producer
 
       - name: Download matching desktop corpus for raw-layout reference
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-corpus-${{ matrix.id }}
           path: artifacts/codec-compat/local-desktop-corpus
@@ -400,7 +400,7 @@ jobs:
 
       - name: Upload Browser-to-desktop verification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-verification-browser-to-${{ matrix.id }}
           path: |
@@ -449,20 +449,20 @@ jobs:
           echo "SHARPLINK_SDK_VERSION=$actual" >> "$GITHUB_ENV"
 
       - name: Download desktop producer corpora
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: codec-corpus-*
           path: artifacts/codec-compat/coreclr-producers
           merge-multiple: false
 
       - name: Download Browser Mono producer corpus
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-evidence-corpus-browser-wasm
           path: artifacts/codec-compat/coreclr-producers/codec-evidence-corpus-browser-mono-net10
 
       - name: Download Browser CoreCLR producer corpus
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-evidence-corpus-browser-coreclr-net11
           path: artifacts/codec-compat/coreclr-producers/codec-evidence-corpus-browser-coreclr-net11
@@ -504,7 +504,7 @@ jobs:
 
       - name: Upload Browser CoreCLR verification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-verification-browser-coreclr-net11
           path: artifacts/codec-compat/browser-coreclr-verification/verification.json
@@ -541,13 +541,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download Browser CoreCLR producer corpus
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-evidence-corpus-browser-coreclr-net11
           path: artifacts/codec-compat/browser-coreclr-producer
 
       - name: Download matching desktop corpus for raw-layout reference
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-corpus-${{ matrix.id }}
           path: artifacts/codec-compat/local-desktop-corpus
@@ -599,7 +599,7 @@ jobs:
 
       - name: Upload Browser CoreCLR-to-desktop verification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-verification-browser-coreclr-to-${{ matrix.id }}
           path: |
@@ -619,13 +619,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download Browser CoreCLR consumer evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-evidence-verification-browser-coreclr-net11
           path: artifacts/codec-compat/browser-coreclr-forward
 
       - name: Download Browser CoreCLR-to-desktop evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: codec-evidence-verification-browser-coreclr-to-*
           path: artifacts/codec-compat/browser-coreclr-reverse
@@ -649,13 +649,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download Browser consumer evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-evidence-verification-browser-wasm
           path: artifacts/codec-compat/browser-forward
 
       - name: Download Browser-to-desktop evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: codec-evidence-verification-browser-to-*
           path: artifacts/codec-compat/browser-reverse
@@ -687,7 +687,7 @@ jobs:
         run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
 
       - name: Download desktop verification reports
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: codec-verification-*
           path: artifacts/codec-compat/verifications
@@ -713,7 +713,7 @@ jobs:
 
       - name: Upload compatibility summary
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-compatibility-summary
           path: artifacts/codec-compat/summary
