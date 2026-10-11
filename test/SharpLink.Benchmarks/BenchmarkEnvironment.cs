@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,6 +43,50 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         _serverReadProbe = serverReadProbe;
     }
 
+    // This is benchmark-only, and intentionally also compiles against the fixed dev
+    // baseline, which has no writer-owned switch. A request for an unsupported mode
+    // fails immediately rather than silently benchmarking legacy code.
+    private static Action<SharpLinkRuntimeOptions>? WithWriterOwnedBenchmarkSelection(
+        Action<SharpLinkRuntimeOptions>? original)
+    {
+        if (Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_WRITER_OWNED") != "1")
+            return original;
+        return options =>
+        {
+            original?.Invoke(options);
+            var selection = typeof(SharpLinkFlowControlOptions).GetProperty(
+                "WriterOwnedStreams", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (selection is null || selection.PropertyType != typeof(bool))
+                throw new NotSupportedException("This revision cannot enable the B3 sender.");
+            selection.SetValue(options.FlowControl, true);
+            if (selection.GetValue(options.FlowControl) is not true)
+                throw new InvalidOperationException("Benchmark B3 selection was not enabled.");
+        };
+    }
+
+    // Check the actual negotiated session, not only the mutable builder flag.
+    // Without this check a successful run could accidentally measure legacy code.
+    internal void AssertWriterOwnedBenchmarkMode()
+    {
+        if (Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_WRITER_OWNED") != "1")
+            return;
+        if (_client is not SharpLinkClient client)
+            throw new InvalidOperationException("The benchmark did not create a SharpLink client.");
+        var ready = typeof(SharpLinkClient).GetField("_readyConnections",
+            BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(client) as Array;
+        if (ready is null || ready.Length == 0)
+            throw new InvalidOperationException("No connected benchmark session to verify.");
+        foreach (var connection in ready)
+        {
+            var session = connection!.GetType().GetProperty("Session",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(connection);
+            var selected = session?.GetType().GetProperty("UsesWriterOwnedStreams",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(session);
+            if (selected is not true)
+                throw new InvalidOperationException("B3 was requested but the connected session uses legacy credit.");
+        }
+    }
+
     public static async Task<BenchmarkEnvironment> CreateAsync(
         Action<SharpLinkServerBuilder>? configureServer = null,
         Action<SharpLinkRuntimeOptions>? configureServerRuntime = null,
@@ -55,8 +100,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
 
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback.ToString());
-        if (configureServerRuntime is not null)
-            serverBuilder.UseRuntime(configureServerRuntime);
+        var serverRuntimeConfiguration = WithWriterOwnedBenchmarkSelection(configureServerRuntime);
+        if (serverRuntimeConfiguration is not null)
+            serverBuilder.UseRuntime(serverRuntimeConfiguration);
         configureServer?.Invoke(serverBuilder);
 
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -78,8 +124,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var client = createClientBuilder?.Invoke(port) ?? SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port);
         client.DisableRequestTimeout();
-        if (configureClientRuntime is not null)
-            client.UseRuntime(configureClientRuntime);
+        var clientRuntimeConfiguration = WithWriterOwnedBenchmarkSelection(configureClientRuntime);
+        if (clientRuntimeConfiguration is not null)
+            client.UseRuntime(clientRuntimeConfiguration);
         var builtClient = client.Build();
         configureBuiltClient?.Invoke(builtClient);
 
@@ -108,8 +155,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTransport(serverReadProbe?.Wrap(transport) ?? transport)
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
-        if (configureServerRuntime is not null)
-            serverBuilder.UseRuntime(configureServerRuntime);
+        var serverRuntimeConfiguration = WithWriterOwnedBenchmarkSelection(configureServerRuntime);
+        if (serverRuntimeConfiguration is not null)
+            serverBuilder.UseRuntime(serverRuntimeConfiguration);
         serverBuilder.ReplaceService<IBenchmarkRpc>(localService);
         var server = serverBuilder.Build();
         configureBuiltServer?.Invoke(server);
@@ -129,8 +177,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             .UseSharedMemory(name)
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
         clientBuilder.DisableRequestTimeout();
-        if (configureClientRuntime is not null)
-            clientBuilder.UseRuntime(configureClientRuntime);
+        var clientRuntimeConfiguration = WithWriterOwnedBenchmarkSelection(configureClientRuntime);
+        if (clientRuntimeConfiguration is not null)
+            clientBuilder.UseRuntime(clientRuntimeConfiguration);
         var client = clientBuilder.Build();
         configureBuiltClient?.Invoke(client);
         try

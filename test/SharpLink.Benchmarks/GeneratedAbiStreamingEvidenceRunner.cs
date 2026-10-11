@@ -27,15 +27,18 @@ internal static class GeneratedAbiStreamingEvidenceRunner
 
     public static async Task RunAsync(string[] args)
     {
-        if (args.Length is not (5 or 6))
+        if (args.Length is not (5 or 6 or 7))
         {
             throw new ArgumentException(
                 "Usage: --generated-abi-streaming-evidence <scenario> " +
-                "<warmup-operations> <measurement-seconds> <max-operations> <output-json> [tcp|sharedmemory]");
+                "<warmup-batches> <measurement-seconds> <max-batches> <output-json> [tcp|sharedmemory] [concurrency]");
         }
 
         var scenario = Enum.Parse<GeneratedAbiStreamingScenario>(args[0], ignoreCase: true);
-        var transport = args.Length == 6 ? args[5] : "tcp";
+        var transport = args.Length >= 6 ? args[5] : "tcp";
+        var concurrency = args.Length == 7 ? int.Parse(args[6], CultureInfo.InvariantCulture) : 1;
+        if (concurrency is < 1 or > 128)
+            throw new ArgumentOutOfRangeException(nameof(concurrency));
         if (transport is not ("tcp" or "sharedmemory"))
             throw new ArgumentException("Transport must be tcp or sharedmemory.", nameof(args));
         var warmupOperations = int.Parse(args[1], CultureInfo.InvariantCulture);
@@ -48,14 +51,31 @@ internal static class GeneratedAbiStreamingEvidenceRunner
 
         await using var benchmark = await GeneratedAbiStreamingCase.CreateAsync(scenario, transport)
             .ConfigureAwait(false);
+        // A batch runs independent generated RPCs concurrently on one connection.
+        // Validate every RPC, not merely one representative. The extra Task array is
+        // deliberately identical for all three revision/mode controls.
+        async ValueTask<long> InvokeBatchAsync()
+        {
+            if (concurrency == 1)
+                return await benchmark.InvokeAsync().ConfigureAwait(false);
+            var pending = new Task<long>[concurrency];
+            for (var i = 0; i < pending.Length; i++)
+                pending[i] = benchmark.InvokeAsync().AsTask();
+            var results = await Task.WhenAll(pending).ConfigureAwait(false);
+            for (var i = 0; i < results.Length; i++)
+                Validate(results[i], benchmark.ExpectedResult, scenario, "concurrent batch");
+            return results[0];
+        }
+
         var firstStarted = Stopwatch.GetTimestamp();
-        var firstResult = await benchmark.InvokeAsync().ConfigureAwait(false);
+        var firstResult = await InvokeBatchAsync().ConfigureAwait(false);
         var firstCallUs = Stopwatch.GetElapsedTime(firstStarted).TotalMicroseconds;
         Validate(firstResult, benchmark.ExpectedResult, scenario, "first call");
+        benchmark.AssertWriterOwnedSelection();
 
         for (var operation = 0; operation < warmupOperations; operation++)
         {
-            var result = await benchmark.InvokeAsync().ConfigureAwait(false);
+            var result = await InvokeBatchAsync().ConfigureAwait(false);
             Validate(result, benchmark.ExpectedResult, scenario, "warmup");
         }
 
@@ -80,7 +100,7 @@ internal static class GeneratedAbiStreamingEvidenceRunner
         while (completed < latencies.Length && Stopwatch.GetTimestamp() < measurementDeadline)
         {
             var started = Stopwatch.GetTimestamp();
-            var result = await benchmark.InvokeAsync().ConfigureAwait(false);
+            var result = await InvokeBatchAsync().ConfigureAwait(false);
             var elapsedTicks = Stopwatch.GetTimestamp() - started;
             Validate(result, benchmark.ExpectedResult, scenario, "measurement");
             latencies[completed++] = elapsedTicks;
@@ -96,9 +116,15 @@ internal static class GeneratedAbiStreamingEvidenceRunner
 
         Array.Sort(latencies, 0, completed);
         var allocatedBytes = allocatedAfter - allocatedBefore;
+        var rpcOperations = checked(completed * concurrency);
         var resultDocument = new GeneratedAbiStreamingEvidenceResult
         {
             Commit = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_SHA") ?? "unknown",
+            WriterMode = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_WRITER_OWNED") == "1"
+                ? "writer-owned" : "legacy",
+            Concurrency = concurrency,
+            CompletedBatches = completed,
+            LatencyUnit = concurrency == 1 ? "rpc" : "concurrent-batch",
             Transport = transport,
             Scenario = scenario.ToString(),
             Shape = benchmark.Shape,
@@ -116,18 +142,18 @@ internal static class GeneratedAbiStreamingEvidenceRunner
             WarmupOperations = warmupOperations,
             RequestedMeasurementSeconds = measurementSeconds,
             ActualMeasurementSeconds = measurementElapsed.TotalSeconds,
-            Operations = completed,
-            ThroughputOperationsPerSecond = completed / measurementElapsed.TotalSeconds,
-            ThroughputItemsPerSecond = completed * benchmark.ItemCount / measurementElapsed.TotalSeconds,
+            Operations = rpcOperations,
+            ThroughputOperationsPerSecond = rpcOperations / measurementElapsed.TotalSeconds,
+            ThroughputItemsPerSecond = (double)rpcOperations * benchmark.ItemCount / measurementElapsed.TotalSeconds,
             FirstCallUs = firstCallUs,
             AverageUs = TicksToMicroseconds(latencyTicks / (double)completed),
             P50Us = Percentile(latencies, completed, 50),
             P99Us = Percentile(latencies, completed, 99),
             P999Us = Percentile(latencies, completed, 99.9),
             MaxUs = TicksToMicroseconds(latencies[completed - 1]),
-            CpuUsPerOperation = (cpuAfter - cpuBefore).TotalMicroseconds / completed,
-            AllocatedBytesPerOperation = allocatedBytes / (double)completed,
-            AllocatedBytesPerItem = allocatedBytes / (double)(completed * benchmark.ItemCount),
+            CpuUsPerOperation = (cpuAfter - cpuBefore).TotalMicroseconds / rpcOperations,
+            AllocatedBytesPerOperation = allocatedBytes / (double)rpcOperations,
+            AllocatedBytesPerItem = allocatedBytes / ((double)rpcOperations * benchmark.ItemCount),
             Gen0Collections = GC.CollectionCount(0) - gen0Before,
             Gen1Collections = GC.CollectionCount(1) - gen1Before,
             Gen2Collections = GC.CollectionCount(2) - gen2Before,
@@ -305,6 +331,7 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
     public int ItemBytes { get; }
     public long ExpectedResult { get; }
     public Func<ValueTask<long>> InvokeAsync { get; }
+    internal void AssertWriterOwnedSelection() => _environment.AssertWriterOwnedBenchmarkMode();
 
     public static async Task<GeneratedAbiStreamingCase> CreateAsync(
         GeneratedAbiStreamingScenario scenario,
@@ -391,6 +418,10 @@ internal sealed class GeneratedAbiStreamingCase : IAsyncDisposable
 internal sealed class GeneratedAbiStreamingEvidenceResult
 {
     public string Commit { get; init; } = string.Empty;
+    public string WriterMode { get; init; } = "legacy";
+    public int Concurrency { get; init; } = 1;
+    public int CompletedBatches { get; init; }
+    public string LatencyUnit { get; init; } = "rpc";
     public string Transport { get; init; } = "tcp";
     public string Scenario { get; init; } = string.Empty;
     public string Shape { get; init; } = string.Empty;

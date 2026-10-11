@@ -1,0 +1,112 @@
+name: Writer-Owned Production RPC Performance Evidence
+
+# Additive diagnostic to the existing PR Fast / Package Smoke / #735 workflows.
+# No existing performance gates, test populations or product defaults are altered.
+on:
+  pull_request:
+    branches: [perf/735-resolved-flow-state]
+    paths:
+      - '.github/workflows/writer-owned-production-rpc-evidence.yml'
+      - 'eng/run-writer-owned-rpc-e2e.py'
+      - 'test/SharpLink.Benchmarks/BenchmarkEnvironment.cs'
+      - 'test/SharpLink.Benchmarks/GeneratedAbiStreamingEvidenceRunner.cs'
+      - 'src/SharpLink.Runtime/**'
+      - 'src/SharpLink.Client/**'
+      - 'src/SharpLink.Server/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: writer-owned-production-rpc-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matched-jit-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      DEV_SHA: 0fe26024b114bb6e78411a9b86276086c045d03d
+      PR_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ROOT: ${{ github.workspace }}/artifacts/performance/writer-owned-rpc
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Prepare fixed dev and candidate with identical benchmark sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ROOT/env"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$PR_SHA"
+          baseline="$RUNNER_TEMP/sharplink-writer-owned-dev"
+          git worktree add --detach "$baseline" "$DEV_SHA"
+          echo "DEV_ROOT=$baseline" >> "$GITHUB_ENV"
+          for source in BenchmarkEnvironment.cs GeneratedAbiStreamingEvidenceRunner.cs; do
+            cp "test/SharpLink.Benchmarks/$source" "$baseline/test/SharpLink.Benchmarks/$source"
+            cmp "test/SharpLink.Benchmarks/$source" "$baseline/test/SharpLink.Benchmarks/$source"
+            sha256sum "test/SharpLink.Benchmarks/$source" >> "$ROOT/env/harness-sha256.txt"
+          done
+          {
+            printf 'dev=%s\npr=%s\n' "$DEV_SHA" "$PR_SHA"
+            printf 'dev_tree=%s\n' "$(git -C "$baseline" rev-parse HEAD^{tree})"
+            printf 'pr_tree=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'dev_harness_origin=exact candidate copies\n'
+          } > "$ROOT/env/revisions.txt"
+          dotnet --info > "$ROOT/env/dotnet-info.txt"
+          lscpu > "$ROOT/env/cpu.txt"
+          python3 -m py_compile eng/run-writer-owned-rpc-e2e.py
+
+      - name: Build pinned dev and candidate benchmark binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          for project in "$DEV_ROOT/test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"                          "test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj"; do
+            dotnet restore "$project"
+            dotnet build "$project" -c Release -p:PublishAot=false --no-restore -m:1 /nodeReuse:false -v minimal
+          done
+
+      - name: Smoke both native transports and actual writer-owned RPC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/run-writer-owned-rpc-e2e.py             --dev-dll "$DEV_ROOT/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"             --pr-dll "test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"             --dev-sha "$DEV_SHA" --pr-sha "$PR_SHA"             --output "$ROOT/smoke" --smoke --rounds 1 --seconds 0.25
+
+      - name: Four-position balanced matched JIT generated RPC evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/run-writer-owned-rpc-e2e.py             --dev-dll "$DEV_ROOT/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"             --pr-dll "test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"             --dev-sha "$DEV_SHA" --pr-sha "$PR_SHA"             --output "$ROOT/measure" --rounds 4 --seconds 1.5
+
+      - name: Show diagnostic summary and failed-cell status
+        if: always()
+        shell: bash
+        run: |
+          echo "## Writer-Owned B3 Generated RPC Evidence" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f "$ROOT/measure/summary.md" ]]; then
+            cat "$ROOT/measure/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ -f "$ROOT/smoke/summary.md" ]]; then
+            echo "Full matched matrix did not run: smoke evidence follows." >> "$GITHUB_STEP_SUMMARY"
+            cat "$ROOT/smoke/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Build or setup blocked measurement; inspect logs." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload raw results, errors, source identity and environment
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: writer-owned-rpc-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/performance/writer-owned-rpc
+          if-no-files-found: error
+          retention-days: 30
