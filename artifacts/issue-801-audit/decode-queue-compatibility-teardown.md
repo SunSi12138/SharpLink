@@ -65,3 +65,19 @@ Independent raw artifact archives:
 - [Full Trim + NuGet package and external consumption](https://github.com/SunSi12138/SharpLink/actions/runs/38107400102/artifacts/11690420156)
 
 **Caveat:** this is runtime/API proof for the single test-only decode compatibility queue subsystem after migrating tests to the real reserved production path. It is **not** part of the earlier 45 unrelated dead methods experiment. Real allocation/throughput evidence remains separately tracked.
+
+## Controlled constructor allocation microprobe (quantitative evidence, not throughput proof)
+
+[Successful GitHub Actions #38107583355](https://github.com/SunSi12138/SharpLink/actions/runs/38107583355), [raw baseline + experiment JSON](https://github.com/SunSi12138/SharpLink/actions/runs/38107583355/artifacts/11690283711). The [standalone reflection-based benchmark](https://github.com/SunSi12138/SharpLink/tree/audit/issue-801-dev-3x-deadcode/eng/issue801/DecodeQueueCostProbe) ran **50 warmups + 300 samples** on a single Ubuntu 24.04 runner, .NET 10.0.12. Baseline and modified `ServerDecodeExecutor(workerCount:1, queueCapacity:4)` were compiled/run in the same job, with the exact same caller and reflection argument allocation outside each measured section.
+
+| Metric | Pristine `dev` | Runner-only reserved-only executor |
+| --- | ---: | ---: |
+| Constructor thread allocation median (300 samples) | **832 B** | **584 B** |
+| P10 / P90 (current-thread allocation) | 832 / 832 B | 584 / 584 B |
+| Reflection-visible instance field count | 17 | 13 |
+| Legacy compatibility instance fields | 4 | 0 |
+| Compatibility static scheduling key | Exists | Absent |
+
+**Observed reduction: 248 bytes per executor construction (about 29.8% of the baseline constructor allocation in this probe)**. The original four compatibility fields are `_compatibilityOperations`, `_compatibilityOperationsDrained`, `_compatibilitySlots`, `_compatibilityStop`; the reserved-only code removes all four.
+
+Measurement limitations: reflective `ConstructorInfo.Invoke`, task-worker creation and ThreadPool scheduling may contribute; numbers refer to `GC.GetAllocatedBytesForCurrentThread` only and are **not** retained heap size, complete server startup allocation, RPC throughput, or request-latency improvements. Capture an in-process connection/decompression workload performance benchmark before claiming a request-path performance win.
