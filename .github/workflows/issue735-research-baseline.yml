@@ -1,0 +1,117 @@
+name: Issue 735 Production Research Baseline
+
+on:
+  push:
+    branches: ['research/735-production-architecture-20261012-f8ba891']
+    paths: ['.github/workflows/issue735-research-baseline.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      SHARPLINK_BENCHMARK_SHA: f8ba89121c87a6410a0139c44d7db30eab877f41
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f8ba89121c87a6410a0139c44d7db30eab877f41
+      - uses: ./.github/actions/setup-dotnet
+      - name: Preserve baseline provenance and environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/issue735-baseline
+          git rev-parse HEAD > artifacts/issue735-baseline/source-sha.txt
+          git rev-parse HEAD^{tree} > artifacts/issue735-baseline/source-tree.txt
+          git status --porcelain > artifacts/issue735-baseline/source-status.txt
+          dotnet --info > artifacts/issue735-baseline/dotnet-info.txt
+          lscpu > artifacts/issue735-baseline/cpu.txt
+          uname -a > artifacts/issue735-baseline/kernel.txt
+      - name: Restore and build unchanged baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore Sharplink.slnx > artifacts/issue735-baseline/restore.log 2>&1
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal > artifacts/issue735-baseline/build.log 2>&1
+          python3 eng/check-project-reference-boundaries.py > artifacts/issue735-baseline/reference-boundaries.log 2>&1
+          sha256sum test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll src/SharpLink.Runtime/bin/Release/net10.0/SharpLink.Runtime.dll > artifacts/issue735-baseline/binaries.sha256
+      - name: Four complete unchanged UnitTests runs, retain every exit
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,subprocess
+          root=pathlib.Path('artifacts/issue735-baseline')
+          rows=[]
+          for r in range(4):
+              command=['dotnet','test','--project','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','--no-build']
+              with (root/f'unit-r{r}.log').open('w') as log:
+                  p=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=300)
+              rows.append({'round':r,'command':command,'exitCode':p.returncode})
+              (root/'unit-exits.json').write_text(json.dumps(rows,indent=2))
+          raise SystemExit(1 if any(x['exitCode'] for x in rows) else 0)
+          PY
+      - name: Baseline generator, load, integration suites
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,subprocess
+          root=pathlib.Path('artifacts/issue735-baseline')
+          rows=[]
+          for project in ['SharpLink.Generator.Tests','SharpLink.LoadTest.Tests','SharpLink.IntegrationTests']:
+              command=['dotnet','test','--project',f'test/{project}/{project}.csproj','-c','Release','--no-build']
+              try:
+                  with (root/f'{project}.log').open('w') as log:
+                      p=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=300)
+                  code=p.returncode
+              except subprocess.TimeoutExpired:
+                  code=124
+              rows.append({'project':project,'command':command,'exitCode':code})
+              (root/'additional-exits.json').write_text(json.dumps(rows,indent=2))
+          raise SystemExit(1 if any(x['exitCode'] for x in rows) else 0)
+          PY
+      - name: Same-binary A/A generated RPC noise controls
+        if: success()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          root=pathlib.Path('artifacts/issue735-baseline/aa')
+          root.mkdir()
+          cpus=sorted(os.sched_getaffinity(0))[:4]
+          affinity=','.join(map(str,cpus))
+          (root/'affinity.json').write_text(json.dumps(cpus))
+          rows=[]
+          for pgo in ['0','1']:
+              for tr in ['tcp','sharedmemory']:
+                  for sc in ['Server1x16','Server100x16','Client100x16','Duplex100x16']:
+                      for r in range(3):
+                          for label in (['A','B'] if r%2==0 else ['B','A']):
+                              name=f'pgo{pgo}-{tr}-{sc}-r{r}-{label}'
+                              env=dict(os.environ,DOTNET_TieredPGO=pgo,DOTNET_ReadyToRun='0',DOTNET_PROCESSOR_COUNT='4',SHARPLINK_STREAMING_TRANSPORT=tr)
+                              cmd=['taskset','-c',affinity,'dotnet','test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll','--generated-abi-streaming-evidence',sc,'30','3','200000',str(root/f'{name}.json')]
+                              try:
+                                  with (root/f'{name}.log').open('w') as log:
+                                      p=subprocess.run(cmd,env=env,stdout=log,stderr=subprocess.STDOUT,timeout=60)
+                                  code=p.returncode
+                              except subprocess.TimeoutExpired:
+                                  code=124
+                              rows.append({'name':name,'exitCode':code,'command':cmd})
+                              (root/'exits.json').write_text(json.dumps(rows,indent=2))
+          raise SystemExit(1 if any(x['exitCode'] for x in rows) else 0)
+          PY
+      - name: Upload all successes and failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-baseline-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735-baseline
+          if-no-files-found: error
+          retention-days: 30
