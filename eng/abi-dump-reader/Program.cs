@@ -28,6 +28,9 @@ internal static class Program
     };
     private static readonly (ulong Address, string Label, string TypeFragment)[] Known =
     {
+        (0x7efd1b8cb710, "dispatcher-local-exception", "SharpLink.Abstractions.SharpLinkException"),
+        (0x7efd1b8bdba0, "client-pending-call", "SharpLink.Client.PendingRequestTable+PendingCall"),
+        (0x7efd1b8c1c88, "client-dispatch-entry", "SharpLink.Runtime.StreamManager+DispatcherEntry"),
         (0x7efd1b88c588, "helper", "SharpLink.IntegrationTests.RuntimeAssemblyIntegrationTests+<ExecuteDynamicStreamExitAndUnloadAsync>d__11"),
         (0x7efd1b98ea08, "credit-waiter-async", "SharpLink.Runtime.StreamFlowController+CreditWaiter+<WaitAsync>d__8"),
         (0x7efd1b8c2aa8, "outbound-pump-async", "SharpLink.Runtime.RpcSession+<PumpGeneratedOutboundStreamAsync>d__141"),
