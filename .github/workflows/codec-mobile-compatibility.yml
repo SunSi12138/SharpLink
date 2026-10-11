@@ -53,7 +53,7 @@ jobs:
           --output artifacts/codec-compat/desktop-reference
 
       - name: Upload canonical desktop corpus
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-mobile-corpus-desktop-linux-x64
           path: artifacts/codec-compat/desktop-reference
@@ -174,7 +174,7 @@ jobs:
 
       - name: Upload Android CoreCLR evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-mobile-evidence-android-x64
           path: |
@@ -328,7 +328,7 @@ jobs:
 
       - name: Upload experimental iOS CoreCLR evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-mobile-evidence-${{ matrix.id }}-coreclr
           path: |
