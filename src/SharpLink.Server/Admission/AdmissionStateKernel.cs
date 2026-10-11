@@ -569,29 +569,6 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         SharpLinkTelemetry.AddAdmissionQueuedCalls(-1);
     }
 
-    internal bool TryReserveAdditionalQueuedBytes(int retainedBytes, long maxQueuedBytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
-        lock (_accountingGate)
-        {
-            if (IsDraining || retainedBytes > maxQueuedBytes - _queuedBytes)
-                return false;
-            _queuedBytes += retainedBytes;
-            return true;
-        }
-    }
-
-    internal void ReleaseAdditionalQueuedBytes(int retainedBytes)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(retainedBytes);
-        lock (_accountingGate)
-        {
-            _queuedBytes -= retainedBytes;
-            if (_queuedBytes < 0)
-                throw new InvalidOperationException("Admission queued byte accounting underflowed.");
-        }
-    }
-
     internal void OnLeaseCreated()
     {
         lock (_accountingGate)

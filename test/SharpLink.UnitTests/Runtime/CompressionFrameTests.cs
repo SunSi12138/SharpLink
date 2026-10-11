@@ -228,7 +228,7 @@ public class CompressionFrameTests
         await using var session = CreateSession(provider, enableFlowControl: true);
 
         var exception = await CaptureSharpLinkExceptionAsync(
-            session.SendStreamChunkAsync(
+            session.SendTestStreamChunkAsync(
                 requestId: 1,
                 streamId: 1,
                 Enumerable.Repeat((byte)0x2a, 2048).ToArray()).AsTask());

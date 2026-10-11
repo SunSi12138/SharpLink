@@ -119,7 +119,7 @@ internal static class PreCredit8WayAttributionEvidenceRunner
                     for (var operation = 0; operation < operationsPerProducer; operation++)
                     {
                         var started = Stopwatch.GetTimestamp();
-                        await session.SendStreamChunkAsync(
+                        await session.SendTestStreamChunkAsync(
                             requestId,
                             1,
                             item,

@@ -23,7 +23,7 @@ public sealed class SharpLinkServerDesiredSessionReviewTests
             "FutureOnly publication should succeed");
         var published = futureOnly.Snapshot ?? throw new InvalidOperationException(
             "successful FutureOnly publication must return its desired snapshot");
-        Ensure(!server.TryCreateRollingSessionRefreshRequestForTesting(pinned, out _),
+        Ensure(!server.TryCreateRollingSessionRefreshRequest(pinned, out _),
             "a session pinned before a FutureOnly publication must not receive handshake catch-up refresh intent");
 
         var rolling = await ((ISharpLinkServer)server).TryPublishDesiredSessionAsync(
@@ -31,7 +31,7 @@ public sealed class SharpLinkServerDesiredSessionReviewTests
             SharpLinkSessionRolloutMode.RollingRefresh);
         Ensure(rolling.Succeeded,
             "same-config RollingRefresh should be accepted without advancing desired generation");
-        Ensure(server.TryCreateRollingSessionRefreshRequestForTesting(pinned, out var request) &&
+        Ensure(server.TryCreateRollingSessionRefreshRequest(pinned, out var request) &&
                request.DesiredGeneration == published.Generation,
             "explicit RollingRefresh should create catch-up intent for the already-published generation");
     }

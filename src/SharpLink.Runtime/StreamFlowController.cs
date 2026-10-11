@@ -242,14 +242,13 @@ internal sealed class StreamFlowController
                 return;
             }
 
-            // A benign double return can overshoot a window: the peer may
-            // release credit at stream detach and then return it again as it
-            // drains the frames that arrive afterwards. Clamp the excess
-            // instead of treating it as a violation; the credit beyond the
-            // negotiated window is obsolete.
+            // A late/duplicate WindowUpdate can exceed this stream's outstanding
+            // debt after abort/retirement refunded its send credit. Discard the
+            // excess instead of granting phantom connection credit to other streams.
             var updatedStreamCredit = Math.Min(checked(state.Credit + credit), _streamWindow);
+            var returnedCredit = updatedStreamCredit - state.Credit;
             var updatedConnectionCredit = Math.Min(
-                checked(_sendConnectionCredit + credit), _connectionWindow);
+                checked(_sendConnectionCredit + returnedCredit), _connectionWindow);
 
             state.Credit = updatedStreamCredit;
             _sendConnectionCredit = updatedConnectionCredit;

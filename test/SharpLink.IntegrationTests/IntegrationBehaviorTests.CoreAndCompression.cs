@@ -84,20 +84,8 @@ public partial class IntegrationBehaviorTests
     [Arguments(true)]
     public async Task BasicRpcAndStreamingShouldWork(bool useSharedMemory)
     {
-        static IRpcCodec? Resolver(Type type)
-        {
-            if (type == typeof(GeneratedEnvelope) ||
-                type == typeof(GeneratedAddress) ||
-                type == typeof(List<string>))
-            {
-                throw new Exception($"Generated Codec unexpectedly fell through to resolver: {type}.");
-            }
-            return null;
-        }
-
-        await using var harness = await TestHarness.CreateAsync(
-            codecResolver: Resolver,
-            useSharedMemory: useSharedMemory);
+        // Generated Contract Codec bindings are authoritative in 3.0: no endpoint resolver exists.
+        await using var harness = await TestHarness.CreateAsync(useSharedMemory: useSharedMemory);
         var svc = harness.Client.Get<ITestService>();
 
         var add = await svc.AddAsync(10, 20);

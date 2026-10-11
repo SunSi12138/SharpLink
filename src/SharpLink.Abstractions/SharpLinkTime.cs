@@ -24,23 +24,7 @@ internal static class SharpLinkTime
             : (long)result;
     }
 
-    internal static long AddElapsedDuration(
-        long timestamp,
-        TimeSpan duration,
-        long timestampFrequency)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThan(duration, TimeSpan.Zero);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timestampFrequency);
-        if (duration == TimeSpan.Zero)
-            return timestamp;
 
-        var numerator = (UInt128)(ulong)duration.Ticks * (ulong)timestampFrequency;
-        var timestampDelta = numerator / (UInt128)TimeSpan.TicksPerSecond;
-        var result = (Int128)timestamp + (Int128)timestampDelta;
-        return result >= long.MaxValue
-            ? long.MaxValue
-            : (long)result;
-    }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     internal static TimeSpan GetElapsed(long timestampOrigin, long timestampNow, long timestampFrequency)

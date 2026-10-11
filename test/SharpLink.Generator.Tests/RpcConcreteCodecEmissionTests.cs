@@ -304,10 +304,10 @@ using SharpLink.Abstractions;
 [assembly: SharpLinkGeneratedCodecIdentityAttribute(typeof(Vendor.ReferencedPayload), 0x7265UL, 0x7266UL)]
 [assembly: SharpLinkGeneratedAssemblyManifestAttribute(
     typeof(Vendor.Manifest),
-    4,
+    5,
     2,
     "2.0.0",
-    "sharplink-2.0-api4-rpcchannel-codec-provider-v1")]
+    "sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
 
 namespace Vendor
 {

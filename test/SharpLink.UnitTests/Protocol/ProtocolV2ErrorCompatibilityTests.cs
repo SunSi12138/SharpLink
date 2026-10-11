@@ -10,7 +10,9 @@ public class ProtocolV2ErrorCompatibilityTests
             ProtocolV2Constants.MinimumCompatibleMinorVersion == 4,
             "published minor-3 peers must be rejected before decoding the structured error shape");
 
-        var policy = ProtocolV2Negotiator.CreateImplementedPolicy(
+        var policy = ProtocolV2NegotiationPolicy.Create(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Negotiator.AlwaysImplementedCapabilities,
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,

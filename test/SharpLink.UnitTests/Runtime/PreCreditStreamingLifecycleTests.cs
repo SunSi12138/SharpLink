@@ -30,11 +30,11 @@ public class PreCreditStreamingLifecycleTests
             streamReceiveWindowBytes: 1,
             connectionReceiveWindowBytes: 1);
 
-        await session.SendStreamChunkAsync(1, 1, new Payload(payloadBytes));
+        await session.SendTestStreamChunkAsync(1, 1, new Payload(payloadBytes));
         Ensure(codec.SerializeCount == 1, "the first item should consume the only flow credit");
 
         using var creditWaitCancellation = new CancellationTokenSource();
-        var creditWaiter = session.SendStreamChunkAsync(
+        var creditWaiter = session.SendTestStreamChunkAsync(
             2,
             1,
             new Payload(payloadBytes),
@@ -45,7 +45,7 @@ public class PreCreditStreamingLifecycleTests
             "the credit waiter should own exactly one serialized payload");
 
         using var budgetWaitCancellation = new CancellationTokenSource();
-        var budgetWaiter = session.SendStreamChunkAsync(
+        var budgetWaiter = session.SendTestStreamChunkAsync(
             3,
             1,
             new Payload(payloadBytes),
@@ -111,7 +111,7 @@ public class PreCreditStreamingLifecycleTests
         Ensure(controller.SendConnectionCredit == 0,
             "test setup should leave no connection credit before the unsized send");
 
-        var pending = session.SendStreamChunkAsync(
+        var pending = session.SendTestStreamChunkAsync(
             requestId,
             streamId,
             new Payload(payloadBytes)).AsTask();
@@ -187,9 +187,9 @@ public class PreCreditStreamingLifecycleTests
             streamReceiveWindowBytes: 1,
             connectionReceiveWindowBytes: 1);
 
-        await session.SendStreamChunkAsync(10, 1, new Payload(payloadBytes));
-        var serializedOwner = session.SendStreamChunkAsync(11, 1, new Payload(payloadBytes)).AsTask();
-        var matchingBudgetWaiter = session.SendStreamChunkAsync(12, 1, new Payload(payloadBytes)).AsTask();
+        await session.SendTestStreamChunkAsync(10, 1, new Payload(payloadBytes));
+        var serializedOwner = session.SendTestStreamChunkAsync(11, 1, new Payload(payloadBytes)).AsTask();
+        var matchingBudgetWaiter = session.SendTestStreamChunkAsync(12, 1, new Payload(payloadBytes)).AsTask();
         Ensure(codec.SerializeCount == 3,
             "the owner and queued follower should each serialize exactly once");
         Ensure(session.PreCreditSerializedBytes == payloadBytes,

@@ -314,23 +314,23 @@ public partial class SharpLinkRuntimeContextTests
 
 
     [Test]
-    public void ExplicitCodecShouldWinAndRemainCallerOwned()
+    public void GeneratedAdapterCodecShouldRemainOwnedByItsManifest()
     {
         var counters = new AdapterCounters();
-        var explicitCodec = new CallerOwnedAdapterValueCodec();
         var context = CreateRuntimeBuilder()
-            .AddCodec(explicitCodec)
             .Build([new AdapterManifest(counters, includeSecondCodec: false)]);
 
-        Ensure(ReferenceEquals(context.Codecs.GetCodec<AdapterValue>(), explicitCodec),
-            "explicit UseCodec registration wins over generated Adapter Codec");
+        var codec = context.Codecs.GetCodec<AdapterValue>();
+        Ensure(codec is AdapterCodec<AdapterValue>,
+            "3.0 must use the manifest-owned generated Adapter Codec, without endpoint override");
+        Ensure(ReferenceEquals(codec, context.Codecs.GetCodec<AdapterValue>()),
+            "owner-local generated codec must be cached for the context lifetime");
         context.Dispose();
         context.Dispose();
 
-        Ensure(counters.ScopeDisposeCount == 1, "Context-owned Adapter Scope is disposed once");
-        Ensure(explicitCodec.DisposeCount == 0, "caller-owned explicit Codec is not disposed by Runtime");
+        Ensure(counters.ScopeDisposeCount == 1,
+            "Context-owned Adapter Scope is disposed exactly once");
     }
-
 
     [Test]
     public void ConflictingManifestCodecsShouldRollbackBothAdapterScopes()

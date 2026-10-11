@@ -159,7 +159,7 @@ SDK 中的 type forwards 也参与审计。下表补充上述专题，覆盖签�
 | `IRpcChannel.Invoke*` options、`SendClientStreamAsync` | 重新生成 API 4；metadata 进入窄参数，client stream 通过 `IRpcClientStreamSink`。业务代码只调用契约 proxy。 |
 | `IRpcStub.Invoke*` 的 Session/专用 writer 参数 | 改为 `IRpcGeneratedServerBridge` 和 `IBufferWriter<byte>`，由 Generator 生成。 |
 | `IRpcGeneratedCodecFactory.SchemaId/WireFormatId`、adapter `WireFormatId`、registration attribute 的第三参数 | 采用 `CodecHash` 与 `[RpcCodecSemanticIdentity]`；改变 wire 含义时改变 semantic identity。详见 [契约与 Codec](contracts-and-codecs.md)。 |
-| Client/Server `UseCodec<T>`、Client `UseSerializer` | Generated RPC 在契约中用 `[RpcCodec]`/`[RpcCodecImplementation]` 或 adapter attribute 绑定；不能用运行时 resolver 覆盖冻结的 generated Codec。Standalone Context 的 `AddCodec`/resolver 仍供独立 codec 使用。 |
+| Client/Server `UseCodec<T>`、Client `UseSerializer` | Generated RPC 在契约中用 `[RpcCodec]`/`[RpcCodecImplementation]` 或 adapter attribute 绑定；不能用运行时 resolver 覆盖冻结的 generated Codec。Standalone Context 的 `AddCodec`/resolver 仍供独立 codec 使用（2.0 的历史行为；3.0 已退役，见 [3.0 UnsafeBlit/Codec 迁移](unsafe-blit-3.0-migration.md)）。 |
 | `SharpLinkGeneratedAssemblyManifestAttribute(Type)` | 重新生成携带 API、Protocol、Generator version 和 ABI identity 的 locator。 |
 | `SharpLinkGeneratedContractDescriptor` 旧构造函数和 factories | 重新生成 provider-aware proxy/stub factory；无 legacy 构造函数或 adapter。 |
 | `ISharpLinkClient` / `ISharpLinkServer` 直接声明的 assembly registry 方法 | 统一继承 `ISharpLinkAssemblyRegistry`；普通调用语法不变，显式接口实现需要重编译并调整所属接口。 |

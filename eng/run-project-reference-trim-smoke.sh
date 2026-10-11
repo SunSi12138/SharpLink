@@ -71,21 +71,8 @@ public static class Program
 
     public static void Main()
     {
-        if (!SharpLinkGeneratedUnsafeBlitCatalog.TryGet(
-                typeof(GeneratedTrimPayload),
-                out var requirement))
-        {
-            throw new InvalidOperationException(
-                "ProjectReference trim smoke did not receive generated UnsafeBlit ABI metadata.");
-        }
-
-        if (requirement.NativePointerWidth != IntPtr.Size)
-        {
-            throw new InvalidOperationException(
-                $"Generated UnsafeBlit ABI pointer width {requirement.NativePointerWidth} " +
-                $"does not match runtime width {IntPtr.Size}.");
-        }
-
+        // The generated owner-local factory carries and validates the ABI requirement.
+        // No process-global Type catalog is needed by generated consumers.
         using var context = new SharpLinkRuntimeContextBuilder().Build();
         var codec = context.Codecs.GetCodec<GeneratedTrimPayload>();
 
@@ -173,6 +160,7 @@ XML
 }
 
 run_trim_mode full
+run_trim_mode partial
 
 trap - EXIT
 rm -rf "$OUTPUT"

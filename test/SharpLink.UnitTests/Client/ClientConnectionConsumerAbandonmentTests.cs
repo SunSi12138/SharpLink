@@ -43,9 +43,10 @@ public class ClientConnectionConsumerAbandonmentTests
             dispatcher,
             deadline: default,
             cancellationToken: CancellationToken.None);
-        session.StreamManager.Register(requestId, dispatcher);
+        session.StreamManager.Register(requestId, 0, dispatcher);
         await session.StreamManager.DispatchChunkAsync(
             requestId,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 }));
 
         var remoteCompletion = LongRunningTestWorker.Run(
@@ -175,9 +176,10 @@ public class ClientConnectionConsumerAbandonmentTests
             dispatcher,
             deadline: default,
             cancellationToken: CancellationToken.None);
-        connection.Session.StreamManager.Register(requestId, dispatcher);
+        connection.Session.StreamManager.Register(requestId, 0, dispatcher);
         connection.Session.StreamManager.Register(
             requestId + 1,
+            0,
             new ThrowingCompleteDispatcher(ownerCleanupFailure));
 
         var completionFailure = CaptureException(() => connection.PendingCalls.TryComplete(
@@ -237,10 +239,11 @@ public class ClientConnectionConsumerAbandonmentTests
             dispatcher,
             deadline: default,
             cancellationToken: CancellationToken.None);
-        connection.Session.StreamManager.Register(requestId, dispatcher);
+        connection.Session.StreamManager.Register(requestId, 0, dispatcher);
 
         var dispatch = connection.Session.StreamManager.DispatchChunkAsync(
             requestId,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
         await dispatcher.DispatchEntered.Task.WaitAsync(RaceCoordinationTimeout);
         Ensure(!dispatch.IsCompleted,
