@@ -391,7 +391,7 @@ def migrate_race_tests(s: str) -> str:
         s, "executor.EnqueueAsync(",
         "EnqueueProduction(executor, ",
         "fair scheduling race tests using compatibility keyed enqueue",
-        expected=2,
+        expected=3,
     )
     s = replace_region(
         s,
