@@ -75,8 +75,11 @@ internal static class Program
 
         var workspaceErrors = new List<string>();
         using var workspace = MSBuildWorkspace.Create();
-        workspace.WorkspaceFailed += (_, eventArgs) =>
-            workspaceErrors.Add(eventArgs.Diagnostic.Kind + ": " + eventArgs.Diagnostic.Message);
+        workspace.RegisterWorkspaceFailedHandler(eventArgs =>
+        {
+            lock (workspaceErrors)
+                workspaceErrors.Add(eventArgs.Diagnostic.Kind + ": " + eventArgs.Diagnostic.Message);
+        });
         var solution = await workspace.OpenSolutionAsync(Path.Combine(root, "Sharplink.slnx"));
         var projects = solution.Projects.Where(p => p.Language == LanguageNames.CSharp).ToArray();
         var symbols = new Dictionary<string, Record>(StringComparer.Ordinal);
