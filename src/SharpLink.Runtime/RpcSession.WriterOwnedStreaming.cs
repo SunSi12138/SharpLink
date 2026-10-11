@@ -14,11 +14,22 @@ internal sealed partial class RpcSession
         TimeProvider? deadlineTimeProvider)
     {
         var stream = await ResolveWriterOwnedStreamAsync(requestId, streamId, lease, cancellationToken).ConfigureAwait(false);
-        await EnqueueWriterOwnedItem(stream, item, codec, exactSizeCodec,
-            cancellationToken, deadline, deadlineTimeProvider).ConfigureAwait(false);
+        try
+        {
+            await EnqueueWriterOwnedItem(stream, item, codec, exactSizeCodec,
+                cancellationToken, deadline, deadlineTimeProvider).ConfigureAwait(false);
+        }
+        catch (Exception error) when (cancellationToken.IsCancellationRequested ||
+            (error is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded } &&
+             deadlineTimeProvider is not null && deadline.IsExpired(deadlineTimeProvider)))
+        {
+            // The first item can lose cancellation before it returns a handle to the producer.
+            // Clean that exact lifecycle here; later items also have a per-stream registration.
+            stream.Owner.Abort(stream, error);
+            throw;
+        }
         // Reuse the existing immutable lease's object slot; no extra per-item wrapper allocation.
-        // The connection identity remains the negotiated controller, but the state is explicitly
-        // tagged by its runtime type. Producer-side controller APIs reject this mode entirely.
+        // Producer-side controller APIs reject this mode entirely.
         return new StreamFlowController.ResolvedSendCreditLease(
             Volatile.Read(ref _protocolState).FlowController!, requestId, streamId, stream, stream.Generation);
     }

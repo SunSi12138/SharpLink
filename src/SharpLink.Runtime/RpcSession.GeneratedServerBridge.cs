@@ -27,124 +27,6 @@ internal sealed partial class RpcSession
         }
     }
 
-    internal async ValueTask PumpGeneratedOutboundStreamAsync<T>(
-        long requestId,
-        ushort streamId,
-        IAsyncEnumerable<T> stream,
-        IRpcCodec<T> codec,
-        bool payloadNullable,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(stream);
-        ArgumentNullException.ThrowIfNull(codec);
-
-        var callContext = SharpLinkCallContext.Current;
-        var deadline = callContext?.LocalRpcDeadline ?? default;
-        var deadlineTimeProvider = callContext?.DeadlineTimeProvider;
-        using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
-        var deadlineWon = false;
-        var exactSizeCodec = codec as IRpcSizedCodec<T>;
-        if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
-            exactSizeCodec = null;
-        var sendCreditLease = default(StreamFlowController.ResolvedSendCreditLease);
-        try
-        {
-            while (true)
-            {
-                var moveNext = enumerator.MoveNextAsync();
-                bool hasNext;
-                if (!deadline.HasValue || deadlineTimeProvider is null || moveNext.IsCompletedSuccessfully)
-                {
-                    hasNext = await moveNext.ConfigureAwait(false);
-                }
-                else
-                {
-                    var moveNextTask = moveNext.AsTask();
-                    if (!await SharpLinkTimer.WaitAsync(
-                            moveNextTask,
-                            deadline,
-                            deadlineTimeProvider,
-                            lifetimeCancellation.Token).ConfigureAwait(false))
-                    {
-                        deadlineWon = true;
-                        TryCancelGeneratedLifetime(lifetimeCancellation);
-                        _ = ObserveAbandonedGeneratedMoveNextAsync(moveNextTask);
-                        throw CreateGeneratedStreamDeadlineExceededException();
-                    }
-                    hasNext = await moveNextTask.ConfigureAwait(false);
-                }
-
-                if (!hasNext)
-                    break;
-
-                var item = enumerator.Current;
-                if (!payloadNullable && default(T) is null && item is null)
-                {
-                    throw new SharpLinkException(
-                        SharpLinkErrorCode.Internal,
-                        "A non-nullable RPC stream response was null.");
-                }
-
-                var send = SendGeneratedStreamChunkAsync(
-                    requestId,
-                    streamId,
-                    item,
-                    codec,
-                    exactSizeCodec,
-                    deadline,
-                    deadlineTimeProvider,
-                    lifetimeCancellation.Token,
-                    sendCreditLease);
-                if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
-                {
-                    sendCreditLease = await send.ConfigureAwait(false);
-                }
-                else
-                {
-                    var sendTask = send.AsTask();
-                    if (!await SharpLinkTimer.WaitAsync(
-                            sendTask,
-                            deadline,
-                            deadlineTimeProvider,
-                            lifetimeCancellation.Token).ConfigureAwait(false))
-                    {
-                        deadlineWon = true;
-                        TryCancelGeneratedLifetime(lifetimeCancellation);
-                        _ = ObserveAbandonedGeneratedSendAsync(sendTask);
-                        throw CreateGeneratedStreamDeadlineExceededException();
-                    }
-                    sendCreditLease = await sendTask.ConfigureAwait(false);
-                }
-            }
-
-            ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
-            await SendGeneratedStreamCompleteAsync(requestId, streamId, deadline,
-                deadlineTimeProvider, lifetimeCancellation.Token).ConfigureAwait(false);
-        }
-        finally
-        {
-            if (UsesWriterOwnedStreams && (deadlineWon || cancellationToken.IsCancellationRequested))
-                CompleteSendStream(requestId, streamId, deadlineWon
-                    ? CreateGeneratedStreamDeadlineExceededException()
-                    : new OperationCanceledException(cancellationToken));
-            TryCancelGeneratedLifetime(lifetimeCancellation);
-            try
-            {
-                var dispose = enumerator.DisposeAsync();
-                if (deadlineWon && !dispose.IsCompletedSuccessfully)
-                    _ = ObserveAbandonedGeneratedDisposeAsync(dispose);
-                else
-                    await dispose.ConfigureAwait(false);
-            }
-            catch when (deadlineWon)
-            {
-                // The monotonic deadline is already terminal; a user enumerator that ignores
-                // cancellation cannot delay the RPC while its disposal completes.
-            }
-        }
-    }
-
     private static void TryCancelGeneratedLifetime(CancellationTokenSource cancellation)
     {
         try
@@ -158,7 +40,7 @@ internal sealed partial class RpcSession
         }
     }
 
-    private async ValueTask SendGeneratedStreamCompleteAsync(
+    private ValueTask SendGeneratedStreamCompleteAsync(
         long requestId,
         ushort streamId,
         RpcDeadline deadline,
@@ -166,11 +48,18 @@ internal sealed partial class RpcSession
         CancellationToken cancellationToken)
     {
         if (UsesWriterOwnedStreams)
-        {
-            await SendWriterOwnedTerminalAsync(requestId, streamId, null,
-                deadline, deadlineTimeProvider, cancellationToken).ConfigureAwait(false);
-            return;
-        }
+            return SendWriterOwnedTerminalAsync(requestId, streamId, null,
+                deadline, deadlineTimeProvider, cancellationToken);
+        SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
+        return ValueTask.CompletedTask;
+    }
+
+    private void SendGeneratedStreamComplete(
+        long requestId,
+        ushort streamId,
+        RpcDeadline deadline,
+        TimeProvider? deadlineTimeProvider)
+    {
         var writer = RentFrameWriter();
         var ownsWriter = true;
         try

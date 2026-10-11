@@ -95,6 +95,9 @@ internal sealed partial class RpcSession
         ArgumentNullException.ThrowIfNull(timeProvider);
         ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
 
+        if (UsesWriterOwnedStreams)
+            return SendWriterOwnedChunkAsync(requestId, streamId, item, codec, exactSizeCodec,
+                terminalToken, creditLease, deadline, timeProvider);
         if (exactSizeCodec is not null &&
             exactSizeCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
         {

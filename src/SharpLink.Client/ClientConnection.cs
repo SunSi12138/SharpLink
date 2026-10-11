@@ -361,6 +361,8 @@ internal sealed class ClientConnection :
         if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
             throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
 
+        var writerCancellation = default(CancellationTokenRegistration);
+        var writerCancellationRegistered = false;
         try
         {
             var exactSizeCodec = codec as IRpcSizedCodec<T>;
@@ -390,6 +392,11 @@ internal sealed class ClientConnection :
                     _timeProvider,
                     cancellationToken,
                     sendCreditLease).ConfigureAwait(false);
+                if (Session.UsesWriterOwnedStreams && !writerCancellationRegistered)
+                {
+                    writerCancellation = Session.RegisterWriterOwnedStreamCancellation(sendCreditLease, cancellationToken);
+                    writerCancellationRegistered = true;
+                }
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -397,12 +404,12 @@ internal sealed class ClientConnection :
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DeadlineExceeded,
                     "RPC deadline exceeded before client stream completion.");
-            Session.SendClientStreamComplete(
+            await Session.SendClientStreamCompleteWithWriterAsync(
                 requestId,
                 streamId,
                 deadline,
                 _timeProvider,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -412,13 +419,13 @@ internal sealed class ClientConnection :
                     SharpLinkErrorCode.Internal,
                     "Internal client stream error.",
                     exception);
-                Session.SendClientStreamError(
+                await Session.SendClientStreamErrorWithWriterAsync(
                     requestId,
                     streamId,
                     protocolError,
                     deadline,
                     _timeProvider,
-                    cancellationToken);
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -431,6 +438,10 @@ internal sealed class ClientConnection :
             {
             }
             throw;
+        }
+        finally
+        {
+            writerCancellation.Dispose();
         }
     }
 
