@@ -1,0 +1,36 @@
+name: Analyze captured 2.0.4 ABI hang dump
+on:
+  push:
+    branches: [validation/2.0.4-abi-dump-analysis]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Download only the existing original-arm diagnostic artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: abi-hang-original-23136b5a6eca9a2ee26b0a7ac766193c3f5ca93b
+          path: captured
+          repository: SunSi12138/SharpLink
+          run-id: 38145121809
+          github-token: ${{ github.token }}
+      - name: Install repository-pinned dump analysis tool
+        run: dotnet tool install dotnet-dump --version 10.0.745401 --tool-path "$GITHUB_WORKSPACE/dump-tools"
+      - name: Analyze exact dump without executing tests
+        run: python3 eng/analyze-204-abi-dump.py "$GITHUB_WORKSPACE/dump-tools/dotnet-dump" "$GITHUB_WORKSPACE/captured/024-round-3.dmp" "$GITHUB_WORKSPACE/analysis"
+      - name: Upload only targeted field evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: abi-existing-dump-fields-${{ github.sha }}
+          path: analysis
+          if-no-files-found: error
+          retention-days: 7
