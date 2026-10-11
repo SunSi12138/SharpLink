@@ -294,8 +294,7 @@ public partial class RpcGenerator
         private static int ClassifyCodecScope(ITypeSymbol type)
             => type.IsUnmanagedType ? RpcCodecScopeUnmanaged : RpcCodecScopeManaged;
 
-        private bool IsNativeCodecType(ITypeSymbol type)
-            => IsNativeCodecType(type, [], 0, type);
+
 
         private bool IsNativeCodecType(
             ITypeSymbol type,
