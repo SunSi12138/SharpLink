@@ -1,0 +1,81 @@
+name: Issue 735 Send State Lease Race
+
+on:
+  push:
+    branches: ['research/735-production-architecture-20261012-f8ba891']
+    paths:
+      - '.github/workflows/issue735-lease-race.yml'
+      - 'eng/issue735/lease-race/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-red-green:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Execute exact dev then the capture-under-gate diagnostic overlay
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,re,shutil,subprocess
+          repo=pathlib.Path.cwd();out=repo/'artifacts/issue735/lease-race';out.mkdir(parents=True)
+          base='f8ba89121c87a6410a0139c44d7db30eab877f41';rows=[]
+          def run(command,name,cwd=repo,timeout=600):
+              with (out/(name+'.log')).open('w') as log:
+                  try:code=subprocess.run(command,cwd=cwd,stdout=log,stderr=subprocess.STDOUT,timeout=timeout).returncode
+                  except subprocess.TimeoutExpired:code=124
+              rows.append({'name':name,'command':command,'cwd':str(cwd),'exitCode':code})
+              (out/'exits.json').write_text(json.dumps(rows,indent=2))
+              print(json.dumps({'name':name,'exitCode':code}),flush=True)
+              return code
+          assert run(['dotnet','--info'],'dotnet-info')==0
+          assert run(['git','fetch','--no-tags','--depth=1','origin',base],'fetch-base')==0
+          manifest={'baselineSha':base,'measurementRecipeSha':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'classification':'diagnostic-interleaving-not-performance','arms':{}}
+          for mode in ['original','fixed']:
+              work=pathlib.Path(os.environ['RUNNER_TEMP'])/('issue735-lease-'+mode)
+              assert run(['git','worktree','add','--detach',str(work),base],'worktree-'+mode)==0
+              assert run(['python3',str(repo/'eng/issue735/lease-race/apply.py'),'--root',str(work),'--mode',mode,'--record',str(out/(mode+'-overlay.json'))],'overlay-'+mode)==0
+              (out/(mode+'.patch')).write_bytes(subprocess.check_output(['git','diff','--binary'],cwd=work))
+              project='test/SharpLink.UnitTests/SharpLink.UnitTests.csproj'
+              assert run(['dotnet','build',project,'-c','Release','-v','minimal'],'build-'+mode,work)==0
+              binary=work/'test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll'
+              runtime=work/'test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.Runtime.dll'
+              hashes={'testAssemblySha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'runtimeAssemblySha256':hashlib.sha256(runtime.read_bytes()).hexdigest()}
+              manifest['arms'][mode]=hashes;(out/'provenance.json').write_text(json.dumps(manifest,indent=2))
+              command=['dotnet','test','--project',project,'-c','Release','--no-build']
+              names=[('focused-r'+str(r),True) for r in range(1 if mode=='original' else 4)]
+              if mode=='fixed':names.extend(('full-r'+str(r),False) for r in range(4))
+              for suffix,focused in names:
+                  name=mode+'-'+suffix
+                  invocation=command+(['--treenode-filter','/*/*/StreamFlowControllerLeaseRaceTests/*'] if focused else [])
+                  code=run(invocation,name,work)
+                  for report in (work/'test/SharpLink.UnitTests/bin/Release/net10.0/TestResults').glob('*.html'):
+                      shutil.copyfile(report,out/(name+'-'+report.name))
+                  output=re.sub(r'\x1b\[[0-9;]*m','',(out/(name+'.log')).read_text())
+                  assert re.search(r'total:\s*'+str(8 if focused else 2090)+r'\b',output),name+' incomplete suite'
+                  if mode=='original':
+                      assert code==2,name
+                      assert 'Stale original AcquireSendCreditAsync was accepted into a replacement generation.' in output
+                      assert re.search(r'failed:\s*1\b',output) and re.search(r'succeeded:\s*7\b',output)
+                  else:
+                      assert code==0,name
+                  assert hashlib.sha256(binary.read_bytes()).hexdigest()==hashes['testAssemblySha256']
+                  assert hashlib.sha256(runtime.read_bytes()).hexdigest()==hashes['runtimeAssemblySha256']
+          (out/'result.json').write_text(json.dumps({'status':'expected-red-and-green-passed','originalFocusedExpectedFailures':1,'fixedFocusedRuns':4,'fixedFullRuns':4,'productionPerformanceEvidence':False},indent=2))
+          PY
+      - name: Retain all failures, overlays, identities and complete TUnit reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-lease-race-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/lease-race
+          if-no-files-found: error
+          retention-days: 30
