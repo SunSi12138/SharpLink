@@ -50,15 +50,8 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     private long _disposeFinalizedLeaseState;
     private DisposeCompletion? _disposeCompletion;
     private TaskCompletionSource? _remoteTerminalPublication;
-    private Action? _beforeConcurrentDisposeCompletionInstallForTests;
-    private Action? _beforeRemoteTerminalPublicationPublishForTests;
-    private Action? _beforeRemoteTerminalPublicationCompletionInstallForTests;
-    private Action? _afterRemoteTerminalPublicationCompletionInstallForTests;
-    private Action? _beforeProducerOperationAcquireForTests;
-    private Action? _beforeConsumerWaitOwnerAcquireForTests;
-    private Action? _afterConsumerWaitResultForTests;
-    private Action? _beforeReturnTransitionForTests;
-    private Action? _afterReturnTransitionForTests;
+    // Test hooks allocate storage only when a test installs a callback.
+    private Action?[]? _testHooks;
     private int _terminalDispatchStateClosed;
     // 0 = no remote terminal, 1 = terminal publication still owns dispatch-state close,
     // 2 = remote terminal publication is complete.
@@ -241,15 +234,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _consumerTerminal, 0);
         Volatile.Write(ref _terminalDispatchStateClosed, 0);
         Volatile.Write(ref _remoteTerminalPublication, null);
-        Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, null);
-        Volatile.Write(ref _beforeRemoteTerminalPublicationPublishForTests, null);
-        Volatile.Write(ref _beforeRemoteTerminalPublicationCompletionInstallForTests, null);
-        Volatile.Write(ref _afterRemoteTerminalPublicationCompletionInstallForTests, null);
-        Volatile.Write(ref _beforeProducerOperationAcquireForTests, null);
-        Volatile.Write(ref _beforeConsumerWaitOwnerAcquireForTests, null);
-        Volatile.Write(ref _afterConsumerWaitResultForTests, null);
-        Volatile.Write(ref _beforeReturnTransitionForTests, null);
-        Volatile.Write(ref _afterReturnTransitionForTests, null);
+        Volatile.Write(ref _testHooks, null);
         Volatile.Write(ref _remoteTerminalPublicationState, 0);
     }
 
@@ -343,7 +328,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         if (GetLeaseStatus(leaseState) != LeaseActive)
             return false;
 
-        Volatile.Read(ref _beforeProducerOperationAcquireForTests)?.Invoke();
+        InvokeTestHook(4);
         Interlocked.Increment(ref _producerOperations);
         var currentLeaseState = Volatile.Read(ref _leaseState);
         if (IsSameLeaseGeneration(currentLeaseState, leaseState) &&
@@ -413,33 +398,63 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
     // boundary. It gates a rare second-dispose CAS so the old-generation/re-rent handoff can be
     // tested deterministically without reflection; it is never read by a first disposal.
     internal void SetBeforeConcurrentDisposeCompletionInstallForTests(Action? callback)
-        => Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, callback);
+        => SetTestHook(0, callback);
 
     // Gates the remote-terminal publication in Complete's finally so a racing DisposeAsync can
     // deterministically install its completion while the publication state is still 1 (issue #206).
     internal void SetBeforeRemoteTerminalPublicationPublishForTests(Action? callback)
-        => Volatile.Write(ref _beforeRemoteTerminalPublicationPublishForTests, callback);
+        => SetTestHook(1, callback);
 
     internal void SetBeforeRemoteTerminalPublicationCompletionInstallForTests(Action? callback)
-        => Volatile.Write(ref _beforeRemoteTerminalPublicationCompletionInstallForTests, callback);
+        => SetTestHook(2, callback);
 
     internal void SetAfterRemoteTerminalPublicationCompletionInstallForTests(Action? callback)
-        => Volatile.Write(ref _afterRemoteTerminalPublicationCompletionInstallForTests, callback);
+        => SetTestHook(3, callback);
 
     internal void SetBeforeProducerOperationAcquireForTests(Action? callback)
-        => Volatile.Write(ref _beforeProducerOperationAcquireForTests, callback);
+        => SetTestHook(4, callback);
 
     internal void SetBeforeConsumerWaitOwnerAcquireForTests(Action? callback)
-        => Volatile.Write(ref _beforeConsumerWaitOwnerAcquireForTests, callback);
+        => SetTestHook(5, callback);
 
     internal void SetAfterConsumerWaitResultForTests(Action? callback)
-        => Volatile.Write(ref _afterConsumerWaitResultForTests, callback);
+        => SetTestHook(6, callback);
 
     internal void SetBeforeReturnTransitionForTests(Action? callback)
-        => Volatile.Write(ref _beforeReturnTransitionForTests, callback);
+        => SetTestHook(7, callback);
 
     internal void SetAfterReturnTransitionForTests(Action? callback)
-        => Volatile.Write(ref _afterReturnTransitionForTests, callback);
+        => SetTestHook(8, callback);
+    private void SetTestHook(int index, Action? callback)
+    {
+        var hooks = Volatile.Read(ref _testHooks);
+        if (hooks is null)
+        {
+            if (callback is null)
+                return;
+            var candidate = new Action?[9];
+            hooks = Interlocked.CompareExchange(ref _testHooks, candidate, null) ?? candidate;
+        }
+        Volatile.Write(ref hooks[index], callback);
+    }
+
+    private void InvokeTestHook(int index)
+    {
+        var hooks = Volatile.Read(ref _testHooks);
+        if (hooks is not null)
+            Volatile.Read(ref hooks[index])?.Invoke();
+    }
+
+    private bool HasTestHooks()
+    {
+        var hooks = Volatile.Read(ref _testHooks);
+        if (hooks is null)
+            return false;
+        foreach (var callback in hooks)
+            if (callback is not null)
+                return true;
+        return false;
+    }
 
     private static ValueTask RejectedDispatch()
     {
@@ -723,7 +738,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         }
         finally
         {
-            Volatile.Read(ref _beforeRemoteTerminalPublicationPublishForTests)?.Invoke();
+            InvokeTestHook(1);
 
             // Publish only after the first remote Close and Signal are complete. A racing
             // consumer DisposeAsync then performs its own second Close in sequence.
@@ -873,7 +888,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
                 ThrowIfEnumerationCanceled();
                 if (!ownsConsumerOperation)
                 {
-                    Volatile.Read(ref _beforeConsumerWaitOwnerAcquireForTests)?.Invoke();
+                    InvokeTestHook(5);
                     Interlocked.Increment(ref _consumerOperations);
                     var currentLeaseState = Volatile.Read(ref _leaseState);
                     if (!IsSameLeaseGeneration(currentLeaseState, consumerLeaseState) ||
@@ -889,7 +904,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
                     ownsConsumerOperation = true;
                 }
                 await WaitForDataAsync().ConfigureAwait(false);
-                Volatile.Read(ref _afterConsumerWaitResultForTests)?.Invoke();
+                InvokeTestHook(6);
             }
         }
         finally
@@ -991,7 +1006,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             }
 
             var created = new DisposeCompletion(disposingLeaseState);
-            Volatile.Read(ref _beforeConcurrentDisposeCompletionInstallForTests)?.Invoke();
+            InvokeTestHook(0);
             if (Interlocked.CompareExchange(ref _disposeCompletion, created, null) is not null)
                 continue;
 
@@ -1020,7 +1035,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         if (Volatile.Read(ref _remoteTerminalPublicationState) == 2)
             return ValueTask.CompletedTask;
 
-        Volatile.Read(ref _beforeRemoteTerminalPublicationCompletionInstallForTests)?.Invoke();
+        InvokeTestHook(2);
 
         var completion = Volatile.Read(ref _remoteTerminalPublication);
         if (completion is null)
@@ -1029,7 +1044,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             completion = Interlocked.CompareExchange(ref _remoteTerminalPublication, created, null) ?? created;
         }
 
-        Volatile.Read(ref _afterRemoteTerminalPublicationCompletionInstallForTests)?.Invoke();
+        InvokeTestHook(3);
 
         // Fenced re-read (issue #206): mirrors the publisher-side fence in Complete. The
         // install CAS above is already a full barrier, but a fenced read keeps the two sides
@@ -1423,13 +1438,13 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
             return;
 
         var returnedState = unchecked(disposingLeaseState + 2);
-        Volatile.Read(ref _beforeReturnTransitionForTests)?.Invoke();
+        InvokeTestHook(7);
         if (Interlocked.CompareExchange(
                 ref _leaseState,
                 returnedState,
                 disposingLeaseState) != disposingLeaseState)
             return;
-        Volatile.Read(ref _afterReturnTransitionForTests)?.Invoke();
+        InvokeTestHook(8);
 
         // Close the acquire-vs-return race before clearing lease state.
         var dispatchState = Volatile.Read(ref _dispatchState);
@@ -1472,15 +1487,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _dispatchState, null);
         Volatile.Write(ref _disposeCompletion, null);
         Volatile.Write(ref _remoteTerminalPublication, null);
-        Volatile.Write(ref _beforeConcurrentDisposeCompletionInstallForTests, null);
-        Volatile.Write(ref _beforeRemoteTerminalPublicationPublishForTests, null);
-        Volatile.Write(ref _beforeRemoteTerminalPublicationCompletionInstallForTests, null);
-        Volatile.Write(ref _afterRemoteTerminalPublicationCompletionInstallForTests, null);
-        Volatile.Write(ref _beforeProducerOperationAcquireForTests, null);
-        Volatile.Write(ref _beforeConsumerWaitOwnerAcquireForTests, null);
-        Volatile.Write(ref _afterConsumerWaitResultForTests, null);
-        Volatile.Write(ref _beforeReturnTransitionForTests, null);
-        Volatile.Write(ref _afterReturnTransitionForTests, null);
+        Volatile.Write(ref _testHooks, null);
 
         // 复位枚举器占用标记
         Volatile.Write(ref _enumeratorTaken, 0);
@@ -1557,15 +1564,7 @@ internal sealed class PooledAsyncStreamDispatcher<T> :
                 !_additionalEnumerationCancellationRegistration.Equals(default) ||
                 Volatile.Read(ref _disposeCompletion) is not null ||
                 Volatile.Read(ref _remoteTerminalPublication) is not null ||
-                Volatile.Read(ref _beforeConcurrentDisposeCompletionInstallForTests) is not null ||
-                Volatile.Read(ref _beforeRemoteTerminalPublicationPublishForTests) is not null ||
-                Volatile.Read(ref _beforeRemoteTerminalPublicationCompletionInstallForTests) is not null ||
-                Volatile.Read(ref _afterRemoteTerminalPublicationCompletionInstallForTests) is not null ||
-                Volatile.Read(ref _beforeProducerOperationAcquireForTests) is not null ||
-                Volatile.Read(ref _beforeConsumerWaitOwnerAcquireForTests) is not null ||
-                Volatile.Read(ref _afterConsumerWaitResultForTests) is not null ||
-                Volatile.Read(ref _beforeReturnTransitionForTests) is not null ||
-                Volatile.Read(ref _afterReturnTransitionForTests) is not null)
+                HasTestHooks())
             {
                 return true;
             }
