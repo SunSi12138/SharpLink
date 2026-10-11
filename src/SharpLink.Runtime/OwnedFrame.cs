@@ -13,6 +13,19 @@ internal interface IRequestEmissionFailureObserver
 internal readonly struct OwnedFrame
 {
     private readonly object? _completionState;
+    private readonly int _writerReadyCreditBytes;
+
+    internal IWriterReadyCompletion? WriterReadyCompletion
+        => _completionState as IWriterReadyCompletion;
+
+    internal int WriterReadyCreditBytes => _writerReadyCreditBytes;
+
+    internal OwnedFrame(WriterReadyFrame ready)
+        : this(ready.Packet, ready.ForceFlush, null, false)
+    {
+        _completionState = ready.Completion;
+        _writerReadyCreditBytes = ready.CreditBytes;
+    }
 
     internal OwnedFrame(
         IRpcByteBufferWriter owner,
@@ -23,7 +36,7 @@ internal readonly struct OwnedFrame
     {
         Owner = owner;
         Memory = owner.WrittenMemory;
-        Length = owner.WrittenCount;
+        _writerReadyCreditBytes = 0;
         ForceFlush = forceFlush;
         IsProtocolProgress = isProtocolProgress;
 
@@ -34,7 +47,7 @@ internal readonly struct OwnedFrame
 
     public ReadOnlyMemory<byte> Memory { get; }
 
-    public int Length { get; }
+    public int Length => Memory.Length;
 
     public bool ForceFlush { get; }
 

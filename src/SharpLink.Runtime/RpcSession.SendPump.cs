@@ -2,7 +2,7 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    private sealed class SendPump
+    private sealed partial class SendPump
     {
         private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
 
@@ -89,7 +89,7 @@ internal sealed partial class RpcSession
 
         private bool HasProgressFrames() => _progressQueue.Reader.TryPeek(out _);
 
-        private bool HasNormalFrames() => _normalQueue.Reader.TryPeek(out _);
+        private bool HasNormalFrames() => _normalQueue.Reader.TryPeek(out _) || HasWriterReadyWork();
 
         private static Channel<OwnedFrame> CreateFrameQueue()
             => Channel.CreateUnbounded<OwnedFrame>(new UnboundedChannelOptions
@@ -198,7 +198,7 @@ internal sealed partial class RpcSession
                     }
 
                     var normalFramesSinceInterleave = 0;
-                    while (_normalQueue.Reader.TryRead(out var frame))
+                    while (TryReadOrdinaryOrWriterReadyFrame(out var frame))
                     {
                         if (pending.Count == 0)
                             batchStartTimestamp = _timeProvider.GetTimestamp();
@@ -275,10 +275,18 @@ internal sealed partial class RpcSession
             }
             finally
             {
-                _flushPolicyState.UnregisterChanged(_flushPolicyChanged);
-                ReleaseBatch(pending, terminalException);
-                DrainQueuedFrames(terminalException);
-                PulseCapacityWaiters();
+                List<Exception>? cleanupFailures = null;
+                try { _flushPolicyState.UnregisterChanged(_flushPolicyChanged); }
+                catch (Exception error) { (cleanupFailures ??= []).Add(error); }
+                try { ReleaseBatch(pending, terminalException); }
+                catch (Exception error) { (cleanupFailures ??= []).Add(error); }
+                try { DrainQueuedFrames(terminalException); }
+                catch (Exception error) { (cleanupFailures ??= []).Add(error); }
+                try { StopWriterReadySource(terminalException); }
+                catch (Exception error) { (cleanupFailures ??= []).Add(error); }
+                finally { PulseCapacityWaiters(); }
+                if (cleanupFailures is not null)
+                    throw new AggregateException("Send-pump cleanup failed.", cleanupFailures);
             }
         }
 
@@ -461,17 +469,34 @@ internal sealed partial class RpcSession
 
         private void ReleaseBatch(List<OwnedFrame> pending, Exception? exception)
         {
+            List<Exception>? failures = null;
             for (var index = 0; index < pending.Count; index++)
-                CompleteReserved(pending[index], exception, completeFlushWaiter: true);
+            {
+                try { CompleteReserved(pending[index], exception, completeFlushWaiter: true); }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
+            // Clear even on callback/buffer-return failure: RunAsync's finally
+            // must not complete the same frame and release its queue bytes twice.
             pending.Clear();
+            if (failures is not null)
+                throw new AggregateException("Send batch release failed.", failures);
         }
 
         private void DrainQueuedFrames(Exception exception)
         {
+            List<Exception>? failures = null;
             while (_progressQueue.Reader.TryRead(out var frame))
-                CompleteReserved(frame, exception, completeFlushWaiter: true);
+            {
+                try { CompleteReserved(frame, exception, completeFlushWaiter: true); }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
             while (_normalQueue.Reader.TryRead(out var frame))
-                CompleteReserved(frame, exception, completeFlushWaiter: true);
+            {
+                try { CompleteReserved(frame, exception, completeFlushWaiter: true); }
+                catch (Exception error) { (failures ??= []).Add(error); }
+            }
+            if (failures is not null)
+                throw new AggregateException("Send queue drain failed.", failures);
         }
 
         private void CompleteReserved(
@@ -487,9 +512,15 @@ internal sealed partial class RpcSession
             var failedRequestId = failureObserver is null
                 ? 0
                 : BinaryPrimitives.ReadInt64LittleEndian(frame.Memory.Span.Slice(7, sizeof(long)));
+            var readyReleaseError = exception;
             try
             {
                 _returnBuffer(frame.Owner);
+            }
+            catch (Exception error)
+            {
+                readyReleaseError ??= error;
+                throw;
             }
             finally
             {
@@ -502,7 +533,15 @@ internal sealed partial class RpcSession
                     else
                         frame.FlushCompletion?.TrySetException(exception);
                 }
-                PulseCapacityWaiters();
+                try
+                {
+                    frame.WriterReadyCompletion?.Complete(frame.WriterReadyCreditBytes, readyReleaseError);
+                }
+                finally
+                {
+                    WakeWriterReadyForCapacity();
+                    PulseCapacityWaiters();
+                }
                 // This belongs to the pump's existing lifetime. There is no detached task,
                 // and no admission lock is held while the pending-call owner completes it.
                 failureObserver?.OnRequestEmissionFailure(failedRequestId, exception!);
