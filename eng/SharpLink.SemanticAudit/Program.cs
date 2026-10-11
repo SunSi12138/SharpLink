@@ -326,9 +326,19 @@ internal static class Program
     private static string RootRisk(ISymbol symbol)
     {
         var reasons = new List<string>();
-        if (symbol is IMethodSymbol method && (method.IsOverride ||
-            method.ExplicitInterfaceImplementations.Length > 0))
-            reasons.Add("virtual-or-interface-dispatch");
+        if (symbol is IMethodSymbol method)
+        {
+            if (method.IsOverride || method.ExplicitInterfaceImplementations.Length > 0)
+                reasons.Add("virtual-or-interface-dispatch");
+            if (method.IsExtensionMethod)
+                reasons.Add("extension-dispatch/compilation-review");
+        }
+        if (symbol is IPropertySymbol property &&
+            (property.IsOverride || property.ExplicitInterfaceImplementations.Length > 0))
+            reasons.Add("property-interface-dispatch");
+        if (symbol is IEventSymbol eventSymbol &&
+            (eventSymbol.IsOverride || eventSymbol.ExplicitInterfaceImplementations.Length > 0))
+            reasons.Add("event-interface-dispatch");
         if (symbol.GetAttributes().Length > 0)
             reasons.Add("attribute-discovery");
         if (symbol is IMethodSymbol { MethodKind: MethodKind.Constructor })
