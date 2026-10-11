@@ -1,0 +1,106 @@
+name: Issue 801 - 45 Dead-Method Removals NativeAOT Desktop Matrix
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-aot-desktop-crossplatform.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-desktop-nativeaot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop-aot-removal:
+    name: ${{ matrix.os }} - ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_AOT_RID: ${{ matrix.rid }}
+
+    steps:
+      - name: Checkout isolated audit branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup repository .NET SDK
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record baseline and SDK
+        run: |
+          mkdir -p artifacts/issue-801-desktop-aot
+          git rev-parse HEAD > artifacts/issue-801-desktop-aot/audit-head.txt
+          dotnet --info > artifacts/issue-801-desktop-aot/dotnet-info.txt
+
+      - name: Restore project graph and removal tool
+        run: |
+          dotnet restore Sharplink.slnx -v minimal
+          dotnet restore eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj -v minimal
+
+      - name: Build removal tool
+        run: dotnet build eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj --no-restore -c Release -v minimal
+
+      - name: Remove precisely indexed non-public methods temporarily
+        run: |
+          cp artifacts/issue-801-audit/tier-A.csv artifacts/issue-801-desktop-aot/tier-A.csv
+          dotnet run --project eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj \
+            -c Release --no-build --no-restore -- \
+            --probe-remove "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/artifacts/issue-801-desktop-aot"
+          git diff --stat -- src/ > artifacts/issue-801-desktop-aot/remove-diff-stat.txt
+          cat artifacts/issue-801-desktop-aot/remove-diff-stat.txt
+
+      - name: Complete Release solution build with 45 candidates removed
+        run: |
+          set -o pipefail
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            2>&1 | tee artifacts/issue-801-desktop-aot/build.log
+
+      - name: Full existing native AOT smoke suite
+        env:
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/issue-801-desktop-aot/native
+          SHARPLINK_AOT_SHM_NAME: issue801-crossplatform-deadcode
+        run: |
+          set -o pipefail
+          bash ./eng/run-shared-memory-aot-process-smoke.sh \
+            2>&1 | tee artifacts/issue-801-desktop-aot/nativeaot-smoke.log
+          grep -q 'Shared-memory process, local endpoint-topology' \
+            artifacts/issue-801-desktop-aot/nativeaot-smoke.log
+
+      - name: Leave no modified production files in checkout
+        if: always()
+        run: |
+          git restore -- src/
+          git diff --exit-code -- src/
+          echo "All source modifications were runner-local."
+
+      - name: Upload per-OS removal and AOT evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-aot-${{ matrix.rid }}-removal-proof
+          path: |
+            artifacts/issue-801-desktop-aot/*.json
+            artifacts/issue-801-desktop-aot/*.txt
+            artifacts/issue-801-desktop-aot/*.log
+            artifacts/issue-801-desktop-aot/native/*.log
+            artifacts/issue-801-desktop-aot/native/sharppack-sidecar/*.log
+            artifacts/issue-801-desktop-aot/native/precredit/*.log
+          if-no-files-found: warn
+          retention-days: 30
