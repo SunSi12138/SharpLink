@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace SharpLink.UnitTests.Runtime;
 
 public partial class StreamManagerTests
@@ -22,6 +24,7 @@ public partial class StreamManagerTests
             new ReadOnlySequence<byte>(new byte[2]), 11, out var buffered), "buffered compressed route");
         await buffered;
         Ensure(accepted == 15 && consumed == 0, "initial receive bytes stay buffered");
+        manager.AbandonExistingRequestStreams(901, 1);
         Ensure(manager.TryDiscardTerminalStreamData(901, 1,
             new ReadOnlySequence<byte>(new byte[3]), 17, out var rejected), "existing stable terminal route");
         await rejected;
@@ -51,6 +54,7 @@ public partial class StreamManagerTests
             () => throw new Exception("unexpected capacity failure"), retainUntilLocalCompletion: true);
         var child = new RecordingDispatcher();
         manager.Register(906, 1, child);
+        manager.AbandonExistingRequestStreams(906, 1);
         Ensure(manager.TryDiscardTerminalStreamData(906, 1,
             new ReadOnlySequence<byte>(new byte[4]), 4, out var dispatch), "stable attached route");
         await dispatch;
@@ -58,6 +62,26 @@ public partial class StreamManagerTests
             "terminal data must bypass the typed child and refund once");
         Ensure(manager.TryCompleteTerminalStream(906, 1, null) && manager.ActiveStreamCount == 0,
             "terminal completion must retire attached stable route");
+    }
+
+    [Test]
+    public async Task TerminalDiscardShouldNotAbandonALiveStableRoute()
+    {
+        var manager = new StreamManager();
+        manager.ReservePreAdmissionStreams(907, 1,
+            new SharpLinkBufferWriterPool(new BufferWriterPoolOptions()), _ => true, _ => { },
+            () => throw new Exception("unexpected stream capacity"), retainUntilLocalCompletion: true);
+        var child = new RecordingDispatcher();
+        manager.Register(907, 1, child);
+        Ensure(!manager.TryDiscardTerminalStreamData(907, 1,
+            new ReadOnlySequence<byte>(new byte[4]), 4, out _),
+            "a stale terminal decision must not gain authority over a live stable route");
+        Ensure(!manager.TryCompleteTerminalStream(907, 1, null),
+            "terminal cleanup must not complete a newer live route");
+        await manager.DispatchChunkAsync(907, 1, new ReadOnlySequence<byte>(new byte[4]));
+        Ensure(child.DispatchCount == 1 && child.CompleteCount == 0,
+            "a live route must remain available to its current owner");
+        manager.CompleteRequestStreams(907, null);
     }
 
     [Test]
@@ -98,10 +122,53 @@ public partial class StreamManagerTests
         Ensure(manager.TryCompleteTerminalStream(903, 1, null) && updates == 4,
             "terminal completion flushes remaining credit exactly once");
         manager.DrainRejectedRequestStreams(904, 1);
-        await Assert.That(() => manager.TryDiscardTerminalStreamData(904, 1,
-            ReadOnlySequence<byte>.Empty, 129, out _)).Throws<SharpLinkProtocolViolationException>();
+        try
+        {
+            manager.TryDiscardTerminalStreamData(904, 1, ReadOnlySequence<byte>.Empty, 129, out _);
+            throw new Exception("oversized terminal data must be rejected");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)
+        {
+        }
         Ensure(updates == 4, "invalid frame must not receive credit");
         manager.CompleteRequestStreams(904, null);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CapturedTerminalCompletionShouldNotCompleteAReplacementRoute(bool keepRequestContainer)
+    {
+        const long requestId = 909;
+        var manager = new StreamManager();
+        manager.DrainRejectedRequestStreams(requestId, keepRequestContainer ? 2 : 1);
+        var map = typeof(StreamManager).GetField("_dispatchersByRequestId",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(manager)!;
+        object?[] lookup = [requestId, null];
+        Ensure((bool)map.GetType().GetMethod("TryGetValue")!.Invoke(map, lookup)!, "original request routes");
+        var requestRoutes = lookup[1]!;
+        object?[] acquire = [(ushort)1, null];
+        Ensure((bool)requestRoutes.GetType().GetMethod("TryAcquire")!.Invoke(requestRoutes, acquire)!,
+            "capture original discard entry lease");
+        var oldEntry = acquire[1]!;
+        try
+        {
+            manager.Unregister(requestId, 1);
+            var replacement = new RecordingDispatcher();
+            manager.Register(requestId, 1, replacement);
+            var complete = typeof(StreamManager).GetMethod("CompleteCapturedTerminalStream",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            Ensure(!(bool)complete.Invoke(manager, [requestId, (ushort)1, requestRoutes, oldEntry, null])!,
+                "old terminal completion must refuse a different entry or request container");
+            await manager.DispatchChunkAsync(requestId, 1, new ReadOnlySequence<byte>(new byte[4]));
+            Ensure(replacement.DispatchCount == 1 && replacement.CompleteCount == 0,
+                "replacement route must remain live and uncompleted");
+        }
+        finally
+        {
+            oldEntry.GetType().GetMethod("Release", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(oldEntry, null);
+            manager.CompleteRequestStreams(requestId, null);
+        }
     }
 
     [Test]

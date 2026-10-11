@@ -747,7 +747,7 @@ internal sealed partial class StreamManager
 
     private readonly record struct RequestDrainEntry(ushort StreamId, DispatcherEntry Entry);
 
-    private sealed class RequestDispatchers
+    private sealed partial class RequestDispatchers
     {
         private DispatcherEntry? _defaultDispatcher;
         private readonly Lock _gate = new();

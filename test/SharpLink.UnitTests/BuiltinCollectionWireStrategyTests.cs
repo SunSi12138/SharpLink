@@ -8,7 +8,7 @@ public class BuiltinCollectionWireStrategyTests
     [Test]
     public async Task DateTimeScalarAndCollectionShouldPreserveRawTicksAndKind()
     {
-        using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
+        using var provider = new RpcCodecProvider();
         var scalarCodec = provider.GetCodec<DateTime>();
         var arrayCodec = provider.GetCodec<DateTime[]>();
         Ensure(scalarCodec.GetType().Name == "DateTimeCodec",
@@ -37,7 +37,7 @@ public class BuiltinCollectionWireStrategyTests
     [Test]
     public async Task DateTimeOffsetCollectionShouldUseNormalizedRaw16RatherThanScalarCodec()
     {
-        using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
+        using var provider = new RpcCodecProvider();
         var scalarCodec = provider.GetCodec<DateTimeOffset>();
         var arrayCodec = provider.GetCodec<DateTimeOffset[]>();
         Ensure(scalarCodec.GetType().Name == "DateTimeOffsetCodec",

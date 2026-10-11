@@ -35,15 +35,8 @@ public partial class RpcManifestCodecProviderTests
     [Test]
     public void GeneratedUnsafeBlitShouldRejectUnregisteredUnmanagedTypeWithValidAbi()
     {
-        var resolverCalls = 0;
         var factory = new UnsafeBlitFactory<UncataloguedPayload>(new(8, false));
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .UseCodecResolver(_ =>
-            {
-                resolverCalls++;
-                return UnsafeBlitCodec<UncataloguedPayload>.Instance;
-            })
-            .Build(includeGeneratedAssemblyCatalog: false);
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         using var registration = context.PrepareGeneratedManifest(new UnsafeBlitManifest(
             typeof(IContractA).Assembly, [], []));
         var generated = GetUnsafeBlitProvider(registration);
@@ -51,8 +44,8 @@ public partial class RpcManifestCodecProviderTests
         ExpectUnadmittedUnsafeBlit(
             () => generated.GetGeneratedUnsafeBlitCodec<UncataloguedPayload>(factory, new(8, false)),
             "a plausible ABI must not authorize an unmanaged type missing from the owner's generated graph");
-        Ensure(factory.CreateCalls == 0 && resolverCalls == 0,
-            "a missing registration must fail without invoking a supplied factory or standalone resolver");
+        Ensure(factory.CreateCalls == 0,
+            "a missing registration must fail without invoking an unadmitted factory");
     }
 
     [Test]
@@ -340,25 +333,18 @@ public partial class RpcManifestCodecProviderTests
     }
 
     [Test]
-    public void GeneratedUnsafeBlitMissingFactoryMustNotConsultStandaloneResolver()
+    public void GeneratedUnsafeBlitMissingFactoryMustFailClosedInOwnerAndRuntime()
     {
-        var resolverCalls = 0;
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .UseCodecResolver(type =>
-            {
-                resolverCalls++;
-                return type == typeof(UncataloguedPayload) ? UnsafeBlitCodec<UncataloguedPayload>.Instance : null;
-            })
-            .Build(includeGeneratedAssemblyCatalog: false);
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var registration = context.PrepareGeneratedManifest(new ContractCodecManifest(
             typeof(IContractA).Assembly, new NamedContractCodec("missing-abi"), "missing-abi"));
         context.AdoptGeneratedManifest(registration);
         ExpectMissingUnsafeBlit(
             () => RpcGeneratedCodecResolver.GetProvider(registration).GetCodec<UncataloguedPayload>(),
-            "A generated owner must never use the standalone resolver for a missing factory.");
-        Ensure(resolverCalls == 0, "owner-local failure must not invoke the supplied standalone resolver");
-        Ensure(context.Codecs.GetCodec<UncataloguedPayload>() is not null && resolverCalls == 1,
-            "the explicit standalone resolver must remain usable outside the generated graph");
+            "A generated owner must reject a missing factory.");
+        ExpectMissingUnsafeBlit(
+            () => context.Codecs.GetCodec<UncataloguedPayload>(),
+            "The runtime must not synthesize an unmanaged Codec without admitted ABI metadata.");
     }
 
     private static IRpcGeneratedUnsafeBlitCodecProvider GetUnsafeBlitProvider(

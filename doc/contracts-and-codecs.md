@@ -20,7 +20,7 @@ Generator 根据签名生成五类调用：Unary、OneWay、ClientStreaming、Se
 
 普通 `T[]`（`byte[]` 除外）、`List<T>`、`Dictionary<K,V>`、Tuple/ValueTuple、DTO/record 和普通 user struct/class 不属于 Framework wire primitive。它们即使默认实现使用 generated/native/blit fast path，也仍然是 configurable payload type。换言之：**fast path != primitive != policy immutability**。
 
-3.0 中，生成的 UnsafeBlit factory 直接携带 ABI requirement，并由所属 manifest 的冻结 Codec graph 验证。缺少生成或显式 Codec 的任意 unmanaged 类型不再自动回退到反射，包括未裁剪 JIT。Standalone `SharpLinkRuntimeContextBuilder.AddCodec<T>` / `UseCodecResolver` 可注册应用自己的 Codec；生成 RPC 的编码策略仍通过编译期 `RpcCodec`/Adapter 绑定，不能被 endpoint 注册覆盖。详细迁移见 [3.0 UnsafeBlit migration](unsafe-blit-3.0-migration.md)。
+3.0 中，生成的 UnsafeBlit factory 直接携带 ABI requirement，并由所属 manifest 的冻结 Codec graph 验证。缺少生成或显式 Codec 的任意 unmanaged 类型不再自动回退到反射，包括未裁剪 JIT。3.0 已移除独立 RuntimeContext 的 `AddCodec<T>` / `UseCodecResolver`；生成 RPC 的编码策略通过编译期 `RpcCodec`/Adapter 绑定。独立序列化可直接使用应用持有的 `IRpcCodec<T>`。详细迁移见 [3.0 UnsafeBlit migration](unsafe-blit-3.0-migration.md)。
 
 UnsafeBlit 仍直接发送 managed representation，包括 padding；它不是 canonical field-wise 编码。机密边界应使用 field-wise/non-raw 自定义 Codec/Adapter，不能把普通 `new`/`default` 当作 padding sanitizer。见 [padding 安全评估](unsafe-blit-padding-security.md) 和 [ABI 兼容性](codec-compatibility.md)。
 
@@ -55,7 +55,7 @@ public sealed class MyTypeCodec : IRpcCodec<MyType>
 
 如果确实需要为 `int`、`string`、enum 等 Framework wire primitive 定义不同 wire representation，应创建 user-defined wrapper struct/class，并为 wrapper 配置 Codec。这样 final graph 仍保持每个 closed `T` 唯一，同时不会把所有 framework primitive 暴露成 configurable policy surface。
 
-`UseSerializer(Func<Type, IRpcCodec?>)` 是实例级 Runtime Context fallback resolver，仅用于未被 generated Contract assembly frozen graph 接管的运行时解析；它不会覆盖 generated RPC 的最终 wire Codec binding。
+3.0 不再提供 Server `UseSerializer(Func<Type, IRpcCodec?>)`。生成式 RPC 的 Codec 必须在编译期通过 `[RpcCodec]` / Adapter/Route 绑定，不再存在 endpoint runtime resolver。
 
 ## Codec Adapter 与 SharpPack
 

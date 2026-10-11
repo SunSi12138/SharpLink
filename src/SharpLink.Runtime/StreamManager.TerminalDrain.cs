@@ -22,15 +22,14 @@ internal sealed partial class StreamManager
         {
             ThrowIfPeerTerminal(entry);
             var dispatcher = entry.Dispatcher;
-            if (dispatcher is PreAdmissionStreamDispatcher preAdmission)
-                preAdmission.Abandon(out _);
-            else if (dispatcher is not DiscardingStreamDispatcher)
+            if (dispatcher is not DiscardingStreamDispatcher &&
+                dispatcher is not PreAdmissionStreamDispatcher { IsDiscarding: true })
             {
                 entry.Release();
                 return false;
             }
 
-            // Establish discard before debit; the same leased route refunds this frame exactly
+            // Confirm discard before debit; the same leased route refunds this frame exactly
             // once. A compressed frame uses its validated original length, without decompression.
             _acceptBytes?.Invoke(requestId, streamId, encodedByteCount);
             dispatch = CompleteDispatch(entry,
@@ -52,16 +51,59 @@ internal sealed partial class StreamManager
             return false;
         try
         {
-            if (entry.Dispatcher is PreAdmissionStreamDispatcher preAdmission)
-                preAdmission.Abandon(out _);
-            else if (entry.Dispatcher is not DiscardingStreamDispatcher)
-                return false;
-            CompletePeerStream(requestId, streamId, exception);
-            return true;
+            return CompleteCapturedTerminalStream(requestId, streamId, requestRoutes, entry, exception);
         }
         finally
         {
             entry.Release();
         }
     }
+
+    private bool CompleteCapturedTerminalStream(long requestId, ushort streamId,
+        RequestDispatchers requestRoutes, DispatcherEntry entry, Exception? exception)
+    {
+        if (entry.Dispatcher is not DiscardingStreamDispatcher &&
+            entry.Dispatcher is not PreAdmissionStreamDispatcher { IsDiscarding: true })
+            return false;
+        if (!requestRoutes.TryRemoveTerminal(streamId, entry))
+            return false;
+        SharpLinkTelemetry.AddActiveStreams(-1);
+        Interlocked.Decrement(ref _activeStreamCount);
+        try
+        {
+            entry.Dispatcher.Complete(exception);
+            PublishReceiveTerminal(requestId, streamId, entry);
+        }
+        finally
+        {
+            entry.Detach();
+            RemoveEmptyRequest(requestId, requestRoutes);
+        }
+        return true;
+    }
+
+    private sealed partial class RequestDispatchers
+    {
+        internal bool TryRemoveTerminal(ushort streamId, DispatcherEntry expected)
+        {
+            if (streamId == 0)
+            {
+                if (!ReferenceEquals(Interlocked.CompareExchange(ref _defaultDispatcher, null, expected), expected))
+                    return false;
+            }
+            else
+            {
+                lock (_gate)
+                {
+                    if (!_byStreamId.TryGetValue(streamId, out var current) || !ReferenceEquals(current, expected))
+                        return false;
+                    _byStreamId.Remove(streamId);
+                }
+            }
+            expected.MarkPeerTerminalReceived();
+            expected.Close();
+            return true;
+        }
+    }
+
 }

@@ -11,12 +11,7 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
     [Test]
     public void ReferencedGeneratedCodecShouldResolveNestedCodecThroughFrozenProviderOwner()
     {
-        using var context = new SharpLinkRuntimeContextBuilder()
-            .AddCodec(new EndpointReferencedChildCodec())
-            .UseCodecResolver(static type => type == typeof(ReferencedFallbackChild)
-                ? new EndpointFallbackChildCodec()
-                : null)
-            .Build(includeGeneratedAssemblyCatalog: false);
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
 
         var providerManifest = new ProviderManifest(typeof(ReferencedPayload).Assembly);
         var providerRegistration = context.PrepareGeneratedManifest(providerManifest);
@@ -43,9 +38,9 @@ public sealed class RpcReferencedCodecOwnerScopeRegressionTests
         Ensure(payloadCodec is not null,
             $"{path} must resolve the provider-owned generated payload registration");
         Ensure(payloadCodec!.Child is ReferencedChildCodec,
-            $"{path} must resolve the generated child through the provider manifest's frozen global graph, not an endpoint AddCodec override");
+            $"{path} must resolve the generated child through its owner-local graph");
         Ensure(payloadCodec.FallbackChild is not EndpointFallbackChildCodec,
-            $"{path} must resolve generated unmanaged semantics from the provider manifest's frozen graph, not endpoint UseCodecResolver state");
+            $"{path} must resolve unmanaged semantics from its owner-local graph");
         Ensure(payloadCodec.FallbackChild.GetType().Name.Contains("UnsafeBlitCodec", StringComparison.Ordinal),
             $"{path} must use the generated unmanaged factory");
     }

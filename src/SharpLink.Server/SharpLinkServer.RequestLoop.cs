@@ -17,9 +17,32 @@ internal sealed partial class SharpLinkServer
             return true;
         }
 
+        return TryAcceptCapturedInboundStreamProgress(
+            requestCancellationMap, requestId, callLease, out hasOwningCallState);
+    }
+
+    private static bool TryAcceptCapturedInboundStreamProgress(
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        long requestId,
+        ServerCallCancellationLease callLease,
+        out bool hasOwningCallState)
+    {
+        // Losing a pooled generation is not a terminal decision. Retry current ownership;
+        // removal falls back to ordinary existing-route handling, never terminal abandonment.
+        var retries = 0;
+        while (!callLease.TryAcquire())
+        {
+            if (++retries > 3)
+                throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed,
+                    "Inbound stream call ownership could not be acquired safely.");
+            if (!requestCancellationMap.TryCapture(
+                    requestId, static (id, state) => state.CaptureLease(id), out callLease))
+            {
+                hasOwningCallState = false;
+                return true;
+            }
+        }
         hasOwningCallState = true;
-        if (!callLease.TryAcquire())
-            return false;
 
         var releaseLease = true;
         try
