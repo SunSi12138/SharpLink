@@ -40,7 +40,7 @@ python3 eng/send-credit-lease-race/run.py --out artifacts/send-credit-lease-race
 | current | focused 四轮 | 每轮 8/8、exit 0、0 skipped。 |
 | current | unfiltered 完整套件四轮 | 每轮 2,090/2,090、exit 0、0 skipped；原测试和超时不变。 |
 
-`FULL_COUNT=2090` 对应此提交的 2,082 个既有 cases 加 8 个诊断 cases。以后合法新增/删除既有 case 时应在同一评审中显式更新计数，不能因本回归失败而降低计数、跳过失败或放宽断言。工作流保留原 TUnit 并行数 8，现有 CI 完全不变。
+`FULL_COUNT=2090` 对应当前整合提交的 2,082 个原生 cases 加 8 个诊断 cases。原始独立修复的原生 suite 为 2,082 cases，历史证据计数保持原样。以后合法新增/删除既有 case 时应在同一评审中显式更新计数，不能因本回归失败而降低计数、跳过失败或放宽断言。工作流保留原 TUnit 并行数 8，现有 CI 完全不变。
 
 每次运行保存真实 argv、cwd、退出码、stdout/stderr、完整 TUnit 输出、输入/输出源码身份和编译后二进制 hashes。每轮前后再次核对全部 DLL/PDB/config 身份，避免测到另一套 build；下一轮前只清理隔离目录中已经归档的旧 TestResults，防止旧 HTML 被当成新报告。非预期失败立即使工作流失败，不重跑到绿。artifact 上传使用 `if: always()`，失败日志照常保留。
 
