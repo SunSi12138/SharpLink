@@ -141,7 +141,7 @@ public partial class SharpLinkServerInvocationTests
             lock (_requestedHashes)
                 _requestedHashes.Add(methodHash);
             return methodHash == CountingMethodHash
-                ? new RpcMethodShape(kind, 0, supportsCancellation: true, hasResponsePayload: true)
+                ? new RpcMethodShape(kind, 0, supportsCancellation: true, hasResponsePayload: kind != RpcMethodKind.OneWay)
                 : RpcMethodShape.UnknownMethod;
         }
 

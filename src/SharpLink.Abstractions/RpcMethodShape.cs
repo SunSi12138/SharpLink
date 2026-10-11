@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 namespace SharpLink.Abstractions;
 
 /// <summary>
@@ -8,30 +6,12 @@ namespace SharpLink.Abstractions;
 /// <see cref="RpcMethodDescriptor"/> materialization.
 /// </summary>
 /// <remarks>
-/// <para>
-/// The default value is deliberately conservative: <see cref="Unresolvable"/> means "this stub
-/// cannot describe its methods", which keeps <see cref="SupportsCancellation"/> <see langword="true"/>
-/// and reports an unknown client-stream count. A zero-initialized shape therefore preserves the
-/// legacy fail-safe behavior instead of silently dropping per-call cancellation state.
-/// </para>
-/// <para>Bit layout of the packed word:</para>
-/// <list type="table">
-/// <item><description>bits 0-1: resolution (0 unresolvable, 1 unknown method, 2 known);</description></item>
-/// <item><description>bits 2-4: <see cref="RpcMethodKind"/>;</description></item>
-/// <item><description>bits 5-11: client-stream count;</description></item>
-/// <item><description>bit 12: <see cref="SupportsCancellation"/>;</description></item>
-/// <item><description>bit 13: <see cref="HasResponsePayload"/>;</description></item>
-/// <item><description>bit 14: <see cref="ResponseNullable"/>;</description></item>
-/// <item><description>bit 15: <see cref="HasMethodTimeout"/>;</description></item>
-/// <item><description>bit 16: <see cref="IsIdempotent"/>;</description></item>
-/// <item><description>bit 17: <see cref="HasMethodTimeoutValue"/>;</description></item>
-/// </list>
+/// The default value is invalid and must be rejected by consumers. Only a typed construction
+/// describes a known method; <see cref="UnknownMethod"/> explicitly describes an absent identifier.
+/// The compact representation is private and is not a generated-code ABI.
 /// </remarks>
 public readonly struct RpcMethodShape : IEquatable<RpcMethodShape>
 {
-    /// <summary>The client-stream count reported when a stub cannot describe its methods.</summary>
-    public const int UnknownClientStreamCount = -1;
-
     /// <summary>The maximum supported number of generated client-stream parameters.</summary>
     public const int MaxClientStreamCount = 127;
 
@@ -51,10 +31,7 @@ public readonly struct RpcMethodShape : IEquatable<RpcMethodShape>
 
     private readonly uint _packed;
 
-    /// <summary>Creates a shape from its packed representation.</summary>
-    /// <param name="packed">The packed word produced by the source generator.</param>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public RpcMethodShape(uint packed) => _packed = packed;
+    private RpcMethodShape(uint packed) => _packed = packed;
 
     /// <summary>Creates a known shape from its individual facts.</summary>
     /// <param name="kind">The generated invocation shape.</param>
@@ -75,6 +52,8 @@ public readonly struct RpcMethodShape : IEquatable<RpcMethodShape>
         bool isIdempotent = false,
         bool hasMethodTimeoutValue = false)
     {
+        if (kind is < RpcMethodKind.Unary or > RpcMethodKind.DuplexStreaming)
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown RPC method kind.");
         if ((uint)clientStreamCount > MaxClientStreamCount)
         {
             throw new ArgumentOutOfRangeException(
@@ -82,6 +61,20 @@ public readonly struct RpcMethodShape : IEquatable<RpcMethodShape>
                 clientStreamCount,
                 $"A generated method cannot own more than {MaxClientStreamCount} client streams.");
         }
+
+        var requiresClientStreams = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
+        if ((requiresClientStreams && clientStreamCount == 0) ||
+            ((kind is RpcMethodKind.Unary or RpcMethodKind.ServerStreaming) && clientStreamCount != 0))
+            throw new ArgumentException("Client-stream count does not match the method kind.", nameof(clientStreamCount));
+        var streamsResponse = kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+        if ((clientStreamCount != 0 || streamsResponse) && !supportsCancellation)
+            throw new ArgumentException("Streaming methods require cancellation support.", nameof(supportsCancellation));
+        if ((kind == RpcMethodKind.OneWay && hasResponsePayload) || (streamsResponse && !hasResponsePayload))
+            throw new ArgumentException("Response payload does not match the method kind.", nameof(hasResponsePayload));
+        if (responseNullable && !hasResponsePayload)
+            throw new ArgumentException("Only response payloads can be nullable.", nameof(responseNullable));
+        if (hasMethodTimeoutValue && !hasMethodTimeout)
+            throw new ArgumentException("A timeout value requires a declared timeout.", nameof(hasMethodTimeoutValue));
 
         _packed = ResolutionKnown
             | (((uint)kind & 0b111u) << KindShift)
@@ -94,23 +87,14 @@ public readonly struct RpcMethodShape : IEquatable<RpcMethodShape>
             | (hasMethodTimeoutValue ? 1u << HasMethodTimeoutValueShift : 0u);
     }
 
-    /// <summary>
-    /// Gets the conservative shape reported by a stub that cannot describe its methods; the
-    /// default value of this type.
-    /// </summary>
-    public static RpcMethodShape Unresolvable => default;
-
     /// <summary>Gets the shape reported for a method identifier that is not part of the contract.</summary>
     public static RpcMethodShape UnknownMethod => new(ResolutionUnknownMethod);
-
-    /// <summary>Gets the packed representation of this shape.</summary>
-    public uint Packed => _packed;
 
     /// <summary>Gets whether the shape describes a method that exists in the contract.</summary>
     public bool IsKnown => (_packed & ResolutionMask) == ResolutionKnown;
 
-    /// <summary>Gets whether the stub could not describe the method at all.</summary>
-    public bool IsUnresolvable => (_packed & ResolutionMask) == 0u;
+    /// <summary>Gets whether this is an invalid, zero-initialized shape.</summary>
+    public bool IsInvalid => !IsKnown && !IsUnknownMethod;
 
     /// <summary>Gets whether the resolved method identifier is outside the contract.</summary>
     public bool IsUnknownMethod => (_packed & ResolutionMask) == ResolutionUnknownMethod;
@@ -118,23 +102,11 @@ public readonly struct RpcMethodShape : IEquatable<RpcMethodShape>
     /// <summary>Gets the generated invocation shape.</summary>
     public RpcMethodKind Kind => (RpcMethodKind)((_packed & KindMask) >> KindShift);
 
-    /// <summary>
-    /// Gets the number of generated client-stream parameters, or
-    /// <see cref="UnknownClientStreamCount"/> when the stub cannot describe the method.
-    /// </summary>
-    public int ClientStreamCount => IsUnresolvable
-        ? UnknownClientStreamCount
-        : (int)((_packed & ClientStreamCountMask) >> ClientStreamCountShift);
+    /// <summary>Gets the number of generated client-stream parameters.</summary>
+    public int ClientStreamCount => (int)((_packed & ClientStreamCountMask) >> ClientStreamCountShift);
 
-    /// <summary>Gets whether the client-stream count is meaningful.</summary>
-    public bool HasKnownClientStreamCount => !IsUnresolvable;
-
-    /// <summary>
-    /// Gets whether the server must create per-call cancellation state. An unresolvable shape
-    /// answers <see langword="true"/> so that custom stubs keep the legacy fail-safe behavior.
-    /// </summary>
-    public bool SupportsCancellation =>
-        IsUnresolvable || (_packed & (1u << SupportsCancellationShift)) != 0;
+    /// <summary>Gets whether the server must create per-call cancellation state.</summary>
+    public bool SupportsCancellation => (_packed & (1u << SupportsCancellationShift)) != 0;
 
     /// <summary>Gets whether a successful response contains a business payload.</summary>
     public bool HasResponsePayload => (_packed & (1u << HasResponsePayloadShift)) != 0;
@@ -164,8 +136,8 @@ public readonly struct RpcMethodShape : IEquatable<RpcMethodShape>
     public override int GetHashCode() => (int)_packed;
 
     /// <inheritdoc/>
-    public override string ToString() => IsUnresolvable
-        ? "RpcMethodShape(Unresolvable)"
+    public override string ToString() => IsInvalid
+        ? "RpcMethodShape(Invalid)"
         : IsUnknownMethod
             ? "RpcMethodShape(UnknownMethod)"
             : $"RpcMethodShape({Kind}, streams: {ClientStreamCount}, cancellable: {SupportsCancellation})";

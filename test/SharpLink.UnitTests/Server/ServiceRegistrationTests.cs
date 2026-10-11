@@ -651,9 +651,10 @@ public class ServiceRegistrationTests
         public RpcMethodShape ResolveMethodShape(long methodHash)
         {
             Interlocked.Increment(ref _shapeLookups);
-            return descriptorKind is { } kind
-                ? new RpcMethodShape(kind, 0, supportsCancellation: true, hasResponsePayload: false)
-                : RpcMethodShape.Unresolvable;
+            return methodHash == 17
+                ? new RpcMethodShape(descriptorKind ?? RpcMethodKind.Unary, 0,
+                    supportsCancellation: true, hasResponsePayload: false)
+                : RpcMethodShape.UnknownMethod;
         }
 
         public long InterfaceHash => 1;

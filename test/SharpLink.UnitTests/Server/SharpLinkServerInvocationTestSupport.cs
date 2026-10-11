@@ -255,6 +255,11 @@ public partial class SharpLinkServerInvocationTests
 
     private sealed class ThrowingStub : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash)
+            => methodHash == 1
+                ? new RpcMethodShape(RpcMethodKind.Unary, 0, true, false)
+                : RpcMethodShape.UnknownMethod;
+
         public long InterfaceHash => 1;
 
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,

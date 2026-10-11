@@ -20,11 +20,10 @@ public sealed class RpcMethodShapeTests
             hasMethodTimeoutValue: true);
 
         await Assert.That(shape.IsKnown).IsTrue();
-        await Assert.That(shape.IsUnresolvable).IsFalse();
+        await Assert.That(shape.IsInvalid).IsFalse();
         await Assert.That(shape.IsUnknownMethod).IsFalse();
         await Assert.That(shape.Kind).IsEqualTo(RpcMethodKind.DuplexStreaming);
         await Assert.That(shape.ClientStreamCount).IsEqualTo(3);
-        await Assert.That(shape.HasKnownClientStreamCount).IsTrue();
         await Assert.That(shape.HasClientStreams).IsTrue();
         await Assert.That(shape.SupportsCancellation).IsTrue();
         await Assert.That(shape.HasResponsePayload).IsTrue();
@@ -56,19 +55,14 @@ public sealed class RpcMethodShapeTests
     }
 
     [Test]
-    public async Task DefaultShapeShouldStayConservative()
+    public async Task DefaultShapeShouldBeInvalidAndDistinctFromUnknownMethod()
     {
         var shape = default(RpcMethodShape);
-
         await Assert.That(shape.IsKnown).IsFalse();
-        await Assert.That(shape.IsUnresolvable).IsTrue();
+        await Assert.That(shape.IsInvalid).IsTrue();
         await Assert.That(shape.IsUnknownMethod).IsFalse();
-        // A stub that cannot describe its methods must keep creating per-call cancellation state.
-        await Assert.That(shape.SupportsCancellation).IsTrue();
-        await Assert.That(shape.HasKnownClientStreamCount).IsFalse();
-        await Assert.That(shape.ClientStreamCount).IsEqualTo(RpcMethodShape.UnknownClientStreamCount);
-        await Assert.That(shape.Kind).IsEqualTo(RpcMethodKind.Unary);
-        await Assert.That(RpcMethodShape.Unresolvable).IsEqualTo(shape);
+        await Assert.That(shape == RpcMethodShape.UnknownMethod).IsFalse();
+        await Assert.That(shape.SupportsCancellation).IsFalse();
     }
 
     [Test]
@@ -78,9 +72,8 @@ public sealed class RpcMethodShapeTests
 
         await Assert.That(shape.IsKnown).IsFalse();
         await Assert.That(shape.IsUnknownMethod).IsTrue();
-        await Assert.That(shape.IsUnresolvable).IsFalse();
+        await Assert.That(shape.IsInvalid).IsFalse();
         await Assert.That(shape.SupportsCancellation).IsFalse();
-        await Assert.That(shape.HasKnownClientStreamCount).IsTrue();
         await Assert.That(shape.ClientStreamCount).IsEqualTo(0);
         await Assert.That(shape.Kind).IsEqualTo(RpcMethodKind.Unary);
     }
@@ -97,12 +90,11 @@ public sealed class RpcMethodShapeTests
         await Assert.That(left).IsEqualTo(right);
         await Assert.That(left == right).IsTrue();
         await Assert.That(left != other).IsTrue();
-        await Assert.That(left.Packed).IsEqualTo(right.Packed);
         await Assert.That(left.GetHashCode()).IsEqualTo(right.GetHashCode());
     }
 
     [Test]
-    public async Task PackedConstructorShouldMatchTheFactConstructor()
+    public async Task TypedShapeCopiesShouldPreserveAllFacts()
     {
         var fromFacts = new RpcMethodShape(
             RpcMethodKind.ServerStreaming,
@@ -114,7 +106,7 @@ public sealed class RpcMethodShapeTests
             isIdempotent: false,
             hasMethodTimeoutValue: true);
 
-        var fromPacked = new RpcMethodShape(fromFacts.Packed);
+        var fromPacked = fromFacts;
 
         await Assert.That(fromPacked).IsEqualTo(fromFacts);
         await Assert.That(fromPacked.Kind).IsEqualTo(RpcMethodKind.ServerStreaming);
@@ -139,13 +131,12 @@ public sealed class RpcMethodShapeTests
     [Arguments(127)]
     public async Task StreamCountBoundariesShouldRoundTripWithoutCorruptingFlags(int count)
     {
-        var shape = new RpcMethodShape(RpcMethodKind.DuplexStreaming, count, true, true,
+        var shape = new RpcMethodShape(count == 0 ? RpcMethodKind.ServerStreaming : RpcMethodKind.DuplexStreaming, count, true, true,
             responseNullable: true, hasMethodTimeout: true, isIdempotent: true,
             hasMethodTimeoutValue: true);
-        var packed = new RpcMethodShape(shape.Packed);
+        var packed = shape;
         await Assert.That(packed.ClientStreamCount).IsEqualTo(count);
-        await Assert.That(packed.HasKnownClientStreamCount).IsTrue();
-        await Assert.That(packed.Kind).IsEqualTo(RpcMethodKind.DuplexStreaming);
+        await Assert.That(packed.Kind).IsEqualTo(count == 0 ? RpcMethodKind.ServerStreaming : RpcMethodKind.DuplexStreaming);
         await Assert.That(packed.SupportsCancellation).IsTrue();
         await Assert.That(packed.HasResponsePayload).IsTrue();
         await Assert.That(packed.ResponseNullable).IsTrue();
@@ -194,17 +185,61 @@ public sealed class RpcMethodShapeTests
     }
 
     [Test]
-    public async Task FromShapeShouldNotLeakTheUnknownStreamSentinel()
+    public async Task DescriptorProjectionShouldRejectInvalidAndUnknownShapes()
     {
-        var unresolvable = RpcMethodDescriptor.FromShape(11, 22, RpcMethodShape.Unresolvable);
-        await Assert.That(unresolvable.ClientStreamCount).IsEqualTo(0);
-        await Assert.That(unresolvable.HasClientStreams).IsFalse();
-        await Assert.That(unresolvable.Kind).IsEqualTo(RpcMethodKind.Unary);
+        await Assert.That(() => RpcMethodDescriptor.FromShape(11, 22, default))
+            .Throws<ArgumentException>();
+        await Assert.That(() => RpcMethodDescriptor.FromShape(11, 22, RpcMethodShape.UnknownMethod))
+            .Throws<ArgumentException>();
+    }
 
-        var unknownMethod = RpcMethodDescriptor.FromShape(11, 22, RpcMethodShape.UnknownMethod);
-        await Assert.That(unknownMethod.ClientStreamCount).IsEqualTo(0);
-        await Assert.That(unknownMethod.HasClientStreams).IsFalse();
-        await Assert.That(unknownMethod.Kind).IsEqualTo(RpcMethodKind.Unary);
+    [Test]
+    public async Task PublicShapeSurfaceShouldNotExposePackedRepresentationOrDefaultStubImplementation()
+    {
+        await Assert.That(typeof(RpcMethodShape).GetConstructor([typeof(uint)])).IsNull();
+        await Assert.That(typeof(RpcMethodShape).GetProperty("Packed")).IsNull();
+        await Assert.That(typeof(IRpcStub).GetMethod(nameof(IRpcStub.ResolveMethodShape))!.IsAbstract).IsTrue();
+    }
+
+    [Test]
+    [Arguments(5)]
+    [Arguments(7)]
+    [Arguments(255)]
+    public async Task UndefinedMethodKindsShouldThrow(int kind)
+    {
+        await Assert.That(() => new RpcMethodShape((RpcMethodKind)kind, 0, true, true))
+            .Throws<ArgumentOutOfRangeException>();
+    }
+
+    [Test]
+    public async Task ContradictoryFlagsShouldThrow()
+    {
+        await Assert.That(() => new RpcMethodShape(RpcMethodKind.Unary, 1, true, true))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new RpcMethodShape(RpcMethodKind.ClientStreaming, 0, true, true))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new RpcMethodShape(RpcMethodKind.ClientStreaming, 1, false, true))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new RpcMethodShape(RpcMethodKind.ServerStreaming, 0, false, true))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new RpcMethodShape(RpcMethodKind.ServerStreaming, 0, true, false))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new RpcMethodShape(RpcMethodKind.OneWay, 0, true, true))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new RpcMethodShape(RpcMethodKind.Unary, 0, true, false, responseNullable: true))
+            .Throws<ArgumentException>();
+        await Assert.That(() => new RpcMethodShape(RpcMethodKind.Unary, 0, true, true, hasMethodTimeoutValue: true))
+            .Throws<ArgumentException>();
+    }
+
+    [Test]
+    public async Task OneWayClientStreamsAndTimeoutWithoutExplicitValueShouldRemainSupported()
+    {
+        var shape = new RpcMethodShape(RpcMethodKind.OneWay, 127, true, false, hasMethodTimeout: true);
+        await Assert.That(shape.IsKnown).IsTrue();
+        await Assert.That(shape.ClientStreamCount).IsEqualTo(127);
+        await Assert.That(shape.HasMethodTimeout).IsTrue();
+        await Assert.That(shape.HasMethodTimeoutValue).IsFalse();
     }
 
     [Test]

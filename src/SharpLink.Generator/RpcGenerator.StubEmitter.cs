@@ -235,18 +235,20 @@ public partial class RpcGenerator
 
     /// <summary>
     /// Emits the single generated method-fact table. Every compile-time fact about a method lives
-    /// here as one packed <c>RpcMethodShape</c> literal, so the server resolves a method once
+    /// here as one validated typed <c>RpcMethodShape</c> value, so the server resolves a method once
     /// per RPC instead of walking several per-method switches.
     /// </summary>
     private static void AppendMethodShapeResolution(StringBuilder sb, RpcInterfaceModel model)
     {
+        foreach (var method in model.Methods)
+            sb.AppendLine($"    private static readonly RpcMethodShape __shape_{GetMethodSuffix(method)} = {GetMethodShapeExpression(method)};");
+        sb.AppendLine();
         sb.AppendLine("    public RpcMethodShape ResolveMethodShape(long methodHash)");
         sb.AppendLine("        => methodHash switch");
         sb.AppendLine("        {");
         foreach (var method in model.Methods)
         {
-            var packed = GetPackedMethodShape(method);
-            sb.AppendLine($"            {method.Hash}L => new RpcMethodShape(0x{packed:x8}u),");
+            sb.AppendLine($"            {method.Hash}L => __shape_{GetMethodSuffix(method)},");
         }
         sb.AppendLine("            _ => RpcMethodShape.UnknownMethod");
         sb.AppendLine("        };");
@@ -271,43 +273,16 @@ public partial class RpcGenerator
         sb.AppendLine();
     }
 
-    /// <summary>Packs every generated fact about one method into its <c>RpcMethodShape</c> word.</summary>
-    private static uint GetPackedMethodShape(RpcMethodModel method)
-    {
-        const uint resolutionKnown = 2u;
-        const uint kindShift = 2;
-        const uint clientStreamCountShift = 5;
-        const uint supportsCancellationBit = 1u << 12;
-        const uint hasResponsePayloadBit = 1u << 13;
-        const uint responseNullableBit = 1u << 14;
-        const uint hasMethodTimeoutBit = 1u << 15;
-        const uint isIdempotentBit = 1u << 16;
-        const uint hasMethodTimeoutValueBit = 1u << 17;
-
-        var kind = (uint)GetMethodKindValue(method);
-        var clientStreamCount = (uint)method.Parameters.Count(static parameter => parameter.IsStream);
-        var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
-
-        return resolutionKnown
-            | ((kind & 0b111u) << (int)kindShift)
-            | ((clientStreamCount & 0b1111111u) << (int)clientStreamCountShift)
-            | (MethodSupportsCancellation(method) ? supportsCancellationBit : 0u)
-            | (hasPayloadResponse ? hasResponsePayloadBit : 0u)
-            | (method.ResponseNullable ? responseNullableBit : 0u)
-            | (method.HasTimeoutAttribute ? hasMethodTimeoutBit : 0u)
-            | (method.IsIdempotent ? isIdempotentBit : 0u)
-            | (method.TimeoutTicks is not null ? hasMethodTimeoutValueBit : 0u);
-    }
-
-    /// <summary>Maps the generated method kind name onto its packed numeric value.</summary>
-    private static int GetMethodKindValue(RpcMethodModel method) => GetMethodKind(method) switch
-    {
-        "OneWay" => 1,
-        "ClientStreaming" => 2,
-        "ServerStreaming" => 3,
-        "DuplexStreaming" => 4,
-        _ => 0
-    };
+    /// <summary>Emits the validated typed shape without exposing its private representation.</summary>
+    private static string GetMethodShapeExpression(RpcMethodModel method)
+        => $"new RpcMethodShape(RpcMethodKind.{GetMethodKind(method)}, " +
+           $"{method.Parameters.Count(static parameter => parameter.IsStream)}, " +
+           $"{(MethodSupportsCancellation(method) ? "true" : "false")}, " +
+           $"{(!method.IsOneWay && !method.IsVoid ? "true" : "false")}, " +
+           $"{(method.ResponseNullable ? "true" : "false")}, " +
+           $"{(method.HasTimeoutAttribute ? "true" : "false")}, " +
+           $"{(method.IsIdempotent ? "true" : "false")}, " +
+           $"{(method.TimeoutTicks is not null ? "true" : "false")})";
 
     /// <summary>
     /// Keeps the packed cancellation fact identical to the legacy standalone

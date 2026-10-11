@@ -98,14 +98,16 @@ public readonly record struct RpcMethodDescriptor
         RpcMethodShape shape,
         TimeSpan? methodTimeout)
     {
+        if (!shape.IsKnown)
+            throw new ArgumentException("A descriptor requires a known method shape.", nameof(shape));
         _contractId = contractId;
         _methodId = methodId;
         _kind = shape.Kind;
         _methodTimeoutTicks = methodTimeout.GetValueOrDefault().Ticks;
-        _clientStreamCount = shape.HasKnownClientStreamCount ? shape.ClientStreamCount : 0;
+        _clientStreamCount = shape.ClientStreamCount;
         _flags = (byte)(
             (shape.HasResponsePayload ? HasResponsePayloadFlag : 0) |
-            (shape.HasKnownClientStreamCount && shape.HasClientStreams ? HasClientStreamsFlag : 0) |
+            (shape.HasClientStreams ? HasClientStreamsFlag : 0) |
             (shape.HasMethodTimeout ? HasMethodTimeoutFlag : 0) |
             (shape.IsIdempotent ? IsIdempotentFlag : 0) |
             (shape.ResponseNullable ? ResponseNullableFlag : 0) |

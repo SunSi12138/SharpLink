@@ -522,6 +522,8 @@ public class ServerInterceptorChainLoweringBenchmarks
 
     private sealed class CompletedStub : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash)
+            => new(RpcMethodKind.Unary, 0, true, false);
         public CompletedSource Source { get; } = new();
         public long InterfaceHash => 0;
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
@@ -536,6 +538,8 @@ public class ServerInterceptorChainLoweringBenchmarks
 
     private sealed class SuspendedStub : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash)
+            => new(RpcMethodKind.Unary, 0, true, false);
         public SuspendedSource Source { get; } = new();
         public long InterfaceHash => 0;
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)

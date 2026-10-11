@@ -580,8 +580,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> callCancellations,
         RpcSession session,
         long requestId,
-        long contractId,
-        long methodId,
+        ResolvedMethodCall resolved,
         Exception exception)
     {
         if (exception is OperationCanceledException &&
@@ -605,16 +604,15 @@ internal sealed partial class SharpLinkServer
 
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
-        if (SharpLinkCallContext.Current is { } callContext &&
-            Volatile.Read(ref _services).TryGetValue(contractId, out var serviceInfo))
+        if (SharpLinkCallContext.Current is { } callContext)
         {
             return MapServiceException(
                 exception,
                 callContext,
                 session,
-                serviceInfo.Stub,
-                methodId,
-                serviceInfo.Stub.ResolveMethodShape(methodId),
+                resolved.Stub,
+                resolved.MethodHash,
+                resolved.Shape,
                 requestId,
                 CancellationToken.None);
         }

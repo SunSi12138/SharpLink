@@ -24,7 +24,9 @@ internal sealed partial class SharpLinkServer
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
             var request = ReadRequestEnvelope(
                 session, payload, flags, admittedCallState?.Deadline ?? default);
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            var serviceInfo = admittedCall?.Registration;
+            if (serviceInfo is null &&
+                !Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out serviceInfo))
             {
                 if (admittedCallState is not null)
                 {

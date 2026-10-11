@@ -42,7 +42,9 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            var serviceInfo = admittedCall?.Registration;
+            if (serviceInfo is null &&
+                !Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out serviceInfo))
             {
                 ValueTask responseSend;
                 try
@@ -84,6 +86,30 @@ internal sealed partial class SharpLinkServer
             // #732: one generated method-fact resolution per RPC. Admission, cancellation,
             // stream reservation, telemetry and invocation orchestration all consume this value.
             var resolved = admittedCall ?? ResolveMethodCall(serviceInfo, request.MethodHash);
+
+            if (!resolved.Shape.IsKnown)
+            {
+                ValueTask responseSend;
+                try
+                {
+                    responseSend = session.SendRpcErrorWithBackpressureAsync(
+                        requestId,
+                        new SharpLinkException(
+                            resolved.Shape.IsUnknownMethod
+                                ? SharpLinkErrorCode.Unimplemented
+                                : SharpLinkErrorCode.Internal,
+                            resolved.Shape.IsUnknownMethod
+                                ? $"Method {request.MethodHash} is not implemented."
+                                : "The RPC stub returned invalid method facts."),
+                        connection.ConnectionToken);
+                }
+                finally
+                {
+                    if (admittedCallState is not null)
+                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+                }
+                return responseSend;
+            }
 
             if (admissionProgram is not null && !admissionGranted)
             {

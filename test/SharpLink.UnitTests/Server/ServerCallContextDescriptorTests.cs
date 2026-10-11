@@ -56,16 +56,16 @@ public partial class SharpLinkServerInvocationTests
             Ensure(context.InterceptorGeneration is not null,
                 "interceptor context must retain its captured generation");
 
-            // An unresolved custom stub still produces the established conservative
-            // Unary descriptor; the refactor must not turn that into a second lookup.
             var missing = new CallContextCountingStub(descriptor, found: false);
-            var fallback = CreateInterceptedContext(server, connection, missing, requestId: 43);
-            Ensure(missing.LookupCount == 1,
-                "missing-descriptor fallback must query the stub exactly once");
-            Ensure(fallback.Method.Kind == RpcMethodKind.Unary &&
-                fallback.Method.ContractId == missing.InterfaceHash &&
-                fallback.Method.MethodId == descriptor.MethodId,
-                "missing-descriptor fallback must preserve method identity and Unary kind");
+            try
+            {
+                _ = CreateInterceptedContext(server, connection, missing, requestId: 43);
+                throw new Exception("unknown method must not produce an observer descriptor");
+            }
+            catch (TargetInvocationException exception) when (exception.InnerException is ArgumentException)
+            {
+            }
+
         }
         finally
         {
@@ -165,7 +165,7 @@ public partial class SharpLinkServerInvocationTests
                     supportsCancellation: true, descriptor.HasResponsePayload,
                     descriptor.ResponseNullable, descriptor.HasMethodTimeout,
                     descriptor.IsIdempotent, descriptor.MethodTimeout.HasValue)
-                : RpcMethodShape.Unresolvable;
+                : RpcMethodShape.UnknownMethod;
 
         public void DescribeMethod(long methodHash, RpcMethodShape shape, out RpcMethodDescriptor method)
         {

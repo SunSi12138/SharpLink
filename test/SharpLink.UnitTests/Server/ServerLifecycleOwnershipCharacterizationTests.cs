@@ -450,6 +450,8 @@ public class ServerLifecycleOwnershipCharacterizationTests
 
     private sealed class StubMarker : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash) => RpcMethodShape.UnknownMethod;
+
         public long InterfaceHash => 1;
 
         public ValueTask InvokeNoReturnAsync(

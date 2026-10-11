@@ -74,6 +74,7 @@ internal sealed class ServerGeneratedBridge(
         long methodId,
         CancellationToken cancellationToken)
     {
+        var resolved = CaptureResolvedMethod(requestId, contractId, methodId);
         try
         {
             await _protocolBridge.PumpOutboundStreamAsync(
@@ -104,10 +105,29 @@ internal sealed class ServerGeneratedBridge(
                 callCancellations,
                 session,
                 requestId,
-                contractId,
-                methodId,
+                resolved,
                 exception);
             session.SendStreamErrorAsync(requestId, streamId, protocolError);
+        }
+    }
+
+    private ResolvedMethodCall CaptureResolvedMethod(long requestId, long contractId, long methodId)
+    {
+        if (!callCancellations.TryCapture(
+                requestId,
+                static (id, state) => state.CaptureLease(id),
+                out var lease) || !lease.TryAcquire())
+            throw new InvalidOperationException("Outbound streaming requires an active original method snapshot.");
+        try
+        {
+            var resolved = lease.State.ResolvedMethod;
+            if (resolved is not { } value || value.ContractId != contractId || value.MethodHash != methodId)
+                throw new InvalidOperationException("Outbound stream identity does not match its original method snapshot.");
+            return value;
+        }
+        finally
+        {
+            lease.ReleaseUse();
         }
     }
 

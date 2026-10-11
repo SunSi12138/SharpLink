@@ -703,6 +703,8 @@ public sealed class ManifestSourceIsolationTests
 
     private sealed class TestStub(long interfaceHash) : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash) => RpcMethodShape.UnknownMethod;
+
         public long InterfaceHash { get; } = interfaceHash;
         public ValueTask InvokeNoReturnAsync(
             object service,

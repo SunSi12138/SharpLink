@@ -35,9 +35,6 @@ internal readonly struct ResolvedMethodCall
 
     internal bool SupportsCooperativeCancellation => Shape.SupportsCancellation;
 
-    /// <summary>
-    /// Gets the client-stream count to reserve. A method whose shape could not be resolved keeps the
-    /// legacy "no reservation" behavior instead of trusting the unknown sentinel value.
-    /// </summary>
-    internal int ClientStreamCount => Shape.HasKnownClientStreamCount ? Shape.ClientStreamCount : 0;
+    /// <summary>Gets the validated client-stream count of this known method.</summary>
+    internal int ClientStreamCount => Shape.ClientStreamCount;
 }

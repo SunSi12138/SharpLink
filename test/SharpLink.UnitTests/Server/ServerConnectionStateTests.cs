@@ -380,6 +380,8 @@ public class ServerConnectionStateTests
 
     private sealed class StubMarker : IRpcStub
     {
+        public RpcMethodShape ResolveMethodShape(long methodHash) => RpcMethodShape.UnknownMethod;
+
         public long InterfaceHash => 1;
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
             long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;

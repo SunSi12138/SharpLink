@@ -180,7 +180,7 @@ public partial class RpcGenerator
                 sb.AppendLine("                new SharpLinkGeneratedMethodDescriptor(");
                 sb.AppendLine($"                    \"{EscapeString(method.Name)}\",");
                 sb.AppendLine($"                    {method.Hash}L,");
-                sb.AppendLine($"                    new RpcMethodShape(0x{GetPackedMethodShape(method):x8}u),");
+                sb.AppendLine($"                    {GetMethodShapeExpression(method)},");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
                 sb.AppendLine($"                    \"{method.Fingerprint}\"),");

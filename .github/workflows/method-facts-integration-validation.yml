@@ -33,13 +33,13 @@ jobs:
           dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
           dotnet build eng/SharpLink.PublicApi/SharpLink.PublicApi.csproj -c Release -v minimal
           python3 eng/verify-public-api.py artifacts/nuget --version 3.0.0 --baseline artifacts/public-api/candidate --update
-          python3 eng/verify-public-api.py artifacts/nuget --version 3.0.0
           python3 eng/verify-release-versions.py
       - name: Verify formatting and maintainability
         run: |
           dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
           bash eng/check-maintainability.sh
       - name: Unit tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
       - name: Generator tests
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -47,6 +47,9 @@ jobs:
       - name: Integration tests
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --maximum-parallel-tests 1
+      - name: Verify reviewed public API baseline
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python3 eng/verify-public-api.py artifacts/nuget --version 3.0.0
       - name: Preserve candidate API and evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -107,6 +107,13 @@ internal sealed partial class SharpLinkServer
             resolved.ModuleCancellation,
             supportsCooperativeCancellation,
             requestCancellationMap);
+        if (resolved.Shape.Kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
+        {
+            callState = EnsureTrackedCallState(
+                connection, callState, requestId, request.RpcDeadline,
+                serverLoopToken, resolved.ModuleCancellation, requestCancellationMap);
+            callState.AttachResolvedMethod(in resolved);
+        }
         if (decodedRequestOwner is not null)
         {
             callState = EnsureTrackedCallState(

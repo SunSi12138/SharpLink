@@ -34,11 +34,9 @@ public partial class SharpLinkServerInvocationTests
             "InvokeServiceWithLeaseAsync",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find leased invocation path");
-        // The leased invocation path now consumes the method facts resolved once per RPC; this
-        // double has no fact table, so the conservative unresolvable shape is the faithful value.
         var registration = ServiceRegistration.CreateSingleton(
             typeof(ThrowingService), stub, lease.Service, ownsService: false);
-        var resolved = new ResolvedMethodCall(registration, methodHash: 1L, RpcMethodShape.Unresolvable);
+        var resolved = new ResolvedMethodCall(registration, methodHash: 1L, stub.ResolveMethodShape(1L));
 
         Exception failure;
         try

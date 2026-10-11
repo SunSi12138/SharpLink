@@ -10,9 +10,9 @@ public interface IRpcStub
     /// <param name="methodHash">The generated method identifier.</param>
     /// <returns>
     /// The generated shape, <see cref="RpcMethodShape.UnknownMethod"/> when the identifier is not part
-    /// of this contract, or <see cref="RpcMethodShape.Unresolvable"/> when the stub has no fact table.
+    /// of this contract. A default/invalid shape is a broken stub contract and must never be returned.
     /// </returns>
-    RpcMethodShape ResolveMethodShape(long methodHash) => RpcMethodShape.Unresolvable;
+    RpcMethodShape ResolveMethodShape(long methodHash);
 
     /// <summary>
     /// Projects one already-resolved shape into the public descriptor form. Implementations with a
