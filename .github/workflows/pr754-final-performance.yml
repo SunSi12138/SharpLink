@@ -1,0 +1,509 @@
+name: PR754 Final Matched Performance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [validation/pr754-final-performance]
+    paths: [.github/workflows/pr754-final-performance.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr754-final-performance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  same-runner-matched:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      HARNESS_ROOT: ${{ runner.temp }}/pr754-harness
+    steps:
+      - name: Checkout validation workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup repository .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.102
+      - name: Materialize reviewed test-only harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HARNESS_ROOT"
+          cat > "$HARNESS_ROOT/Pr754MethodFactsEvidence.cs" <<'PR754_EOF_Pr754MethodFactsEvidence_cs'
+          using System;
+          using System.Collections.Generic;
+          using System.Diagnostics;
+          using System.Globalization;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection;
+          using System.Runtime;
+          using System.Runtime.CompilerServices;
+          using System.Runtime.InteropServices;
+          using System.Text.Json;
+          using System.Threading;
+          using System.Threading.Tasks;
+          using SharpLink.Abstractions;
+          using SharpLink.Runtime;
+          using SharpLink.Sdk;
+          
+          namespace SharpLink.Benchmarks;
+          
+          // Identical source contract in both trees. No handwritten substitute for generated stubs.
+          [RpcContract]
+          public interface IPr754EvidenceRpc : IService
+          {
+              [NonCancellable, Idempotent] ValueTask<int> Add(int value);
+              ValueTask<int> Cancel(int value, CancellationToken cancellationToken);
+              [NonCancellable, SharpLink.Sdk.Timeout(3)] ValueTask<int> TimedThree(int value);
+              [NonCancellable, SharpLink.Sdk.Timeout(7)] ValueTask<int> TimedSeven(int value);
+              [NonCancellable, SharpLink.Sdk.Timeout] ValueTask<int> DefaultTimeout(int value);
+              [NonCancellable] ValueTask<string?> Nullable(string value);
+              [NonCancellable, Oneway] ValueTask Publish(int value);
+              IAsyncEnumerable<int> Download(int count, CancellationToken cancellationToken);
+              ValueTask<int> Upload(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+              IAsyncEnumerable<int> Duplex(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+          }
+          
+          internal static class Pr754MethodFactsEvidence
+          {
+              private const int Width = 4096;
+              private static long _sink;
+              private sealed record Expected(RpcMethodKind Kind, int Streams, bool Cancel, bool Payload,
+                  bool Nullable = false, bool Timeout = false, bool Idempotent = false, long? TimeoutTicks = null);
+              private sealed record SemanticRow(string Name, long MethodId, long Facts, long Projection,
+                  int Kind, int Streams, bool Cancel, bool Payload, bool Nullable, bool Timeout, bool Idempotent, long? TimeoutTicks);
+              private sealed record Sample(int Index, long Operations, long ElapsedTicks, double NsPerOperation,
+                  long AllocatedBytes, double BytesPerOperation, long Checksum);
+              private sealed record Case(string Name, string Scope, int ObserverProjection, double UnknownFraction,
+                  Sample[] Samples);
+              private sealed record IlMethod(string Name, int IlBytes, bool MetadataRelated);
+              private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
+          
+              public static void Run(string[] args)
+              {
+                  if (args.Length != 2) throw new ArgumentException("Expected output JSON and round.");
+                  var load = SharpLinkAssemblyManifestLoader.TryLoad(typeof(IPr754EvidenceRpc).Assembly, out var manifest);
+                  if (!load.Succeeded || manifest is null) throw new InvalidOperationException($"Manifest load: {load.Error}");
+                  var contract = manifest.Contracts.Single(x => x.ContractType == typeof(IPr754EvidenceRpc));
+                  using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+                  var owner = context.PrepareGeneratedManifest(manifest);
+                  context.AdoptGeneratedManifest(owner);
+                  IRpcStub stub = contract.StubFactory(RpcGeneratedCodecResolver.GetProvider(owner));
+                  var expected = new Dictionary<string, Expected>(StringComparer.Ordinal)
+                  {
+                      ["Add"] = new(RpcMethodKind.Unary, 0, false, true, Idempotent: true),
+                      ["Cancel"] = new(RpcMethodKind.Unary, 0, true, true),
+                      ["TimedThree"] = new(RpcMethodKind.Unary, 0, false, true, Timeout: true, TimeoutTicks: TimeSpan.FromSeconds(3).Ticks),
+                      ["TimedSeven"] = new(RpcMethodKind.Unary, 0, false, true, Timeout: true, TimeoutTicks: TimeSpan.FromSeconds(7).Ticks),
+                      ["DefaultTimeout"] = new(RpcMethodKind.Unary, 0, false, true, Timeout: true),
+                      ["Nullable"] = new(RpcMethodKind.Unary, 0, false, true, Nullable: true),
+                      ["Publish"] = new(RpcMethodKind.OneWay, 0, false, false),
+                      ["Download"] = new(RpcMethodKind.ServerStreaming, 0, true, true),
+                      ["Upload"] = new(RpcMethodKind.ClientStreaming, 1, true, true),
+                      ["Duplex"] = new(RpcMethodKind.DuplexStreaming, 1, true, true)
+                  };
+                  if (contract.Methods.Count != expected.Count) throw new InvalidOperationException("Contract method count differs.");
+                  var rows = new List<SemanticRow>();
+                  foreach (var method in contract.Methods.OrderBy(x => x.Name, StringComparer.Ordinal))
+                  {
+                      var e = expected[method.Name];
+                      var facts = Pack(e.Kind, e.Streams, e.Cancel, e.Payload, e.Nullable, e.Timeout, e.Idempotent, e.TimeoutTicks.HasValue);
+                      var projection = Project(facts, stub.InterfaceHash, method.MethodId, e.TimeoutTicks.GetValueOrDefault());
+                      if (Resolve(stub, method.MethodId, false) != facts || Resolve(stub, method.MethodId, true) != projection)
+                          throw new InvalidOperationException($"Semantic mismatch for {method.Name}.");
+          #if PR754_TYPED_SHAPE
+                      stub.DescribeMethod(method.MethodId, stub.ResolveMethodShape(method.MethodId), out var descriptor);
+          #else
+                      if (!stub.TryGetMethodDescriptor(method.MethodId, out var descriptor)) throw new InvalidOperationException("Missing descriptor");
+          #endif
+                      if (descriptor.ContractId != stub.InterfaceHash || descriptor.MethodId != method.MethodId ||
+                          descriptor.Kind != e.Kind || descriptor.ClientStreamCount != e.Streams || descriptor.HasClientStreams != (e.Streams != 0) ||
+                          descriptor.HasResponsePayload != e.Payload || descriptor.ResponseNullable != e.Nullable ||
+                          descriptor.HasMethodTimeout != e.Timeout || descriptor.IsIdempotent != e.Idempotent || descriptor.MethodTimeout?.Ticks != e.TimeoutTicks)
+                          throw new InvalidOperationException($"Scalar descriptor mismatch for {method.Name}.");
+                      rows.Add(new(method.Name, method.MethodId, facts, projection, (int)e.Kind, e.Streams, e.Cancel,
+                          e.Payload, e.Nullable, e.Timeout, e.Idempotent, e.TimeoutTicks));
+                  }
+                  long unknown = 1;
+                  while (rows.Any(x => x.MethodId == unknown)) unknown++;
+                  if (Resolve(stub, unknown, false) != -1 || Resolve(stub, unknown, true) != -1)
+                      throw new InvalidOperationException("Unknown method must be recognized.");
+                  var known = new long[Width];
+                  for (var i = 0; i < Width; i++) known[i] = rows[i % rows.Count].MethodId;
+                  // Runtime-filled, shuffled hashes cannot be folded to one generated table arm.
+                  var random = new Random(754);
+                  for (var i = known.Length - 1; i > 0; i--) { var j = random.Next(i + 1); (known[i], known[j]) = (known[j], known[i]); }
+                  var mixed = (long[])known.Clone();
+                  for (var i = 0; i < Width; i += 16) mixed[i] = unknown;
+                  var knownFacts = known.Select(h => rows.Single(x => x.MethodId == h).Facts).ToArray();
+                  var cases = new List<Case>();
+                  cases.Add(Measure("control-precomputed-facts", "Array/checksum control only; never subtracted", stub, knownFacts, false, 0, true, knownFacts.Sum()));
+                  foreach (var entry in new[] { ("known", known, 0.0), ("mixed-6.25pct-unknown", mixed, 0.0625) })
+                  {
+                      foreach (var observer in new[] { false, true })
+                      {
+                          var expectedCycle = entry.Item2.Aggregate(0L, (sum, h) => unchecked(sum +
+                              (h == unknown ? -1 : observer ? rows.Single(x => x.MethodId == h).Projection : rows.Single(x => x.MethodId == h).Facts)));
+                          cases.Add(Measure($"{entry.Item1}-{(observer ? "facts-and-scalar-projection" : "facts-only")}",
+                              "Generated-stub micro including NoInlining adapter, interface dispatch, packing/checksum; excludes observer context allocation, RPC transport and service dispatch",
+                              stub, entry.Item2, observer, entry.Item3, false, expectedCycle));
+                      }
+                  }
+                  var methods = stub.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                      .Cast<MethodBase>().Concat(stub.GetType().GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance));
+                  if (stub.GetType().TypeInitializer is { } initializer) methods = methods.Append(initializer);
+                  var il = methods.Select(m => new IlMethod(m.Name, m.GetMethodBody()?.GetILAsByteArray()?.Length ?? 0,
+                      m.Name is "ResolveMethodShape" or "DescribeMethod" or "TryGetMethodDescriptor" or "SupportsCancellation" or ".cctor")).ToArray();
+                  var report = new
+                  {
+                      sourceCommit = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_SHA") ?? "unknown",
+                      sourceTree = Environment.GetEnvironmentVariable("SHARPLINK_BENCHMARK_TREE") ?? "unknown",
+                      round = int.Parse(args[1], CultureInfo.InvariantCulture), host = Environment.MachineName,
+                      utc = DateTimeOffset.UtcNow, runtime = RuntimeInformation.FrameworkDescription,
+                      os = RuntimeInformation.OSDescription, architecture = RuntimeInformation.ProcessArchitecture.ToString(),
+                      cpuCount = Environment.ProcessorCount, serverGc = GCSettings.IsServerGC,
+                      tieredCompilation = Environment.GetEnvironmentVariable("DOTNET_TieredCompilation"),
+                      tieredPgo = Environment.GetEnvironmentVariable("DOTNET_TieredPGO"),
+                      stopwatchFrequency = Stopwatch.Frequency, validationFailures = 0,
+                      contractId = stub.InterfaceHash, stubType = stub.GetType().FullName,
+                      descriptorBytes = Unsafe.SizeOf<RpcMethodDescriptor>(),
+          #if PR754_TYPED_SHAPE
+                      api = "typed-shape-API5", shapeBytes = Unsafe.SizeOf<RpcMethodShape>(),
+          #else
+                      api = "descriptor-and-cancellation", shapeBytes = (int?)null,
+          #endif
+                      semanticRows = rows, unknownMethodId = unknown,
+                      generatedStubIl = il, generatedStubTotalIlBytes = il.Sum(x => x.IlBytes),
+                      generatedMetadataIlIncludingStaticInitializationBytes = il.Where(x => x.MetadataRelated).Sum(x => x.IlBytes),
+                      cases, sink = Volatile.Read(ref _sink)
+                  };
+                  Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[0]))!);
+                  File.WriteAllText(args[0], JsonSerializer.Serialize(report, Json));
+                  Console.WriteLine(JsonSerializer.Serialize(report, Json));
+              }
+          
+              private static Case Measure(string name, string scope, IRpcStub stub, long[] hashes, bool observer,
+                  double unknownFraction, bool control, long expectedCycle)
+              {
+                  // Tiering disabled in workflow for micro only. Warmup excludes static initialization.
+                  var warmUntil = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 3;
+                  do { Validate(Block(stub, hashes, observer, 1, control), expectedCycle); } while (Stopwatch.GetTimestamp() < warmUntil);
+                  var cycles = 1;
+                  while (true)
+                  {
+                      var started = Stopwatch.GetTimestamp();
+                      var value = Block(stub, hashes, observer, cycles, control);
+                      var ticks = Stopwatch.GetTimestamp() - started;
+                      Validate(value, unchecked(expectedCycle * cycles));
+                      if (ticks >= Stopwatch.Frequency / 20 || cycles >= 4096) break;
+                      cycles *= 2;
+                  }
+                  // Seven raw samples with a 50ms calibration target (not a duration floor). No control subtraction.
+                  var samples = new Sample[7];
+                  for (var sample = 0; sample < samples.Length; sample++)
+                  {
+                      var before = GC.GetAllocatedBytesForCurrentThread();
+                      var started = Stopwatch.GetTimestamp();
+                      var value = Block(stub, hashes, observer, cycles, control);
+                      var elapsed = Stopwatch.GetTimestamp() - started;
+                      var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                      Validate(value, unchecked(expectedCycle * cycles));
+                      Volatile.Write(ref _sink, value);
+                      var operations = (long)cycles * hashes.Length;
+                      samples[sample] = new(sample, operations, elapsed, elapsed * (1e9 / Stopwatch.Frequency) / operations,
+                          allocated, allocated / (double)operations, value);
+                  }
+                  return new(name, scope, observer ? 1 : 0, unknownFraction, samples);
+              }
+          
+              private static void Validate(long actual, long expected)
+              {
+                  if (actual != expected) throw new InvalidOperationException($"Checksum mismatch: {actual} != {expected}");
+              }
+          
+              [MethodImpl(MethodImplOptions.NoInlining)]
+              private static long Block(IRpcStub stub, long[] hashes, bool observer, int cycles, bool control)
+              {
+                  long sum = 0;
+                  if (control)
+                  {
+                      for (var cycle = 0; cycle < cycles; cycle++)
+                          for (var i = 0; i < hashes.Length; i++) sum = unchecked(sum + hashes[i]);
+                  }
+                  else
+                  {
+                      for (var cycle = 0; cycle < cycles; cycle++)
+                          for (var i = 0; i < hashes.Length; i++) sum = unchecked(sum + Resolve(stub, hashes[i], observer));
+                  }
+                  return sum;
+              }
+          
+              [MethodImpl(MethodImplOptions.NoInlining)]
+              private static long Resolve(IRpcStub stub, long hash, bool observer)
+              {
+          #if PR754_TYPED_SHAPE
+                  var shape = stub.ResolveMethodShape(hash);
+                  if (shape.IsUnknownMethod) return -1;
+                  if (shape.IsInvalid) throw new InvalidOperationException("Invalid generated shape.");
+                  var facts = Pack(shape.Kind, shape.ClientStreamCount, shape.SupportsCancellation, shape.HasResponsePayload,
+                      shape.ResponseNullable, shape.HasMethodTimeout, shape.IsIdempotent, shape.HasMethodTimeoutValue);
+                  if (!observer) return facts;
+                  stub.DescribeMethod(hash, shape, out var descriptor);
+          #else
+                  if (!stub.TryGetMethodDescriptor(hash, out var descriptor)) return -1;
+                  var facts = Pack(descriptor.Kind, descriptor.ClientStreamCount, stub.SupportsCancellation(hash), descriptor.HasResponsePayload,
+                      descriptor.ResponseNullable, descriptor.HasMethodTimeout, descriptor.IsIdempotent, descriptor.MethodTimeout.HasValue);
+                  if (!observer) return facts;
+          #endif
+                  return Project(facts, descriptor.ContractId, descriptor.MethodId, descriptor.MethodTimeout.GetValueOrDefault().Ticks);
+              }
+          
+              [MethodImpl(MethodImplOptions.AggressiveInlining)]
+              private static long Pack(RpcMethodKind kind, int streams, bool cancel, bool payload, bool nullable,
+                  bool timeout, bool idempotent, bool timeoutValue)
+                  => 1L | ((long)kind << 2) | ((long)streams << 5) | (cancel ? 1L << 12 : 0) |
+                      (payload ? 1L << 13 : 0) | (nullable ? 1L << 14 : 0) | (timeout ? 1L << 15 : 0) |
+                      (idempotent ? 1L << 16 : 0) | (timeoutValue ? 1L << 17 : 0);
+          
+              [MethodImpl(MethodImplOptions.AggressiveInlining)]
+              private static long Project(long facts, long contract, long method, long timeoutTicks)
+                  => unchecked(facts + contract * 17 + method * 31 + timeoutTicks * 43);
+          }
+          PR754_EOF_Pr754MethodFactsEvidence_cs
+          cat > "$HARNESS_ROOT/summarize.py" <<'PR754_EOF_summarize_py'
+          #!/usr/bin/env python3
+          """Fail-closed paired summary; independent processes/rounds are statistical units."""
+          import json, math, pathlib, statistics, sys
+          root = pathlib.Path(sys.argv[1])
+          SHAS = {'baseline': '9fb2744300ee816c973e447a3f8e55466acf7f38', 'candidate': 'c8f0f2d59d52b1ec4ccd2234f184c8403bc822f3'}
+          ROUNDS = range(1, 7)
+          def stats(values):
+              if len(values) < 2 or not all(math.isfinite(x) for x in values):
+                  raise ValueError('Missing or nonfinite observations')
+              return {'n': len(values), 'mean': statistics.mean(values), 'sampleStandardDeviation': statistics.stdev(values),
+                      'median': statistics.median(values), 'minimum': min(values), 'maximum': max(values), 'values': values}
+          def load(path):
+              with path.open() as f: return json.load(f)
+          micro = {label: [load(root/'raw/micro'/f'{label}-r{r}.json') for r in ROUNDS] for label in SHAS}
+          reference = micro['baseline'][0]
+          for label, docs in micro.items():
+              for r, d in zip(ROUNDS, docs):
+                  assert d['sourceCommit'] == SHAS[label] and d['round'] == r
+                  assert d['host'] == reference['host'] and d['runtime'] == reference['runtime']
+                  assert d['validationFailures'] == 0 and d['tieredCompilation'] == '0' and d['tieredPgo'] == '0'
+                  assert d['semanticRows'] == reference['semanticRows'], 'Generated semantic/identity rows differ'
+                  assert d['contractId'] == reference['contractId']
+                  assert d['unknownMethodId'] == reference['unknownMethodId']
+                  assert [x['name'] for x in d['cases']] == [x['name'] for x in reference['cases']]
+                  for case in d['cases']:
+                      assert len(case['samples']) == 7
+                      assert all(s['operations'] > 0 and s['elapsedTicks'] > 0 for s in case['samples'])
+                      assert len({s['checksum'] for s in case['samples']}) == 1
+          summary = {'baseline': SHAS['baseline'], 'candidate': SHAS['candidate'], 'host': reference['host'],
+                     'runtime': reference['runtime'], 'rounds': 6, 'micro': [], 'e2e': [], 'codeSize': {}}
+          lines = ['# PR754 final versus current dev: matched advisory evidence', '',
+              f"- Baseline: `{SHAS['baseline']}`", f"- Candidate: `{SHAS['candidate']}`",
+              f"- Host: `{reference['host']}`; runtime: `{reference['runtime']}`",
+              '- Six independent paired process rounds. Odd rounds baseline→candidate; even rounds candidate→baseline.',
+              '- CPU affinity, exact SDK/runtime, build logs, raw JSON, source trees and test-only overlay patches are attached.',
+              '- Ratios are candidate/baseline. Lower is better for ns/op, latency and B/op. Small/noisy differences are inconclusive.', '',
+              '## Generated method-facts micro', '',
+              'Single pinned CPU; optimized JIT with tiering/PGO disabled. Includes the same NoInlining adapter, interface dispatch, fact packing and checksum consumption. Observer-on means scalar descriptor projection; it excludes observer context allocation and actual RPC dispatch. Allocation is synchronous current-thread B/op.', '',
+              'Within-process seven calibrated batches remain raw diagnostics. Independent round medians are the comparison units; 42 batches are not 42 independent trials. The 50 ms calibration target is not a guaranteed sample duration. The array/checksum control is not subtracted.', '',
+              '| Case | Baseline round median ns/op (mean ± SD) | Candidate round median ns/op (mean ± SD) | Paired ratio median [min,max] | B/op baseline → candidate |',
+              '|---|---:|---:|---:|---:|']
+          for i, case in enumerate(reference['cases']):
+              observed = {label: [statistics.median(s['nsPerOperation'] for s in d['cases'][i]['samples']) for d in docs] for label, docs in micro.items()}
+              allocation = {label: [statistics.median(s['bytesPerOperation'] for s in d['cases'][i]['samples']) for d in docs] for label, docs in micro.items()}
+              ratios = [c/b for b,c in zip(observed['baseline'], observed['candidate'])]
+              entry = {'case': case['name'], 'metric': 'round-median-ns/op',
+                  'baseline': stats(observed['baseline']), 'candidate': stats(observed['candidate']),
+                  'pairedCandidateOverBaseline': stats(ratios), 'allocation': {label: stats(v) for label,v in allocation.items()}}
+              summary['micro'].append(entry)
+              b,c,rr=entry['baseline'],entry['candidate'],entry['pairedCandidateOverBaseline']
+              lines.append(f"| {case['name']} | {b['mean']:.3f} ± {b['sampleStandardDeviation']:.3f} | {c['mean']:.3f} ± {c['sampleStandardDeviation']:.3f} | {rr['median']:.3f} [{rr['minimum']:.3f}, {rr['maximum']:.3f}] | {statistics.median(allocation['baseline']):.3f} → {statistics.median(allocation['candidate']):.3f} |")
+          lines += ['', '## In-process real RPC evidence', '',
+              'Same two-CPU affinity, tiering/PGO enabled. Reuses byte-identical existing runners and workloads, with identical postmeasurement p95/sample-SD reporting added. StaticDefault and ServerInterceptor use actual TCP-backed unary calls; Server1x16 is the existing streaming workload. E2E B/op is process-wide managed allocation including client, server and background activity; CPU/op is aggregate process CPU. These are controlled local in-process E2E samples, not remote-network production predictions.', '',
+              '| Scenario | Mean latency µs: baseline → candidate (round SD) | Paired mean-latency ratio median [min,max] | Median request p95 µs: baseline → candidate | Median request SD µs: baseline → candidate | Median B/op: baseline → candidate |',
+              '|---|---:|---:|---:|---:|---:|']
+          for mode in ['StaticDefault','ServerInterceptor','Server1x16']:
+              docs={label: [load(root/'raw/e2e'/f'{label}-r{r}-{mode}.json') for r in ROUNDS] for label in SHAS}
+              for label, items in docs.items():
+                  for d in items:
+                      assert d['commit'] == SHAS[label] and d['hostName'] == reference['host']
+                      assert d['runtimeVersion'] == reference['runtime'] and d['scenario'] == mode
+                      assert d['validationFailures'] == 0 and d['operations'] >= 1000
+                      assert d['tieredCompilation'] == '1' and d['tieredPgo'] == '1'
+                      assert not d['hitOperationLimit'] and d['actualMeasurementSeconds'] >= 2.7
+              metrics={metric:{label:stats([d[metric] for d in items]) for label,items in docs.items()}
+                       for metric in ['averageUs','p50Us','p95Us','p99Us','latencyStandardDeviationUs','allocatedBytesPerOperation','cpuUsPerOperation']}
+              ratios=stats([c['averageUs']/b['averageUs'] for b,c in zip(docs['baseline'], docs['candidate'])])
+              summary['e2e'].append({'case': mode, 'metrics':metrics, 'pairedCandidateOverBaselineMeanLatency':ratios})
+              b,c=metrics['averageUs']['baseline'],metrics['averageUs']['candidate']
+              med=lambda metric,label: metrics[metric][label]['median']
+              lines.append(f"| {mode} | {b['mean']:.3f} → {c['mean']:.3f} ({b['sampleStandardDeviation']:.3f}, {c['sampleStandardDeviation']:.3f}) | {ratios['median']:.3f} [{ratios['minimum']:.3f}, {ratios['maximum']:.3f}] | {med('p95Us','baseline'):.3f} → {med('p95Us','candidate'):.3f} | {med('latencyStandardDeviationUs','baseline'):.3f} → {med('latencyStandardDeviationUs','candidate'):.3f} | {med('allocatedBytesPerOperation','baseline'):.3f} → {med('allocatedBytesPerOperation','candidate'):.3f} |")
+          lines += ['', '## Generated code and managed IL', '', '| Measure | Baseline | Candidate |', '|---|---:|---:|']
+          for key in ['descriptorBytes','generatedStubTotalIlBytes','generatedMetadataIlIncludingStaticInitializationBytes']:
+              vals={label:docs[0][key] for label,docs in micro.items()}
+              assert all(d[key]==vals[label] for label,docs in micro.items() for d in docs)
+              summary['codeSize'][key]=vals
+              lines.append(f"| {key} | {vals['baseline']} | {vals['candidate']} |")
+          summary['codeSize']['shapeBytes'] = micro['candidate'][0]['shapeBytes']
+          lines += ['', '- Metadata IL includes all generated facts/descriptor/cancellation methods plus the generated static initializer. Full stub IL is separately shown; helper methods in SharpLink.Abstractions are outside these IL totals.',
+              '- Exact generated source and per-method IL byte lengths are retained. Entire benchmark-assembly file size is contextual only. None of these is NativeAOT executable size or a NativeAOT throughput result.',
+              '', '## Limits', '',
+              '- One hosted machine, one Linux architecture, one effective SDK/runtime and bounded workloads. No statistical significance or broad performance guarantee is claimed.',
+              '- Micro packing/dispatch and per-request timestamp/validation overhead remain in measurements; nothing is subtracted.',
+              '- Per-request p95 and standard deviation are real latency distribution summaries; no p95 is claimed from only six round aggregates.',
+              '- No queued-admission benchmark was added. Extended correctness coverage and the existing Fast allocation budget gate are separate evidence, not measured speedups.',
+              '- Historical PR754 ns/IL/AOT-size numbers do not apply to these final sources.']
+          (root/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          (root/'summary.md').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          PR754_EOF_summarize_py
+          cat > "$HARNESS_ROOT/run.sh" <<'PR754_EOF_run_sh'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          : "${GITHUB_WORKSPACE:?}" "${RUNNER_TEMP:?}"
+          EVIDENCE_ROOT="$GITHUB_WORKSPACE/artifacts/pr754-final-performance"
+          HARNESS_ROOT="${HARNESS_ROOT:-$RUNNER_TEMP/pr754-harness}"
+          BASELINE=9fb2744300ee816c973e447a3f8e55466acf7f38
+          CANDIDATE=c8f0f2d59d52b1ec4ccd2234f184c8403bc822f3
+          mkdir -p "$EVIDENCE_ROOT"/{environment,raw/micro,raw/e2e,logs,codegen,source}
+          export EVIDENCE_ROOT HARNESS_ROOT
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1 TESTINGPLATFORM_TELEMETRY_OPTOUT=1
+          { date -u; uname -a; } > "$EVIDENCE_ROOT/environment/host.txt"
+          lscpu > "$EVIDENCE_ROOT/environment/lscpu.txt"
+          dotnet --info > "$EVIDENCE_ROOT/environment/dotnet-info.txt"
+          dotnet --list-sdks > "$EVIDENCE_ROOT/environment/sdk-list.txt"
+          SDK_VERSION="$(dotnet --version)"
+          printf '%s\n' "$SDK_VERSION" > "$EVIDENCE_ROOT/environment/effective-sdk.txt"
+          python3 - <<'PY' > "$EVIDENCE_ROOT/environment/affinity.env"
+          import os
+          cpus=sorted(os.sched_getaffinity(0))
+          print('MICRO_CPU='+str(cpus[0]))
+          print('E2E_CPUS='+','.join(map(str,cpus[:2])))
+          print('AVAILABLE_CPUS='+','.join(map(str,cpus)))
+          PY
+          source "$EVIDENCE_ROOT/environment/affinity.env"
+          printf 'baseline\t%s\ncandidate\t%s\nworkflow\t%s\nrun_id\t%s\n' "$BASELINE" "$CANDIDATE" "$(git rev-parse HEAD)" "${GITHUB_RUN_ID:-local}" > "$EVIDENCE_ROOT/source/provenance.tsv"
+          sha256sum "$HARNESS_ROOT"/* > "$EVIDENCE_ROOT/source/harness-sha256.txt"
+          for label in baseline candidate; do
+            sha="$BASELINE"; [[ "$label" = candidate ]] && sha="$CANDIDATE"
+            root="$RUNNER_TEMP/pr754-$label"
+            git cat-file -e "$sha^{commit}"
+            git worktree add --detach "$root" "$sha"
+            [ "$(git -C "$root" rev-parse HEAD)" = "$sha" ]
+            git -C "$root" show -s --format='%H %T %P%n%s' HEAD > "$EVIDENCE_ROOT/source/$label.txt"
+            cp "$HARNESS_ROOT/Pr754MethodFactsEvidence.cs" "$root/test/SharpLink.Benchmarks/Pr754MethodFactsEvidence.cs"
+            if [[ "$label" = candidate ]]; then
+              sed -i '1i#define PR754_TYPED_SHAPE' "$root/test/SharpLink.Benchmarks/Pr754MethodFactsEvidence.cs"
+            fi
+            # Patch only isolated test harness copies. No production file changes.
+            python3 - "$root" <<'PY'
+          import pathlib, sys
+          root=pathlib.Path(sys.argv[1]); folder=root/'test/SharpLink.Benchmarks'
+          p=folder/'Program.cs'; s=p.read_text(); marker='    public static async Task Main(string[] args)\n    {'
+          assert s.count(marker)==1
+          s=s.replace(marker,marker+'\n        if (args.Length > 0 && args[0] == "--pr754-method-facts")\n        {\n            Pr754MethodFactsEvidence.Run(args[1..]);\n            return;\n        }')
+          p.write_text(s)
+          # Both original runner files are byte-identical between source SHAs. Add matched p95 and
+          # per-request sample SD, calculated after timing. No latency-recorder changes in timed paths.
+          for name in ['FeatureEvidenceRunner.cs','GeneratedAbiStreamingEvidenceRunner.cs']:
+           p=folder/name; s=p.read_text()
+           marker='            P50Us = Percentile(latencies, completed, 50),'
+           assert s.count(marker)==1
+           s=s.replace(marker,marker+'\n            P95Us = Percentile(latencies, completed, 95),\n            LatencyStandardDeviationUs = Math.Sqrt(latencies.Take(completed).Sum(t => Math.Pow(TicksToMicroseconds(t) - TicksToMicroseconds(latencyTicks / (double)completed), 2)) / Math.Max(1, completed - 1)),')
+           marker='    public double P50Us { get; init; }'
+           assert s.count(marker)==1
+           s=s.replace(marker,marker+'\n    public double P95Us { get; init; }\n    public double LatencyStandardDeviationUs { get; init; }')
+           p.write_text(s)
+          PY
+            git -C "$root" diff > "$EVIDENCE_ROOT/source/$label-test-overlay.patch"
+            cp "$root/test/SharpLink.Benchmarks/Pr754MethodFactsEvidence.cs" "$EVIDENCE_ROOT/source/$label-Pr754MethodFactsEvidence.cs"
+            diff_paths="$(git -C "$root" diff --name-only)"
+            [[ "$diff_paths" != *"src/"* ]] || { echo 'Unexpected production change'; exit 1; }
+            (
+              cd "$root"
+              [ "$(dotnet --version)" = "$SDK_VERSION" ] || { echo "SDK differs between builds"; exit 1; }
+              dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj
+              dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -m:1 /nodeReuse:false -v minimal
+            ) 2>&1 | tee "$EVIDENCE_ROOT/logs/$label-build.log"
+            python3 - "$root" "$EVIDENCE_ROOT/codegen/$label" <<'PY'
+          import pathlib,sys,hashlib,json
+          root=pathlib.Path(sys.argv[1]); out=pathlib.Path(sys.argv[2]); out.mkdir(parents=True,exist_ok=True)
+          entries=[]
+          for p in sorted((root/'test/SharpLink.Benchmarks/obj/Generated').rglob('*.cs')):
+           data=p.read_bytes()
+           if b'IPr754EvidenceRpc' in data:
+            rel=p.relative_to(root/'test/SharpLink.Benchmarks/obj/Generated'); dest=out/rel
+            dest.parent.mkdir(parents=True,exist_ok=True); dest.write_bytes(data)
+            entries.append(dict(path=str(rel),bytes=len(data),lines=data.count(b'\n'),sha256=hashlib.sha256(data).hexdigest()))
+          assert entries, 'Fixture-generated source not found'
+          (out/'generated-source-index.json').write_text(json.dumps(entries,indent=2))
+          binary=root/'test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll'
+          (out/'managed-assembly.json').write_text(json.dumps(dict(bytes=binary.stat().st_size,sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),scope='Entire benchmark assembly; not isolated generated-method size or NativeAOT size'),indent=2))
+          PY
+          done
+          # Fail closed if reusing nonidentical baseline/candidate E2E sources.
+          for path in FeatureEvidenceRunner.cs GeneratedAbiStreamingEvidenceRunner.cs FeatureBenchmarkScenarios.cs BenchmarkEnvironment.cs; do
+            git show "$BASELINE:test/SharpLink.Benchmarks/$path" > "$RUNNER_TEMP/pr754-old-$path"
+            git show "$CANDIDATE:test/SharpLink.Benchmarks/$path" > "$RUNNER_TEMP/pr754-new-$path"
+            cmp "$RUNNER_TEMP/pr754-old-$path" "$RUNNER_TEMP/pr754-new-$path"
+          done
+          printf 'round\tcase\tposition\tlabel\tutc\n' > "$EVIDENCE_ROOT/run-order.tsv"
+          run_one() {
+            local label="$1" round="$2" mode="$3" position="$4"
+            local root="$RUNNER_TEMP/pr754-$label" sha="$BASELINE"
+            [[ "$label" = candidate ]] && sha="$CANDIDATE"
+            local binary="$root/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll"
+            local output="$EVIDENCE_ROOT/raw/e2e/$label-r$round-$mode.json"
+            printf '%s\t%s\t%s\t%s\t%s\n' "$round" "$mode" "$position" "$label" "$(date -u +%FT%TZ)" >> "$EVIDENCE_ROOT/run-order.tsv"
+            export SHARPLINK_BENCHMARK_SHA="$sha" SHARPLINK_BENCHMARK_TREE="$(git -C "$root" rev-parse HEAD^{tree})"
+            if [[ "$mode" = micro ]]; then
+              output="$EVIDENCE_ROOT/raw/micro/$label-r$round.json"
+              DOTNET_TieredCompilation=0 DOTNET_TieredPGO=0 taskset -c "$MICRO_CPU" dotnet "$binary" --pr754-method-facts "$output" "$round" > "$EVIDENCE_ROOT/logs/$label-r$round-$mode.log"
+            elif [[ "$mode" = Server1x16 ]]; then
+              DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 taskset -c "$E2E_CPUS" dotnet "$binary" --generated-abi-streaming-evidence "$mode" 5000 3 1000000 "$output" > "$EVIDENCE_ROOT/logs/$label-r$round-$mode.log"
+            else
+              DOTNET_TieredCompilation=1 DOTNET_TieredPGO=1 taskset -c "$E2E_CPUS" dotnet "$binary" --feature-evidence server "$mode" 5000 3 1000000 "$output" > "$EVIDENCE_ROOT/logs/$label-r$round-$mode.log"
+            fi
+          }
+          for round in 1 2 3 4 5 6; do
+            order=(baseline candidate); (( round % 2 == 0 )) && order=(candidate baseline)
+            for mode in micro StaticDefault ServerInterceptor Server1x16; do
+              run_one "${order[0]}" "$round" "$mode" 1
+              run_one "${order[1]}" "$round" "$mode" 2
+            done
+          done
+          # Disassembly is outside all measured rounds and uses the same optimized non-tiered micro mode.
+          for label in baseline candidate; do
+            root="$RUNNER_TEMP/pr754-$label"
+            sha="$BASELINE"; [[ "$label" = candidate ]] && sha="$CANDIDATE"
+            SHARPLINK_BENCHMARK_SHA="$sha" SHARPLINK_BENCHMARK_TREE="$(git -C "$root" rev-parse HEAD^{tree})" DOTNET_TieredCompilation=0 DOTNET_TieredPGO=0 \
+              COMPlus_JitDisasm='SharpLink.Benchmarks.Pr754MethodFactsEvidence:Resolve' \
+              COMPlus_JitStdOutFile="$EVIDENCE_ROOT/codegen/$label-resolve-jit.txt" \
+              taskset -c "$MICRO_CPU" dotnet "$root/test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll" \
+              --pr754-method-facts "$EVIDENCE_ROOT/codegen/$label-disasm-validation.json" 0 > "$EVIDENCE_ROOT/logs/$label-disasm.log"
+            test -s "$EVIDENCE_ROOT/codegen/$label-resolve-jit.txt"
+          done
+          python3 "$HARNESS_ROOT/summarize.py" "$EVIDENCE_ROOT"
+          cat "$EVIDENCE_ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          PR754_EOF_run_sh
+      - name: Build both pinned revisions and collect six matched rounds
+        shell: bash
+        run: bash "$HARNESS_ROOT/run.sh"
+      - name: Upload all evidence, including partial evidence on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr754-final-matched-performance-${{ github.run_id }}
+          path: artifacts/pr754-final-performance
+          if-no-files-found: error
+          retention-days: 14
