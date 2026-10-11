@@ -1,0 +1,489 @@
+# Workflow-only validation of the published, immutable standalone credit fix; no production changes.
+name: Terminal Stream Credit Standalone Validation
+'on':
+  push:
+    branches:
+    - validate/terminal-stream-credit-standalone
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: terminal-credit-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  BASE_SHA: ce73ec3e68137091536a189800a792dbdba4e458
+  CANDIDATE_SHA: 35241e8258279ae6969f611b56c68e03373b0128
+  CANDIDATE_TREE: 985ab007357ef9def59a70a3d099a276897a930f
+  FIXTURE: test/SharpLink.IntegrationTests/IntegrationBehaviorTests.TerminalStreamCredit.cs
+  ADMISSION: test/SharpLink.IntegrationTests/IntegrationBehaviorTests.Admission.cs
+  FIXTURE_SHA256: 98c6221374177e5661b4237e5ec0d1dcd9092b0552f4bf41bce8065c6956d2eb
+  ADMISSION_SHA256: af3c6fc7ebc7258eb92455865a0070ebf76ca187c11356ec5e607b94d097ce66
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+  TUNIT_MAX_PARALLEL_TESTS: '8'
+  TUNIT_ENABLE_JUNIT_REPORTER: '1'
+defaults:
+  run:
+    shell: bash
+jobs:
+  full-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+    - name: Checkout pinned source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.CANDIDATE_SHA }}
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Initialize durable raw evidence capture
+      run: |
+        evidence="$RUNNER_TEMP/terminal-credit-evidence"
+        mkdir -p "$evidence"
+        echo "EVIDENCE=$evidence" >> "$GITHUB_ENV"
+        cat > "$evidence/capture-shell.sh" <<'BASH'
+        if [[ -z "${TERMINAL_CREDIT_CAPTURE_ACTIVE:-}" ]]; then
+          export TERMINAL_CREDIT_CAPTURE_ACTIVE=1
+          exec > >(tee -a "$EVIDENCE/shell-transcript.log") 2>&1
+          printf '\n=== %s / %s ===\n' "${GITHUB_JOB:-unknown}" "${GITHUB_ACTION:-unknown}"
+        fi
+        BASH
+        echo "BASH_ENV=$evidence/capture-shell.sh" >> "$GITHUB_ENV"
+        printf 'definition_commit=%s\nworkflow_ref=%s\nrun_id=%s\nattempt=%s\n' \
+          "$GITHUB_SHA" "$GITHUB_WORKFLOW_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$evidence/workflow.txt"
+    - name: Verify immutable source and retain complete source evidence
+      run: |
+        test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+        git diff --exit-code
+        git diff --cached --exit-code
+        test -z "$(git ls-files --others --exclude-standard)"
+        git rev-parse HEAD HEAD^{tree} | tee "$EVIDENCE/source-identity.txt"
+        git ls-tree -r HEAD > "$EVIDENCE/source-tree.txt"
+        git archive --format=tar HEAD | gzip > "$EVIDENCE/source.tar.gz"
+        git status --porcelain=v1 --untracked-files=all > "$EVIDENCE/status-before.txt"
+        sha256sum "$FIXTURE" "$ADMISSION" > "$EVIDENCE/regression-files.sha256"
+        test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+        echo "$FIXTURE_SHA256  $FIXTURE" | sha256sum -c -
+        echo "$ADMISSION_SHA256  $ADMISSION" | sha256sum -c -
+    - name: Setup canonical .NET CI environment
+      uses: ./.github/actions/setup-dotnet
+    - name: Record SDK and host
+      run: |
+        dotnet --info | tee "$EVIDENCE/dotnet-info.txt"
+        uname -a | tee "$EVIDENCE/uname.txt"
+        lscpu > "$EVIDENCE/lscpu.txt"
+    - name: Prove scoped production delta and unchanged API/version/ABI inputs
+      run: |
+        python3 - <<'PYCODE'
+        import json, os, subprocess
+        from pathlib import Path
+        base = os.environ['BASE_SHA']
+        paths = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines()
+        allowed = {
+            'CHANGELOG.md', 'doc/terminal-stream-credit.md',
+            'src/SharpLink.Runtime/PreAdmissionStreamDispatcher.TerminalDrain.cs',
+            'src/SharpLink.Runtime/StreamManager.TerminalDrain.cs',
+            'src/SharpLink.Runtime/StreamManager.cs',
+            'src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs',
+            'src/SharpLink.Server/SharpLinkServer.OneWayCompletion.cs',
+            'src/SharpLink.Server/SharpLinkServer.RequestLoop.cs',
+            'src/SharpLink.Server/SharpLinkServer.TerminalStreamDrain.cs',
+            'test/SharpLink.IntegrationTests/IntegrationBehaviorTests.TerminalStreamCredit.cs',
+            'test/SharpLink.UnitTests/Runtime/StreamManagerTests.TerminalDrain.cs',
+            'test/SharpLink.UnitTests/Server/CompressedTerminalStreamRequestLoopTests.cs',
+            'test/SharpLink.UnitTests/Server/InboundStreamGenerationTests.cs',
+        }
+        if set(paths) != allowed:
+            raise SystemExit(f'Unexpected candidate delta: missing={allowed-set(paths)}, extra={set(paths)-allowed}')
+        manifest = json.loads(Path('eng/release-versions.json').read_text())
+        unchanged = ['Directory.Build.props', 'Directory.Packages.props', 'eng/public-api',
+            'eng/release-versions.json', 'src/SharpLink.Abstractions', 'src/SharpLink.Generator',
+            'src/SharpLink.Sdk', os.environ['ADMISSION']]
+        unchanged += sorted({entry['path'] for entry in manifest['versions']})
+        subprocess.run(['git', 'diff', '--exit-code', base, 'HEAD', '--', *unchanged], check=True)
+        evidence = Path(os.environ['EVIDENCE'])
+        (evidence/'candidate-vs-base.patch').write_bytes(subprocess.check_output(['git', 'diff', '--binary', base, 'HEAD']))
+        (evidence/'candidate-vs-base.paths.json').write_text(json.dumps(paths, indent=2)+'\n')
+        (evidence/'unchanged-api-version-abi-inputs.json').write_text(json.dumps(unchanged, indent=2)+'\n')
+        (evidence/'baseline-identity.txt').write_text(subprocess.check_output(['git', 'rev-parse', base, base+'^{tree}'], text=True))
+        print('Exact scoped delta; public API baselines, release versions, ABI/identity and generator inputs unchanged.')
+        PYCODE
+    - name: Restore entire solution
+      run: |
+        dotnet restore Sharplink.slnx
+    - name: Production project reference boundary guard
+      run: |
+        python3 eng/check-project-reference-boundaries.py
+    - name: Verify formatting without source changes
+      run: |
+        dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+    - name: Maintainability debt guard tests
+      run: |
+        python3 eng/test-verify-maintainability.py
+    - name: Canonical maintainability debt guard
+      run: |
+        bash eng/check-maintainability.sh
+    - name: Build entire solution Release
+      run: |
+        dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+    - name: Verify generated assembly dependencies
+      run: |
+        bash eng/verify-generated-assembly-dependencies.sh
+    - name: Full unit tests
+      run: |
+        dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+    - name: Full generator tests
+      run: |
+        dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+    - name: Full load-test unit tests
+      run: |
+        dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+    - name: Full integration suite with canonical serial execution and raw diagnostics
+      run: |
+        dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- \
+          --maximum-parallel-tests 1 --timeout 120s --output Detailed \
+          --github-reporter-style full --no-progress \
+          --results-directory "$EVIDENCE/integration" \
+          --junit-output-path "$EVIDENCE/integration/junit.xml" \
+          --diagnostic --diagnostic-verbosity Trace \
+          --diagnostic-output-directory "$EVIDENCE/integration"
+    - name: Verify source remained unchanged after validation
+      run: |
+        git diff --binary > "$EVIDENCE/tracked-diff-after.patch"
+        git status --porcelain=v1 --untracked-files=all > "$EVIDENCE/status-after.txt"
+        git diff --exit-code
+        git diff --cached --exit-code
+        test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+        test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+      if: always()
+    - name: Upload all evidence even on failure
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: terminal-credit-full-release-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/terminal-credit-evidence
+          artifacts/maintainability
+          **/TestResults
+        if-no-files-found: error
+        retention-days: 90
+  deterministic-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        label:
+        - baseline
+        - candidate
+    env:
+      PROOF_LABEL: ${{ matrix.label }}
+    steps:
+    - name: Checkout pinned source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ matrix.label == 'baseline' && env.BASE_SHA || env.CANDIDATE_SHA }}
+        persist-credentials: false
+    - name: Initialize durable raw evidence capture
+      run: |
+        evidence="$RUNNER_TEMP/terminal-credit-evidence"
+        mkdir -p "$evidence"
+        echo "EVIDENCE=$evidence" >> "$GITHUB_ENV"
+        cat > "$evidence/capture-shell.sh" <<'BASH'
+        if [[ -z "${TERMINAL_CREDIT_CAPTURE_ACTIVE:-}" ]]; then
+          export TERMINAL_CREDIT_CAPTURE_ACTIVE=1
+          exec > >(tee -a "$EVIDENCE/shell-transcript.log") 2>&1
+          printf '\n=== %s / %s ===\n' "${GITHUB_JOB:-unknown}" "${GITHUB_ACTION:-unknown}"
+        fi
+        BASH
+        echo "BASH_ENV=$evidence/capture-shell.sh" >> "$GITHUB_ENV"
+        printf 'definition_commit=%s\nworkflow_ref=%s\nrun_id=%s\nattempt=%s\n' \
+          "$GITHUB_SHA" "$GITHUB_WORKFLOW_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$evidence/workflow.txt"
+    - name: Record untouched pinned source before fixture overlay
+      run: |
+        expected="$CANDIDATE_SHA"
+        if [[ "$PROOF_LABEL" == baseline ]]; then expected="$BASE_SHA"; fi
+        test "$(git rev-parse HEAD)" = "$expected"
+        git diff --exit-code
+        git diff --cached --exit-code
+        test -z "$(git ls-files --others --exclude-standard)"
+        git rev-parse HEAD HEAD^{tree} | tee "$EVIDENCE/source-identity.txt"
+        git ls-tree -r HEAD > "$EVIDENCE/source-tree.txt"
+        git archive --format=tar HEAD | gzip > "$EVIDENCE/source.tar.gz"
+        echo "$ADMISSION_SHA256  $ADMISSION" | sha256sum -c -
+        if [[ "$PROOF_LABEL" == candidate ]]; then
+          test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+          echo "$FIXTURE_SHA256  $FIXTURE" | sha256sum -c -
+        else
+          test ! -e "$FIXTURE"
+        fi
+    - name: Checkout identical fixture donor at pinned candidate SHA
+      if: matrix.label == 'baseline'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.CANDIDATE_SHA }}
+        path: .validation-fixture-source
+        persist-credentials: false
+    - name: Overlay only the unchanged 188-line regression on baseline
+      run: |
+        python3 - <<'PYCODE'
+        import hashlib, os, shutil, subprocess
+        from pathlib import Path
+        evidence = Path(os.environ['EVIDENCE'])
+        fixture = Path(os.environ['FIXTURE'])
+        if os.environ['PROOF_LABEL'] == 'baseline':
+            donor = Path('.validation-fixture-source')
+            sha = subprocess.check_output(['git', '-C', str(donor), 'rev-parse', 'HEAD'], text=True).strip()
+            tree = subprocess.check_output(['git', '-C', str(donor), 'rev-parse', 'HEAD^{tree}'], text=True).strip()
+            assert sha == os.environ['CANDIDATE_SHA'] and tree == os.environ['CANDIDATE_TREE']
+            subprocess.run(['git', '-C', str(donor), 'diff', '--exit-code'], check=True)
+            shutil.copyfile(donor/fixture, fixture)
+            (evidence/'fixture-donor-identity.txt').write_text(sha+'\n'+tree+'\n')
+        data = fixture.read_bytes()
+        assert len(data.splitlines()) == 188
+        assert hashlib.sha256(data).hexdigest() == os.environ['FIXTURE_SHA256']
+        assert hashlib.sha256(Path(os.environ['ADMISSION']).read_bytes()).hexdigest() == os.environ['ADMISSION_SHA256']
+        subprocess.run(['git', 'diff', '--exit-code'], check=True)
+        subprocess.run(['git', 'diff', '--cached', '--exit-code'], check=True)
+        untracked = set(subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], text=True).splitlines())
+        expected_untracked = {str(fixture), '.validation-fixture-source/'} if os.environ['PROOF_LABEL'] == 'baseline' else set()
+        assert untracked == expected_untracked, f'Unexpected source overlay: {untracked}'
+        (evidence/'status-before-build.txt').write_text(subprocess.check_output(['git', 'status', '--porcelain=v1', '--untracked-files=all'], text=True))
+        (evidence/'regression.cs').write_bytes(data)
+        (evidence/'original-admission.cs').write_bytes(Path(os.environ['ADMISSION']).read_bytes())
+        (evidence/'fixture.sha256').write_text(hashlib.sha256(data).hexdigest()+'\n')
+        if os.environ['PROOF_LABEL'] == 'baseline':
+            patch = subprocess.run(['git', 'diff', '--no-index', '--binary', '/dev/null', str(fixture)], capture_output=True, check=False)
+            assert patch.returncode == 1
+            (evidence/'only-test-overlay.patch').write_bytes(patch.stdout)
+        print('Provenance verified: production source unchanged; original two-second test unchanged.')
+        PYCODE
+    - name: Setup canonical .NET CI environment
+      uses: ./.github/actions/setup-dotnet
+    - name: Record SDK and host
+      run: |
+        dotnet --info | tee "$EVIDENCE/dotnet-info.txt"
+        uname -a | tee "$EVIDENCE/uname.txt"
+        lscpu > "$EVIDENCE/lscpu.txt"
+    - name: Build pinned integration source with no production modifications
+      run: |
+        dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -v minimal
+    - name: Collect five independent processes per required proof without masking outcomes
+      run: |
+        methods=(QueuedOneWayStubFailureShouldPreserveCreditWhileExceptionMapperIsBlocked)
+        if [[ "$PROOF_LABEL" == candidate ]]; then
+          methods+=(QueuedOneWayStubFailureShouldDrainReservedStreams)
+        fi
+        printf 'method,attempt,exit_code\n' > "$EVIDENCE/results.csv"
+        for method in "${methods[@]}"; do
+          for attempt in 1 2 3 4 5; do
+            output="$EVIDENCE/proof/$method/$attempt"
+            mkdir -p "$output"
+            set +e
+            timeout 90s dotnet run -c Release --no-build \
+              --project test/SharpLink.IntegrationTests -- \
+              --treenode-filter "/*/*/IntegrationBehaviorTests/$method" \
+              --maximum-parallel-tests 1 --output Detailed --github-reporter-style full --no-progress \
+              --results-directory "$output" --junit-output-path "$output/junit.xml" \
+              --diagnostic --diagnostic-verbosity Trace --diagnostic-output-directory "$output" \
+              2>&1 | tee "$output/stdout.log"
+            result=${PIPESTATUS[0]}
+            set -e
+            printf '%s,%s,%s\n' "$method" "$attempt" "$result" >> "$EVIDENCE/results.csv"
+          done
+        done
+        # Collection never decides success; the next step must validate all fifteen expected outcomes.
+    - name: Require exact assertion failures on baseline and exact passes on candidate
+      run: |
+        python3 - <<'PYCODE'
+        import csv, json, os, re
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+        root = Path(os.environ['EVIDENCE'])
+        label = os.environ['PROOF_LABEL']
+        deterministic = 'QueuedOneWayStubFailureShouldPreserveCreditWhileExceptionMapperIsBlocked'
+        original = 'QueuedOneWayStubFailureShouldDrainReservedStreams'
+        methods = [deterministic] if label == 'baseline' else [deterministic, original]
+        expected_pairs = {(method, str(attempt)) for method in methods for attempt in range(1,6)}
+        rows = list(csv.DictReader((root/'results.csv').open()))
+        assert len(rows) == len(expected_pairs)
+        assert {(row['method'], row['attempt']) for row in rows} == expected_pairs
+        expected_message = 'assert failed: discarded terminal-call stream bytes must preserve connection credit: expected 64, actual 0'
+        verified = []
+        for row in rows:
+            method, attempt = row['method'], row['attempt']
+            output = root/'proof'/method/attempt
+            code = int(row['exit_code'])
+            tree = ET.parse(output/'junit.xml')
+            cases = tree.findall('.//testcase')
+            if tree.getroot().tag == 'testcase': cases = [tree.getroot()]
+            assert len(cases) == 1, f'{method}/{attempt}: expected exactly one executed test, found {len(cases)}'
+            case = cases[0]
+            assert method in case.get('name',''), f'Wrong test selected: {case.attrib}'
+            errors = tree.findall('.//error')
+            skipped = tree.findall('.//skipped')
+            failures = tree.findall('.//failure')
+            assert not errors and not skipped, f'{method}/{attempt}: errors or skipped test'
+            if label == 'baseline':
+                assert code == 2, f'Expected test-failure exit 2, got {code}'
+                assert len(failures) == 1 and failures[0] in list(case), 'Expected exactly this test assertion to fail'
+                failure = failures[0]
+                message = failure.get('message','').strip()
+                # Reporters may prefix the exception type; no timeout/setup/other assertion is accepted.
+                clean_message = re.sub(r'^(?:System\.)?Exception:\s*', '', message)
+                assert clean_message == expected_message, f'Wrong failure: {message!r}'
+                text = (output/'stdout.log').read_text()
+                assert expected_message in text, 'Raw process output must corroborate the same assertion'
+                verified.append(dict(method=method, attempt=int(attempt), exit_code=code, expected_credit=64, actual_credit=0, outcome='expected-assertion-failure'))
+            else:
+                assert code == 0 and not failures, f'{method}/{attempt}: expected a genuine pass'
+                verified.append(dict(method=method, attempt=int(attempt), exit_code=code, outcome='passed'))
+        (root/'verified-proof.json').write_text(json.dumps(dict(source=label, outcomes=verified), indent=2)+'\n')
+        print(json.dumps(dict(source=label, verified_count=len(verified), outcomes=verified), indent=2))
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+            summary.write(f'### Terminal stream credit: {label}\n\n')
+            summary.write('5/5 precise expected-credit-64/actual-credit-0 failures; mapper-held assertion provenance preserved.\n' if label == 'baseline' else '5/5 deterministic credit-preservation passes and 5/5 unchanged original two-second regression passes.\n')
+        PYCODE
+    - name: Retain final source status and verify no production drift
+      run: |
+        git status --porcelain=v1 --untracked-files=all > "$EVIDENCE/status-after.txt"
+        git diff --binary > "$EVIDENCE/tracked-diff-after.patch"
+        git diff --exit-code
+        git diff --cached --exit-code
+        echo "$FIXTURE_SHA256  $FIXTURE" | sha256sum -c -
+        echo "$ADMISSION_SHA256  $ADMISSION" | sha256sum -c -
+      if: always()
+    - name: Upload all evidence even on failure
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: terminal-credit-proof-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/terminal-credit-evidence
+        if-no-files-found: error
+        retention-days: 90
+  package-trim-aot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+    - name: Checkout pinned source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.CANDIDATE_SHA }}
+        persist-credentials: false
+    - name: Initialize durable raw evidence capture
+      run: |
+        evidence="$RUNNER_TEMP/terminal-credit-evidence"
+        mkdir -p "$evidence"
+        echo "EVIDENCE=$evidence" >> "$GITHUB_ENV"
+        cat > "$evidence/capture-shell.sh" <<'BASH'
+        if [[ -z "${TERMINAL_CREDIT_CAPTURE_ACTIVE:-}" ]]; then
+          export TERMINAL_CREDIT_CAPTURE_ACTIVE=1
+          exec > >(tee -a "$EVIDENCE/shell-transcript.log") 2>&1
+          printf '\n=== %s / %s ===\n' "${GITHUB_JOB:-unknown}" "${GITHUB_ACTION:-unknown}"
+        fi
+        BASH
+        echo "BASH_ENV=$evidence/capture-shell.sh" >> "$GITHUB_ENV"
+        printf 'definition_commit=%s\nworkflow_ref=%s\nrun_id=%s\nattempt=%s\n' \
+          "$GITHUB_SHA" "$GITHUB_WORKFLOW_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$evidence/workflow.txt"
+    - name: Verify immutable source and retain complete source evidence
+      run: |
+        test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+        git diff --exit-code
+        git diff --cached --exit-code
+        test -z "$(git ls-files --others --exclude-standard)"
+        git rev-parse HEAD HEAD^{tree} | tee "$EVIDENCE/source-identity.txt"
+        git ls-tree -r HEAD > "$EVIDENCE/source-tree.txt"
+        git archive --format=tar HEAD | gzip > "$EVIDENCE/source.tar.gz"
+        git status --porcelain=v1 --untracked-files=all > "$EVIDENCE/status-before.txt"
+        sha256sum "$FIXTURE" "$ADMISSION" > "$EVIDENCE/regression-files.sha256"
+        test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+        echo "$FIXTURE_SHA256  $FIXTURE" | sha256sum -c -
+        echo "$ADMISSION_SHA256  $ADMISSION" | sha256sum -c -
+    - name: Setup canonical .NET CI environment
+      uses: ./.github/actions/setup-dotnet
+    - name: Record SDK and host
+      run: |
+        dotnet --info | tee "$EVIDENCE/dotnet-info.txt"
+        uname -a | tee "$EVIDENCE/uname.txt"
+        lscpu > "$EVIDENCE/lscpu.txt"
+    - name: Restore entire solution
+      run: |
+        dotnet restore Sharplink.slnx
+    - name: Build entire solution Release before isolated publishes
+      run: |
+        dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+    - name: Canonical source ProjectReference full and partial trim smoke
+      run: |
+        bash eng/run-project-reference-trim-smoke.sh
+      env:
+        SHARPLINK_TRIM_RID: linux-x64
+    - name: Canonical source NativeAOT transport and topology smoke
+      run: |
+        bash eng/run-shared-memory-aot-process-smoke.sh
+      env:
+        SHARPLINK_AOT_RID: linux-x64
+        SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/terminal-credit-source-aot
+    - name: Pack exact candidate packages
+      run: |
+        dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+    - name: Canonical package contracts
+      uses: ./.github/actions/verify-packages
+    - name: Verify complete canonical public API with zero delta
+      run: |
+        bash eng/verify-public-api.sh
+    - name: Verify calibrated release versions without increments
+      run: |
+        python3 eng/verify-release-versions.py
+    - name: Verify runtime architecture
+      run: |
+        if ! command -v rg >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+        fi
+        bash eng/verify-runtime-architecture.sh
+    - name: Canonical package smoke including full trim, partial trim, late configuration and NativeAOT
+      uses: ./.github/actions/package-smoke
+    - name: Verify source remained unchanged after validation
+      run: |
+        git diff --binary > "$EVIDENCE/tracked-diff-after.patch"
+        git status --porcelain=v1 --untracked-files=all > "$EVIDENCE/status-after.txt"
+        git diff --exit-code
+        git diff --cached --exit-code
+        test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+        test "$(git rev-parse HEAD^{tree})" = "$CANDIDATE_TREE"
+      if: always()
+    - name: Upload all evidence even on failure
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: terminal-credit-package-trim-aot-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/terminal-credit-evidence
+          artifacts/nuget
+          artifacts/public-api
+          artifacts/terminal-credit-source-aot/**/*.log
+          artifacts/terminal-credit-source-aot/**/*.json
+        if-no-files-found: error
+        retention-days: 90
+  summary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs:
+    - full-release
+    - deterministic-proof
+    - package-trim-aot
+    if: always()
+    steps:
+    - name: Require every independent validation job to succeed
+      run: |
+        python3 - <<'PYCODE'
+        import json, os
+        results = json.loads(os.environ['RESULTS'])
+        failed = {name: job['result'] for name, job in results.items() if job['result'] != 'success'}
+        if len(results) != 3 or failed:
+            raise SystemExit(f'Incomplete terminal-credit validation: {failed or results}')
+        print('All exact-source terminal-credit correctness, build, integration, API/version and package/trim/AOT checks passed.')
+        print('No performance claim, mobile coverage, merge or release action is implied.')
+        PYCODE
+      env:
+        RESULTS: ${{ toJSON(needs) }}
