@@ -47,7 +47,7 @@ public partial class StreamManagerTests
         var dispatcher = new RecordingDispatcher();
         manager.Register(20, 3, dispatcher);
 
-        manager.CompleteStream(20, 3, true, "boom");
+        manager.CompleteStream(20, 3, new SharpLinkException(SharpLinkErrorCode.RemoteError, "boom"));
         manager.CompleteStream(20, 3, exception: null);
 
         Ensure(dispatcher.CompleteCount == 1, "complete called once");
@@ -66,7 +66,7 @@ public partial class StreamManagerTests
         manager.Register(2, 1, d2);
         manager.Register(2, 2, d3);
 
-        manager.CompleteAll(true, "shutdown");
+        manager.CompleteAll(new SharpLinkException(SharpLinkErrorCode.RemoteError, "shutdown"));
 
         Ensure(d1.CompleteCount == 1, "d1 completed");
         Ensure(d2.CompleteCount == 1, "d2 completed");
@@ -199,7 +199,7 @@ public partial class StreamManagerTests
         var exception = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "transport closed");
         manager.Register(30, dispatcher);
 
-        manager.CompleteStream(30, exception);
+        manager.CompleteStream(30, 0, exception);
 
         Ensure(ReferenceEquals(exception, dispatcher.LastException), "manager should pass through supplied exception");
     }

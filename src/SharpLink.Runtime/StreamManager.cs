@@ -254,24 +254,6 @@ internal sealed class StreamManager
     }
 
     /// <inheritdoc />
-    internal void CompleteStream(long requestId, ushort streamId, bool isError, string? msg)
-    {
-        CompleteStream(requestId, streamId, CreateCompletionException(isError, msg));
-    }
-
-    /// <inheritdoc />
-    internal void CompleteAll(bool isError, string? msg)
-    {
-        CompleteAll(CreateCompletionException(isError, msg));
-    }
-
-    /// <inheritdoc />
-    internal void CompleteStream(long requestId, Exception? exception)
-    {
-        CompleteStream(requestId, 0, exception);
-    }
-
-    /// <inheritdoc />
     internal void CompleteStream(long requestId, ushort streamId, Exception? exception)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
@@ -723,15 +705,6 @@ internal sealed class StreamManager
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
         if (requestDispatchers.IsEmpty && dispatchersByRequestId is not null)
             dispatchersByRequestId.TryRemove(requestId, requestDispatchers);
-    }
-
-    private static Exception? CreateCompletionException(bool isError, string? msg)
-    {
-        if (!isError)
-            return null;
-
-        var message = string.IsNullOrWhiteSpace(msg) ? "Remote Error" : msg;
-        return new SharpLinkException(SharpLinkErrorCode.RemoteError, message);
     }
 
     private sealed class Termination(Exception? exception)
