@@ -53,7 +53,7 @@ jobs:
           -- produce --profile native-width --output artifacts/layout/desktop/native-width
 
       - name: Upload desktop layout corpora
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsafe-blit-layout-corpus-desktop-linux-x64
           path: artifacts/layout/desktop
@@ -98,7 +98,7 @@ jobs:
           "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION"
 
       - name: Upload Browser layout corpora
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsafe-blit-layout-corpus-browser-wasm
           path: artifacts/layout/browser
@@ -129,13 +129,13 @@ jobs:
         run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
 
       - name: Download desktop producer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-corpus-desktop-linux-x64
           path: artifacts/layout/producers/desktop
 
       - name: Download Browser producer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-corpus-browser-wasm
           path: artifacts/layout/producers/browser
@@ -229,7 +229,7 @@ jobs:
 
       - name: Upload Android layout evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsafe-blit-layout-android
           path: |
@@ -257,19 +257,19 @@ jobs:
         run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
 
       - name: Download desktop producer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-corpus-desktop-linux-x64
           path: artifacts/layout/producers/desktop
 
       - name: Download Browser producer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-corpus-browser-wasm
           path: artifacts/layout/producers/browser
 
       - name: Download Android producers
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-android
           path: artifacts/layout/android-download
@@ -289,7 +289,7 @@ jobs:
           -- verify --input artifacts/layout/producers --output artifacts/layout/desktop-report/layout-verification.json
 
       - name: Upload desktop verification
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsafe-blit-layout-verification-desktop
           path: artifacts/layout/desktop-report/layout-verification.json
@@ -317,19 +317,19 @@ jobs:
         run: echo "SHARPLINK_SDK_VERSION=$(dotnet --version)" >> "$GITHUB_ENV"
 
       - name: Download desktop producer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-corpus-desktop-linux-x64
           path: artifacts/layout/producers/desktop
 
       - name: Download Browser producer
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-corpus-browser-wasm
           path: artifacts/layout/producers/browser
 
       - name: Download Android producers
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-android
           path: artifacts/layout/android-download
@@ -356,7 +356,7 @@ jobs:
           "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION"
 
       - name: Upload Browser verification
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsafe-blit-layout-verification-browser
           path: artifacts/layout/browser-report/layout-verification.json
@@ -378,19 +378,19 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Download Android reports
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-android
           path: artifacts/layout/reports/android
 
       - name: Download desktop report
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-verification-desktop
           path: artifacts/layout/reports/desktop
 
       - name: Download Browser report
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: unsafe-blit-layout-verification-browser
           path: artifacts/layout/reports/browser
@@ -406,7 +406,7 @@ jobs:
         run: cat artifacts/layout/summary/unsafe-blit-layout-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload UnsafeBlit layout summary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unsafe-blit-layout-summary
           path: artifacts/layout/summary
