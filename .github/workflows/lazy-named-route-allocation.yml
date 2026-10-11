@@ -1,0 +1,147 @@
+name: Lazy Named-Route Allocation Attribution
+
+# Additive, same-machine mechanism attribution. Does not change any existing
+# performance gate, regular UnitTests, runtime defaults, protocol, or RPC benchmark.
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - '.github/workflows/lazy-named-route-allocation.yml'
+      - 'src/SharpLink.Runtime/StreamManager.cs'
+      - 'src/SharpLink.Runtime/StreamManager.TerminalDrain.cs'
+      - 'test/SharpLink.UnitTests/Runtime/StreamManagerLazyMapAllocationEvidence.cs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matched-attribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BASE_SHA: f0fee51e77a5a736469bffa837ceb8f31b1f6877
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      ARTIFACT_ROOT: ${{ github.workspace }}/artifacts/lazy-named-route
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet
+      - name: Prepare fixed dev with exact same measurement harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          mkdir -p "$ARTIFACT_ROOT"/{raw,logs,env}
+          baseline="$RUNNER_TEMP/route-lazy-dev"
+          git worktree add --detach "$baseline" "$BASE_SHA"
+          cp test/SharpLink.UnitTests/Runtime/StreamManagerLazyMapAllocationEvidence.cs \
+             "$baseline/test/SharpLink.UnitTests/Runtime/StreamManagerLazyMapAllocationEvidence.cs"
+          cmp test/SharpLink.UnitTests/Runtime/StreamManagerLazyMapAllocationEvidence.cs \
+              "$baseline/test/SharpLink.UnitTests/Runtime/StreamManagerLazyMapAllocationEvidence.cs"
+          echo "BASELINE_ROOT=$baseline" >> "$GITHUB_ENV"
+          printf 'base=%s\nhead=%s\n' "$BASE_SHA" "$HEAD_SHA" > "$ARTIFACT_ROOT/env/revisions.txt"
+          sha256sum test/SharpLink.UnitTests/Runtime/StreamManagerLazyMapAllocationEvidence.cs > "$ARTIFACT_ROOT/env/harness.sha256"
+          dotnet --info > "$ARTIFACT_ROOT/env/dotnet.txt"
+          lscpu > "$ARTIFACT_ROOT/env/cpu.txt"
+
+      - name: Build both isolated UnitTests assemblies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for project in "$BASELINE_ROOT/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj" \
+                         "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"; do
+            dotnet restore "$project"
+            dotnet build "$project" -c Release --no-restore -m:1 /nodeReuse:false -v minimal
+          done
+
+      - name: Run four balanced dev/candidate/dev allocation rounds
+        shell: bash
+        run: |
+          set -euo pipefail
+          for round in 0 1 2 3; do
+            if (( round % 2 == 0 )); then
+              order=(dev-a candidate dev-b)
+            else
+              order=(dev-b candidate dev-a)
+            fi
+            for arm in "${order[@]}"; do
+              if [[ "$arm" == candidate ]]; then
+                project=test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+                sha="$HEAD_SHA"
+                mode=candidate
+              else
+                project="$BASELINE_ROOT/test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
+                sha="$BASE_SHA"
+                mode=baseline
+              fi
+              export SHARPLINK_LAZY_ROUTE_EVIDENCE_OUTPUT="$ARTIFACT_ROOT/raw/$arm-$round.json"
+              export SHARPLINK_LAZY_ROUTE_EVIDENCE_SHA="$sha"
+              export SHARPLINK_LAZY_ROUTE_EVIDENCE_MODE="$mode"
+              dotnet test --project "$project" -c Release --no-build -- \
+                --treenode-filter '/*/*/StreamManagerLazyMapAllocationEvidence/*' \
+                > "$ARTIFACT_ROOT/logs/$arm-$round.log" 2>&1
+              test -s "$SHARPLINK_LAZY_ROUTE_EVIDENCE_OUTPUT"
+            done
+          done
+
+      - name: Verify exact source, A/A control and complete 12-cell population
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, statistics
+          root=pathlib.Path(os.environ["ARTIFACT_ROOT"])
+          base=os.environ["BASE_SHA"]
+          head=os.environ["HEAD_SHA"]
+          samples={}
+          for round in range(4):
+            for arm in ("dev-a","candidate","dev-b"):
+              path=root/"raw"/f"{arm}-{round}.json"
+              data=json.loads(path.read_text())
+              expected=head if arm=="candidate" else base
+              expected_mode="candidate" if arm=="candidate" else "baseline"
+              assert data["source"]==expected and data["revisionMode"]==expected_mode, path
+              assert data["operationsPerRepeat"]==10000 and data["warmupOperations"]==2048
+              assert len(data["defaultBytesPerLifecycle"])==3 and len(data["namedBytesPerLifecycle"])==3
+              samples[(arm,round)]=data
+          assert len(samples)==12
+          def med(arm,key):
+            return statistics.median([
+              v for i in range(4) for v in samples[(arm,i)][key]
+            ])
+          keys=["defaultBytesPerLifecycle","namedBytesPerLifecycle"]
+          title=["Default-only stream 0","Named stream 7"]
+          result=[
+              "# Same-machine route-allocation attribution",
+              "",
+              "Frozen dev vs standalone lazy named-map candidate, same exact test source.",
+              "Not an RPC throughput or NativeAOT performance result.",
+              "",
+              "| Route | dev A B/lifecycle | dev B B/lifecycle | candidate B/lifecycle | candidate vs dev median |",
+              "|---|---:|---:|---:|---:|",
+          ]
+          for name,key in zip(title,keys):
+            a,b,c=(med(arm,key) for arm in ("dev-a","dev-b","candidate"))
+            reference=statistics.median((a,b))
+            result.append(f"| {name} | {a:.2f} | {b:.2f} | {c:.2f} | {c-reference:+.2f} B |")
+          result+=["","All 12 cells have 3 measured 10,000-route repeats after 2,048 warmups.",
+                   "A/A dev A versus dev B is retained. No original gates or thresholds changed.",""]
+          (root/"summary.md").write_text("\n".join(result))
+          print("\n".join(result))
+          PY
+          cat "$ARTIFACT_ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve results and any failure logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lazy-named-route-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/lazy-named-route
+          retention-days: 30
+          if-no-files-found: warn
