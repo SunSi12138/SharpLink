@@ -31,7 +31,7 @@ internal sealed partial class WriterOwnedStreamScheduler
                 ValidateOpen(handle);
                 if (handle.ProducerActive != 0)
                     throw new InvalidOperationException("A stream can have only one active frame producer.");
-                handle.ProducerActive = 1;
+                handle.ProducerActive = ProducerUseMask;
                 ownsProducer = true;
             }
             while (true)
@@ -49,7 +49,7 @@ internal sealed partial class WriterOwnedStreamScheduler
                 if (wait is null) break;
                 await wait.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await _prepared.AcquireAsync(handle.RequestId, handle.StreamId, bytes, cancellationToken).ConfigureAwait(false);
+            await AcquirePreparedBudgetAsync(handle, bytes, cancellationToken).ConfigureAwait(false);
             ownsBudget = true;
             // TimeProvider is an extension boundary. Never call it under a stream gate.
             if (deadlineTimeProvider is not null && deadline.IsExpired(deadlineTimeProvider))
@@ -82,12 +82,26 @@ internal sealed partial class WriterOwnedStreamScheduler
                 {
                     if (ownsProducer)
                     {
-                        lock (handle.Gate) handle.ProducerActive = 0;
+                        // Abort cleanup may still hold upper units in this existing use word.
+                        // Releasing the producer must not clear those independent ownerships.
+                        lock (handle.Gate) handle.ProducerActive &= ~ProducerUseMask;
                         if (Volatile.Read(ref handle.EndQueued) || Volatile.Read(ref handle.Error) is not null) Notify(handle);
                     }
                 }
             }
         }
+    }
+
+    // Called while Enqueue owns the producer use. A late Abort can run after the last open
+    // check but before the budget waiter is registered. Register first, then recheck Error:
+    // either Abort sees this waiter, or this recheck supplies the otherwise lost rejection.
+    internal ValueTask AcquirePreparedBudgetAsync(StreamHandle handle, int bytes, CancellationToken token)
+    {
+        Debug.Assert((handle.ProducerActive & ProducerUseMask) != 0);
+        var pending = _prepared.AcquireAsync(handle.RequestId, handle.StreamId, bytes, token);
+        if (!pending.IsCompletedSuccessfully && Volatile.Read(ref handle.Error) is { } error)
+            _prepared.CompleteStream(handle.RequestId, handle.StreamId, error);
+        return pending;
     }
 
     internal void PostWindowUpdate(long requestId, ushort streamId, int bytes)

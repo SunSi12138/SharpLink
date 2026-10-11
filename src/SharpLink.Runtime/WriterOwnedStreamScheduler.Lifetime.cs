@@ -2,6 +2,12 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class WriterOwnedStreamScheduler
 {
+    // ProducerActive is an existing lifecycle-use word: bit zero owns the single producer;
+    // each abort cleanup holds two units. The writer may retire a key only when it is zero.
+    // Reuse that word rather than adding another object, gate or per-stream reference field.
+    private const int ProducerUseMask = 1;
+    private const int AbortCleanupUse = 2;
+
     internal void AbortRequest(long requestId, Exception error)
     {
         ArgumentNullException.ThrowIfNull(error);
@@ -25,6 +31,7 @@ internal sealed partial class WriterOwnedStreamScheduler
         lock (stream.Gate)
         {
             if (!stream.Attached) return;
+            stream.ProducerActive = checked(stream.ProducerActive + AbortCleanupUse);
             stream.Error ??= error;
             stream.RemoteAbort |= remote;
             while (stream.Frames.TryDequeue(out var frame)) (discarded ??= []).Add(frame);
@@ -33,13 +40,25 @@ internal sealed partial class WriterOwnedStreamScheduler
             drains = stream.DrainWaiters;
             stream.DrainWaiters = null;
         }
-        // A wake hint never faults. A canceled WaitAsync proxy may have detached from it;
-        // waking and rechecking avoids leaving an unobserved exception on the abandoned hint.
-        space?.TrySetResult();
-        CompleteDrainWaiters(drains, error);
-        _prepared.CompleteStream(stream.RequestId, stream.StreamId, error);
-        ReturnDiscarded(discarded);
-        Notify(stream);
+        try
+        {
+            // A wake hint never faults. A canceled WaitAsync proxy may have detached from it;
+            // waking and rechecking avoids leaving an unobserved exception on the abandoned hint.
+            space?.TrySetResult();
+            CompleteDrainWaiters(drains, error);
+            // Notifications may schedule arbitrary TaskScheduler code. Keep the OLD key pinned
+            // through this key-scoped operation, even if notification reenters the writer.
+            _prepared.CompleteStream(stream.RequestId, stream.StreamId, error);
+        }
+        finally
+        {
+            try { ReturnDiscarded(discarded); }
+            finally
+            {
+                lock (stream.Gate) stream.ProducerActive -= AbortCleanupUse;
+                Notify(stream);
+            }
+        }
     }
 
     private void ReturnDiscarded(List<PreparedFrame>? frames)
