@@ -1,0 +1,98 @@
+name: Issue 801 - Decode Queue Constructor Cost Comparison
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-decode-queue-cost.yml
+      - eng/issue801/DecodeQueueCostProbe/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-decode-queue-cost-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  allocation-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+
+    steps:
+      - name: Checkout isolated audit branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup SDK
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore original solution and cost probe
+        run: |
+          mkdir -p artifacts/issue-801-decode-cost
+          dotnet restore Sharplink.slnx -v minimal
+          dotnet restore eng/issue801/DecodeQueueCostProbe/DecodeQueueCostProbe.csproj -v minimal
+
+      - name: Measure pristine executor constructor
+        run: |
+          dotnet run --project eng/issue801/DecodeQueueCostProbe/DecodeQueueCostProbe.csproj \
+            -c Release --no-restore -- baseline \
+            "$GITHUB_WORKSPACE/artifacts/issue-801-decode-cost/baseline.json" \
+            > artifacts/issue-801-decode-cost/baseline-output.log 2>&1
+          tail -n 40 artifacts/issue-801-decode-cost/baseline-output.log
+
+      - name: Remove compatibility-only production subsystem and migrate tests
+        run: |
+          python3 eng/issue801/remove-decode-compatibility.py artifacts/issue-801-decode-cost
+          git diff --check
+
+      - name: Measure reserved-only executor constructor
+        run: |
+          dotnet run --project eng/issue801/DecodeQueueCostProbe/DecodeQueueCostProbe.csproj \
+            -c Release --no-restore -- reserved \
+            "$GITHUB_WORKSPACE/artifacts/issue-801-decode-cost/reserved.json" \
+            > artifacts/issue-801-decode-cost/reserved-output.log 2>&1
+          tail -n 40 artifacts/issue-801-decode-cost/reserved-output.log
+
+      - name: Summarize object state and allocation delta
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("artifacts/issue-801-decode-cost")
+          a=json.loads((p/"baseline.json").read_text())
+          b=json.loads((p/"reserved.json").read_text())
+          report={
+            "PristineConstructorMedianBytes": a["ConstructorAllocationPerCurrentThreadBytes"]["Median"],
+            "ReservedConstructorMedianBytes": b["ConstructorAllocationPerCurrentThreadBytes"]["Median"],
+            "ObservedMedianBytesSavedPerConstructor": a["ConstructorAllocationPerCurrentThreadBytes"]["Median"] - b["ConstructorAllocationPerCurrentThreadBytes"]["Median"],
+            "InstanceFieldCountBefore": a["InstanceFieldCount"],
+            "InstanceFieldCountAfter": b["InstanceFieldCount"],
+            "CompatibilityFieldsBefore": a["CompatibilityInstanceFields"],
+            "CompatibilityFieldsAfter": b["CompatibilityInstanceFields"],
+            "LegacyStaticKeyBefore": a["LegacyStaticSchedulingKeyExists"],
+            "LegacyStaticKeyAfter": b["LegacyStaticSchedulingKeyExists"],
+            "Caveat":"Single machine and sample batch; reflection allocations plus threadpool startup noise. Not a throughput benchmark."
+          }
+          (p/"comparison.json").write_text(json.dumps(report,indent=2)+"\n")
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Restore all original sources and tests
+        if: always()
+        run: |
+          git restore -- src/ test/
+          git diff --exit-code -- src/ test/
+
+      - name: Upload raw baseline and reserved allocation data
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-reserved-decode-constructor-allocation-comparison
+          path: artifacts/issue-801-decode-cost
+          if-no-files-found: warn
+          retention-days: 30
