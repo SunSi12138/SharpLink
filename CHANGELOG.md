@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- Fixed a deadline wait that could remain pending when the clock crossed its absolute deadline between sampling the remaining time and installing the relative timer delay. Task waits and deadline-limited retry backoff now claim an expiry observed immediately after arming, without requiring another timer tick.
+
 - Preserve receive-credit accounting for late client-stream frames while a completed server call still owns its request entry. Terminal processing drains only an existing already-discarding route, validates compressed original-byte lengths, and keeps route completion bound to the exact captured stream owner.
 
 ### Changed
