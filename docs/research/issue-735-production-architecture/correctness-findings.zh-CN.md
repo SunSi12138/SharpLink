@@ -1,5 +1,7 @@
 # Issue #735：独立正确性发现、修复与证据边界
 
+> **后续状态（2026-10-11 21:01:06 UTC，见附录 C、D、E）：**修复集成后的 B2 `754d723c`、`60828816`、`5cabd4d7` 各自的实际 JIT correctness collector 均已满足全部 25 个既定 gate，包含各四轮完整 2123-case 套件与指定 mutant 的真实 red。它们不覆盖原 PR 的独立 allocation-gate、Package Smoke、CodeQL 或性能验收。报告 PR #852 的原 allocation gate 另有 **59.848 > 50 B/RPC spread** 红灯，原因未归属；它与 #850 的 24,624 B 失败分开保留。下文 20:21 的原阶段记录不回写成后来的结果。
+
 本文记录本轮生产架构审计发现的三类**既有 dev 正确性缺陷**，以及相应独立 Draft PR。它们分别涉及 send-state generation 捕获、sized-codec 快照／writer 的异常所有权，以及错误终结后的未发送额度归还。三者都能用固定原始 dev 复现，不以 B2 grant、B3 Ready Writer 或 D 的方向锁改动作为触发前提。因此，其修复必须进入性能比较双方共同的正确性控制，不能计入任何调度器的性能收益。[#849](https://github.com/SunSi12138/SharpLink/pull/849)、[#850](https://github.com/SunSi12138/SharpLink/pull/850)、[#851](https://github.com/SunSi12138/SharpLink/pull/851)
 
 **截至 2026-10-11 20:21:09 UTC 的结论：**三项独立修复均已有实际产品提交及 PR 合成提交的指定 red/green、四轮完整套件通过；共同正确性控制也已实际通过其指定三项 red/green 和四轮 2085 个 case。#850 的固定 40 进程 A/B 控制已经逐份核验，全数通过；但其更早完整测试中的 **24,624 B / 0 B 分配断言失败仍未归因**。原编译失败、完整测试红灯及未执行位置都保留。三项 PR 均为 Draft、均未合并；这些正确性结果不构成 B2 或 B3 的性能 Go。初始 B2 桥接测试另已实际触发相同的错误终结退款缺陷，修复后的集成结果仍须独立验证。[#849 最新回归](https://github.com/SunSi12138/SharpLink/actions/runs/38168008260)、[#850 原完整测试红灯](https://github.com/SunSi12138/SharpLink/actions/runs/38170017685)、[#850 固定控制](https://github.com/SunSi12138/SharpLink/actions/runs/38170670903)、[共同正确性控制](https://github.com/SunSi12138/SharpLink/actions/runs/38171029907)、[B2 桥接 red](https://github.com/SunSi12138/SharpLink/actions/runs/38171089212)
@@ -245,3 +247,124 @@ $$
 - 初始 B2 `d472eee7`：已实际完成编译和 focused，唯一 deadline 退款失败保留；四轮 full 和后续检查为 NotRun。它的修复集成是另一个待验证候选，不由以上三个独立 PR 的 green 自动代替。
 
 相关研究边界见 [历史失败及证据审计](failures-and-evidence.zh-CN.md)、[成熟框架与候选架构](frameworks-and-candidates.zh-CN.md)、[D 的测量方法和控制](directional-control-and-methods.zh-CN.md)。本文件只负责正确性发现及其独立验收，不改变那些报告各自冻结的测量群体或架构判断。
+
+## 附录 C：B2 修复集成后的实际 correctness 验收
+
+**追加：2026-10-11 20:56:21 UTC。**第 7 节及附录 B 中 `d472eee7` 的真实 deadline 退款 red 仍是有效历史记录。之后候选导入已独立验证的错误终结退款修复，再通过原格式 gate；`754d723c7866a67a48f3952495d8aeda3159d07b` 的完整 collector 已取得实际结果。`608288167436ce361920e7ee41fa9bb958229707` 添加一致的 RPC/footprint 测量工具后，重新对自己的实际构建执行同一 correctness collector。这里更新这两次运行的事实，不把独立修复收益计入 B2。[退款集成提交](https://github.com/SunSi12138/SharpLink/commit/ba9dfedc3a769a14f03cb5c522f4921f5da655eb)、[754 完整运行](https://github.com/SunSi12138/SharpLink/actions/runs/38172137769)、[608 correctness job](https://github.com/SunSi12138/SharpLink/actions/runs/38172711056/job/114568509934)
+
+### C.1 源码、原 ZIP 与实际构建身份
+
+| 运行 / 输入 | 原 artifact | ZIP 大小 / SHA256 | 独立验证范围 |
+|---|---|---|---|
+| 754：`754d723c7866a67a48f3952495d8aeda3159d07b`；run `38172137769` | [11714691349](https://github.com/SunSi12138/SharpLink/actions/runs/38172137769/artifacts/11714691349) | 13,444,621 B；`45129c57ec0cad7c6a80579685516585103c885161bcfbbc602c3626c83e5216` | 84 ZIP entries、83 manifest 文件、1592 个 tracked source files、33 个保存的 binary 文件。 |
+| 608：`608288167436ce361920e7ee41fa9bb958229707`；run `38172711056` | [11714716344](https://github.com/SunSi12138/SharpLink/actions/runs/38172711056/artifacts/11714716344) | 13,449,142 B；`a19d8e0831176e2e5a479456bc3e293eab8b9e1f70b877868a8a15939935a0de` | 84 ZIP entries、83 manifest 文件、1615 个 tracked source files、33 个保存的 binary 文件。 |
+
+ZIP 大小与 digest 均与 GitHub artifact 元数据一致。所有 entries 通过完整读取及逐字节解压副本比较；内部 manifest 的文件集合与 digest 全部相符。源码身份不是只读分支标签：本次独立审计从固定 Git commit 的全部 blobs 重算 SHA256 与 tracked-content digest，并检查每个测试进程记录的 source identity。两个输入的生产 `src` tree 均为 `5c63c1d0eec9451115bdabd25020854deb58e901`。[754 源码](https://github.com/SunSi12138/SharpLink/tree/754d723c7866a67a48f3952495d8aeda3159d07b/src)、[608 源码](https://github.com/SunSi12138/SharpLink/tree/608288167436ce361920e7ee41fa9bb958229707/src)
+
+754 到 608 的全部 **497 个生产源码文件逐字节相同**；correctness collector、Unit / Generator / Load / Integration 原四个测试项目也没有改变。24 个变更路径只涉及新 RPC/footprint harness、workflow 与说明，其清单保存在 `evidence/new/38172711056/correctness-754-608-comparison.json`。两次都使用 SHA256 为 `cbf65ba77f1635379cf05b740b263c05594aa5af58f73a5fe726557881e0d948` 的 [correctness collector](https://github.com/SunSi12138/SharpLink/blob/608288167436ce361920e7ee41fa9bb958229707/eng/issue735/run_b2_correctness.py)。源码相同没有被扩大为“相同 binary”；实际保存的 Runtime DLL 身份如下。
+
+| 构建 | candidate Runtime DLL SHA256 | diagnostic mutant Runtime DLL SHA256 |
+|---|---|---|
+| 754 | `c942bd65861bc7c7cb3a11c41baccdde714bda8ecf9c992965a40015fe3ed57d` | `93284cc4f1a92b5f72ade3d0c01b841d54f0b818bea714963202a22db4e314e0` |
+| 608 | `0bad3721d83a0c6b19ce057fd69703238a167f04954a3709d5f7dd1f3dd9f497` | `89c0ae6729ba1187cc8e741a052ede2df0ed2fa0a022b61433360f9ebd8d4c10` |
+
+每个保留的 assembly、apphost、PDB、deps/runtimeconfig 文件都与该 run 的编译后及执行前后 inventory 对照通过。所有顶层依赖有执行前后 hash 记录，但原 artifact 只保存选定的 33 个 binary 文件；不能声称保存了完整可再次启动的所有依赖闭包。[754 原始 binary/provenance artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38172137769/artifacts/11714691349)、[608 原始 binary/provenance artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38172711056/artifacts/11714716344)
+
+### C.2 25 个 gate 与实际测试计数
+
+两个 run 分别满足相同的 **25/25 既定 gate**。这里的 gate 包含判定指定 mutant 失败是否符合预期；因此它不意味着每个进程 exit 0。每个 run 都有 11 个实际测试进程，9,338 次 case execution，其中唯一失败是那个预先指定的 mutant red。没有从别的 SHA 借用测试成功，也没有在某个实际失败后删掉其余计划位置。[完整 collector 计划](https://github.com/SunSi12138/SharpLink/blob/608288167436ce361920e7ee41fa9bb958229707/eng/issue735/run_b2_correctness.py#L294-L389)
+
+| gate 组 | 个数 | 实际完成内容 |
+|---|---:|---|
+| 输入与 candidate 构建 | 5 | source-and-plan-validation、dotnet-info、restore、build-candidate、candidate-binary-identities。 |
+| candidate 测试进程 | 9 | DisableGrant 单项、focused、四轮 full、Generator、Load、Integration。 |
+| 原工程检查 | 5 | project-boundaries、format-whitespace、maintainability-gate-tests、maintainability-gate、generated-assembly-boundaries。 |
+| mutant 构建和指定对照 | 6 | mutant-worktree、mutant-overlay、build-mutant、mutant-binary-identities、mutant-disable-expected-red、mutant-dispose-control。 |
+
+| 每个 run 的位置 | 实际进程数 | 每个进程 total / succeeded / failed / skipped | 实际 exit |
+|---|---:|---|---:|
+| candidate DisableGrant 单项 | 1 | 1 / 1 / 0 / 0 | 0 |
+| candidate focused | 1 | 41 / 41 / 0 / 0 | 0 |
+| candidate Unit full | 4 | 每轮 2123 / 2123 / 0 / 0 | 0 |
+| candidate Generator | 1 | 271 / 271 / 0 / 0 | 0 |
+| candidate LoadTest | 1 | 77 / 77 / 0 / 0 | 0 |
+| candidate Integration | 1 | 454 / 454 / 0 / 0 | 0 |
+| mutant DisableGrant 指定 red | 1 | 1 / 0 / **1** / 0 | **2** |
+| 同 mutant Dispose 控制 | 1 | 1 / 1 / 0 / 0 | 0 |
+
+41 个 focused case 的组成固定为 33 个 controller case、6 个实际 generated bridge case、2 个 snapshot ownership case；full 是 `2082 + 41 = 2123`，不是共同正确性控制的 `2085` 再叠加 41。原 `TUNIT_MAX_PARALLEL_TESTS=8` 和 integration 的 `--maximum-parallel-tests 1 --timeout 120s` 保持，outer watchdog 是预定 600 秒。两次的全部 TUnit HTML 内嵌报告与保存 JSON 全对象相等，stdout 原四项计数一致，11 个 session/report identity 各自唯一且时间落在对应执行区间内；“完整通过”来自这些原始执行记录。[754 artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38172137769/artifacts/11714691349)、[608 artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38172711056/artifacts/11714716344)
+
+### C.3 Mutant 证明的范围
+
+诊断 mutant 只在 `DisableSendGrant` 内把 unused-grant recall 的条件加上 `dispose &&`。独立重放原 Git blob 上唯一一次替换，确认所有其他源码字节未动；变化前该文件 SHA256 为 `df37087330c876d1ad91bc87966c983d2d633d5ca5fbead662c3097362f2071d`，后为 `f339194af1df55785ec8ec80999f4e1ff637868e760217aa5b731f684da4f4ae`。[原生产 recall](https://github.com/SunSi12138/SharpLink/blob/608288167436ce361920e7ee41fa9bb958229707/src/SharpLink.Runtime/StreamFlowController.SendGrants.cs#L148-L168)、[限定 mutant 变换](https://github.com/SunSi12138/SharpLink/blob/608288167436ce361920e7ee41fa9bb958229707/eng/issue735/run_b2_correctness.py#L127-L150)
+
+两次指定 red 都是 `DisableGrantMustReturnUnusedCreditWithoutClosingTheLease`，原异常精确显示 `expected F/C/G=120/24/0; actual=108/24/12`，exit 2；同一个 mutant 的 `DisposeMustCloseBeforeReturningGrantAndStillAllowTheOwnedItemRefund` 单项仍通过。它证明测试能捕获故意删掉 DisableGrant 回收的错误，而 Dispose 路径仍保留回收；**它不是历史 dev red，也不是未修改 candidate 的 correctness failure**。这些界限由原 patch、两种 Runtime DLL 和原失败报告共同支持。[指定测试](https://github.com/SunSi12138/SharpLink/blob/608288167436ce361920e7ee41fa9bb958229707/test/SharpLink.UnitTests/Runtime/StreamFlowGrantTests.cs#L77-L120)、[mutant 原始 artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38172711056/artifacts/11714716344)
+
+### C.4 未覆盖的原 CI 与性能门槛
+
+这两次 collector 均没有运行原 PR 独立 **allocation-gate、Package Smoke、CodeQL**；也没有在该 correctness job 中发布执行 NativeAOT 或测量 RPC 性能。608 的 [correctness-gate job](https://github.com/SunSi12138/SharpLink/actions/runs/38172711056/job/114568509934) 为 success，但 [完整 run 38172711056](https://github.com/SunSi12138/SharpLink/actions/runs/38172711056) 为 failure：六个后续 RPC screen job 均为 failure。那些 job 的失败原材料各自保留，不能因为前置 correctness green 而改写；也不能把本附录当作其性能结果。
+
+独立只读复算脚本为 `evidence/new/38172711056/verify_correctness_independently.py`，SHA256 `d0bdecb26616b9cba7e8b453d3415d2fa36018b76df1606d3519065a8d842365`，本次实际 exit 0。逐项结果在该目录的 `correctness-independent-verification.json`、`correctness-754-608-comparison.json` 和 `correctness-independent-diagnosis.zh-CN.md`；754 的此次复算另存 `evidence/new/38172137769/historical-independent-recheck.json`。这些是对历史执行结果的复核，不是新产生的产品执行或可追加的性能样本。
+
+## 附录 D：报告 PR #852 的独立 allocation gate 红灯
+
+**追加：2026-10-11 20:56:21 UTC。**报告分支也必须如实呈现原 CI 状态。原 [PR Fast run 38172281638](https://github.com/SunSi12138/SharpLink/actions/runs/38172281638) 中，fast job success，独立 [allocation-gate job 114567210379](https://github.com/SunSi12138/SharpLink/actions/runs/38172281638/job/114567210379) failure、原 exit 1，整个 run failure。[原 artifact 11714194960](https://github.com/SunSi12138/SharpLink/actions/runs/38172281638/artifacts/11714194960) 大小 2,998 B，SHA256 `3af95de01edb7e4329dd58f2425dfb2704e9eaf1276dbf62fd79ac62692442b1`；其中只有 `gate.json` 和 `self-test.json`，已逐字节核验 ZIP 与解压副本。
+
+### D.1 原五样本与失败条件
+
+唯一失败是 `rpc-add-sharedmemory-c1`，固定 warmup 512 RPC，每样本实际完成 4,000 RPC，5 个样本，未注入额外分配、未设置 case filter。原 [预算文件](https://github.com/SunSi12138/SharpLink/blob/0aab0f64655e775e39a3735883028d420f23125b/eng/perf/allocation-budgets.json#L5-L8) 要求 median ≤1450 B/RPC 且 spread ≤50 B/RPC。[原 gate 报告](https://github.com/SunSi12138/SharpLink/actions/runs/38172281638/artifacts/11714194960)
+
+| 原 index | allocatedBytes | completedOperations | 独立重算 B/RPC |
+|---:|---:|---:|---:|
+| 0 | 5,254,544 | 4,000 | 1313.636 |
+| 1 | 5,266,408 | 4,000 | 1316.602 |
+| 2 | 5,301,472 | 4,000 | 1325.368 |
+| 3 | 5,444,560 | 4,000 | 1361.140 |
+| 4 | 5,493,936 | 4,000 | 1373.484 |
+
+**实际 median 为 1325.368 B/RPC，符合 1450 门槛；spread 为 1373.484 − 1313.636 = 59.848 B/RPC，高于 50 门槛。**1450 是门槛，不能写成测量值。源码的准入条件同时检查样本数、median 与 spread；因此这里是有效的原 allocation-stability red。四个实际 case 中其余三个通过，原 policy self-test 也通过，它们均不替代失败的 real gate。[原判定代码](https://github.com/SunSi12138/SharpLink/blob/0aab0f64655e775e39a3735883028d420f23125b/test/SharpLink.Benchmarks/AllocationGateRunner.cs#L243-L269)、[原 job log](https://github.com/SunSi12138/SharpLink/actions/runs/38172281638/job/114567210379)
+
+### D.2 可以核实的源码等同性，以及缺失的二进制链条
+
+原 checkout 是 `0aab0f64655e775e39a3735883028d420f23125b`，其父提交为初始 dev `f8ba89121c87a6410a0139c44d7db30eab877f41` 和报告 HEAD `4fdc74fe700eacd6f0ac51518146d51c875a752a`。本次只读取得该固定 merge 的 Git 对象，验证三者完整 `src`、完整 `test`、Directory.Build.props、Directory.Packages.props、global.json、原 allocation action、PR Fast workflow、runner shell 与 budgets 的 tree/blob 相等；五个关键 gate 文件另做原始字节比较及 SHA256。三者 `src` tree 均为 `20205a8d16d2fecf674c32d207edbbe8e90b3b1c`。Directory.Build.targets 在三者均不存在，不算成一个已保存并 hash 的构建输入。[实际 merge](https://github.com/SunSi12138/SharpLink/commit/0aab0f64655e775e39a3735883028d420f23125b)、[初始 dev](https://github.com/SunSi12138/SharpLink/commit/f8ba89121c87a6410a0139c44d7db30eab877f41)、[报告 HEAD](https://github.com/SunSi12138/SharpLink/commit/4fdc74fe700eacd6f0ac51518146d51c875a752a)
+
+这些结论是**固定 Git checkout 所指源码相等**。原 CI 没有保留实际执行 assembly/executable、binary digest 或编译前工作区逐文件 hash manifest；原 artifact 仅两份 JSON。日志确实记录 checkout→Release build→run，并报告 .NET 10.0.12，但不能据此补造完整的 source→binary→execution 身份链条，也不能把源码相等当成该红灯只是噪声的证明。[原 allocation action](https://github.com/SunSi12138/SharpLink/blob/0aab0f64655e775e39a3735883028d420f23125b/.github/actions/allocation-gate/action.yml)、[原两文件 artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38172281638/artifacts/11714194960)
+
+`MeasureAsync` 在启动 workers 与全部完成之间调用 `GC.GetTotalAllocatedBytes(precise: true)`，观测的是进程总分配。样本 diagnostics 的 thread/work-item 计数不含分配类型、调用栈或组件归属，因而不能仅凭它们把 59.848 B/RPC spread 归因于 pool、调度、JIT 或 RPC 状态。[测量区间源码](https://github.com/SunSi12138/SharpLink/blob/0aab0f64655e775e39a3735883028d420f23125b/test/SharpLink.Benchmarks/AllocationGateRunner.cs#L272-L306)
+
+### D.3 尚未归属的原 CI 阻碍
+
+截至这份原始运行，#852 不能宣称原 CI 全绿；该 allocation-stability red 应继续列为**原因未归属的完整 CI 验收阻碍**。它没有证明报告文字或 B2/D 引入了分配回退，也不能被借作 B2 性能失败样本；后续正确性 green 同样不能消除它。没有改变样本数、预算、warmup、超时或通过重跑选择样本来修饰该结果。
+
+它与第 4 节 #850 的 **24,624 B / 0 B** 失败严格分开：#850 是单元测试当前线程的零分配断言；这里是五个真实 unary RPC 样本的进程总 B/RPC 稳定性。没有原始证据把两者合并成同一原因。[#850 原完整 red](https://github.com/SunSi12138/SharpLink/actions/runs/38170017685)、[#852 原 allocation red](https://github.com/SunSi12138/SharpLink/actions/runs/38172281638)
+
+复核材料在 `evidence/new/38172281638/historical-independent-allocation-verification.json` 和 `historical-independent-allocation-diagnosis.zh-CN.md`，只读脚本 `verify_allocation_independently.py` 的 SHA256 为 `994b8fb6e1e1fe8976029816b0db7ab9a03e9854341ac07912170fd0156a973c`，最终实际 exit 0。脚本初次误假定 Directory.Build.targets 存在的本地审计失败另存 `historical-independent-audit-first-attempt.json`；它不是新产品执行，不与原 CI red 混用。所有原 ZIP、原日志、样本及先前诊断保持原样。
+
+## 附录 E：5cab 实际构建的同门槛复核
+
+**追加：2026-10-11 21:01:06 UTC。**`5cabd4d7cc5ce9aa0a87424e36954e414e0912da` 的 [correctness-gate job 114571488571](https://github.com/SunSi12138/SharpLink/actions/runs/38173700315/job/114571488571) 已实际 success。本次只下载并复核其 [artifact 11715271556](https://github.com/SunSi12138/SharpLink/actions/runs/38173700315/artifacts/11715271556)，没有重复下载该 run 的其他 artifacts。截止时间 [完整 run 38173700315](https://github.com/SunSi12138/SharpLink/actions/runs/38173700315) 仍在进行，此附录不替正在进行的 RPC screen 作结论。
+
+ZIP 大小 13,431,002 B，SHA256 `b88befc937ada71ad04bbfdf675f5ce9fdeab0acdde5eb1772fce1099bda2e9b` 与 GitHub 元数据一致。84 entries 完整读取、CRC 与逐字节解压副本核验通过；83 个 manifest 文件、1615 个 tracked source files、33 个保存的 binary 文件分别核验。源码 tracked-content SHA256 为 `7ad6ba1889598ffac56d713dd6fe4ad1332e6559d0da2b4e72dea2b00f3e674b`。497 个 `src` 文件与 608 全部逐字节相同，生产 tree 仍为 `5c63c1d0eec9451115bdabd25020854deb58e901`。[5cab 固定源码](https://github.com/SunSi12138/SharpLink/tree/5cabd4d7cc5ce9aa0a87424e36954e414e0912da/src)、[原 provenance/binary artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38173700315/artifacts/11715271556)
+
+608→5cab 唯一变化位于 `test/SharpLink.FlowArchitectureEvidence/GrantBenchmarkClient.cs`：`Validate(GrantBenchmarkPayload value)` 的参数改为 `GrantBenchmarkPayload?`，保持既有 null 验证主体。独立审计对旧 Git blob 精确重放这一个字符的修改并比较新 blob 全字节；生产文件、原四个 correctness 测试项目及 collector 均未变。[唯一 harness 修改](https://github.com/SunSi12138/SharpLink/commit/5cabd4d7cc5ce9aa0a87424e36954e414e0912da)
+
+其实际 candidate Runtime DLL SHA256 是 `a33187fa89aacb4dd949fbb717824be5171128e8b2cf4feb649afdf735d64399`，mutant 是 `30ff54e9930d174a945df527a4dfe4293b2041c3c04e3e25292846b9c4a9d14e`。它们各自与原执行位置的前后 binary inventory 及保存文件匹配；没有把此前 754/608 的 binary hash 当成此提交的身份。[5cab binary/provenance 原始 artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38173700315/artifacts/11715271556)
+
+原计划 **25/25 gate 全满足**，测试群体与附录 C.2 相同：candidate 单项 1、focused 41、四轮各 2123 Unit、Generator 271、Load 77、Integration 454 全部 exit 0、failed 0、skipped 0；mutant DisableGrant 单项原 exit **2**，精确失败仍是 `expected F/C/G=120/24/0; actual=108/24/12`，同 mutant Dispose 控制 1/1 通过。11 个进程共 9,338 次 case execution；所有 HTML 内嵌报告、JSON、stdout 四计数、session/time/source/binary identities 均逐项核验。该指定 mutant red 的含义与 C.3 完全相同，不能称为历史 dev red。[完整执行 artifact](https://github.com/SunSi12138/SharpLink/actions/runs/38173700315/artifacts/11715271556)
+
+这第三次真实 correctness 成功没有扩大该 collector 的范围：它不包含原 PR 独立 allocation-gate、Package Smoke、CodeQL、实际 NativeAOT 发布执行或 RPC 性能门槛；不改变原 608 screen 的失败，也不消除 #850/#852 的原 allocation red。新测量群体仍须用自己实际运行的 binary、原始样本和结果单独审阅。
+
+独立材料在 `evidence/new/38173700315/correctness-independent-verification.json`、`correctness-608-5cab-comparison.json`、`correctness-independent-diagnosis.zh-CN.md`。driver `verify_correctness_independently.py` 的 SHA256 为 `fd82e3d45fe9ebb7d395ca19454dbd7f514284279b21f0243df09f07082868b8`，本次实际 exit 0；它调用前先核验附录 C 冻结只读 verifier 的 SHA256，没有为新候选改变判断条件。
+
+
+## 附录 F：交付时的 GitHub 状态复核
+
+2026-10-11 UTC 的最后交付核对中，`dev` 仍为 f8ba89121c87a6410a0139c44d7db30eab877f41；#849 / #850 / #851 head 分别仍为 018728ae / 15c9f30d / 57b59f40。三项 PR 均未合并，生产补丁未因本次 B2 No-Go 而混入性能分支报告。
+
+| PR | 当时状态 | 新确认的原 CI 状态 |
+|---|---|---|
+| [#849](https://github.com/SunSi12138/SharpLink/pull/849) | Open / Draft | 最新 [PR Fast 38171837589](https://github.com/SunSi12138/SharpLink/actions/runs/38171837589) success；同 head 的既有 Package Smoke / CodeQL / lease race 仍 success |
+| [#850](https://github.com/SunSi12138/SharpLink/pull/850) | Open / Ready for review | 最新 [PR Fast 38171852280](https://github.com/SunSi12138/SharpLink/actions/runs/38171852280) 与 [PR Extended 38175288843](https://github.com/SunSi12138/SharpLink/actions/runs/38175288843) success；同 head 的 Package Smoke / CodeQL / snapshot regression / fixed allocation control 仍 success |
+| [#851](https://github.com/SunSi12138/SharpLink/pull/851) | Open / Draft | 最新 [PR Fast 38171865833](https://github.com/SunSi12138/SharpLink/actions/runs/38171865833) success；同 head 的既有 Package Smoke / CodeQL / terminal regression 仍 success |
+
+#850 的 issue timeline 记录 `ready_for_review` 于 2026-10-11T21:10:48Z，actor 为仓库所有者；本次研究保留该已存在状态，没有反向切回 Draft。这里报告的是新增 CI 的实际状态，不将 Extended、smoke 或 package 检查称作真实 NativeAOT RPC，也不由新的绿色覆盖附录中保留的 24,624 B/0 分配断言、report allocation spread 红灯或 B2 资源失败。具体测试、二进制与实验层级仍以各自原 artifact 和前述固定证据为准。

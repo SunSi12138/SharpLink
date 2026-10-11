@@ -2,6 +2,8 @@
 
 审计日期：2026-10-11 UTC。SharpLink 基线固定为 [`dev@f8ba89121c87a6410a0139c44d7db30eab877f41`](https://github.com/SunSi12138/SharpLink/tree/f8ba89121c87a6410a0139c44d7db30eab877f41)，包含已经合并的 #840、#841 和 #842。本文件是架构与机制证据附件；完整 SharpLink 历史性能审计、实际 RPC 样本与最终验收结论由同目录总报告给出。
 
+**后续实证衔接：**第 11–15 节保留候选设计阶段的假设和目标，不能作为最新实现状态。D 已经完成两轮各 432 个真实 RPC 进程并作出 [No-Go](directional-control-and-methods.zh-CN.md)。改进 B2 后续已形成四文件生产 pilot，完成指定 red/green、多轮完整测试、JIT/NativeAOT 分配阶段与实际生成式 RPC，最终作出阶段 No-Go；其实现、静态操作数和实际分配见 [B2 架构附录](b2-pilot-architecture.zh-CN.md)，真实 RPC 的独立身份与结果见 [B2 测量报告](b2-real-rpc-methods-and-results.zh-CN.md)。B3/混合仍是待证实架构，不能以这些 B2 或 D 数据冒充其生产验收。
+
 ## 1. 审计结论及证据边界
 
 目前源码证据支持三个判断：
@@ -19,7 +21,7 @@
 | 固定源码审计 | 六个框架的 owner、队列、窗口、生命周期及关键历史修复 | 具体实现及可迁移原则 | SharpLink 的 CPU、B/RPC、吞吐改善 |
 | 外部历史测量 | Kestrel PR、gRPC-Go PR、h2 PR 原作者结果 | 对应版本和负载下的历史现象 | 本任务复现、同机 SharpLink A/B、NativeAOT |
 | 本轮串行模型 | 新写 B2 守恒 oracle，20 项检查、27 行逻辑计数 | 原子事件模型的守恒、计数、被否定的错误设计 | .NET 并发线性化、真实锁次数、发送性能 |
-| 本轮 D 生产控制 | 当前 dev 的 send / receive gate 分离，保持实际发送路径 | 需要实际 RPC 与测试结果判定 | B2 或 B3 已经接入、尚未出炉的 Go |
+| 本轮 D 生产控制 | 当前 dev 的 send / receive gate 分离，保持实际发送路径；两轮各 432 次 RPC 已完成 | 已作出独立 [No-Go](directional-control-and-methods.zh-CN.md) | B2 / B3 的实现或性能结论 |
 | 对象分配诊断 | 真实 controller，JIT PGO ON/OFF 与实际 NativeAOT；首次编译失败保留 | 限定作用域内 constructor / 状态 / waiter / churn 分配 | 常驻 RSS、所有线程分配、RPC 性能 |
 
 研究模型、相同 transport harness、生成式完整 RPC、实际发布执行的 NativeAOT，以及 NativeAOT smoke test 是五种不同证据。任何一项成功不能替代另一项。
@@ -314,7 +316,7 @@ pressure epoch 需要让新 refill 进入公平队列，authority 能独立回�
 
 ### 11.2 普通 item 操作下界与可能收益
 
-对一个已经注册、当前 lease 有效、grant 充足、无压力的 item，候选必须完成一次 local 互斥 / 等价原子协议、lease / terminal 校验、pressure 观察、G / C 本地更新。**一个具体实现目标是一次 stream lock、无 connection lock / RMW / command；这是候选目标，尚未有并发生产代码或反汇编证明。** 后续现有 SendPump admission / enqueue / wake 不消失。
+对一个已经注册、当前 lease 有效、grant 充足、无压力的 item，候选必须完成一次 local 互斥 / 等价原子协议、lease / terminal 校验、pressure 观察、G / C 本地更新。**一个具体实现目标是一次 stream lock、无 connection lock / RMW / command；这是本节候选设计阶段的目标；后续 B2 生产 pilot 的具体操作与验证另列于架构附录，仍没有反汇编证明。** 后续现有 SendPump admission / enqueue / wake 不消失。
 
 固定 item n、grant target q、长流无压力时，理想 refill/item 约 n/q；n ≥ q 时至少一次 authority reservation / item。连接 WU、terminal、慢路径失败重试与回收仍需单列。若 4 KiB item 与 grant target 同量级，B2 未必减少协调，反而增加 state 同步和 epoch 检查。
 
@@ -385,7 +387,7 @@ D 是本轮实际编码的窄控制实验，用于识别同一 `_gate` 把两个
 | 潜在回退 | 每连接多一个同步对象 / controller 字段；Complete 多一次锁，其他布局 / 缓存效应须测 |
 | JIT / AOT | 没有新异步 / 泛型 / interface 路径，但 Lock 和对象布局仍必须在实际二进制测量 |
 
-基线 controller SHA256 为 `7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2`，D 为 `a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d`。D 的真实 RPC 正在作为独立对照验收，本文件不预判 Go。
+基线 controller SHA256 为 `7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2`，D 为 `a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d`。D 后续已完成两轮实际 RPC 对照并作出 No-Go；本节保留其原始设计动机，结果见独立 D 报告。
 
 ## 15. 候选比较与需要实测的静态成本
 
@@ -405,7 +407,7 @@ D 是本轮实际编码的窄控制实验，用于识别同一 `_gate` 把两个
 | 接入范围 | FlowController / resolved handle 为主，保持生成式序列化和 SendPump | FlowController、producer、SendPump、预算、terminal / Request 顺序 | 中到大，取决于是否跨准备模式 | 仅 FlowController 同步域 |
 | 尚待验证收益 | 小 item 长流的 connection coordination 被 refill 摊薄 | 实际 batch 降 writer handoff / 重复队列 / completion | 保留 A / B 收益并减低 c1 / 短流回退 | 独立方向争用是否为真实瓶颈 |
 
-S 是 retained / active state 上界，H 是允许同时等待的 producer / handle 数，Q 是每 stream prepared slots。矩阵中的 O(S)、O(H) 是调度操作复杂度，不是确定 CPU 时间。除了 D，尚无足够生产实现可以可信给出精确 B/stream、B/connection 或 CAS/item；以字段数猜精确内存会制造证据。
+S 是 retained / active state 上界，H 是允许同时等待的 producer / handle 数，Q 是每 stream prepared slots。矩阵中的 O(S)、O(H) 是调度操作复杂度，不是确定 CPU 时间。本表建立时除了 D 尚无完整生产对象布局；后续 B2 已实际测得若干调用分配阶段，另见 B2 附录。B3/混合仍不能可信给出精确 B/stream、B/connection 或 CAS/item；以字段数猜精确内存会制造证据。
 
 ## 16. 本轮 B2 最小 oracle 的实际执行结果
 
@@ -444,7 +446,7 @@ c128，每流 1024 items，总计 131,072 items：
 
 **这些数字是串行模型事件，不是锁、CAS、queue command、writer handoff 或 RPC 性能。** 代表行 pressure scans 全为零，不能据此声称实际压力回收廉价。模型为了 oracle 使用 Ticket / Request 对象和全表守恒扫描，不报告 ns、allocation、P99 或 B/item；PGO 两次相等也不是性能稳定证据。
 
-模型没有并发内存序、codec snapshot、buffer backing、实际 SendPump、Request wire 顺序、deadline、consumer Dispose 或 blocked Flush。独立 Progress 事件只证明模型 authority 可以接收控制操作，不证明网络阻塞时控制帧及时出网。因此它支持“B2 机制值得继续最小否证”，不支持 B2 生产 Go，也不能证明所有未来 B2 不可能达标。
+模型没有并发内存序、codec snapshot、buffer backing、实际 SendPump、Request wire 顺序、deadline、consumer Dispose 或 blocked Flush。独立 Progress 事件只证明模型 authority 可以接收控制操作，不证明网络阻塞时控制帧及时出网。因此在该模型阶段它支持“B2 机制值得继续最小否证”，不支持 B2 生产 Go；后续真实 RPC 已按另一份证据作出 pilot No-Go，也不能证明所有未来 B2 不可能达标。
 
 ## 17. 真实 controller footprint：JIT 与实际 NativeAOT
 
@@ -473,7 +475,7 @@ c128，每流 1024 items，总计 131,072 items：
 
 NativeAOT baseline ELF SHA256 `f2d2e6db6487f866e8a53bef535798c653d80713cc2c3da21590cd9cd416ef8c`，D ELF SHA256 `0baaf646a8354308412b0291a2ad274c0ee4dae210af7c41c1b242c377fd82fd`。下载同一 ELF 后又在本地直接执行，两臂均 exit 0，命令 / SHA / stdout / stderr / TSV 保存于 `local-native-execution`。这属于**实际 NativeAOT controller 分配实验**，既不是只编译的 smoke，也不是 NativeAOT 完整 RPC 性能。
 
-结果量化了 D 的每 controller 构造增量，没有发现这些限定 lifecycle phase 的额外分配；它仍不能证明 D 的 RPC 吞吐、锁争用或尾延迟改善。A / B / C 尚无生产对象布局，当前继续只给对象库存和边界公式。
+结果量化了 D 的每 controller 构造增量，没有发现这些限定 lifecycle phase 的额外分配；它仍不能证明 D 的 RPC 吞吐、锁争用或尾延迟改善。这是 D 分配阶段的证据边界；后续 A 的限定 B2 pilot 有独立分配实测，B / C 仍只有对象库存和边界公式。
 
 ## 18. 生产接入前的止损点与验证门槛
 
@@ -503,6 +505,6 @@ speedup ≈ 1 / (1 − p × r + h)
 
 ### 18.3 最终决策的适用范围
 
-成熟源码支持优先缩小共享临界区、复用已有 writer、去重 stream-ready、批量完成工作，并明确退役所有权；不支持无条件恢复旧 B3。A 有可检验的 grant 机制但尚无生产并发 / RPC 证明，B 必须先消除重复 per-item 调度与预算阶段，C 需要已存在的收益才值得承担切换复杂度。D 是更小的真实方向耦合控制，是否值得独立提交由它自身的测试和测量决定。
+成熟源码支持优先缩小共享临界区、复用已有 writer、去重 stream-ready、批量完成工作，并明确退役所有权；不支持无条件恢复旧 B3。A 的 grant 机制已在后续限定 B2 pilot 中接受实际并发与生成式 RPC 测试，最终阶段 No-Go 由其独立 RPC 报告给出；B 必须先消除重复 per-item 调度与预算阶段，C 需要已存在的收益才值得承担切换复杂度。D 已依据自己的测试和两轮测量被否决，不作为生产性能 PR 提交。
 
 一个具体实现可以因正确性或真实性能失败明确 No-Go；“尚未实现的所有 B2 / B3 / 混合架构都被证明不可行”超出当前证据。任何最终 Go 都必须附上相应生产源码、真实执行身份、未筛掉的失败、原始样本和全部验收门槛，不能由本文件的跨框架相似性或串行模型成功代替。
