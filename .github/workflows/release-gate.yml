@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload allocation evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: allocation-release-gate-${{ github.sha }}
           path: artifacts/perf/allocation-gate
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload Integration Diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-${{ runner.os }}-diagnostics
           path: artifacts/test-results/integration-${{ runner.os }}
@@ -189,7 +189,7 @@ jobs:
           test -n "$(find artifacts/nuget -name '*.nupkg' -type f)"
 
       - name: Upload NuGet artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nuget-packages
           path: |
@@ -240,7 +240,7 @@ jobs:
 
       - name: Upload Chaos Report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chaos-release-smoke-${{ runner.os }}
           path: |

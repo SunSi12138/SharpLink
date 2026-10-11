@@ -60,7 +60,7 @@ jobs:
           --output artifacts/codec-compat/corpus
 
       - name: Upload codec corpus
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-corpus-${{ matrix.id }}
           path: artifacts/codec-compat/corpus
@@ -105,7 +105,7 @@ jobs:
           "$SHARPLINK_SDK_VERSION"
 
       - name: Upload browser WASM corpus
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-corpus-browser-wasm
           path: artifacts/codec-compat/browser-corpus
@@ -168,7 +168,7 @@ jobs:
           "$SHARPLINK_SDK_VERSION"
 
       - name: Upload Browser CoreCLR corpus
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-corpus-browser-coreclr-net11
           path: artifacts/codec-compat/browser-coreclr-corpus
@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload verification diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-verification-${{ matrix.id }}
           path: |
@@ -305,7 +305,7 @@ jobs:
 
       - name: Upload browser WASM verification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-verification-browser-wasm
           path: artifacts/codec-compat/browser-verification/verification.json
@@ -400,7 +400,7 @@ jobs:
 
       - name: Upload Browser-to-desktop verification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-verification-browser-to-${{ matrix.id }}
           path: |
@@ -504,7 +504,7 @@ jobs:
 
       - name: Upload Browser CoreCLR verification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-verification-browser-coreclr-net11
           path: artifacts/codec-compat/browser-coreclr-verification/verification.json
@@ -599,7 +599,7 @@ jobs:
 
       - name: Upload Browser CoreCLR-to-desktop verification report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-evidence-verification-browser-coreclr-to-${{ matrix.id }}
           path: |
@@ -713,7 +713,7 @@ jobs:
 
       - name: Upload compatibility summary
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: codec-compatibility-summary
           path: artifacts/codec-compat/summary
