@@ -9,6 +9,8 @@ using Microsoft.Diagnostics.Runtime;
 internal static class Program
 {
     private const string ExpectedSha = "904d23ea529f02e7f8845edfcfa83fec03223e774c6c9cc65dabab740a1fad95";
+    private const string ExpectedCoreClrBuildId = "79945f51fb2612f13b7667a10a8fd29122664791";
+    private const string ExpectedDacSha = "54554757342c4325ab0eb8147afd1eafec1913fae6b2739cde225387673bdd23";
     private const int MaxObjects = 512, MaxPerRootType = 64, MaxFields = 160;
     private const int MaxObjectDepth = 4, MaxStructDepth = 8;
     private static readonly HashSet<string> Roots = new(StringComparer.Ordinal)
@@ -192,6 +194,87 @@ internal static class Program
             catch (Exception ex) { Error(Hex(item.Address), ex); }
         }
     }
+    // Read only bounded ELF headers and GNU build-id notes from the local runtime binary.
+    // No executable loading, arbitrary strings, shell, network, or dump mutation.
+    private static string LocalElfBuildId(string path)
+    {
+        using var file = File.OpenRead(path);
+        if (file.Length is < 64 or > 134217728) throw new InvalidDataException("Unexpected ELF file size.");
+        byte[] At(ulong offset, int byteCount)
+        {
+            if (byteCount < 0 || offset > (ulong)file.Length || (ulong)byteCount > (ulong)file.Length - offset)
+                throw new InvalidDataException("ELF read outside file.");
+            byte[] data = new byte[byteCount];
+            file.Position = checked((long)offset);
+            file.ReadExactly(data);
+            return data;
+        }
+        var h = At(0, 64);
+        if (h[0] != 0x7f || h[1] != (byte)'E' || h[2] != (byte)'L' || h[3] != (byte)'F'
+            || h[4] != 2 || h[5] != 1 || BinaryPrimitives.ReadUInt16LittleEndian(h.AsSpan(18)) != 62)
+            throw new InvalidDataException("Expected little-endian Linux x64 ELF.");
+        ulong phoff = BinaryPrimitives.ReadUInt64LittleEndian(h.AsSpan(32));
+        int stride = BinaryPrimitives.ReadUInt16LittleEndian(h.AsSpan(54));
+        int count = BinaryPrimitives.ReadUInt16LittleEndian(h.AsSpan(56));
+        if (stride is < 56 or > 128 || count is < 1 or > 512)
+            throw new InvalidDataException("ELF program-header bounds exceeded.");
+        string? found = null;
+        int totalNoteBytes = 0;
+        for (int i = 0; i < count; i++)
+        {
+            byte[] ph = At(checked(phoff + (ulong)(i * stride)), 56);
+            if (BinaryPrimitives.ReadUInt32LittleEndian(ph) != 4) continue; // PT_NOTE only.
+            ulong offset = BinaryPrimitives.ReadUInt64LittleEndian(ph.AsSpan(8));
+            ulong length = BinaryPrimitives.ReadUInt64LittleEndian(ph.AsSpan(32));
+            if (length > 1048576 || (totalNoteBytes += checked((int)length)) > 4194304)
+                throw new InvalidDataException("ELF note bounds exceeded.");
+            byte[] notes = At(offset, (int)length);
+            int pos = 0;
+            while (pos < notes.Length)
+            {
+                if (notes.Length - pos < 12) throw new InvalidDataException("Truncated ELF note header.");
+                uint nameSize = BinaryPrimitives.ReadUInt32LittleEndian(notes.AsSpan(pos));
+                uint descSize = BinaryPrimitives.ReadUInt32LittleEndian(notes.AsSpan(pos + 4));
+                uint kind = BinaryPrimitives.ReadUInt32LittleEndian(notes.AsSpan(pos + 8));
+                if (nameSize > 1048576 || descSize > 1048576) throw new InvalidDataException("ELF note field bound exceeded.");
+                int nameStart = pos + 12;
+                int descStart = checked(nameStart + (int)((nameSize + 3) & ~3u));
+                int end = checked(descStart + (int)((descSize + 3) & ~3u));
+                if (end > notes.Length) throw new InvalidDataException("ELF note outside segment.");
+                if (kind == 3 && nameSize == 4 && notes.AsSpan(nameStart, 4).SequenceEqual(new byte[] { 71, 78, 85, 0 }))
+                {
+                    if (descSize is < 1 or > 64) throw new InvalidDataException("Invalid GNU build-id size.");
+                    string id = Convert.ToHexString(notes.AsSpan(descStart, (int)descSize)).ToLowerInvariant();
+                    if (found is not null && found != id) throw new InvalidDataException("Conflicting GNU build-id notes.");
+                    found = id;
+                }
+                pos = end;
+            }
+        }
+        return found ?? throw new InvalidDataException("Local libcoreclr has no GNU build-id.");
+    }
+    private static ClrRuntime CreateVerifiedRuntime(ClrInfo info, string dacPath)
+    {
+        // Normal nonzero versions retain ClrMD's own strict comparison unchanged.
+        if (!info.Version.Equals(new Version())) return info.CreateRuntime(dacPath);
+        string capturedId = Convert.ToHexString(info.ModuleInfo.BuildId.ToArray()).ToLowerInvariant();
+        if (capturedId != ExpectedCoreClrBuildId)
+            throw new InvalidDataException($"Unknown-version fallback denied: captured coreclr build-id {capturedId}.");
+        dacPath = Path.GetFullPath(dacPath);
+        if (Path.GetFileName(dacPath) != "libmscordaccore.so") throw new InvalidDataException("Unexpected DAC filename.");
+        string corePath = Path.Combine(Path.GetDirectoryName(dacPath)!, "libcoreclr.so");
+        string localId = LocalElfBuildId(corePath);
+        if (localId != capturedId) throw new InvalidDataException($"Unknown-version fallback denied: local coreclr build-id {localId}.");
+        string dacSha;
+        using (var input = File.OpenRead(dacPath)) dacSha = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
+        if (dacSha != ExpectedDacSha) throw new InvalidDataException($"Unknown-version fallback denied: DAC SHA-256 {dacSha}.");
+        Emit(new { kind = "runtime-identity", capturedVersion = info.Version.ToString(), capturedCoreClrBuildId = capturedId,
+            localCoreClrBuildId = localId, dacSha256 = dacSha, expectedRuntime = "10.0.12", expectedRuntimeCommit = "95017c711e",
+            ignoreVersionMismatch = true, reason = "ClrMD ELF dump version unavailable (0.0); captured/local coreclr GNU build IDs and pinned official-runtime DAC SHA-256 independently matched." });
+        // The fallback is admitted only for exactly Version(0,0), with all identity checks above.
+        // Do not disable signature verification or retry this path for real nonzero mismatches.
+        return info.CreateRuntime(dacPath, ignoreMismatch: true);
+    }
     private static int Main(string[] args)
     {
         try
@@ -206,7 +289,7 @@ internal static class Program
             Target = target;
             if (target.DataReader.PointerSize != 8 || !BitConverter.IsLittleEndian) throw new NotSupportedException("This fixed Linux x64 dump reader requires little-endian 64-bit target and host.");
             if (target.ClrVersions.Length != 1) throw new InvalidDataException($"Expected one CLR, got {target.ClrVersions.Length}.");
-            using var runtime = target.ClrVersions[0].CreateRuntime(args[1]); // Never ignore DAC mismatch.
+            using var runtime = CreateVerifiedRuntime(target.ClrVersions[0], args[1]);
             Heap = runtime.Heap;
             Emit(new { kind = "runtime", version = target.ClrVersions[0].Version.ToString(), Heap.CanWalkHeap });
             foreach (var known in Known) Queue.Enqueue((known.Address, known.Label, 0));

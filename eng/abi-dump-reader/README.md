@@ -1,10 +1,10 @@
 # Fixed-dump SharpLink managed reader
 
-Diagnostic-only candidate. No production repository edits, pushes, workflow dispatches, tests, live-process attachment, or target execution. Local .NET is unavailable, so compilation and actual dump reading have **not** been verified here.
+Diagnostic-only candidate. No production repository edits, pushes, workflow dispatches, tests, live-process attachment, or target execution. Local .NET is unavailable. The previous revision compiled in CI run 38147629312, but failed before reading fields because captured ELF version metadata was unavailable. This identity-guarded revision requires its own CI validation.
 
 ## Run on Linux x64 with .NET 10 SDK
 
-Restore the captured, hash-matched assemblies to the paths recorded in the dump before running. Supply the matching runtime's `libmscordaccore.so`, not the analyzer SDK's DAC merely because it is convenient. Version checking stays enabled. The analyzer disables symbol-server lookup; no new module substitutions are attempted.
+Restore the captured, hash-matched assemblies to the paths recorded in the dump before running. Supply the matching runtime's `libmscordaccore.so`, not the analyzer SDK's DAC merely because it is convenient. Nonzero versions retain strict DAC version checking. This captured Linux dump has missing version metadata (ClrMD reports 0.0); only that exact case admits an explicit logged fallback after matching the captured and local coreclr GNU build IDs and the pinned official-runtime DAC SHA-256. Any identity mismatch fails closed. The analyzer disables symbol-server lookup; no new module substitutions are attempted.
 
 ```sh
 ./run-reader.sh /path/024-round-3.dmp /path/matching/libmscordaccore.so /path/managed-output
