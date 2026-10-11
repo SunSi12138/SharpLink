@@ -140,9 +140,6 @@ internal sealed class StreamManager
     }
 
     /// <inheritdoc />
-    internal void Unregister(long requestId) => Unregister(requestId, 0);
-
-    /// <inheritdoc />
     internal void Unregister(long requestId, ushort streamId)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
