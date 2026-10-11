@@ -255,7 +255,7 @@ internal sealed partial class StreamFlowController
                 return;
             using (new SendStateLock(state))
             {
-                if ((lease is not null && !lease.IsCurrent(state)) || state.AbortException is not null)
+                if ((lease is not null && !lease.IsCurrent(state)) || state.CreditRefundedByAbort)
                     return;
                 var updatedStreamCredit = checked(state.Credit + credit);
                 var updatedConnectionCredit = checked(_sendConnectionCredit + credit);
@@ -345,6 +345,7 @@ internal sealed partial class StreamFlowController
                 _sendConnectionCredit = checked(
                     _sendConnectionCredit + (_streamWindow - state.Credit));
                 state.Credit = _streamWindow;
+                state.CreditRefundedByAbort = true;
                 state.AbortException = exception;
                 if (state.Completed)
                     (removedKeys ??= []).Add(pair.Key);

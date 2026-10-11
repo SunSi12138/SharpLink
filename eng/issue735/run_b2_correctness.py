@@ -26,7 +26,7 @@ import traceback
 
 PARTIAL = "src/SharpLink.Runtime/StreamFlowController.SendGrants.cs"
 # Reviewed controller freeze. A future production correction requires a reviewed update.
-REVIEWED_PARTIAL_SHA256 = "a5e84e028b181a056f580f818595f6e647af13db4e5350f5da16b2496dae917a"
+REVIEWED_PARTIAL_SHA256 = "df37087330c876d1ad91bc87966c983d2d633d5ca5fbead662c3097362f2071d"
 UNIT = "test/SharpLink.UnitTests/SharpLink.UnitTests.csproj"
 GENERATOR = "test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj"
 LOAD = "test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj"

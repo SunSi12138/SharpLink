@@ -199,6 +199,7 @@ internal sealed partial class StreamFlowController
         public long Credit = initialCredit;
         public bool Completed;
         public Exception? AbortException;
+        public bool CreditRefundedByAbort;
         public long Lease;
         public SendState? Next;
         public Lock? Gate;
@@ -409,6 +410,7 @@ internal sealed partial class StreamFlowController
         state.Credit = _streamWindow;
         state.Completed = false;
         state.AbortException = null;
+        state.CreditRefundedByAbort = false;
         state.UnusedGrant = 0;
         state.CurrentLease = null;
         state.Lease = ++_sendStateLeaseCounter;
