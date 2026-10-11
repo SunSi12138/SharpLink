@@ -65,18 +65,6 @@ internal sealed class SynchronousBuildTransaction : IDisposable
         return resource;
     }
 
-    /// <summary>Registers a sequence one item at a time so each resource receives identity validation.</summary>
-    internal void OwnRange<T>(
-        IEnumerable<T> resources,
-        Action<T>? cleanup,
-        SynchronousBuildResourceMetadata metadata)
-        where T : class
-    {
-        ArgumentNullException.ThrowIfNull(resources);
-        foreach (var resource in resources)
-            Own(resource, cleanup, metadata);
-    }
-
     /// <summary>Transfers every registered framework-owned resource to the completed runtime.</summary>
     internal void Commit()
     {
@@ -85,9 +73,6 @@ internal sealed class SynchronousBuildTransaction : IDisposable
         _resources.Clear();
         _state = State.Committed;
     }
-
-    /// <summary>Alias for <see cref="Commit"/> at ownership-transfer call sites.</summary>
-    internal void Transfer() => Commit();
 
     /// <summary>Releases registered framework-owned resources in reverse registration order.</summary>
     internal void Rollback()

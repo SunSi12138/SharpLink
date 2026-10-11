@@ -51,20 +51,7 @@ public partial class RpcGenerator
                 CollectCurrentAssemblyRoots(nested, roots, includeSerializable, includeContracts);
         }
 
-        private void CollectReferencedContractRoots(Dictionary<string, ITypeSymbol> roots)
-        {
-            foreach (var reference in _compilation.References)
-            {
-                if (_compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly ||
-                    !_allowedAssemblyNames.Contains(assembly.Identity.Name) ||
-                    HasGeneratedAssemblyManifest(assembly))
-                {
-                    continue;
-                }
 
-                CollectReferencedContractRoots(assembly.GlobalNamespace, roots);
-            }
-        }
 
         private void CollectReferencedContractRoots(
             INamespaceSymbol namespaceSymbol,
@@ -416,8 +403,7 @@ public partial class RpcGenerator
 
         // Kept as a compatibility alias for pre-plan candidate utilities. New discovery and final
         // selection code should use the explicit runtime-factory wording above.
-        private static bool IsBuiltin(ITypeSymbol type)
-            => HasRuntimeCodecWithoutGeneratedFactoryCandidate(type);
+
 
         private static ITypeSymbol NormalizeAdapterTarget(ITypeSymbol type)
             => type is INamedTypeSymbol

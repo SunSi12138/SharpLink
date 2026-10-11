@@ -68,12 +68,6 @@ internal sealed partial class RpcSession
     internal int PreCreditSerializedWaiterCount
         => Volatile.Read(ref _preCreditSerializedBudget)?.WaiterCount ?? 0;
 
-    // Kept as diagnostics for the benchmark harness while the previous two-layer prototype is
-    // compared with the final flow-credit-probe design. The final design has no serializer gate.
-    internal int PreCreditSerializationPermitLimit => 0;
-
-    internal int PreCreditActiveSerializerCount => 0;
-
     internal void CompletePreCreditSendStream(
         long requestId,
         ushort streamId,

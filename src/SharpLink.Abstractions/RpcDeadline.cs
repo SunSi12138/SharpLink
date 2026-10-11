@@ -132,14 +132,7 @@ internal readonly struct RpcDeadline
             : GetRemaining(Timestamp, timeProvider.GetTimestamp(), timeProvider.TimestampFrequency);
     }
 
-    internal TimeSpan GetRemaining(long timestampNow, long timestampFrequency)
-    {
-        if (!HasValue)
-            return TimeSpan.MaxValue;
-        return _usesTimeBudget
-            ? GetBudgetRemaining(timestampNow)
-            : GetRemaining(Timestamp, timestampNow, timestampFrequency);
-    }
+
 
     private TimeSpan GetBudgetRemaining(long timestampNow)
     {
