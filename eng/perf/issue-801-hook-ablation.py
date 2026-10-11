@@ -122,74 +122,118 @@ def apply(root, expected_sha, manifest):
 
 def summarize(out):
     out = pathlib.Path(out)
-    rounds = [(1, "base"), (2, "stripped"), (3, "stripped"), (4, "base")]
+    # ABBA+BAAB reverses the second quartet to reduce one-way runner drift.
+    rounds = [(1, "base"), (2, "stripped"), (3, "stripped"), (4, "base"),
+              (5, "stripped"), (6, "base"), (7, "base"), (8, "stripped")]
     rows = []
     for index, variant in rounds:
         path = out / ("round-%02d-%s" % (index, variant)) / "results"
         reports = list(path.glob("*-report-full*.json"))
-        if len(reports) != 2:
-            raise RuntimeError("%s: expected two BDN JSON reports; found %d" %
+        if len(reports) != 4:
+            raise RuntimeError("%s: expected four different BDN JSON reports; found %d" %
                                (path, len(reports)))
         for report in reports:
             benchmarks = json.loads(report.read_text()).get("Benchmarks") or []
             if len(benchmarks) != 1:
-                raise RuntimeError("%s: expected one method per report" % report)
+                raise RuntimeError("%s: expected exactly one benchmark method" % report)
             bench = benchmarks[0]
-            ns = (bench.get("Statistics") or {}).get("Mean")
+            stats = bench.get("Statistics") or {}
+            ns = stats.get("Mean")
             allocated = (bench.get("Memory") or {}).get("BytesAllocatedPerOperation")
-            if not isinstance(ns, (float, int)) or ns <= 0:
-                raise RuntimeError("%s: invalid ns/op" % report)
-            if not isinstance(allocated, (float, int)) or allocated < 0:
-                raise RuntimeError("%s: missing allocated bytes/op" % report)
+            if not isinstance(ns, (float, int)) or not 0 < ns < 1.0e15:
+                raise RuntimeError("%s: missing/invalid positive ns/op" % report)
+            if not isinstance(allocated, (float, int)) or not 0 <= allocated < 1.0e15:
+                raise RuntimeError("%s: missing/invalid B/op" % report)
             rows.append({
-                "round": index, "variant": variant,
+                "round": index,
+                "variant": variant,
                 "method": bench["Type"] + "." + bench["Method"],
-                "meanNsOp": ns, "allocatedBytesOp": allocated,
+                "meanNsOp": ns,
+                "stdDevNsOp": stats.get("StandardDeviation"),
+                "allocatedBytesOp": allocated,
                 "report": str(report.relative_to(out)),
             })
+
     methods = sorted({r["method"] for r in rows})
-    if len(rows) != 8 or len(methods) != 2:
-        raise RuntimeError("ABBA 4 rounds x 2 methods were not completed")
+    expected_classes = [
+        "Issue801AdmissionAblationBenchmarks.CaptureAndRelease",
+        "Issue801ClientAblationBenchmarks.BuildAndDisposeDefaultAsync",
+        "Issue801WireRpcAblationBenchmarks.AddViaRealTcpAsync",
+        "Issue801ReconnectAblationBenchmarks.ForceTransportLossAndReconnectAsync",
+    ]
+    if len(rows) != 32 or len(methods) != 4:
+        raise RuntimeError("Incomplete eight rounds by four benchmarks")
+    if sorted(method.split("SharpLink.Benchmarks.")[-1] for method in methods) != sorted(expected_classes):
+        raise RuntimeError("Benchmark method set unexpectedly changed: " + repr(methods))
     with (out / "measurements.csv").open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
     lines = [
-        "# Issue 801: pinned-dev source-level A/B (ABBA on one CI runner)",
+        "# Issue #801: same-runner source-ablation ABBA + BAAB replication",
         "",
-        "Both variants compile independently; the stripped version is experimental and must never be merged.",
-        "These are exploratory numbers: only two independent BDN runs per variant.",
+        "Both production variants compiled from the exact same dev SHA. The stripped variant is temporary and non-shippable.",
+        "Four **independent BDN processes per variant**, five/four warmup iterations for original/new benchmarks.",
+        "New workload: real TCP Protocol v2 RPC. New reconnect workload: close an established TCP transport,",
+        "wait for the fixed-client reconnect owner to negotiate a replacement, then complete an RPC.",
         "",
-        "| Method | Base median ns/op | Ablated median ns/op | Base median B/op | Ablated median B/op |",
-        "| --- | ---: | ---: | ---: | ---: |",
+        "| Method | Baseline median ns/op | Ablated median ns/op | Baseline median B/op | Ablated median B/op | Baseline run span ns | Ablated run span ns |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+    comparable = []
     for method in methods:
         groups = {}
         for variant in ("base", "stripped"):
             matches = [r for r in rows if r["method"] == method and r["variant"] == variant]
-            if len(matches) != 2:
-                raise RuntimeError("Missing pair: %s / %s" % (method, variant))
-            groups[variant] = {
-                "ns": statistics.median(r["meanNsOp"] for r in matches),
-                "bytes": statistics.median(r["allocatedBytesOp"] for r in matches),
+            if len(matches) != 4:
+                raise RuntimeError("Missing four repetitions: %s / %s" % (method, variant))
+            ns_values = [r["meanNsOp"] for r in matches]
+            group = {
+                "timeNsMedian": statistics.median(ns_values),
+                "timeNsMin": min(ns_values),
+                "timeNsMax": max(ns_values),
+                "bytesMedian": statistics.median(r["allocatedBytesOp"] for r in matches),
+                "rounds": [r["round"] for r in matches],
             }
+            groups[variant] = group
         a, b = groups["base"], groups["stripped"]
-        lines.append("| %s | %.3f | %.3f | %.2f | %.2f |" %
-                     (method, a["ns"], b["ns"], a["bytes"], b["bytes"]))
+        spans_overlap = max(a["timeNsMin"], b["timeNsMin"]) <= min(a["timeNsMax"], b["timeNsMax"])
+        comparable.append({
+            "method": method,
+            "baseline": a,
+            "stripped": b,
+            "medianDeltaNs": b["timeNsMedian"] - a["timeNsMedian"],
+            "medianDeltaPct": (b["timeNsMedian"] / a["timeNsMedian"] - 1) * 100,
+            "spansOverlap": spans_overlap,
+        })
+        lines.append("| %s | %.3f | %.3f | %.2f | %.2f | %.2f..%.2f | %.2f..%.2f |" %
+                     (method, a["timeNsMedian"], b["timeNsMedian"],
+                      a["bytesMedian"], b["bytesMedian"],
+                      a["timeNsMin"], a["timeNsMax"],
+                      b["timeNsMin"], b["timeNsMax"]))
+
     lines.extend([
         "",
-        "No confidence interval is inferred from two runs per variant.",
-        "Do not equate measured differences with a production performance guarantee.",
-        "All raw BDN statistics, CPU info, exact SHA and source diff are attached.",
+        "Each median uses four BDN process means, **not** a robust cross-machine confidence interval.",
+        "Run spans are simple ranges of four process means; overlapping spans weaken attribution.",
+        "Client reconnection timing includes a real fixed 2-ms policy delay, TCP establishment,",
+        "Protocol v2 handshake, OS scheduling, and a post-recovery RPC. It does NOT isolate one hook check.",
+        "Do not infer production throughput, request latency, or object-size savings without additional",
+        "controlled runners, assembly layout inspections, and preserved deterministic race tests.",
+        "",
+        "Experimental hook removal is NOT compatible with the existing hook-driven race tests.",
+        "Never cherry-pick the stripped worktree into dev. See ablation-manifest.json and raw BDN results.",
     ])
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     (out / "summary.json").write_text(json.dumps({
         "completedUtc": datetime.now(timezone.utc).isoformat(),
         "observations": rows,
-        "methodology": "ABBA source ablation with two independent BDN runs per variant",
+        "comparisons": comparable,
+        "methodology": "Eight same-host rounds, ABBA followed by BAAB; four BDN processes per source variant",
+        "limits": "No causal guarantee or full regression evidence; stripped source is experimental only",
     }, indent=2))
     print((out / "summary.md").read_text())
-
 
 if __name__ == "__main__":
     if len(sys.argv) == 5 and sys.argv[1] == "apply":
