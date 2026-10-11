@@ -197,6 +197,11 @@ public class ReadOwnershipPipeReaderDispatchTests
         {
             await completed.Task.WaitAsync(Timeout);
         }
+        catch (TimeoutException)
+        {
+            Console.WriteLine($"DISPATCH_DEADLINE late={late} context={useSchedulingContext} progress={Volatile.Read(ref progress)} elapsedMs={watch.Elapsed.TotalMilliseconds:F3} workerTask={completed.Task.Status}");
+            throw;
+        }
         finally
         {
             var joined = registeringThread.Join(Timeout);
