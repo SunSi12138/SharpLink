@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
 using SharpLink.Client;
@@ -64,21 +65,24 @@ internal sealed class EvidenceEnvironment : IAsyncDisposable
         // option is changed by the mode. The external collector owns the 60 s deadline.
         clientBuilder.DisableRequestTimeout();
         serverBuilder.ReplaceService<IBenchmarkRpc>(service);
-        var server = serverBuilder.Build();
-        var client = clientBuilder.Build();
+        ISharpLinkServer? server = null;
+        ISharpLinkClient? client = null;
         try
         {
+            // A client build failure must still dispose an already-built server.
+            // Each builder owns rollback of its own unsuccessful Build transaction.
+            server = serverBuilder.Build();
+            client = clientBuilder.Build();
             await server.StartAsync().ConfigureAwait(false);
             await client.ConnectAsync().ConfigureAwait(false);
             var environment = new EvidenceEnvironment(client, server, service);
             environment.RequireOneConnection();
             return environment;
         }
-        catch
+        catch (Exception exception)
         {
-            await client.DisposeAsync().ConfigureAwait(false);
-            await server.StopAsync(TimeSpan.Zero).ConfigureAwait(false);
-            await server.DisposeAsync().ConfigureAwait(false);
+            var failures = await CleanupResourcesAsync(client, server).ConfigureAwait(false);
+            ThrowCleanupFailures(failures, exception);
             throw;
         }
     }
@@ -113,17 +117,60 @@ internal sealed class EvidenceEnvironment : IAsyncDisposable
         RequireOneConnection();
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync() => DisposeAsync(primaryFailure: null);
+
+    internal async ValueTask DisposeAsync(Exception? primaryFailure)
     {
-        try
+        var failures = await CleanupResourcesAsync(_client, _server).ConfigureAwait(false);
+        ThrowCleanupFailures(failures, primaryFailure);
+    }
+
+    private static async ValueTask<List<Exception>?> CleanupResourcesAsync(
+        ISharpLinkClient? client, ISharpLinkServer? server)
+    {
+        List<Exception>? failures = null;
+        if (client is not null)
         {
-            await _client.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await client.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(new InvalidOperationException("Client disposal failed.", exception));
+            }
         }
-        finally
+        if (server is not null)
         {
-            await _server.StopAsync(TimeSpan.Zero).ConfigureAwait(false);
-            await _server.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await server.StopAsync(TimeSpan.Zero).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(new InvalidOperationException("Server stop failed.", exception));
+            }
+            try
+            {
+                await server.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(new InvalidOperationException("Server disposal failed.", exception));
+            }
         }
+        return failures;
+    }
+
+    private static void ThrowCleanupFailures(List<Exception>? failures, Exception? primaryFailure)
+    {
+        if (failures is null)
+            return;
+        if (primaryFailure is not null)
+            failures.Insert(0, primaryFailure);
+        if (failures.Count == 1)
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException("RPC environment cleanup failed; primary failure is preserved first.", failures);
     }
 }
 

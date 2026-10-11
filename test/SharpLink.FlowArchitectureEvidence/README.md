@@ -93,6 +93,19 @@ delta, ThreadPool completed-work-item delta, RPC/s, logical item/s, allocation a
 CPU per RPC/logical item, and nearest-rank P50/P95/P99/P99.9/max are emitted. The
 upper-tail sample count is explicit: short screens cannot establish P99.9 safety.
 
+Two cost boundaries are retained. The existing `elapsedSeconds`, throughput,
+CPU, allocation and GC fields end when all measured RPCs have completed and their
+payloads/counts have been validated. Additional `settled*` fields extend from the
+same measurement start until `WaitForIdleAsync` observes zero pending/active
+calls and client streams. The latter include lifecycle work after caller
+completion, the polling/Task.Delay costs of `WaitForIdleAsync` itself, and the
+intermediate completed-counter observations. These observer costs are disclosed
+and are not estimated away. Neither boundary includes raw sample/report I/O,
+the additional session probe, or transport disposal. The physical-session probe
+and its subsequent idle check occur after both sets of counters are captured.
+`completedToSettledMicroseconds` records the whole elapsed difference between
+these boundaries; it must not be treated as pure production cleanup time.
+
 `items` means logical workload items. Duplex produces two stream-payload items per
 logical item; Unary has two application payload transits but zero StreamData
 items. Separate fields report these denominators. Actual wire DATA frame count,
@@ -104,19 +117,35 @@ Files beside `<output-file>`:
 
 - `.started.txt`: compiled identity and start status, before transport setup.
 - `.samples.csv`: every measured worker/RPC start, end and latency, without batch
-  latency substitution; written before final settlement validation.
+  latency substitution; written after settled cost observations and before final
+  session-probe validation.
 - `.workers.csv`: completion totals, latency/spans, failure flags and actual
   warmup count/duration by persistent worker.
 - `.fairness.csv`: worker completion counts and Jain index at common 10%, 25%,
   50%, 75%, 90% and 100% wall-time boundaries, derived after measurement without a
   sampling observer on the hot path. The 100% balance is forced by fixed counts;
   earlier points and per-worker spans are the useful observations.
-- `.failure.txt` / `.worker-N.failure.txt`: full exceptions, preserved on failure.
+- `.failure.txt` / `.worker-N.failure.txt`: full exceptions. Each worker writes its
+  original exception immediately in its failure handler, before notifying the
+  coordinator, so a different pending RPC or blocked teardown cannot hide it.
+
+The measurement coordinator waits for either all workers or the first worker
+failure. This single completion race is allocated before measurement; the normal
+per-RPC loop has no added task or wait. On failure, the coordinator cancels worker
+gates and enters existing transport disposal to terminate pending RPCs. The
+collector deadline remains unchanged. If artifact writing itself fails, the
+original worker exception and artifact error are written to stderr.
 
 Before and after measurement, a generated unary probe observes the server session
 ID. The harness requires one ready physical connection, an unchanged ID, and zero
 pending calls, active calls and client streams after settlement. Success is written
-only after environment disposal has completed. These checks do not replace
+only after environment disposal has completed. Server/client Build calls are
+inside startup cleanup handling. If a later Build or startup step fails, already
+created resources are cleaned up. Client disposal, server stop and server disposal
+are each attempted even if an earlier step throws. A startup/measurement failure
+is retained as the first exception when cleanup also fails; all cleanup exceptions
+are retained with their stage labels in the aggregate. The existing zero server
+stop grace interval and external collector deadline are unchanged. These checks do not replace
 deterministic lifecycle/credit tests or prove that every internal byte budget is
 settled; no such acceptance claim is emitted.
 

@@ -110,8 +110,9 @@ internal sealed class EvidenceRun
             _states[worker] = new WorkerState(worker, _options.MeasuredOpsPerWorker);
 
         string report;
-        await using (var environment = await EvidenceEnvironment.CreateAsync(
-            _options.Transport, _options.Items, payload).ConfigureAwait(false))
+        var environment = await EvidenceEnvironment.CreateAsync(
+            _options.Transport, _options.Items, payload).ConfigureAwait(false);
+        try
         {
             operation.Rpc = environment.Rpc;
             var initialSession = await environment.ProbeSessionAsync().ConfigureAwait(false);
@@ -137,6 +138,9 @@ internal sealed class EvidenceRun
                     firstFailure, stopWorkers.Token));
             }
             var allWorkers = Task.WhenAll(tasks);
+            // Prepare the one terminal race before measurement. A failed worker must
+            // trigger teardown even if another RPC remains pending indefinitely.
+            var completionOrFailure = Task.WhenAny(allWorkers, firstFailure.Task);
             try
             {
                 await ReadyOrFailureAsync(workersCreated.Task, firstFailure.Task).ConfigureAwait(false);
@@ -164,7 +168,12 @@ internal sealed class EvidenceRun
                 _measurementStart = Stopwatch.GetTimestamp();
                 measurementStart.SetResult();
 
-                await allWorkers.ConfigureAwait(false);
+                var completed = await completionOrFailure.ConfigureAwait(false);
+                if (ReferenceEquals(completed, firstFailure.Task))
+                    throw new InvalidOperationException("A persistent RPC worker failed during measurement.",
+                        firstFailure.Task.GetAwaiter().GetResult());
+                // WhenAll won, so this is already complete; observe any aggregate failure.
+                allWorkers.GetAwaiter().GetResult();
 
                 _measurementEnd = Stopwatch.GetTimestamp();
                 var allocations = GC.GetTotalAllocatedBytes(precise: true) - allocationsBefore;
@@ -177,20 +186,33 @@ internal sealed class EvidenceRun
                 process.Refresh();
                 var cpu = process.TotalProcessorTime - cpuBefore;
 
-                // Raw samples are preserved even if a later settlement or teardown check fails.
-                WriteRawSamples();
                 var settleStarted = Stopwatch.GetTimestamp();
                 await environment.WaitForIdleAsync().ConfigureAwait(false);
+                var settledEnd = Stopwatch.GetTimestamp();
+                var settledAllocations = GC.GetTotalAllocatedBytes(precise: true) - allocationsBefore;
+                var settledGen0 = GC.CollectionCount(0) - gen0Before;
+                var settledGen1 = GC.CollectionCount(1) - gen1Before;
+                var settledGen2 = GC.CollectionCount(2) - gen2Before;
+                var settledPause = GC.GetTotalPauseDuration() - pauseBefore;
+                process.Refresh();
+                var settledCpu = process.TotalProcessorTime - cpuBefore;
+                var settleTicks = settledEnd - settleStarted;
+
+                // All resource-cost observations precede raw-file I/O and the extra
+                // session probe. Keep both RPC-completion and settled boundaries.
+                WriteRawSamples();
+                var probeStarted = Stopwatch.GetTimestamp();
                 var finalSession = await environment.ProbeSessionAsync().ConfigureAwait(false);
                 await environment.WaitForIdleAsync().ConfigureAwait(false);
                 if (!string.Equals(initialSession, finalSession, StringComparison.Ordinal))
                     throw new InvalidOperationException("The physical RPC session changed during the run.");
-                var settleTicks = Stopwatch.GetTimestamp() - settleStarted;
+                var probeTicks = Stopwatch.GetTimestamp() - probeStarted;
 
                 report = BuildReport(environment, cpu, allocations, gen0, gen1, gen2,
                     pause, threadPoolCompleted, originalWorkerMin, originalIoMin,
                     workerMin, workerMax, ioMax, threadsBefore, threadsAfter, settleTicks,
-                    initialSession);
+                    initialSession, settledEnd, settledCpu, settledAllocations,
+                    settledGen0, settledGen1, settledGen2, settledPause, probeTicks);
             }
             catch
             {
@@ -202,6 +224,13 @@ internal sealed class EvidenceRun
                 throw;
             }
         }
+        catch (Exception exception)
+        {
+            // Keep the invocation/setup error first if transport cleanup also fails.
+            await environment.DisposeAsync(exception).ConfigureAwait(false);
+            throw;
+        }
+        await environment.DisposeAsync().ConfigureAwait(false);
 
         // Success is emitted only after the transport has actually torn down cleanly.
         File.WriteAllText(_options.Output, report, Encoding.UTF8);
@@ -241,6 +270,19 @@ internal sealed class EvidenceRun
         catch (Exception exception)
         {
             state.Error = exception.ToString();
+            try
+            {
+                // Preserve the original failure before waking teardown or waiting for
+                // other workers. A later transport-disposal timeout cannot erase it.
+                File.WriteAllText(_options.Output + ".worker-" + state.Id + ".failure.txt",
+                    state.Error, Encoding.UTF8);
+            }
+            catch (Exception artifactException)
+            {
+                Console.Error.WriteLine("Failed to preserve worker " + state.Id +
+                    " exception artifact: " + artifactException);
+                Console.Error.WriteLine(state.Error);
+            }
             firstFailure.TrySetResult(exception);
             throw;
         }
@@ -368,7 +410,9 @@ internal sealed class EvidenceRun
         EvidenceEnvironment environment, TimeSpan cpu, long allocations, int gen0, int gen1,
         int gen2, TimeSpan pause, long threadPoolCompleted, int originalWorkerMin,
         int originalIoMin, int workerMin, int workerMax, int ioMax,
-        int threadsBefore, int threadsAfter, long settleTicks, string sessionId)
+        int threadsBefore, int threadsAfter, long settleTicks, string sessionId,
+        long settledEnd, TimeSpan settledCpu, long settledAllocations,
+        int settledGen0, int settledGen1, int settledGen2, TimeSpan settledPause, long probeTicks)
     {
         var count = checked(_options.Concurrency * _options.MeasuredOpsPerWorker);
         var timings = new long[count];
@@ -382,6 +426,7 @@ internal sealed class EvidenceRun
         }
         Array.Sort(timings);
         var seconds = (_measurementEnd - _measurementStart) / (double)Stopwatch.Frequency;
+        var settledSeconds = (settledEnd - _measurementStart) / (double)Stopwatch.Frequency;
         var logicalItems = (long)count * _options.Items;
         var streamDataItemsPerRpc = _options.Shape switch
         {
@@ -424,6 +469,23 @@ internal sealed class EvidenceRun
         Add(builder, "allocationBytesTotal", allocations);
         Add(builder, "allocationBytesPerRpc", (double)allocations / count);
         AddRatio(builder, "allocationBytesPerLogicalItem", allocations, logicalItems);
+        Add(builder, "completedBoundaryDefinition", "all-measured-rpcs-validated-before-lifecycle-settlement");
+        Add(builder, "settledElapsedSeconds", settledSeconds);
+        Add(builder, "settledThroughputRpcPerSecond", count / settledSeconds);
+        Add(builder, "settledThroughputLogicalItemsPerSecond", logicalItems / settledSeconds);
+        Add(builder, "settledCpuTotalMicroseconds", settledCpu.TotalMicroseconds);
+        Add(builder, "settledCpuMicrosecondsPerRpc", settledCpu.TotalMicroseconds / count);
+        AddRatio(builder, "settledCpuMicrosecondsPerLogicalItem", settledCpu.TotalMicroseconds, logicalItems);
+        Add(builder, "settledAllocationBytesTotal", settledAllocations);
+        Add(builder, "settledAllocationBytesPerRpc", (double)settledAllocations / count);
+        AddRatio(builder, "settledAllocationBytesPerLogicalItem", settledAllocations, logicalItems);
+        Add(builder, "settledGen0Collections", settledGen0);
+        Add(builder, "settledGen1Collections", settledGen1);
+        Add(builder, "settledGen2Collections", settledGen2);
+        Add(builder, "settledGcPauseTotalMicroseconds", settledPause.TotalMicroseconds);
+        Add(builder, "settledBoundaryDefinition", "measured-rpcs-plus-observed-call-stream-settlement");
+        Add(builder, "settledObserverCosts", "includes-WaitForIdle-polling-and-intermediate-completed-counter-observation");
+        Add(builder, "settledExcludedWork", "raw-sample-file-IO-session-probe-report-formatting-and-transport-disposal");
         Add(builder, "p50Microseconds", QuantileUs(timings, 0.50));
         Add(builder, "p95Microseconds", QuantileUs(timings, 0.95));
         Add(builder, "p99Microseconds", QuantileUs(timings, 0.99));
@@ -451,7 +513,9 @@ internal sealed class EvidenceRun
         Add(builder, "activeClientCallsAfterSettlement", environment.Client.ActiveClientCallCount);
         Add(builder, "activeClientStreamsAfterSettlement", environment.Client.ActiveClientStreamCount);
         Add(builder, "activeServerCallsAfterSettlement", environment.Server.ActiveCallCountForDiagnostics);
-        Add(builder, "settlementAndProbeMicroseconds", TicksToUs(settleTicks));
+        Add(builder, "postCompletionSettlementMicroseconds", TicksToUs(settleTicks));
+        Add(builder, "completedToSettledMicroseconds", TicksToUs(settledEnd - _measurementEnd));
+        Add(builder, "postMeasurementProbeMicroseconds", TicksToUs(probeTicks));
         Add(builder, "actualClientStreamReceiveWindowBytes",
             environment.Runtime.FlowControl.StreamReceiveWindowBytes);
         Add(builder, "actualClientConnectionReceiveWindowBytes",
