@@ -1,7 +1,7 @@
 namespace SharpLink.Runtime;
 
 /// <summary>Provides concurrent request-scoped routing for active RPC streams.</summary>
-internal sealed class StreamManager
+internal sealed partial class StreamManager
 {
     private StripedLongMap<RequestDispatchers>? _dispatchersByRequestId;
     private readonly RuntimeConcurrencyOptions _concurrencyOptions;
@@ -137,9 +137,6 @@ internal sealed class StreamManager
     }
 
     /// <inheritdoc />
-    internal void Unregister(long requestId) => Unregister(requestId, 0);
-
-    /// <inheritdoc />
     internal void Unregister(long requestId, ushort streamId)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
@@ -244,24 +241,6 @@ internal sealed class StreamManager
         {
             entry.Release();
         }
-    }
-
-    /// <inheritdoc />
-    internal void CompleteStream(long requestId, ushort streamId, bool isError, string? msg)
-    {
-        CompleteStream(requestId, streamId, CreateCompletionException(isError, msg));
-    }
-
-    /// <inheritdoc />
-    internal void CompleteAll(bool isError, string? msg)
-    {
-        CompleteAll(CreateCompletionException(isError, msg));
-    }
-
-    /// <inheritdoc />
-    internal void CompleteStream(long requestId, Exception? exception)
-    {
-        CompleteStream(requestId, 0, exception);
     }
 
     /// <inheritdoc />
@@ -718,15 +697,6 @@ internal sealed class StreamManager
             dispatchersByRequestId.TryRemove(requestId, requestDispatchers);
     }
 
-    private static Exception? CreateCompletionException(bool isError, string? msg)
-    {
-        if (!isError)
-            return null;
-
-        var message = string.IsNullOrWhiteSpace(msg) ? "Remote Error" : msg;
-        return new SharpLinkException(SharpLinkErrorCode.RemoteError, message);
-    }
-
     private sealed class Termination(Exception? exception)
     {
         internal Exception? Exception { get; } = exception;
@@ -734,7 +704,7 @@ internal sealed class StreamManager
 
     private readonly record struct RequestDrainEntry(ushort StreamId, DispatcherEntry Entry);
 
-    private sealed class RequestDispatchers
+    private sealed partial class RequestDispatchers
     {
         private DispatcherEntry? _defaultDispatcher;
         private readonly Lock _gate = new();

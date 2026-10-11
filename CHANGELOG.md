@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve receive-credit accounting for late client-stream frames while a completed server call still owns its request entry. Terminal processing drains only an existing already-discarding route, validates compressed original-byte lengths, and keeps route completion bound to the exact captured stream owner.
+
 ### Changed
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.

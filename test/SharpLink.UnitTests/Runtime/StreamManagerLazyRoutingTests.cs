@@ -81,7 +81,7 @@ public class StreamManagerLazyRoutingTests
             "first successful registration should materialize routing state");
         Ensure(manager.ActiveStreamCount == 1,
             "later mutations of the caller-owned options must not affect lazy initialization");
-        manager.Unregister(2);
+        manager.Unregister(2, 0);
     }
 
     [Test]
@@ -201,7 +201,7 @@ public class StreamManagerLazyRoutingTests
             Ensure(!manager.HasMaterializedRoutingState,
                 "first routing state must still be unpublished at the deterministic race point");
 
-            manager.Unregister(requestId);
+            manager.Unregister(requestId, 0);
 
             Ensure(!manager.HasMaterializedRoutingState,
                 "an unregister that linearizes before first publication must remain a null-map no-op");
@@ -232,7 +232,7 @@ public class StreamManagerLazyRoutingTests
         Ensure(dispatcher.DispatchCount == 1,
             "the registration must remain addressable after the earlier null-map unregister");
 
-        manager.Unregister(requestId);
+        manager.Unregister(requestId, 0);
         Ensure(manager.ActiveStreamCount == 0,
             "a later unregister should remove the now-published registration normally");
     }

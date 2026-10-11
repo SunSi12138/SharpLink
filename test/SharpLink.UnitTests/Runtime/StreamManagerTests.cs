@@ -47,7 +47,7 @@ public partial class StreamManagerTests
         var dispatcher = new RecordingDispatcher();
         manager.Register(20, 3, dispatcher);
 
-        manager.CompleteStream(20, 3, true, "boom");
+        manager.CompleteStream(20, 3, new SharpLinkException(SharpLinkErrorCode.RemoteError, "boom"));
         manager.CompleteStream(20, 3, exception: null);
 
         Ensure(dispatcher.CompleteCount == 1, "complete called once");
@@ -66,7 +66,7 @@ public partial class StreamManagerTests
         manager.Register(2, 1, d2);
         manager.Register(2, 2, d3);
 
-        manager.CompleteAll(true, "shutdown");
+        manager.CompleteAll(new SharpLinkException(SharpLinkErrorCode.RemoteError, "shutdown"));
 
         Ensure(d1.CompleteCount == 1, "d1 completed");
         Ensure(d2.CompleteCount == 1, "d2 completed");
@@ -201,7 +201,7 @@ public partial class StreamManagerTests
         var exception = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "transport closed");
         manager.Register(30, 0, dispatcher);
 
-        manager.CompleteStream(30, exception);
+        manager.CompleteStream(30, 0, exception);
 
         Ensure(ReferenceEquals(exception, dispatcher.LastException), "manager should pass through supplied exception");
     }
@@ -313,7 +313,7 @@ public partial class StreamManagerTests
         manager.Register(60, 0, dispatcher);
         var state = dispatcher.DispatchState;
 
-        manager.Unregister(60);
+        manager.Unregister(60, 0);
 
         var detached = state.WaitForDetachedAsync(CancellationToken.None);
         Ensure(detached.IsCompletedSuccessfully,
@@ -338,7 +338,7 @@ public partial class StreamManagerTests
         Ensure(ReferenceEquals(first, second),
             "every waiter for one entry must share the same lazy detach completion");
 
-        manager.Unregister(61);
+        manager.Unregister(61, 0);
 
         await Task.WhenAll(first, second).WaitAsync(RaceCoordinationTimeout);
         Ensure(dispatcher.DispatchesDrainedCount == 1,
@@ -364,7 +364,7 @@ public partial class StreamManagerTests
             var detach = LongRunningTestWorker.Run(() =>
             {
                 start.Wait();
-                manager.Unregister(requestId);
+                manager.Unregister(requestId, 0);
             });
             try
             {
@@ -405,7 +405,7 @@ public partial class StreamManagerTests
         {
         }
 
-        manager.Unregister(62);
+        manager.Unregister(62, 0);
         await state.WaitForDetachedAsync(CancellationToken.None);
         Ensure(state.IsDetached,
             "cancelling one waiter must not change the entry terminal detach state");
@@ -432,7 +432,7 @@ public partial class StreamManagerTests
             var detach = Task.Run(() =>
             {
                 start.Wait();
-                manager.Unregister(requestId);
+                manager.Unregister(requestId, 0);
             });
 
             start.Set();
@@ -472,7 +472,7 @@ public partial class StreamManagerTests
         manager.Register(63, 0, dispatcher);
         var detached = dispatcher.DispatchState.WaitForDetachedAsync(CancellationToken.None).AsTask();
 
-        var unregister = LongRunningTestWorker.Run(() => manager.Unregister(63));
+        var unregister = LongRunningTestWorker.Run(() => manager.Unregister(63, 0));
         try
         {
             await creditEntered.Task.WaitAsync(RaceCoordinationTimeout);
@@ -507,7 +507,7 @@ public partial class StreamManagerTests
             new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
         await dispatcher.DispatchEntered.WaitAsync(RaceCoordinationTimeout);
 
-        manager.Unregister(64);
+        manager.Unregister(64, 0);
         await state.WaitForDetachedAsync(CancellationToken.None);
         Ensure(dispatcher.DispatchesDrainedCount == 0,
             "detach alone must not return a lease while an acquired dispatch remains active");
