@@ -49,8 +49,8 @@ jobs:
           (source.parent/'analysis/module-identity.json').write_text(json.dumps(rows,indent=2))
           PYMODULE
           test -z "$(git status --porcelain --untracked-files=normal)"
-      - name: Install repository-pinned dump analysis tool
-        run: dotnet tool install dotnet-dump --version 10.0.745401 --tool-path "$GITHUB_WORKSPACE/dump-tools"
+      - name: Install fixed analysis-tool release with managed-host selection fixes
+        run: dotnet tool install dotnet-dump --version 10.0.750501 --tool-path "$GITHUB_WORKSPACE/dump-tools"
       - name: Analyze exact dump without executing tests
         run: python3 eng/analyze-204-abi-dump.py "$GITHUB_WORKSPACE/dump-tools/dotnet-dump" "$GITHUB_WORKSPACE/captured/024-round-3.dmp" "$GITHUB_WORKSPACE/analysis"
       - name: Upload only targeted field evidence

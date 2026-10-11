@@ -5,7 +5,7 @@ collector,dump,out=map(pathlib.Path,sys.argv[1:4]);out.mkdir(parents=True,exist_
 assert hashlib.sha256(dump.read_bytes()).hexdigest()=='904d23ea529f02e7f8845edfcfa83fec03223e774c6c9cc65dabab740a1fad95'
 started=time.monotonic();queries=[];seen=set();serial=0
 
-def query(command,label):
+def query(command,label,allow_failure=False):
     global serial
     if time.monotonic()-started>420: raise TimeoutError('Analysis admission budget exceeded')
     serial+=1;path=out/f'{serial:03d}-{label}.txt'
@@ -14,6 +14,8 @@ def query(command,label):
     queries.append({'Command':command,'Path':path.name,'ExitCode':p.returncode})
     (out/'queries.json').write_text(json.dumps(queries,indent=2))
     print(f'{path.name}: exit={p.returncode}',flush=True)
+    if p.returncode != 0 and not allow_failure:
+        raise RuntimeError(f'Analysis command failed: {command}, exit={p.returncode}')
     return text
 
 def object_query(address,label):
@@ -34,7 +36,10 @@ types=[
  'SharpLink.Runtime.PooledAsyncStreamDispatcher',
  'SharpLink.Runtime.RpcSession+SendPump',
 ]
+query("dumpasync --address 00007efd1b88c588 --fields", "helper-managed-fields")
+query("dumpasync --address 00007efd1b8c2aa8 --fields", "pump-managed-fields")
 query("gcroot 00007efd1b8c2320", "awaited-task-roots")
+query("dumpobj 00007efd1b98e888", "native-field-probe")
 queue=[]
 for index,name in enumerate(types):
     listing=query('dumpheap -type '+name+' -stat',f'type-{index}')
