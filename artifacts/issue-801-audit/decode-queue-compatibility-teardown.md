@@ -42,3 +42,26 @@ Even if the `EnqueueAsync` overloads have no production callers, their infrastru
 - Once all gates pass, open a separate reviewable cleanup PR against `dev`, showing exactly the production code and test changes, without committing the provisional experiments directly to `dev`.
 
 This is a separate clean-up group from the independently validated **45 zero-direct-reference private/internal methods**; neither result licenses deleting all Tier A or Tier B symbols.
+
+## Extended cross-platform AOT, trim and NuGet consumer proof (all four jobs PASS)
+
+[Completed GitHub Actions #38107400102 — four jobs succeeded](https://github.com/SunSi12138/SharpLink/actions/runs/38107400102). Each OS job independently applied the exact runner-only **same production + test migration** script before building and running the original repository NativeAOT smoke suite.
+
+| Check | Actual result |
+| --- | --- |
+| `ubuntu-latest` / `linux-x64` NativeAOT | PASS: Release build (0 warnings/errors), shared-memory process, TCP, generated service, SharpPack sidecar, PreCredit TCP/SharedMemory |
+| `windows-latest` / `win-x64` NativeAOT | PASS: same full native smoke suite |
+| `macos-14` / `osx-arm64` NativeAOT | PASS: same full native smoke suite |
+| Linux full project-reference `TrimMode=full` consumer | PASS: `PROJECT_REFERENCE_TRIM_SMOKE_PASS` |
+| `dotnet pack` all SharpLink 2.0.3 NuGet packages | PASS |
+| All eight NuGet package metadata/symbol/dependency checks | PASS |
+| Full public/protected API comparison against frozen 2.0.0 baseline | PASS: `Verified the complete public/protected API, including SDK type forwards, of all eight packages.` |
+| External package consumers: full/partial trim, late-trim configuration, NativeAOT, QuickStart+ProductionTemplate | PASS: `PACKAGE_TRIM_SMOKE_PASS`, `QUICKSTART_PACKAGE_SMOKE_PASS version=2.0.3` |
+
+Independent raw artifact archives:
+- [Linux NativeAOT](https://github.com/SunSi12138/SharpLink/actions/runs/38107400102/artifacts/11689339403)
+- [Windows NativeAOT](https://github.com/SunSi12138/SharpLink/actions/runs/38107400102/artifacts/11690054273)
+- [macOS ARM64 NativeAOT](https://github.com/SunSi12138/SharpLink/actions/runs/38107400102/artifacts/11689759701)
+- [Full Trim + NuGet package and external consumption](https://github.com/SunSi12138/SharpLink/actions/runs/38107400102/artifacts/11690420156)
+
+**Caveat:** this is runtime/API proof for the single test-only decode compatibility queue subsystem after migrating tests to the real reserved production path. It is **not** part of the earlier 45 unrelated dead methods experiment. Real allocation/throughput evidence remains separately tracked.
