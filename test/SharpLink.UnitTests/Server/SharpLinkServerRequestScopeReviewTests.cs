@@ -342,12 +342,13 @@ public class SharpLinkServerRequestScopeReviewTests
 
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
-            ((ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
+            var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(Server)!).PublishServices(new Dictionary<long, ServiceRegistration>
-                {
-                    [stub.InterfaceHash] = registration
-                }.ToFrozenDictionary());
+                .GetValue(Server)!;
+            Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
+            {
+                [stub.InterfaceHash] = registration
+            }.ToFrozenDictionary());
             typeof(SharpLinkServer).GetField(
                     "_state", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .SetValue(Server, 2);

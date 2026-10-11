@@ -17,9 +17,32 @@ internal sealed partial class SharpLinkServer
             return true;
         }
 
+        return TryAcceptCapturedInboundStreamProgress(
+            requestCancellationMap, requestId, callLease, out hasOwningCallState);
+    }
+
+    private static bool TryAcceptCapturedInboundStreamProgress(
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        long requestId,
+        ServerCallCancellationLease callLease,
+        out bool hasOwningCallState)
+    {
+        // Losing a pooled generation is not a terminal decision. Retry current ownership;
+        // removal falls back to ordinary existing-route handling, never terminal abandonment.
+        var retries = 0;
+        while (!callLease.TryAcquire())
+        {
+            if (++retries > 3)
+                throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed,
+                    "Inbound stream call ownership could not be acquired safely.");
+            if (!requestCancellationMap.TryCapture(
+                    requestId, static (id, state) => state.CaptureLease(id), out callLease))
+            {
+                hasOwningCallState = false;
+                return true;
+            }
+        }
         hasOwningCallState = true;
-        if (!callLease.TryAcquire())
-            return false;
 
         var releaseLease = true;
         try
@@ -95,6 +118,9 @@ internal sealed partial class SharpLinkServer
                                 streamRequestId,
                                 out hasOwningStreamCallState))
                         {
+                            await DrainTerminalStreamProgressAsync(
+                                session, header.Type, header.Flags, streamRequestId, payload, decoded: false)
+                                .ConfigureAwait(false);
                             continue;
                         }
 
@@ -179,6 +205,9 @@ internal sealed partial class SharpLinkServer
                                             failedRequestId,
                                             out _))
                                     {
+                                        await DrainTerminalStreamProgressAsync(
+                                            session, header.Type, header.Flags, failedRequestId, payload, decoded: false)
+                                            .ConfigureAwait(false);
                                         continue;
                                     }
 
@@ -202,8 +231,17 @@ internal sealed partial class SharpLinkServer
                                 streamRequestId,
                                 out _))
                         {
-                            session.ReturnDecodedPayload(decodedOwner);
-                            decodedOwner = null;
+                            try
+                            {
+                                await DrainTerminalStreamProgressAsync(
+                                    session, header.Type, header.Flags, streamRequestId, payload, decoded: true)
+                                    .ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                session.ReturnDecodedPayload(decodedOwner);
+                                decodedOwner = null;
+                            }
                             continue;
                         }
 
@@ -458,8 +496,7 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private void ObserveUserCall(ValueTask dispatchTask, long requestId)
-        => _ = AwaitDispatchAsync(dispatchTask, requestId);
+
 
     private async Task ObserveDecodedRequestErrorSend(ValueTask dispatchTask, long requestId)
     {

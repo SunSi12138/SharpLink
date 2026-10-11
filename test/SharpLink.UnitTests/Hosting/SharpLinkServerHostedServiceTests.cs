@@ -379,7 +379,7 @@ public class SharpLinkServerHostedServiceTests
         var provider = new ManualTimeProvider();
         var owner = new TaskCompletionSource<bool>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var wait = SharpLinkServer.ServerLifecycleCoordinator.WaitUntilWithProviderForDiagnosticsAsync(
+        var wait = SharpLinkServer.ServerLifecycleCoordinator.WaitUntilWithProviderAsync(
             owner.Task,
             long.MaxValue,
             provider);

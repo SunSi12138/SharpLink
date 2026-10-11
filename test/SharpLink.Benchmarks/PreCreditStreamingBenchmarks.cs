@@ -49,14 +49,14 @@ public class PreCreditStreamingBenchmarks
     [Benchmark(Baseline = true)]
     public void UnsizedFastConsumer()
     {
-        CompleteSynchronously(_unsizedSession.SendStreamChunkAsync(1, 1, _unsizedPayload));
+        CompleteSynchronously(_unsizedSession.SendTestStreamChunkAsync(1, 1, _unsizedPayload));
         _unsizedSession.ApplyWindowUpdate(1, new ProtocolV2WindowUpdate(1, PayloadBytes));
     }
 
     [Benchmark]
     public void ExactSizeControl()
     {
-        CompleteSynchronously(_sizedSession.SendStreamChunkAsync(2, 1, _sizedPayload));
+        CompleteSynchronously(_sizedSession.SendTestStreamChunkAsync(2, 1, _sizedPayload));
         _sizedSession.ApplyWindowUpdate(2, new ProtocolV2WindowUpdate(1, PayloadBytes));
     }
 
@@ -153,7 +153,7 @@ internal static class PreCreditStarvationEvidenceRunner
         var sends = new Task[streams];
         for (var index = 0; index < sends.Length; index++)
         {
-            sends[index] = session.SendStreamChunkAsync(
+            sends[index] = session.SendTestStreamChunkAsync(
                 index + 1,
                 1,
                 new UnsizedPayload(payloadBytes),

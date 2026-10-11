@@ -265,7 +265,7 @@ public readonly struct RpcNoClientStreams : IRpcClientStreamWriter
 }
 
 /// <summary>Client channel consumed by generated proxies.</summary>
-public interface IRpcChannel : IRpcClientStreamSink
+public interface IRpcChannel
 {
     /// <summary>Gets the runtime context owned by this channel.</summary>
     IRpcRuntimeContext RuntimeContext { get; }

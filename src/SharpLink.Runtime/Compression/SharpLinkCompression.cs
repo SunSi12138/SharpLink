@@ -115,15 +115,6 @@ public sealed class SharpLinkCompressionOptions
         destination._providerBindings = ProviderBindings;
     }
 
-    internal SharpLinkCompressionProviderBinding? FindProviderBinding(string wireProfile)
-    {
-        foreach (var binding in ProviderBindings)
-        {
-            if (string.Equals(binding.WireProfile, wireProfile, StringComparison.Ordinal))
-                return binding;
-        }
-        return null;
-    }
 }
 
 internal readonly record struct SharpLinkCompressionProviderBinding(

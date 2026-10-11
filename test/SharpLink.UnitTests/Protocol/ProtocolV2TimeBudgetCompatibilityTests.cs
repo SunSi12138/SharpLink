@@ -5,7 +5,9 @@ public class ProtocolV2TimeBudgetCompatibilityTests
     [Test]
     public void PreTimeBudgetProtocolMinorShouldBeRejectedAtNegotiation()
     {
-        var serverPolicy = ProtocolV2Negotiator.CreateImplementedPolicy(
+        var serverPolicy = ProtocolV2NegotiationPolicy.Create(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Negotiator.AlwaysImplementedCapabilities,
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,
@@ -27,7 +29,9 @@ public class ProtocolV2TimeBudgetCompatibilityTests
     [Test]
     public void ClientShouldRejectServerResponseBelowTimeBudgetBoundary()
     {
-        var clientPolicy = ProtocolV2Negotiator.CreateImplementedPolicy(
+        var clientPolicy = ProtocolV2NegotiationPolicy.Create(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Negotiator.AlwaysImplementedCapabilities,
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,

@@ -1,0 +1,80 @@
+name: Issue 801 - Retired Codec API Desktop NativeAOT
+
+on:
+  push:
+    branches:
+      - cleanup/issue-801-3x-codec-api-retirement
+    paths:
+      - .github/workflows/issue-801-codec-api-nativeaot.yml
+      - src/SharpLink.Runtime/**
+      - src/SharpLink.Client/**
+      - src/SharpLink.Server/**
+      - src/SharpLink.Abstractions/**
+      - test/SharpLink.AotSmoke/**
+      - test/SharpLink.PreCreditAotSmoke/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-codec-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nativeaot:
+    name: ${{ matrix.os }} / ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_AOT_RID: ${{ matrix.rid }}
+    steps:
+      - name: Checkout actual candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET SDK
+        uses: ./.github/actions/setup-dotnet
+      - name: Restore solution
+        run: dotnet restore Sharplink.slnx -v minimal
+      - name: Complete Release build
+        run: |
+          mkdir -p artifacts/issue-801-codec-native
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-codec-native/release-build.log 2>&1 || {
+              tail -n 100 artifacts/issue-801-codec-native/release-build.log
+              exit 1
+            }
+          tail -n 22 artifacts/issue-801-codec-native/release-build.log
+      - name: Publish and run NativeAOT RPC streaming, SharpPack and pre-credit tests
+        env:
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/issue-801-codec-native/aot
+          SHARPLINK_AOT_SHM_NAME: issue801-codec-api3x
+        run: |
+          set -o pipefail
+          bash ./eng/run-shared-memory-aot-process-smoke.sh 2>&1 \
+            | tee artifacts/issue-801-codec-native/nativeaot.log
+          grep -q 'Shared-memory process, local endpoint-topology' artifacts/issue-801-codec-native/nativeaot.log
+      - name: Upload per-platform native verification proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-retired-codec-${{ matrix.rid }}-nativeaot
+          path: |
+            artifacts/issue-801-codec-native/*.log
+            artifacts/issue-801-codec-native/aot/*.log
+            artifacts/issue-801-codec-native/aot/sharppack-sidecar/*.log
+            artifacts/issue-801-codec-native/aot/precredit/*.log
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,122 @@
+namespace SharpLink.Sdk
+{
+    public interface IService { }
+    [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple=false, Inherited=true)]
+    public sealed class IdempotentAttribute : System.Attribute
+    {
+        public IdempotentAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Method, Inherited=false)]
+    public sealed class NonCancellableAttribute : System.Attribute
+    {
+        public NonCancellableAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Method)]
+    public sealed class OnewayAttribute : System.Attribute
+    {
+        public OnewayAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly | System.AttributeTargets.Class | System.AttributeTargets.Struct, AllowMultiple=true, Inherited=false)]
+    public sealed class RpcCodecAdapterAttribute : System.Attribute
+    {
+        public RpcCodecAdapterAttribute(System.Type adapterType) { }
+        public RpcCodecAdapterAttribute(System.Type targetType, System.Type adapterType) { }
+        public System.Type AdapterType { get; }
+        public System.Type? TargetType { get; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly, AllowMultiple=true)]
+    public sealed class RpcCodecAdapterRegistrationAttribute : System.Attribute
+    {
+        public RpcCodecAdapterRegistrationAttribute(System.Type adapterType, string adapterId) { }
+        public string AdapterId { get; }
+        public System.Type AdapterType { get; }
+        public System.Type? SelectorAttributeType { get; init; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly, AllowMultiple=true, Inherited=false)]
+    public sealed class RpcCodecRouteAttribute : System.Attribute
+    {
+        public RpcCodecRouteAttribute(SharpLink.Sdk.RpcCodecScope scope, System.Type adapterType) { }
+        public System.Type AdapterType { get; }
+        public SharpLink.Sdk.RpcCodecScope Scope { get; }
+    }
+    [System.Flags]
+    public enum RpcCodecScope
+    {
+        None = 0,
+        Managed = 1,
+        Unmanaged = 2,
+        All = 3,
+    }
+    [System.AttributeUsage(System.AttributeTargets.Interface)]
+    public sealed class RpcContractAttribute : System.Attribute
+    {
+        public RpcContractAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field)]
+    public sealed class RpcIgnoreAttribute : System.Attribute
+    {
+        public RpcIgnoreAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field)]
+    public sealed class RpcMemberAttribute : System.Attribute
+    {
+        public RpcMemberAttribute(int id) { }
+        public int Id { get; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Property | System.AttributeTargets.Field)]
+    public sealed class RpcRequiredAttribute : System.Attribute
+    {
+        public RpcRequiredAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Struct)]
+    public sealed class RpcSerializableAttribute : System.Attribute
+    {
+        public RpcSerializableAttribute() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Class, Inherited=false)]
+    public sealed class RpcServiceAttribute : System.Attribute
+    {
+        public RpcServiceAttribute() { }
+        public SharpLink.Sdk.SharpLinkServiceLifetime Lifetime { get; init; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Class | System.AttributeTargets.Interface, AllowMultiple=true, Inherited=false)]
+    public sealed class RpcUnionCaseAttribute : System.Attribute
+    {
+        public RpcUnionCaseAttribute(int tag, System.Type caseType) { }
+        public System.Type CaseType { get; }
+        public int Tag { get; }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly, AllowMultiple=true)]
+    public sealed class SharpLinkClusterContractAssemblyAttribute : System.Attribute
+    {
+        public SharpLinkClusterContractAssemblyAttribute(string cluster, System.Type assemblyMarker) { }
+        public System.Type AssemblyMarker { get; }
+        public string Cluster { get; }
+    }
+    public sealed class SharpLinkMetadata : System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.Generic.IReadOnlyCollection<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.KeyValuePair<string, string>>, System.Collections.IEnumerable
+    {
+        public SharpLinkMetadata(params System.Collections.Generic.KeyValuePair<string, string>[] entries) { }
+        public int Count { get; }
+        public System.Collections.Generic.KeyValuePair<string, string> this[int index] { get; }
+        public System.Collections.Generic.IEnumerator<System.Collections.Generic.KeyValuePair<string, string>> GetEnumerator() { }
+    }
+    [System.AttributeUsage(System.AttributeTargets.Assembly)]
+    public sealed class SharpLinkRpcContractsAttribute : System.Attribute
+    {
+        public SharpLinkRpcContractsAttribute(params System.Type[] contractTypes) { }
+        public System.Type[] ContractTypes { get; }
+    }
+    public enum SharpLinkServiceLifetime
+    {
+        Singleton = 0,
+        Connection = 1,
+        Call = 2,
+    }
+    [System.AttributeUsage(System.AttributeTargets.Method)]
+    public sealed class TimeoutAttribute : System.Attribute
+    {
+        public TimeoutAttribute() { }
+        public TimeoutAttribute(double seconds) { }
+        public double? Seconds { get; }
+    }
+}

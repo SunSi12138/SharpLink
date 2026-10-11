@@ -5,8 +5,7 @@ internal static class SharpLinkTimer
     internal static readonly TimeSpan MaximumDelay = TimeSpan.FromMilliseconds(int.MaxValue);
     private static readonly Task Never = Task.Delay(Timeout.InfiniteTimeSpan);
 
-    internal static ValueTask DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
-        => DelayAsync(delay, TimeProvider.System, cancellationToken);
+
 
     internal static async ValueTask DelayAsync(
         TimeSpan delay,
@@ -218,11 +217,7 @@ internal static class SharpLinkTimer
         return true;
     }
 
-    internal static async ValueTask<bool> WaitAsync(
-        Task task,
-        TimeSpan timeout,
-        CancellationToken cancellationToken = default)
-        => await WaitAsync(task, timeout, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+
 
     internal static async ValueTask<bool> WaitAsync(
         Task task,
@@ -358,15 +353,7 @@ internal static class SharpLinkTimer
         }
     }
 
-    internal static async ValueTask<bool> WaitAsync(
-        SemaphoreSlim semaphore,
-        TimeSpan timeout,
-        CancellationToken cancellationToken)
-        => await WaitAsync(
-            semaphore,
-            timeout,
-            TimeProvider.System,
-            cancellationToken).ConfigureAwait(false);
+
 
     internal static async ValueTask<bool> WaitAsync(
         SemaphoreSlim semaphore,

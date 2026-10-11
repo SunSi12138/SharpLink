@@ -96,7 +96,7 @@ internal sealed partial class SharpLinkClient
                         }
                         if (_sessionRefreshDebt.Count == 0)
                         {
-                            Volatile.Read(ref _client._beforeSessionRefreshWorkerReleaseTestHook)?.Invoke();
+                            _client._beforeSessionRefreshWorkerReleaseTestHook?.Invoke();
                             ReleaseSessionRefreshWorkerLocked(owner);
                             return;
                         }
@@ -298,7 +298,7 @@ internal sealed partial class SharpLinkClient
                                     _sessionRefreshDebt, source, publishedReplacement, processedRequest);
                                 PublishReadySnapshotLocked();
                                 endpoint.MarkReadyTimestamp(_client._runtimeContext.TimeProvider.GetTimestamp());
-                                Volatile.Read(ref _client._afterSessionRefreshEligibilitySwapTestHook)?.Invoke();
+                                _client._afterSessionRefreshEligibilitySwapTestHook?.Invoke();
                                 published = true;
                             }
                         }

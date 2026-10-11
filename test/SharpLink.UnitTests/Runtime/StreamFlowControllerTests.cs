@@ -496,7 +496,12 @@ public partial class StreamFlowControllerTests
         {
             try
             {
-                session.SendStreamCompleteAsync(1, 1);
+                session.SendClientStreamComplete(
+                    requestId: 1,
+                    streamId: 1,
+                    deadline: default,
+                    timeProvider: TimeProvider.System,
+                    terminalToken: CancellationToken.None);
                 throw new Exception("expected the bounded send queue to reject StreamComplete");
             }
             catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ResourceExhausted)

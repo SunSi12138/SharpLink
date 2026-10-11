@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the API of the actual shipping packages with the reviewed 2.0 surface."""
+"""Compare the API of the actual shipping packages with the reviewed release-line surface."""
 
 import argparse
 import difflib
@@ -24,8 +24,8 @@ def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("packages", type=Path)
-    parser.add_argument("--version", default="2.0.0")
-    parser.add_argument("--baseline", type=Path, default=root / "eng/public-api/2.0.0")
+    parser.add_argument("--version", default="3.0.0")
+    parser.add_argument("--baseline", type=Path, default=root / "eng/public-api/3.0.0")
     parser.add_argument("--output", type=Path, default=root / "artifacts/public-api/current")
     parser.add_argument("--update", action="store_true", help="Write a candidate baseline for explicit review")
     options = parser.parse_args()

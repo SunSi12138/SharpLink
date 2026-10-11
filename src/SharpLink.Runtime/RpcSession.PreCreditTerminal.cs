@@ -2,43 +2,7 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    /// <summary>
-    /// Instance members shadow the extension-frame helpers so stream terminal transitions can reject
-    /// budget waiters that have not yet reached StreamFlowController admission.
-    /// </summary>
-    internal void SendStreamCompleteAsync(long requestId, ushort streamId)
-    {
-        var writer = RentFrameWriter();
-        var ownsWriter = true;
-        try
-        {
-            using (writer.BeginPacketScope(
-                       ProtocolV2FrameType.StreamComplete,
-                       ProtocolV2FrameFlags.None,
-                       unchecked((ulong)requestId)))
-            {
-                var idSpan = writer.GetSpan(sizeof(ushort));
-                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
-                writer.Advance(sizeof(ushort));
-            }
-            ownsWriter = false;
-            try
-            {
-                SendPacket(writer);
-            }
-            finally
-            {
-                CompletePreCreditSendStream(requestId, streamId);
-                CompleteSendStream(requestId, streamId);
-            }
-        }
-        finally
-        {
-            if (ownsWriter)
-                RuntimeContext.Buffers.Return(writer);
-        }
-    }
-
+    /// <summary>Publishes a stream error terminal and retires pre-credit/send-flow ownership.</summary>
     internal void SendStreamErrorAsync(
         long requestId,
         ushort streamId,
