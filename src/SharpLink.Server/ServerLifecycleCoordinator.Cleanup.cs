@@ -134,7 +134,7 @@ internal sealed partial class SharpLinkServer
         private Task<bool> WaitUntilWithRuntimeTimeAsync(Task task, long deadline)
             => WaitUntilWithProviderAsync(task, deadline, _server._runtimeContext.TimeProvider);
 
-        private static async Task<bool> WaitUntilWithProviderAsync(
+        internal static async Task<bool> WaitUntilWithProviderAsync(
             Task task,
             long deadline,
             TimeProvider timeProvider)

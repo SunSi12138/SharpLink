@@ -338,7 +338,7 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
                 for (var operation = 0; operation < operationsPerProducer; operation++)
                 {
                     var started = Stopwatch.GetTimestamp();
-                    await session.SendStreamChunkAsync(
+                    await session.SendTestStreamChunkAsync(
                         requestId,
                         1,
                         item,
@@ -392,7 +392,6 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             $"p50Ns={metrics.P50Ns:F1} p95Ns={metrics.P95Ns:F1} " +
             $"p99Ns={metrics.P99Ns:F1} maxNs={metrics.MaxNs:F1} " +
             $"serializeCount={(serializeCount is null ? "n/a" : serializeCount.Value.ToString())} " +
-            $"serializerPermitLimit={ReadInternalNumber(session, "PreCreditSerializationPermitLimit")} " +
             $"reservedBytes={ReadInternalNumber(session, "PreCreditSerializedBytes")} " +
             $"waiterCount={ReadInternalNumber(session, "PreCreditSerializedWaiterCount")}");
     }
@@ -439,7 +438,6 @@ internal static class PreCreditConcurrentFastConsumerEvidenceRunner
             $"p50Ns={Median(p50):F1} p95Ns={Median(p95):F1} " +
             $"p99Ns={Median(p99):F1} maxNs={Median(maxima):F1} " +
             $"serializeCount={(serializeCount is null ? "n/a" : serializeCount.Value.ToString())} " +
-            $"serializerPermitLimit={ReadInternalNumber(session, "PreCreditSerializationPermitLimit")} " +
             $"reservedBytes={ReadInternalNumber(session, "PreCreditSerializedBytes")} " +
             $"waiterCount={ReadInternalNumber(session, "PreCreditSerializedWaiterCount")}");
     }

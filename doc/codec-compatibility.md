@@ -1,6 +1,6 @@
 # UnsafeBlitCodec compatibility contract
 
-`UnsafeBlitCodec<T>` is SharpLink's high-performance fallback for value types that do not contain managed references. It serializes the current runtime's managed representation directly, so it is intentionally treated as ABI-sensitive rather than assumed to be stable across every OS, architecture, runtime family, pointer width, or future .NET major.
+`UnsafeBlitCodec<T>` is SharpLink's high-performance generated raw codec for value types that do not contain managed references. In 3.0 its generated factory carries the ABI requirement; arbitrary unmanaged reflection fallback has been removed (see [migration](unsafe-blit-3.0-migration.md)). It serializes the current runtime's managed representation directly, so it is intentionally treated as ABI-sensitive rather than assumed to be stable across every OS, architecture, runtime family, pointer width, or future .NET major.
 
 This document defines the current compatibility contract and evidence model. The primary compatibility matrix is CoreCLR. Mono is tracked as auxiliary evidence with narrower, type/layout-specific claims. This model does not replace, restrict, or slow down the production codec hot path.
 

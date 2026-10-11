@@ -52,9 +52,6 @@ internal sealed partial class SharpLinkClient
     internal Task ReadySignalForTesting
         => Volatile.Read(ref _readySignal).Task;
 
-    internal void TransitionToForTesting(SharpLinkConnectionState state)
-        => TransitionTo(state);
-
     internal void PublishReadinessFacts(ClientReadinessFacts facts)
     {
         ValidateReadinessFacts(facts);

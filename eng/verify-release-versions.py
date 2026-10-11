@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce the reviewed version calibration against the published 1.1.1 boundary."""
+"""Enforce the reviewed version calibration against the reviewed published release boundary."""
 
 import json
 from pathlib import Path
@@ -29,4 +29,4 @@ for entry in manifest["versions"]:
     if not valid.get(policy, False):
         raise ValueError(f"Invalid release calibration for {entry['name']}: {policy}")
     observed[entry["name"]] = after
-print(f"Verified {len(observed)} version declarations against released 1.1.1; no development-only increments.")
+print(f"Verified {len(observed)} version declarations against released {manifest['publishedBaseline']['version']}; no development-only increments.")

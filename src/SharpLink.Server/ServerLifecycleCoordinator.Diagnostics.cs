@@ -14,10 +14,5 @@ internal sealed partial class SharpLinkServer
 
         internal Task DisposeAllSessionsForDiagnosticsAsync() => DisposeAllSessionsAsync();
 
-        internal static Task<bool> WaitUntilWithProviderForDiagnosticsAsync(
-            Task task,
-            long deadline,
-            TimeProvider timeProvider)
-            => WaitUntilWithProviderAsync(task, deadline, timeProvider);
     }
 }

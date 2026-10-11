@@ -110,8 +110,8 @@ public partial class SharpLinkServerInvocationTests
         {
             loopCancellation.Cancel();
             await heartbeat;
-            connections.TryRemove(healthySession.Id, out _);
-            connections.TryRemove(staleSession.Id, out _);
+            connections.TryRemove(new KeyValuePair<string, ServerConnectionState>(healthySession.Id, healthy));
+            connections.TryRemove(new KeyValuePair<string, ServerConnectionState>(staleSession.Id, stale));
             await stale.CloseAsync();
             await healthy.CloseAsync();
             await stale.ServiceCleanupTask;
@@ -205,15 +205,13 @@ public partial class SharpLinkServerInvocationTests
         Ensure(!ReferenceEquals(connections.Values.First(), unexpected),
             "the expected close must be first in the deterministic shutdown snapshot");
 
-        var disposeSessions = CreatePrivateCall<Func<SharpLinkServer, Task>>(
-            typeof(SharpLinkServer).GetMethod(
-                "DisposeAllSessionsAsync",
-                BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find Server session shutdown path"));
+        Ensure(typeof(SharpLinkServer).GetMethod(
+                "DisposeAllSessionsAsync", BindingFlags.Instance | BindingFlags.NonPublic) is null,
+            "outer server must not retain reflection-only lifecycle forwarding alias");
         Exception? failure = null;
         try
         {
-            await disposeSessions(server);
+            await server.LifecycleForDiagnostics.DisposeAllSessionsForDiagnosticsAsync();
         }
         catch (Exception exception)
         {

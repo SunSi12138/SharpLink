@@ -14,7 +14,7 @@ public sealed class DateTimeOffsetPerformanceValidationProbe
     [Test]
     public void Run()
     {
-        using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
+        using var provider = new RpcCodecProvider();
         var candidateArray = provider.GetCodec<DateTimeOffset[]>();
         var candidateList = provider.GetCodec<List<DateTimeOffset>>();
         IRpcCodec<DateTimeOffset[]?> baselineArray = new BaselineArrayCodec();

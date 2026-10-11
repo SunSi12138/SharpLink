@@ -8,8 +8,8 @@ internal static class __SharpLinkContractManifest
     internal const string Json = @"{
   ""format"": ""SharpLink.Contracts"",
   ""version"": 2,
-  ""generatorVersion"": ""2.0.4"",
-  ""schemaFingerprint"": ""a5292e3029787dc56483b4d62b0677daa690bbf0fee1a3f5f544b1b33ab38e12"",
+  ""generatorVersion"": ""3.0.0"",
+  ""schemaFingerprint"": ""506004ce2ed82845b61b3f5121779676e17da27f42f136ec2caa54838480ffe9"",
   ""contracts"": [
     {
       ""name"": ""IFixtureService"",

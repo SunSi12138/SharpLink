@@ -58,7 +58,6 @@ public partial class RpcGenerator
             .ToImmutableArray();
         var unsafeBlitAutoLayoutDiagnostics =
             DtoAnalysisState.BuildUnsafeBlitAutoLayoutDiagnostics(contractPolicyGraph);
-        var unsafeBlitRequirements = BuildUnsafeBlitRequirements(standaloneGraph, contractPolicyGraph);
         var contractPolicyCodecs = AttachCodecHashes(
             contractPolicy.Codecs,
             contractPolicyGraph,
@@ -123,7 +122,7 @@ public partial class RpcGenerator
             policyHashByType,
             contractOwnedPolicyRoots);
         var finalCodecBoundTypes = contractPolicyGraph.Plans.Values
-            .Where(RequiresGeneratedFactory)
+            .Where(static plan => plan is not FinalUnsafeBlitCodecPlan && RequiresGeneratedFactory(plan))
             .Select(static plan => plan.TypeName)
             .OrderBy(static type => type, StringComparer.Ordinal)
             .ToImmutableArray();
@@ -156,7 +155,6 @@ public partial class RpcGenerator
         {
             CodecHashes = codecHashes,
             ReferencedCodecHashes = referencedCodecHashes,
-            UnsafeBlitRequirements = unsafeBlitRequirements,
             UnsafeBlitAutoLayoutDiagnostics = unsafeBlitAutoLayoutDiagnostics,
             AssemblyLogicalIdentity = compilation.Assembly.Identity.Name
         };
@@ -174,6 +172,8 @@ public partial class RpcGenerator
             .OrderBy(static plan => plan.TypeName, StringComparer.Ordinal)
             .Select(plan =>
             {
+                if (plan is FinalUnsafeBlitCodecPlan unsafeBlit)
+                    codecByType[plan.TypeName] = CreateUnsafeBlitFactoryModel(unsafeBlit);
                 if (!codecByType.TryGetValue(plan.TypeName, out var codec))
                 {
                     throw new InvalidOperationException(
@@ -260,7 +260,8 @@ public partial class RpcGenerator
     }
 
     private static bool RequiresGeneratedFactory(FinalCodecPlan plan)
-        => plan is FinalGeneratedDtoCodecPlan or
+        => plan is FinalUnsafeBlitCodecPlan or
+            FinalGeneratedDtoCodecPlan or
             FinalUnionCodecPlan or
             FinalCustomCodecPlan or
             FinalAdapterCodecPlan or
@@ -269,6 +270,7 @@ public partial class RpcGenerator
     private static bool MatchesGeneratedFactoryPlan(FinalCodecPlan plan, GeneratedCodecModel codec)
         => plan switch
         {
+            FinalUnsafeBlitCodecPlan => codec.Kind == GeneratedCodecKind.UnsafeBlit,
             FinalGeneratedDtoCodecPlan => codec.Kind == GeneratedCodecKind.Dto,
             FinalUnionCodecPlan => codec.Kind == GeneratedCodecKind.Union,
             FinalCustomCodecPlan custom =>
