@@ -160,7 +160,6 @@ internal sealed partial class RpcSession
     {
         var writer = RentFrameWriter();
         var ownsWriter = true;
-        Exception? operationError = null;
         try
         {
             using (writer.BeginPacketScope(
@@ -278,6 +277,7 @@ internal sealed partial class RpcSession
         var creditAcquired = false;
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
+        Exception? operationError = null;
         try
         {
             await AcquireStreamSendCreditAsync(
