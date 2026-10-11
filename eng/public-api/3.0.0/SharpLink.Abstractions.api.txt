@@ -105,12 +105,12 @@ namespace SharpLink.Abstractions
     public interface IRpcStub
     {
         long InterfaceHash { get; }
+        void DescribeMethod(long methodHash, SharpLink.Abstractions.RpcMethodShape shape, out SharpLink.Abstractions.RpcMethodDescriptor descriptor);
         System.Threading.Tasks.ValueTask InvokeAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output);
         System.Threading.Tasks.ValueTask InvokeCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output, System.Threading.CancellationToken cancellationToken);
         System.Threading.Tasks.ValueTask InvokeNoReturnAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args);
         System.Threading.Tasks.ValueTask InvokeNoReturnCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Threading.CancellationToken cancellationToken);
-        bool SupportsCancellation(long methodHash);
-        bool TryGetMethodDescriptor(long methodHash, out SharpLink.Abstractions.RpcMethodDescriptor descriptor);
+        SharpLink.Abstractions.RpcMethodShape ResolveMethodShape(long methodHash);
     }
     public interface IServerTransportListener : System.IAsyncDisposable
     {
@@ -547,19 +547,21 @@ namespace SharpLink.Abstractions
     }
     public readonly struct RpcMethodDescriptor : System.IEquatable<SharpLink.Abstractions.RpcMethodDescriptor>
     {
+        public RpcMethodDescriptor(long contractId, long methodId, SharpLink.Abstractions.RpcMethodShape shape, System.TimeSpan? methodTimeout) { }
         public RpcMethodDescriptor(long ContractId, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool HasResponsePayload, bool HasClientStreams, bool HasMethodTimeout, System.TimeSpan? MethodTimeout, bool IsIdempotent = false, int ClientStreamCount = 0, bool ResponseNullable = false) { }
-        public int ClientStreamCount { get; init; }
-        public long ContractId { get; init; }
-        public bool HasClientStreams { get; init; }
-        public bool HasMethodTimeout { get; init; }
-        public bool HasResponsePayload { get; init; }
-        public bool IsIdempotent { get; init; }
-        public SharpLink.Abstractions.RpcMethodKind Kind { get; init; }
-        public long MethodId { get; init; }
-        public System.TimeSpan? MethodTimeout { get; init; }
-        public bool ResponseNullable { get; init; }
+        public int ClientStreamCount { get; }
+        public long ContractId { get; }
+        public bool HasClientStreams { get; }
+        public bool HasMethodTimeout { get; }
+        public bool HasResponsePayload { get; }
+        public bool IsIdempotent { get; }
+        public SharpLink.Abstractions.RpcMethodKind Kind { get; }
+        public long MethodId { get; }
+        public System.TimeSpan? MethodTimeout { get; }
+        public bool ResponseNullable { get; }
         public void Deconstruct(out long ContractId, out long MethodId, out SharpLink.Abstractions.RpcMethodKind Kind, out bool HasResponsePayload, out bool HasClientStreams, out bool HasMethodTimeout, out System.TimeSpan? MethodTimeout, out bool IsIdempotent, out int ClientStreamCount) { }
         public void Deconstruct(out long ContractId, out long MethodId, out SharpLink.Abstractions.RpcMethodKind Kind, out bool HasResponsePayload, out bool HasClientStreams, out bool HasMethodTimeout, out System.TimeSpan? MethodTimeout, out bool IsIdempotent, out int ClientStreamCount, out bool ResponseNullable) { }
+        public static SharpLink.Abstractions.RpcMethodDescriptor FromShape(long contractId, long methodId, SharpLink.Abstractions.RpcMethodShape shape, System.TimeSpan? methodTimeout = default) { }
     }
     public enum RpcMethodKind : byte
     {
@@ -568,6 +570,35 @@ namespace SharpLink.Abstractions
         ClientStreaming = 2,
         ServerStreaming = 3,
         DuplexStreaming = 4,
+    }
+    public readonly struct RpcMethodShape : System.IEquatable<SharpLink.Abstractions.RpcMethodShape>
+    {
+        public const int MaxClientStreamCount = 127;
+        public const int UnknownClientStreamCount = -1;
+        public RpcMethodShape(uint packed) { }
+        public RpcMethodShape(SharpLink.Abstractions.RpcMethodKind kind, int clientStreamCount, bool supportsCancellation, bool hasResponsePayload, bool responseNullable = false, bool hasMethodTimeout = false, bool isIdempotent = false, bool hasMethodTimeoutValue = false) { }
+        public int ClientStreamCount { get; }
+        public bool HasClientStreams { get; }
+        public bool HasKnownClientStreamCount { get; }
+        public bool HasMethodTimeout { get; }
+        public bool HasMethodTimeoutValue { get; }
+        public bool HasResponsePayload { get; }
+        public bool IsIdempotent { get; }
+        public bool IsKnown { get; }
+        public bool IsUnknownMethod { get; }
+        public bool IsUnresolvable { get; }
+        public SharpLink.Abstractions.RpcMethodKind Kind { get; }
+        public uint Packed { get; }
+        public bool ResponseNullable { get; }
+        public bool SupportsCancellation { get; }
+        public static SharpLink.Abstractions.RpcMethodShape UnknownMethod { get; }
+        public static SharpLink.Abstractions.RpcMethodShape Unresolvable { get; }
+        public bool Equals(SharpLink.Abstractions.RpcMethodShape other) { }
+        public override bool Equals(object? obj) { }
+        public override int GetHashCode() { }
+        public override string ToString() { }
+        public static bool operator !=(SharpLink.Abstractions.RpcMethodShape left, SharpLink.Abstractions.RpcMethodShape right) { }
+        public static bool operator ==(SharpLink.Abstractions.RpcMethodShape left, SharpLink.Abstractions.RpcMethodShape right) { }
     }
     public readonly struct RpcNoClientStreams : SharpLink.Abstractions.IRpcClientStreamWriter
     {
@@ -952,20 +983,19 @@ namespace SharpLink.Abstractions
     }
     public static class SharpLinkGeneratedManifestVersions
     {
-        public const string AbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
+        public const string AbiIdentity = "sharplink-3.0-api5-v1";
         public const int Api = 5;
         public const int Protocol = 2;
     }
     public sealed class SharpLinkGeneratedMethodDescriptor : System.IEquatable<SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor>
     {
-        public SharpLinkGeneratedMethodDescriptor(string Name, long MethodId, SharpLink.Abstractions.RpcMethodKind Kind, bool SupportsCancellation, string RequestSchema, string ResponseSchema, string Fingerprint) { }
+        public SharpLinkGeneratedMethodDescriptor(string Name, long MethodId, SharpLink.Abstractions.RpcMethodShape Shape, string RequestSchema, string ResponseSchema, string Fingerprint) { }
         public string Fingerprint { get; init; }
-        public SharpLink.Abstractions.RpcMethodKind Kind { get; init; }
         public long MethodId { get; init; }
         public string Name { get; init; }
         public string RequestSchema { get; init; }
         public string ResponseSchema { get; init; }
-        public bool SupportsCancellation { get; init; }
+        public SharpLink.Abstractions.RpcMethodShape Shape { get; init; }
     }
     public sealed class SharpLinkGeneratedServiceDescriptor : System.IEquatable<SharpLink.Abstractions.SharpLinkGeneratedServiceDescriptor>
     {
@@ -1129,6 +1159,7 @@ namespace SharpLink.Abstractions
         public SharpLink.Abstractions.RpcMethodDescriptor Method { get; }
         public System.Net.EndPoint? RemoteEndPoint { get; }
         public long RequestId { get; }
+        public SharpLink.Abstractions.RpcMethodShape Shape { get; }
         public SharpLink.Abstractions.SharpLinkInvocationStatus Status { get; }
     }
     public delegate System.Threading.Tasks.ValueTask SharpLinkServerInvocationDelegate(SharpLink.Abstractions.SharpLinkServerInvocationContext context);

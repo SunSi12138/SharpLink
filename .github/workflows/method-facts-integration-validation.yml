@@ -33,6 +33,7 @@ jobs:
           dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
           dotnet build eng/SharpLink.PublicApi/SharpLink.PublicApi.csproj -c Release -v minimal
           python3 eng/verify-public-api.py artifacts/nuget --version 3.0.0 --baseline artifacts/public-api/candidate --update
+          python3 eng/verify-public-api.py artifacts/nuget --version 3.0.0
           python3 eng/verify-release-versions.py
       - name: Verify formatting and maintainability
         run: |
@@ -55,3 +56,39 @@ jobs:
             artifacts/public-api
             artifacts/maintainability
           if-no-files-found: warn
+
+  combined-package-trim-aot:
+    needs: combined-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify exact combined ABI source
+        run: |
+          git rev-parse HEAD
+          python3 eng/verify-release-versions.py
+          grep -F 'AbiIdentity = "sharplink-3.0-api5-v1"' src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs
+      - name: Build and pack
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+          dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+      - name: Source full and partial trim
+        env:
+          SHARPLINK_TRIM_RID: linux-x64
+        run: bash eng/run-project-reference-trim-smoke.sh
+      - name: Isolated NativeAOT
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/combined-aot-smoke
+        run: bash eng/run-shared-memory-aot-process-smoke.sh
+      - name: Verify reviewed shipping API and package contracts
+        run: bash eng/verify-public-api.sh
+      - uses: ./.github/actions/verify-packages
+      - name: Package full and partial trim, late trim, and AOT consumers
+        uses: ./.github/actions/package-smoke
+
+  combined-mobile:
+    needs: combined-contract
+    uses: ./.github/workflows/codec-mobile-compatibility.yml
