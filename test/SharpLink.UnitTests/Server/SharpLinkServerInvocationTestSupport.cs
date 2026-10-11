@@ -473,7 +473,7 @@ public partial class SharpLinkServerInvocationTests
                     "_serviceModuleRegistry",
                     BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;
-            serviceRegistry.PublishServices(new Dictionary<long, ServiceRegistration>
+            Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
             {
                 [stub.InterfaceHash] = registration
             }.ToFrozenDictionary());
