@@ -2,6 +2,17 @@
 
 Baseline `dev` @ `eb99fe887cf2129d9b88441245ca0a4a6406b6c2`. A/B/C/D are **reference classifications**, not an automatic deletion plan. GitHub Actions checkout source was temporarily modified only for verification. No production file has been merged to dev.
 
+## Status update: executed next priority groups
+
+- **ServerDecodeExecutor test compatibility enqueue subsystem — independently PASS.** Replaced the test-only blocking queue with the real production reserved-before-publication queue, migrated two unit-test files, and removed the extra SemaphoreSlim/CTS/TCS plus operation accounting and entry branch. Source/test experiment delta **3 files, +137/−318 lines**. [Full UnitTests 2018, Generator 269, Integration 453 and pristine build pass](./decode-queue-compatibility-teardown.md); [three-platform NativeAOT, trim, 8-package public API and external consumers pass](https://github.com/SunSi12138/SharpLink/actions/runs/38107400102). A controlled Linux .NET 10 ctor allocation trial measured **832 B → 584 B median**, 17→13 instance fields, saving **248 B/constructor (sample-specific; not throughput)**. [Raw allocation proof](https://github.com/SunSi12138/SharpLink/actions/runs/38107583355).
+- **PooledAsyncStreamDispatcher<T> nine test hooks → one lazily allocated Action[] pointer — PASS** Release UnitTests 2018 and Generator 269, baseline comparator. [Proof](./lazy-test-hook-validation.md). **64B theoretical x64 instance-field reduction**; no actual throughput/retained heap measurements.
+- **SharpLinkClient ten session-refresh/failure test hooks → one lazily allocated Delegate[] pointer — PASS** Release UnitTests 2018, Generator 269, IntegrationTests 453, Linux NativeAOT and pristine build. [Proof](./client-session-hook-validation.md). **72B theoretical x64 client instance-field reduction**; hot-path speed still unmeasured.
+- **3.0 IRpcChannel false streaming interface inheritance — PASS as a breaking-change experiment** Release UnitTests 2018, Generator 269, Linux NativeAOT after unlinking the inheritance and deleting three fake/forwarding channel methods while retaining ClientConnection's real sink. [Proof](./rpc-channel-3x-api-validation.md). Requires approval of external API break/migration docs, not a silent 2.x change.
+- **Earlier 45 non-public zero-direct-reference methods**: not modified in dev, but validated on all three desktop NativeAOT platforms plus trimmed and NuGet package consumers. [Proof](./native-safety-validation.md).
+- **Open policy calls:** `SharpLinkRuntimeContextBuilder.AddCodec<T>`, Server `UseSerializer` and runtime `UseCodecResolver` fallback graph; these are genuine standalone runtime extension behaviors and cannot be automatically labeled dead solely from in-repository references.
+
+The two test-hook refactors and the decode-queue overhaul are three **separate** implementation groups, and should have independent, reviewable PRs and benchmarking gates rather than being combined with the unrelated 45-method cleanup.
+
 ## Established implementation evidence
 
 | Candidate | Actual proof | Recommendation |
