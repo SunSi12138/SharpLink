@@ -1,0 +1,77 @@
+name: Dev pre-existing Debug allocation control
+'on':
+  push:
+    branches:
+    - codex/validate-dev-debug-allocation-control
+permissions:
+  contents: read
+jobs:
+  deadline:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+        - macos-latest
+        configuration:
+        - Debug
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      BASE_SHA: f122a8b495d4799b434d272c6def2dbe4de7588b
+      CANDIDATE_SHA: edb7d684aa4a182ce6f0d9d6400be8cf3f212967
+      CONFIGURATION: ${{ matrix.configuration }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TUNIT_ENABLE_JUNIT_REPORTER: 'true'
+    steps:
+    - name: Checkout pinned baseline
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.BASE_SHA }}
+        path: baseline
+        persist-credentials: false
+    - name: Checkout pinned candidate
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.CANDIDATE_SHA }}
+        path: candidate
+        persist-credentials: false
+    - name: Setup SDK
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      with:
+        dotnet-version: 10.0.x
+    - name: Capture environment
+      shell: bash
+      run: 'mkdir -p evidence
+
+        dotnet --info > evidence/dotnet-info.txt
+
+        git --version > evidence/git-version.txt'
+    - name: Prove identical pre-existing Debug allocation failures
+      shell: python
+      run: "import json, os, pathlib, subprocess, xml.etree.ElementTree as ET\nroot=pathlib.Path.cwd(); evidence=root/'evidence';\
+        \ evidence.mkdir(exist_ok=True)\nexpected_names={'SuccessfulSuspensionsShouldNotAllocateAfterWarmup','RegisteredConsumerSuspensionsShouldNotAllocateAfterWarmup'}\n\
+        records=[]\nfor label,sha in [('baseline',os.environ['BASE_SHA']),('candidate',os.environ['CANDIDATE_SHA'])]:\n  \
+        \  path=root/label\n    assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=path,text=True).strip()==sha\n\
+        \    subprocess.run(['git','diff','--exit-code'],cwd=path,check=True)\n    with (evidence/(label+'-build.log')).open('w',encoding='utf-8')\
+        \ as f:\n        p=subprocess.run(['dotnet','build','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Debug','-v','minimal'],cwd=path,stdout=f,stderr=subprocess.STDOUT)\n\
+        \    assert p.returncode==0\n    log=evidence/(label+'.log'); report=evidence/(label+'.xml')\n    with log.open('w',encoding='utf-8')\
+        \ as f:\n        p=subprocess.run(['dotnet','run','--project','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Debug','--no-build','--','--treenode-filter','/*/*/ReadOwnershipPipeReaderLifetimeTests/*ShouldNotAllocateAfterWarmup','--maximum-parallel-tests','1','--no-progress','--output','Detailed','--results-directory',str(evidence/label),'--junit-output-path',str(report)],cwd=path,stdout=f,stderr=subprocess.STDOUT)\n\
+        \    print(log.read_text(encoding='utf-8',errors='replace'),flush=True)\n    (evidence/(label+'-exit.txt')).write_text(str(p.returncode)+'\\\
+        n')\n    cases=ET.parse(report).findall('.//testcase')\n    assert p.returncode==2 and len(cases)==2\n    assert {c.get('name')\
+        \ for c in cases}==expected_names, [c.attrib for c in cases]\n    for c in cases:\n        problem=c.find('error')\n\
+        \        if problem is None: problem=c.find('failure')\n        assert problem is not None and problem.get('type')=='System.InvalidOperationException'\n\
+        \        assert 'must allocate 0 bytes, got 200' in problem.get('message',''), problem.attrib\n        records.append(dict(label=label,source_sha=sha,name=c.get('name'),error=problem.attrib,exit=p.returncode))\n\
+        \    subprocess.run(['git','diff','--exit-code'],cwd=path,check=True)\n(evidence/'verified-preexisting-debug-failures.json').write_text(json.dumps(records,indent=2)+'\\\
+        n')\nprint(json.dumps(records,indent=2))"
+    - name: Upload raw evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: dev-debug-allocation-control-${{ matrix.os }}
+        path: evidence
+        if-no-files-found: error
+        retention-days: 30
