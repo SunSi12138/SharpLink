@@ -100,57 +100,57 @@ internal static class ClientServerTestStateInspector
 {
     internal static void Capture(BenchmarkEnvironment environment, string file)
     {
-            var client = (SharpLinkClient)environment.Client;
-            var server = (SharpLinkServer)environment.Server;
-            var types = new[]
+        var client = (SharpLinkClient)environment.Client;
+        var server = (SharpLinkServer)environment.Server;
+        var types = new[]
+        {
+            (Type: typeof(SharpLinkClient), Instance: (object?)client),
+            (Type: typeof(SharpClientBuilder), Instance: (object?)null),
+            (Type: typeof(SharpLinkServer), Instance: (object?)server),
+            (Type: typeof(SharpLinkServerBuilder), Instance: (object?)null),
+            (Type: typeof(AdmissionProgram), Instance: (object?)null),
+            (Type: typeof(ServerCallCancellationState), Instance: (object?)null),
+            (Type: typeof(SharpLinkAdmissionController), Instance: (object?)null)
+        };
+        var fields = types.SelectMany(item => item.Type
+            .GetFields(BindingFlags.Public | BindingFlags.NonPublic |
+                       BindingFlags.Instance | BindingFlags.Static |
+                       BindingFlags.DeclaredOnly)
+            .Where(field => field.Name.Contains("test", StringComparison.OrdinalIgnoreCase) ||
+                            field.Name.Contains("hook", StringComparison.OrdinalIgnoreCase) ||
+                            field.Name.Contains("probe", StringComparison.OrdinalIgnoreCase))
+            .Select(field => new
             {
-                (Type: typeof(SharpLinkClient), Instance: (object?)client),
-                (Type: typeof(SharpClientBuilder), Instance: (object?)null),
-                (Type: typeof(SharpLinkServer), Instance: (object?)server),
-                (Type: typeof(SharpLinkServerBuilder), Instance: (object?)null),
-                (Type: typeof(AdmissionProgram), Instance: (object?)null),
-                (Type: typeof(ServerCallCancellationState), Instance: (object?)null),
-                (Type: typeof(SharpLinkAdmissionController), Instance: (object?)null)
-            };
-            var fields = types.SelectMany(item => item.Type
-                .GetFields(BindingFlags.Public | BindingFlags.NonPublic |
-                           BindingFlags.Instance | BindingFlags.Static |
-                           BindingFlags.DeclaredOnly)
-                .Where(field => field.Name.Contains("test", StringComparison.OrdinalIgnoreCase) ||
-                                field.Name.Contains("hook", StringComparison.OrdinalIgnoreCase) ||
-                                field.Name.Contains("probe", StringComparison.OrdinalIgnoreCase))
-                .Select(field => new
-                {
-                    type = item.Type.FullName,
-                    name = field.Name,
-                    staticField = field.IsStatic,
-                    instanceField = !field.IsStatic,
-                    managedReference = !field.FieldType.IsValueType,
-                    fieldType = field.FieldType.FullName,
-                    observedOnNormalRuntime = field.IsStatic || item.Instance is not null,
-                    isNullInNormalRuntime = (field.IsStatic || item.Instance is not null) &&
-                                            field.GetValue(field.IsStatic ? null : item.Instance) is null
-                })).OrderBy(x => x.type).ThenBy(x => x.name).ToArray();
-            var payload = new
+                type = item.Type.FullName,
+                name = field.Name,
+                staticField = field.IsStatic,
+                instanceField = !field.IsStatic,
+                managedReference = !field.FieldType.IsValueType,
+                fieldType = field.FieldType.FullName,
+                observedOnNormalRuntime = field.IsStatic || item.Instance is not null,
+                isNullInNormalRuntime = (field.IsStatic || item.Instance is not null) &&
+                                        field.GetValue(field.IsStatic ? null : item.Instance) is null
+            })).OrderBy(x => x.type).ThenBy(x => x.name).ToArray();
+        var payload = new
+        {
+            runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+            timestampUtc = DateTimeOffset.UtcNow,
+            kind = "observed normal constructed/connected production Client and Server",
+            fields,
+            notes = new[]
             {
-                runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
-                timestampUtc = DateTimeOffset.UtcNow,
-                kind = "observed normal constructed/connected production Client and Server",
-                fields,
-                notes = new[]
-                {
-                    "Field inventory is actual reflection, not measured per-field heap bytes.",
-                    "A null delegate avoids callback invocation but the reference slot remains in the object/type.",
-                    "The BenchmarkDotNet enabled-vs-disabled hook trials are not a compiler ablation.",
-                    "Measure allocation B/op and ns/op in the raw BDN JSON; do not infer causal field-size savings."
-                }
-            };
-            await File.WriteAllTextAsync(file,
-                JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
-            Console.WriteLine($"TEST-STATE-FIELDS: {fields.Length}; normal runtime non-null hooks: " +
-                              fields.Count(f => f.observedOnNormalRuntime && !f.isNullInNormalRuntime));
-            foreach (var field in fields)
-                Console.WriteLine($"FIELD: {field.type}.{field.name} static={field.staticField} " +
-                                  $"observed={field.observedOnNormalRuntime} null={field.isNullInNormalRuntime}");
+                "Field inventory is actual reflection, not measured per-field heap bytes.",
+                "A null delegate avoids callback invocation but the reference slot remains in the object/type.",
+                "The BenchmarkDotNet enabled-vs-disabled hook trials are not a compiler ablation.",
+                "Measure allocation B/op and ns/op in the raw BDN JSON; do not infer causal field-size savings."
+            }
+        };
+        File.WriteAllText(file,
+            JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine($"TEST-STATE-FIELDS: {fields.Length}; normal runtime non-null hooks: " +
+                          fields.Count(f => f.observedOnNormalRuntime && !f.isNullInNormalRuntime));
+        foreach (var field in fields)
+            Console.WriteLine($"FIELD: {field.type}.{field.name} static={field.staticField} " +
+                              $"observed={field.observedOnNormalRuntime} null={field.isNullInNormalRuntime}");
     }
 }
