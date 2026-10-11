@@ -118,7 +118,7 @@ public sealed class WriterOwnedTransportIntegrationTests
     {
         using var timeout = new CancellationTokenSource(Limit);
         var serverBuilder = SharpLinkServerBuilder.Create();
-        var clientBuilder = SharpClientBuilder.Create();
+        var clientBuilder = SharpClientBuilder.Create().UseRequestTimeout();
         if (sharedMemory)
         {
             var name = "writer-owned-" + Guid.NewGuid().ToString("N");
