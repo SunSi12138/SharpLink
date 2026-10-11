@@ -105,7 +105,7 @@ internal sealed class GrantBenchmarkClient
             throw new InvalidDataException($"Generated DTO response item count mismatch: {count} != {_itemCount}.");
     }
 
-    private void Validate(GrantBenchmarkPayload value)
+    private void Validate(GrantBenchmarkPayload? value)
     {
         if (value is null || value.Tag != _expected.Tag ||
             !string.Equals(value.Text, _expected.Text, StringComparison.Ordinal))
