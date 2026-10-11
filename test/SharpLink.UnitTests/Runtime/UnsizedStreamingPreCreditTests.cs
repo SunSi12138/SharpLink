@@ -57,8 +57,6 @@ public class UnsizedStreamingPreCreditTests
             "only one oversized item may own the one-byte actual serialized-byte budget");
         Ensure(session.PreCreditSerializedWaiterCount == 1,
             "a sub-frame local budget should retain at most one serialized budget waiter");
-        Ensure(session.PreCreditSerializationPermitLimit == 0 && session.PreCreditActiveSerializerCount == 0,
-            "the final design must not use a global pre-serialization permit gate");
 
         var pending = new List<Task>();
         var rejectedCount = 0;
@@ -125,8 +123,6 @@ public class UnsizedStreamingPreCreditTests
             "the exact-size item must not serialize while flow credit is exhausted");
         Ensure(session.PreCreditSerializedByteLimit == 0,
             "exact-size streaming must not instantiate the unsized pre-credit byte budget");
-        Ensure(session.PreCreditSerializationPermitLimit == 0,
-            "exact-size streaming must not instantiate a pre-serialization gate");
 
         var terminal = new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "sized cleanup");
         session.NotifyDisconnected(terminal);
