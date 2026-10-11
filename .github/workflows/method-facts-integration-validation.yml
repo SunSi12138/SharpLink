@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 50fd895b257e1ca7512a9c742639074aa8901928
+          ref: 7589962637b66768bab0adf7bb51abe2a147b1c6
       - name: Record exact validation source
         run: |
           mkdir -p artifacts/public-api
@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 50fd895b257e1ca7512a9c742639074aa8901928
+          ref: 7589962637b66768bab0adf7bb51abe2a147b1c6
       - uses: ./.github/actions/setup-dotnet
       - name: Verify exact combined ABI source
         run: |
