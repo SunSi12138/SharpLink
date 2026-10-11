@@ -1,0 +1,225 @@
+name: Issue 775 Exact-Source OneWay ABBA and Separate Profile
+permissions:
+  contents: read
+'on':
+  push:
+    branches:
+    - validation/775-oneway-abba-3aedcfc
+  workflow_dispatch: null
+concurrency:
+  group: issue775-oneway-abba-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  oneway-abba:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASE_SHA: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
+      PRODUCTION_SHA: 3aedcfc71e85a43fa71a266b7fd0e6d18939d4ff
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+    - name: Checkout exact production source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: 3aedcfc71e85a43fa71a266b7fd0e6d18939d4ff
+    - name: Verify exact clean source and canonical Git blobs
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "3aedcfc71e85a43fa71a266b7fd0e6d18939d4ff"
+        test -z "$(git status --porcelain)"
+        python3 - <<'PYHASH'
+        import hashlib, subprocess
+        expected = {'.github/workflows/pr-quick.yml': '147e80457dbb7d521264521cfbe2e4dd048663276e6cf80a0b9e8c994e8d39fc', '.github/workflows/pr-extended.yml': '2490d2239113a02cd0ed8da45d63b9eacffa573f7f13ec6e62f7552bec271d35', '.github/workflows/codec-compatibility.yml': '750d773a930f4357314700e17bda0df78894bc372aeb9bec606694b01d67cec4', '.github/workflows/pr-fast.yml': '5908d85ddc3f233a54f7f57d4f2266f6d1ed7c7665885d7b2a15eeefc5492cca'}
+        for path, digest in expected.items():
+            actual = hashlib.sha256(subprocess.check_output(['git', 'show', 'HEAD:' + path])).hexdigest()
+            if actual != digest:
+                raise SystemExit(f'Canonical blob mismatch: {path}')
+            print(path, actual)
+        PYHASH
+    - name: Setup canonical .NET CI environment
+      uses: ./.github/actions/setup-dotnet
+    - name: Prepare exact baseline and record provenance
+      shell: bash
+      run: |
+        set -euo pipefail
+        output="$GITHUB_WORKSPACE/artifacts/validation/issue775-oneway-abba"
+        mkdir -p "$output"
+        git fetch --no-tags origin "$BASE_SHA"
+        git worktree add --detach "$RUNNER_TEMP/issue775-abba-base" "$BASE_SHA"
+        test "$(git -C "$RUNNER_TEMP/issue775-abba-base" rev-parse HEAD)" = "$BASE_SHA"
+        test -z "$(git -C "$RUNNER_TEMP/issue775-abba-base" status --porcelain)"
+        git diff --exit-code "$BASE_SHA" "$PRODUCTION_SHA" -- test/SharpLink.Benchmarks eng/perf eng/run-generated-abi-performance-evidence.sh > "$output/harness-diff.txt"
+        printf 'base_sha=%s\nproduction_sha=%s\nworkflow_definition_sha=%s\nworkflow_ref=%s\nrun_id=%s\nrun_attempt=%s\n' "$BASE_SHA" "$PRODUCTION_SHA" "$GITHUB_SHA" "$GITHUB_WORKFLOW_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$output/provenance.txt"
+        printf '%s\n' 'order=base head head base head base base head' 'invocations=4096; warmups=6; actual_iterations=15; launches_per_timing_slot=3' 'scope=sender-side OneWay call completion; no per-operation receiver acknowledgement/drain' 'PayloadSize labels use identical OneWay arguments; pool MinConnections=MaxConnections=1' 'profiled timing is excluded from ABBA comparisons' >> "$output/provenance.txt"
+        dotnet --info > "$output/dotnet-info.txt"
+        uname -a > "$output/uname.txt"
+        lscpu > "$output/cpu.txt"
+        cpu_list="$(python3 -c 'import os; c=sorted(os.sched_getaffinity(0)); assert len(c)>=2; print(",".join(map(str,c[:2])))')"
+        printf 'cpu_affinity=%s\nDOTNET_PROCESSOR_COUNT=2\n' "$cpu_list" >> "$output/provenance.txt"
+        echo "ISSUE775_CPU_LIST=$cpu_list" >> "$GITHUB_ENV"
+        echo 'DOTNET_PROCESSOR_COUNT=2' >> "$GITHUB_ENV"
+    - name: Build both exact revisions before timing
+      shell: bash
+      run: |
+        set -euo pipefail
+        for label in base head; do
+          checkout="$GITHUB_WORKSPACE"; sha="$PRODUCTION_SHA"
+          if [[ "$label" == base ]]; then checkout="$RUNNER_TEMP/issue775-abba-base"; sha="$BASE_SHA"; fi
+          output="$GITHUB_WORKSPACE/artifacts/validation/issue775-oneway-abba/build/$label"
+          mkdir -p "$output"
+          (
+            cd "$checkout"
+            test "$(git rev-parse HEAD)" = "$sha"
+            test -z "$(git status --porcelain)"
+            printf 'build_sha=%s\n' "$sha" > "$output/build-commit.txt"
+            printf '%s\n' 'dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj' 'dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -m:1 /nodeReuse:false -v minimal' > "$output/commands.txt"
+            dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj 2>&1 | tee "$output/restore.log"
+            dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -m:1 /nodeReuse:false -v minimal 2>&1 | tee "$output/build.log"
+            sha256sum test/SharpLink.Benchmarks/UnaryBenchmarks.cs test/SharpLink.Benchmarks/BenchmarkEnvironment.cs test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll > "$output/input-output-sha256.txt"
+            dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --help > "$output/benchmark-help.txt"
+          )
+        done
+    - name: Measure balanced ABBA then BAAB with canonical bounded batches
+      shell: bash
+      run: |
+        set -euo pipefail
+        order=(base head head base head base base head)
+        phase_deadline=$((SECONDS+1080))
+        for index in "${!order[@]}"; do
+          label="${order[$index]}"; slot="$(printf '%02d-%s' "$((index+1))" "$label")"
+          checkout="$GITHUB_WORKSPACE"; sha="$PRODUCTION_SHA"
+          if [[ "$label" == base ]]; then checkout="$RUNNER_TEMP/issue775-abba-base"; sha="$BASE_SHA"; fi
+          output="$GITHUB_WORKSPACE/artifacts/validation/issue775-oneway-abba/timing/$slot"
+          mkdir -p "$output"
+          printf 'slot=%s\nrevision=%s\nsource_sha=%s\n' "$slot" "$label" "$sha" > "$output/provenance.txt"
+          remaining=$((phase_deadline-SECONDS))
+          if ((remaining<=0)); then printf '124\n' > "$output/process-exit-code.txt"; echo 'Timing phase budget exhausted; required slot incomplete.' > "$output/benchmark.log"; continue; fi
+          ((remaining>240)) && remaining=240
+          (
+            cd "$checkout"
+            export SHARPLINK_BENCHMARK_SHA="$sha"
+            { date -u +'%Y-%m-%dT%H:%M:%S.%NZ'; cat /proc/loadavg; } > "$output/host-before.txt"
+            command=(timeout "${remaining}s" taskset -c "$ISSUE775_CPU_LIST" dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build --no-restore -- --filter '*UnaryBenchmarks.Rpc_OnewayPublish*' --launchCount 3 --warmupCount 6 --iterationCount 15 --invocationCount 4096 --exporters json --artifacts "$output/bdn" --keepFiles --buildTimeout 180)
+            printf '%q ' "${command[@]}" > "$output/command.txt"; printf '\n' >> "$output/command.txt"
+            set +e
+            "${command[@]}" 2>&1 | tee "$output/benchmark.log"
+            status=${PIPESTATUS[0]}
+            set -e
+            printf '%s\n' "$status" > "$output/process-exit-code.txt"
+            { date -u +'%Y-%m-%dT%H:%M:%S.%NZ'; cat /proc/loadavg; } > "$output/host-after.txt"
+          )
+        done
+    - name: Require all unprofiled launches and summarize balanced blocks
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PYVALIDATE'
+        import json, math, os, re, statistics
+        from pathlib import Path
+        root=Path(os.environ['GITHUB_WORKSPACE'])/'artifacts/validation/issue775-oneway-abba'
+        order=['base','head','head','base','head','base','base','head']; rows=[]
+        def finite(v): return isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v)
+        for index,label in enumerate(order,1):
+            slot=f'{index:02d}-{label}'; d=root/'timing'/slot
+            if (d/'process-exit-code.txt').read_text().strip()!='0': raise SystemExit(f'{slot}: process failed or timed out')
+            log=(d/'benchmark.log').read_text()
+            if len(re.findall(r'Benchmark Process \d+ has exited with code 0\.',log))!=6: raise SystemExit(f'{slot}: incomplete subprocesses')
+            reports=list((d/'bdn/results').glob('*UnaryBenchmarks-report-full*.json'))
+            if len(reports)!=1: raise SystemExit(f'{slot}: missing or duplicate full report')
+            data=json.loads(reports[0].read_text()); benchmarks=data.get('Benchmarks',[])
+            if len(benchmarks)!=2 or {b.get('Parameters') for b in benchmarks}!={'PayloadSize=16','PayloadSize=256'}: raise SystemExit(f'{slot}: wrong parameter rows')
+            for b in benchmarks:
+                s=b.get('Statistics') or {}; m=b.get('Memory') or {}; samples=b.get('Measurements') or []
+                if b.get('Method')!='Rpc_OnewayPublish' or not finite(s.get('Mean')) or s['Mean']<=0 or not finite(s.get('N')) or s['N']<=0: raise SystemExit(f'{slot}: invalid timing')
+                if not finite(m.get('BytesAllocatedPerOperation')) or m['BytesAllocatedPerOperation']<0 or m.get('TotalOperations',0)<=0: raise SystemExit(f'{slot}: invalid memory diagnostic')
+                actual=[x for x in samples if x.get('IterationMode')=='Workload' and x.get('IterationStage')=='Actual']
+                results=[x for x in samples if x.get('IterationMode')=='Workload' and x.get('IterationStage')=='Result']
+                if {x.get('LaunchIndex') for x in actual}!={1,2,3}: raise SystemExit(f'{slot}: missing actual launch')
+                launches=[]
+                for launch in (1,2,3):
+                    a=[x for x in actual if x['LaunchIndex']==launch]; r=[x for x in results if x['LaunchIndex']==launch]
+                    if len(a)!=15 or {x.get('IterationIndex') for x in a}!=set(range(1,16)) or any(x.get('Operations')!=4096 or not finite(x.get('Nanoseconds')) or x['Nanoseconds']<=0 for x in a): raise SystemExit(f'{slot}: incomplete actual iterations')
+                    if not r or any(x.get('Operations')!=4096 or not finite(x.get('Nanoseconds')) or x['Nanoseconds']<=0 for x in r): raise SystemExit(f'{slot}: missing completed result samples')
+                    av=[x['Nanoseconds']/x['Operations'] for x in a]; rv=[x['Nanoseconds']/x['Operations'] for x in r]
+                    launches.append({'launch':launch,'actualMeanNs':statistics.mean(av),'actualMedianNs':statistics.median(av),'actualMinNs':min(av),'actualMaxNs':max(av),'resultMeanNs':statistics.mean(rv),'resultMedianNs':statistics.median(rv),'retainedResultCount':len(rv)})
+                rows.append({'slot':index,'revision':label,'parameterLabel':b['Parameters'],'statistics':s,'memory':m,'launches':launches,'slotMedianLaunchNs':statistics.median(x['actualMedianNs'] for x in launches),'host':data['HostEnvironmentInfo']})
+        comparisons=[]
+        for parameter in ('PayloadSize=16','PayloadSize=256'):
+            p=[r for r in rows if r['parameterLabel']==parameter]
+            blocks=[]
+            for lo,hi in ((1,4),(5,8)):
+                q=[r for r in p if lo<=r['slot']<=hi]
+                med={label:statistics.median(r['slotMedianLaunchNs'] for r in q if r['revision']==label) for label in ('base','head')}
+                blocks.append({'slots':[lo,hi],**med,'headBaseRatio':med['head']/med['base']})
+            med={label:statistics.median(r['slotMedianLaunchNs'] for r in p if r['revision']==label) for label in ('base','head')}
+            comparisons.append({'parameterLabel':parameter,'blocks':blocks,'medianBaseNs':med['base'],'medianHeadNs':med['head'],'headBaseRatio':med['head']/med['base']})
+        summary={'executionIntegrity':'passed','actualSenderOperations':2949120,'scope':'sender call completion, not receiver delivery; labels have identical OneWay arguments','timingAcceptance':'No new timing budget; inspect all blocks and dispersion before concluding no regression.','comparisons':comparisons,'rows':rows}
+        (root/'unprofiled-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+        print(json.dumps({'executionIntegrity':'passed','actualSenderOperations':2949120,'comparisons':comparisons},indent=2))
+        PYVALIDATE
+    - name: Collect one separate EventPipe diagnostic pair after timing
+      shell: bash
+      run: |
+        set -euo pipefail
+        root="$GITHUB_WORKSPACE/artifacts/validation/issue775-oneway-abba"
+        for label in base head; do grep -q 'EP/ETW' "$root/build/$label/benchmark-help.txt"; done
+        phase_deadline=$((SECONDS+360))
+        for label in head base; do
+          checkout="$GITHUB_WORKSPACE"; sha="$PRODUCTION_SHA"
+          if [[ "$label" == base ]]; then checkout="$RUNNER_TEMP/issue775-abba-base"; sha="$BASE_SHA"; fi
+          output="$root/diagnostics/$label"; mkdir -p "$output"
+          printf 'source_sha=%s\nscope=EventPipe CPU sampling diagnostic; exclude all profiled timings from ABBA comparison\n' "$sha" > "$output/provenance.txt"
+          remaining=$((phase_deadline-SECONDS))
+          if ((remaining<=0)); then printf '124\n' > "$output/process-exit-code.txt"; echo 'Diagnostic phase budget exhausted.' > "$output/benchmark.log"; continue; fi
+          ((remaining>240)) && remaining=240
+          (
+            cd "$checkout"
+            export SHARPLINK_BENCHMARK_SHA="$sha"
+            command=(timeout "${remaining}s" taskset -c "$ISSUE775_CPU_LIST" dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build --no-restore -- --filter '*UnaryBenchmarks.Rpc_OnewayPublish*' --launchCount 1 --warmupCount 6 --iterationCount 15 --invocationCount 4096 --profiler EP --exporters json --artifacts "$output/bdn" --keepFiles --buildTimeout 180)
+            printf '%q ' "${command[@]}" > "$output/command.txt"; printf '\n' >> "$output/command.txt"
+            set +e
+            "${command[@]}" 2>&1 | tee "$output/benchmark.log"
+            status=${PIPESTATUS[0]}
+            set -e
+            printf '%s\n' "$status" > "$output/process-exit-code.txt"
+          )
+        done
+    - name: Require complete diagnostic executions and nonempty traces
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'PYPROFILE'
+        import json, os, re
+        from pathlib import Path
+        root=Path(os.environ['GITHUB_WORKSPACE'])/'artifacts/validation/issue775-oneway-abba'; manifest=[]
+        for label in ('head','base'):
+            d=root/'diagnostics'/label
+            if (d/'process-exit-code.txt').read_text().strip()!='0': raise SystemExit(f'{label}: profiler failed or timed out')
+            log=(d/'benchmark.log').read_text()
+            if len(re.findall(r'Benchmark Process \d+ has exited with code 0\.',log))!=2: raise SystemExit(f'{label}: incomplete profiled subprocesses')
+            if any(message in log for message in ('potentially broken trace','exception occurred during reading trace stream','exception occurred during converting')): raise SystemExit(f'{label}: invalid trace')
+            reports=list((d/'bdn/results').glob('*UnaryBenchmarks-report-full*.json'))
+            if len(reports)!=1: raise SystemExit(f'{label}: missing diagnostic JSON')
+            rows=json.loads(reports[0].read_text()).get('Benchmarks',[])
+            if len(rows)!=2 or {r.get('Parameters') for r in rows}!={'PayloadSize=16','PayloadSize=256'}: raise SystemExit(f'{label}: missing diagnostic rows')
+            for row in rows:
+                a=[x for x in row.get('Measurements',[]) if x.get('IterationMode')=='Workload' and x.get('IterationStage')=='Actual']
+                if not row.get('Statistics') or len(a)!=15 or any(x.get('LaunchIndex')!=1 or x.get('Operations')!=4096 for x in a): raise SystemExit(f'{label}: incomplete diagnostic workload')
+            traces=list((d/'bdn').rglob('*.nettrace')); speeds=list((d/'bdn').rglob('*.speedscope.json'))
+            if len(traces)!=2 or len(speeds)!=2 or any(p.stat().st_size==0 for p in traces+speeds): raise SystemExit(f'{label}: missing or empty traces')
+            for p in speeds:
+                data=json.loads(p.read_text())
+                if not data.get('shared',{}).get('frames') or not any(profile.get('samples') or profile.get('events') for profile in data.get('profiles',[])): raise SystemExit(f'{label}: no sampled stack data')
+            manifest.append({'revision':label,'traceFiles':[str(p.relative_to(root)) for p in traces+speeds]})
+        (root/'diagnostic-manifest.json').write_text(json.dumps({'scope':'CPU sampling only; profiled timing excluded from ABBA comparisons','profiles':manifest},indent=2)+'\n')
+        print(json.dumps(manifest,indent=2))
+        PYPROFILE
+    - name: Always upload raw timing, diagnostic and provenance evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: issue775-oneway-abba-3aedcfc-${{ github.run_id }}-${{ github.run_attempt }}
+        path: artifacts/validation/issue775-oneway-abba
+        if-no-files-found: error
+        retention-days: 30
