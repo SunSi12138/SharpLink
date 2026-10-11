@@ -1,0 +1,316 @@
+name: PR754 Allocation Attribution Diagnostic
+on:
+  workflow_dispatch:
+  push:
+    branches: [validation/pr754-allocation-diagnostic]
+    paths: [.github/workflows/pr754-allocation-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout diagnostic workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up recorded performance SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.112
+      - name: Materialize Program.cs
+        shell: bash
+        run: |
+          set -euo pipefail
+          HARNESS="$RUNNER_TEMP/pr754-allocation-diagnostic"
+          mkdir -p "$HARNESS"
+          cat > "$HARNESS/Program.cs" <<'DIAGNOSTIC_EOF_Program_cs'
+          using System;
+          using System.Collections.Concurrent;
+          using System.Collections.Generic;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection;
+          using System.Reflection.Emit;
+          using System.Runtime.CompilerServices;
+          using System.Runtime.InteropServices;
+          using System.Text.Json;
+          using System.Threading;
+          using System.Threading.Tasks;
+          using SharpLink.Server;
+          
+          internal static class Program
+          {
+              private const BindingFlags All = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
+              private sealed record AllocationSample(int Sample, int Operations, long Bytes, double BytesPerOperation);
+              private sealed record FieldRow(string Name, string Type, int StorageBytes);
+              private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
+          
+              private static void Main(string[] args)
+              {
+                  if (args.Length != 3) throw new ArgumentException("Expected source SHA, source tree and output JSON.");
+                  var server = typeof(SharpLinkServerBuilder).Assembly;
+                  var callState = server.GetType("SharpLink.Server.ServerCallCancellationState", throwOnError: true)!;
+                  var resolved = server.GetType("SharpLink.Server.ResolvedMethodCall");
+                  var stack = new ConcurrentStack<object>();
+                  var token = new object();
+                  Action noOp = static () => { };
+                  Action stackCycle = () =>
+                  {
+                      stack.Push(token);
+                      if (!stack.TryPop(out var popped) || !ReferenceEquals(popped, token))
+                          throw new InvalidOperationException("Stack control lost its object.");
+                  };
+                  // DynamicMethod is compiled once before measurement. The measured loop performs no
+                  // reflection Invoke, object[] creation, argument boxing or delegate construction.
+                  var poolCycle = CreatePoolCycle(callState);
+                  var allocations = new[]
+                  {
+                      new { Name = "cached-noop-delegate", Scope = "Delegate-loop allocation control", Samples = MeasureAction(noOp) },
+                      new { Name = "ConcurrentStack-object-push-pop", Scope = "One real push/pop of a reused object; measures fresh node allocation", Samples = MeasureAction(stackCycle) },
+                      new { Name = "real-ServerCallCancellationState-rent-dispose", Scope = "Warmed actual pool; no deadline/cancellation tokens; non-cooperative; includes actual ReturnCore and ConcurrentStack.Push", Samples = MeasureAction(poolCycle) }
+                  };
+                  var layouts = new List<object>();
+                  foreach (var target in new[]
+                  {
+                      ("SharpLink.Server.ServerGeneratedBridge", "PumpOutboundStreamAsync"),
+                      ("SharpLink.Server.SharpLinkServer", "AwaitDispatchRpcNoReturnAsync"),
+                      ("SharpLink.Server.SharpLinkServer", "AwaitDispatchRpcAsync")
+                  })
+                  {
+                      var declaringType = server.GetType(target.Item1, throwOnError: true)!;
+                      var method = declaringType.GetMethods(All).Single(m => m.Name == target.Item2);
+                      var attribute = method.GetCustomAttribute<AsyncStateMachineAttribute>() ?? throw new InvalidOperationException("Async-state attribute missing.");
+                      var state = attribute.StateMachineType;
+                      if (state.ContainsGenericParameters)
+                      {
+                          if (state.GetGenericArguments().Length != 1) throw new InvalidOperationException("Unexpected generic state-machine shape.");
+                          state = state.MakeGenericType(typeof(byte[]));
+                      }
+                      var boxDefinition = typeof(AsyncTaskMethodBuilder<>).GetNestedTypes(All)
+                          .Single(t => t.Name == "AsyncStateMachineBox`1");
+                      var voidResult = typeof(Task).Assembly.GetType("System.Threading.Tasks.VoidTaskResult", throwOnError: true)!;
+                      var box = boxDefinition.MakeGenericType(voidResult, state);
+                      layouts.Add(new
+                      {
+                          sourceMethod = target.Item1 + "." + target.Item2,
+                          stateMachineType = state.FullName,
+                          stateMachineBytes = SizeOf(state),
+                          fields = state.GetFields(All).Where(f => !f.IsStatic).OrderBy(f => f.MetadataToken)
+                              .Select(f => new FieldRow(f.Name, f.FieldType.ToString(), SizeOf(f.FieldType))).ToArray(),
+                          moveNextIlBytes = state.GetMethod("MoveNext", All)!.GetMethodBody()!.GetILAsByteArray()!.Length,
+                          runtimeBoxType = box.ToString(),
+                          boxAllocationProbe = MeasureUninitializedObject(box),
+                          scope = "Actual compiled state layout and actual closed runtime box allocation size only; constructor-free objects are never scheduled; this does not count boxes on a real RPC path"
+                      });
+                  }
+                  var report = new
+                  {
+                      sourceCommit = args[0], sourceTree = args[1], utc = DateTimeOffset.UtcNow,
+                      runtime = RuntimeInformation.FrameworkDescription, architecture = RuntimeInformation.ProcessArchitecture.ToString(),
+                      host = Environment.MachineName, cpuCount = Environment.ProcessorCount,
+                      tieredCompilation = Environment.GetEnvironmentVariable("DOTNET_TieredCompilation"),
+                      serverAssembly = server.FullName, serverModuleVersionId = server.ManifestModule.ModuleVersionId,
+                      resolvedMethodCallBytes = resolved is null ? (int?)null : SizeOf(resolved),
+                      callStateFields = callState.GetFields(All).Where(f => !f.IsStatic).OrderBy(f => f.MetadataToken)
+                          .Select(f => new FieldRow(f.Name, f.FieldType.ToString(), SizeOf(f.FieldType))).ToArray(),
+                      allocations, layouts,
+                      uninitializedObjectControl = MeasureUninitializedObject(typeof(object)),
+                      limits = "Synchronous current-thread allocation only. No network workload or per-RPC occurrence count. Pooled state object growth is separate from steady-state pool-cycle allocation. Do not add box-size deltas to pool-cycle B/op without proving their execution frequency."
+                  };
+                  var output = Path.GetFullPath(args[2]);
+                  Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+                  File.WriteAllText(output, JsonSerializer.Serialize(report, Json));
+                  Console.WriteLine(JsonSerializer.Serialize(report, Json));
+              }
+          
+              private static int SizeOf(Type type)
+                  => (int)typeof(Program).GetMethod(nameof(SizeOfGeneric), BindingFlags.NonPublic | BindingFlags.Static)!
+                      .MakeGenericMethod(type).Invoke(null, null)!;
+              private static int SizeOfGeneric<T>() => Unsafe.SizeOf<T>();
+          
+              private static Action CreatePoolCycle(Type callState)
+              {
+                  var rent = callState.GetMethods(All).Single(m => m.Name == "Rent" && m.GetParameters().Length == 6);
+                  var p = rent.GetParameters();
+                  if (p[0].ParameterType != typeof(long) || p[2].ParameterType != typeof(TimeProvider) ||
+                      p[3].ParameterType != typeof(CancellationToken) || p[4].ParameterType != typeof(CancellationToken) || p[5].ParameterType != typeof(bool))
+                      throw new InvalidOperationException("Unexpected Rent overload.");
+                  var method = new DynamicMethod("Pr754RealPoolCycle", typeof(void), Type.EmptyTypes, callState.Module, skipVisibility: true);
+                  var il = method.GetILGenerator();
+                  var deadline = il.DeclareLocal(p[1].ParameterType);
+                  var cancellation = il.DeclareLocal(typeof(CancellationToken));
+                  il.Emit(OpCodes.Ldloca, deadline); il.Emit(OpCodes.Initobj, p[1].ParameterType);
+                  il.Emit(OpCodes.Ldloca, cancellation); il.Emit(OpCodes.Initobj, typeof(CancellationToken));
+                  il.Emit(OpCodes.Ldc_I8, 1L);
+                  il.Emit(OpCodes.Ldloc, deadline);
+                  il.Emit(OpCodes.Call, typeof(TimeProvider).GetProperty(nameof(TimeProvider.System))!.GetMethod!);
+                  il.Emit(OpCodes.Ldloc, cancellation); il.Emit(OpCodes.Ldloc, cancellation);
+                  il.Emit(OpCodes.Ldc_I4_0);
+                  il.Emit(OpCodes.Call, rent);
+                  il.Emit(OpCodes.Callvirt, typeof(IDisposable).GetMethod(nameof(IDisposable.Dispose))!);
+                  il.Emit(OpCodes.Ret);
+                  return (Action)method.CreateDelegate(typeof(Action));
+              }
+          
+              private static AllocationSample[] MeasureAction(Action action)
+              {
+                  for (var i = 0; i < 2048; i++) action();
+                  const int operations = 100000;
+                  var samples = new AllocationSample[7];
+                  for (var sample = 0; sample < samples.Length; sample++)
+                  {
+                      var before = GC.GetAllocatedBytesForCurrentThread();
+                      for (var i = 0; i < operations; i++) action();
+                      var bytes = GC.GetAllocatedBytesForCurrentThread() - before;
+                      samples[sample] = new(sample, operations, bytes, bytes / (double)operations);
+                  }
+                  GC.KeepAlive(action);
+                  return samples;
+              }
+          
+              private static AllocationSample[] MeasureUninitializedObject(Type type)
+              {
+                  // Never invoke these uninitialized objects. Retain them only until allocation is measured.
+                  const int operations = 2048;
+                  var objects = new object[operations];
+                  for (var i = 0; i < 128; i++) objects[i] = RuntimeHelpers.GetUninitializedObject(type);
+                  var samples = new AllocationSample[7];
+                  for (var sample = 0; sample < samples.Length; sample++)
+                  {
+                      var before = GC.GetAllocatedBytesForCurrentThread();
+                      for (var i = 0; i < operations; i++) objects[i] = RuntimeHelpers.GetUninitializedObject(type);
+                      var bytes = GC.GetAllocatedBytesForCurrentThread() - before;
+                      samples[sample] = new(sample, operations, bytes, bytes / (double)operations);
+                  }
+                  GC.KeepAlive(objects);
+                  return samples;
+              }
+          }
+          DIAGNOSTIC_EOF_Program_cs
+      - name: Materialize Pr754AllocationDiagnostic.csproj
+        shell: bash
+        run: |
+          set -euo pipefail
+          HARNESS="$RUNNER_TEMP/pr754-allocation-diagnostic"
+          mkdir -p "$HARNESS"
+          cat > "$HARNESS/Pr754AllocationDiagnostic.csproj" <<'DIAGNOSTIC_EOF_Pr754AllocationDiagnostic_csproj'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <IsPackable>false</IsPackable>
+            </PropertyGroup>
+            <ItemGroup>
+              <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+            </ItemGroup>
+          </Project>
+          DIAGNOSTIC_EOF_Pr754AllocationDiagnostic_csproj
+      - name: Materialize run.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          HARNESS="$RUNNER_TEMP/pr754-allocation-diagnostic"
+          mkdir -p "$HARNESS"
+          cat > "$HARNESS/run.sh" <<'DIAGNOSTIC_EOF_run_sh'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ROOT="$GITHUB_WORKSPACE/artifacts/pr754-allocation-diagnostic"
+          HARNESS="$RUNNER_TEMP/pr754-allocation-diagnostic"
+          mkdir -p "$ROOT"/{raw,logs,source,environment}
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1
+          uname -a > "$ROOT/environment/uname.txt"
+          lscpu > "$ROOT/environment/lscpu.txt"
+          dotnet --info > "$ROOT/environment/dotnet-info.txt"
+          SDK="$(dotnet --version)"
+          printf '%s\n' "$SDK" > "$ROOT/environment/effective-sdk.txt"
+          CPU="$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')"
+          printf '%s\n' "$CPU" > "$ROOT/environment/cpu-affinity.txt"
+          sha256sum "$HARNESS"/* > "$ROOT/source/harness-sha256.txt"
+          cp "$HARNESS/Program.cs" "$HARNESS/Pr754AllocationDiagnostic.csproj" "$ROOT/source/"
+          for label in baseline candidate; do
+            sha=9fb2744300ee816c973e447a3f8e55466acf7f38
+            [[ "$label" = candidate ]] && sha=c8f0f2d59d52b1ec4ccd2234f184c8403bc822f3
+            work="$RUNNER_TEMP/pr754-diagnostic-$label"
+            git cat-file -e "$sha^{commit}"
+            git worktree add --detach "$work" "$sha"
+            [ "$(git -C "$work" rev-parse HEAD)" = "$sha" ]
+            git -C "$work" show -s --format='%H %T %P%n%s' HEAD > "$ROOT/source/$label.txt"
+            mkdir -p "$work/test/Pr754AllocationDiagnostic"
+            cp "$HARNESS/Program.cs" "$HARNESS/Pr754AllocationDiagnostic.csproj" "$work/test/Pr754AllocationDiagnostic/"
+            [ -z "$(git -C "$work" diff --name-only)" ]
+            (
+              cd "$work"
+              [ "$(dotnet --version)" = "$SDK" ]
+              dotnet restore test/Pr754AllocationDiagnostic/Pr754AllocationDiagnostic.csproj
+              dotnet build test/Pr754AllocationDiagnostic/Pr754AllocationDiagnostic.csproj --no-restore -c Release -m:1 /nodeReuse:false -v minimal
+            ) 2>&1 | tee "$ROOT/logs/$label-build.log"
+            bin="$work/test/Pr754AllocationDiagnostic/bin/Release/net10.0"
+            mkdir -p "$ROOT/binaries/$label"
+            cp "$bin/SharpLink.Server.dll" "$bin/SharpLink.Runtime.dll" "$bin/SharpLink.Abstractions.dll" "$bin/Pr754AllocationDiagnostic.dll" "$ROOT/binaries/$label/"
+            sha256sum "$ROOT/binaries/$label/"* > "$ROOT/source/$label-binaries-sha256.txt"
+          done
+          for label in baseline candidate; do
+            work="$RUNNER_TEMP/pr754-diagnostic-$label"
+            sha="$(git -C "$work" rev-parse HEAD)"
+            tree="$(git -C "$work" rev-parse HEAD^{tree})"
+            DOTNET_TieredCompilation=0 DOTNET_TieredPGO=0 taskset -c "$CPU" \
+              dotnet "$work/test/Pr754AllocationDiagnostic/bin/Release/net10.0/Pr754AllocationDiagnostic.dll" \
+              "$sha" "$tree" "$ROOT/raw/$label.json" > "$ROOT/logs/$label-diagnostic.log"
+          done
+          python3 "$HARNESS/summarize.py" "$ROOT"
+          cat "$ROOT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          DIAGNOSTIC_EOF_run_sh
+      - name: Materialize summarize.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          HARNESS="$RUNNER_TEMP/pr754-allocation-diagnostic"
+          mkdir -p "$HARNESS"
+          cat > "$HARNESS/summarize.py" <<'DIAGNOSTIC_EOF_summarize_py'
+          import json,pathlib,statistics,sys
+          root=pathlib.Path(sys.argv[1]);docs={x:json.loads((root/'raw'/f'{x}.json').read_text()) for x in ['baseline','candidate']}
+          assert docs['baseline']['sourceCommit']=='9fb2744300ee816c973e447a3f8e55466acf7f38'
+          assert docs['candidate']['sourceCommit']=='c8f0f2d59d52b1ec4ccd2234f184c8403bc822f3'
+          assert docs['baseline']['runtime']==docs['candidate']['runtime']
+          assert docs['baseline']['host']==docs['candidate']['host']
+          lines=['# PR754 allocation attribution diagnostic','',f"Runtime: {docs['baseline']['runtime']}; host: {docs['baseline']['host']}",'',
+                 '## Real warmed pool-cycle allocation','',
+                 'Current-thread allocation over seven 100,000-operation batches. No-op is a cached delegate control. Pool cycles call the real Rent/Dispose code through one precompiled delegate; no reflection invocation or argument boxing is inside the loop. This is an isolated mechanism diagnostic, not per-RPC allocation frequency.','',
+                 '| Case | Baseline B/op median [min,max] | Candidate B/op median [min,max] |','|---|---:|---:|']
+          for i,item in enumerate(docs['baseline']['allocations']):
+           values={label:[s['bytesPerOperation'] for s in d['allocations'][i]['samples']] for label,d in docs.items()}
+           assert item['name']==docs['candidate']['allocations'][i]['name']
+           assert all(len(v)==7 for v in values.values())
+           if item['name']=='cached-noop-delegate': assert all(x==0 for v in values.values() for x in v)
+           fmt=lambda label:f"{statistics.median(values[label]):.3f} [{min(values[label]):.3f}, {max(values[label]):.3f}]"
+           lines.append(f"| {item['name']} | {fmt('baseline')} | {fmt('candidate')} |")
+          lines+=['','## Actual compiled layouts; object-size probe only','',
+                  'State-machine field lists are in raw JSON. Box sizes below come from constructor-free instances of the real closed runtime type, never scheduled or invoked. They do not prove that a box is allocated on any given streaming call.','',
+                  '| Async method | Baseline → candidate state bytes | Baseline → candidate box-allocation bytes |','|---|---:|---:|']
+          for b,c in zip(docs['baseline']['layouts'],docs['candidate']['layouts']):
+           assert b['sourceMethod']==c['sourceMethod']
+           bb=statistics.median(s['bytesPerOperation'] for s in b['boxAllocationProbe']);cb=statistics.median(s['bytesPerOperation'] for s in c['boxAllocationProbe'])
+           lines.append(f"| {b['sourceMethod']} | {b['stateMachineBytes']} → {c['stateMachineBytes']} | {bb:.0f} → {cb:.0f} |")
+          lines+=['',f"Candidate ResolvedMethodCall managed size: {docs['candidate']['resolvedMethodCallBytes']} bytes.",'',
+                  '## Source-backed interpretation boundary','',
+                  '- The tiny Server1x16 iterator awaits only Task.CompletedTask; client timeout is disabled and no cancellation token is passed. The generated server-stream request therefore can use flags=None, and initial flow-control credit permits synchronous completion.',
+                  '- Baseline initially skips call-state creation for this non-cooperative static call, adding it if invocation suspends. Candidate requires call state before every outbound stream to preserve the original registration snapshot.',
+                  '- Returning a tracked state calls ConcurrentStack.Push. The warmed-cycle measurement quantifies that mechanism separately from async-box growth.',
+                  '- No real Server1x16 invocation completion counts or allocation stacks were collected here. Do not claim exclusive causal attribution or add separate mechanism costs without proving their occurrence frequencies.',
+                  '- No production code was changed. Source SHAs, SDK/CPU details, raw samples, reflected fields and inspected binaries are retained.']
+          (root/'summary.md').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          DIAGNOSTIC_EOF_summarize_py
+      - name: Build exact sources and inspect allocation mechanisms
+        shell: bash
+        run: bash "$RUNNER_TEMP/pr754-allocation-diagnostic/run.sh"
+      - name: Upload raw diagnostic and binaries
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr754-allocation-diagnostic-${{ github.run_id }}
+          path: artifacts/pr754-allocation-diagnostic
+          if-no-files-found: error
+          retention-days: 14
