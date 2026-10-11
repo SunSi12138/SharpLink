@@ -298,28 +298,6 @@ internal static class RpcSessionExtensions
         }
     }
 
-    private static void SendTimestampFrame(RpcSession session, ProtocolV2FrameType type, long timestamp)
-    {
-        var writer = session.RentFrameWriter();
-        var ownsWriter = true;
-        try
-        {
-            using (writer.BeginPacketScope(type, ProtocolV2FrameFlags.None, 0))
-            {
-                var span = writer.GetSpan(sizeof(long));
-                BinaryPrimitives.WriteInt64LittleEndian(span, timestamp);
-                writer.Advance(sizeof(long));
-            }
-            ownsWriter = false;
-            session.SendPacket(writer);
-        }
-        finally
-        {
-            if (ownsWriter)
-                session.RuntimeContext.Buffers.Return(writer);
-        }
-    }
-
     private static async ValueTask SendTimestampFrameWithBackpressureAsync(
         RpcSession session,
         ProtocolV2FrameType type,
