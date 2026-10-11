@@ -1,0 +1,723 @@
+{
+  "schema": "sharplink-issue735-D-evidence-index-v1",
+  "recordedDateUtc": "2026-10-11",
+  "meaning": "Frozen original source and local downloaded ZIP identities. V1/V2 are separate 432-process populations, never pooled. Every authoritative local ZIP verified against GitHub digest. Local execution and footprint are separate evidence layers.",
+  "artifacts": [
+    {
+      "runId": 38163383883,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38163383883",
+      "artifactId": 11711397350,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38163383883/artifacts/11711397350",
+      "artifactName": "issue735-baseline-3b1cb21467897ca36ec9d0f3e81e851d8b150ce4-attempt1",
+      "bytes": 155729,
+      "sha256": "3beb6f56998039795ea778c442756c98e3c710c66037a7886e3b655e1036166d",
+      "workflowHeadSha": "3b1cb21467897ca36ec9d0f3e81e851d8b150ce4",
+      "archivePath": "evidence/new/38163383883/baseline.zip"
+    },
+    {
+      "runId": 38163848907,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38163848907",
+      "artifactId": 11711725557,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38163848907/artifacts/11711725557",
+      "artifactName": "issue735-directional-a35ae087bfb3b5fb90e5e39da7439d71b3f96620-attempt1",
+      "bytes": 8127,
+      "sha256": "58107e6212ff6e3417d4943596953ba767a739857124c6242debd7b0a6b3d1f3",
+      "workflowHeadSha": "a35ae087bfb3b5fb90e5e39da7439d71b3f96620",
+      "archivePath": "evidence/new/38163848907/directional-attribution-38163848907.zip"
+    },
+    {
+      "runId": 38163848907,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38163848907",
+      "artifactId": 11711417040,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38163848907/artifacts/11711417040",
+      "artifactName": "issue735-historical-a35ae087bfb3b5fb90e5e39da7439d71b3f96620-attempt1",
+      "bytes": 15579,
+      "sha256": "4aed08e1b70a3e802c6d89f970702e9afeb13e6f0938736fcc11c5b3ea4ef6c4",
+      "workflowHeadSha": "a35ae087bfb3b5fb90e5e39da7439d71b3f96620",
+      "archivePath": "evidence/new/38163848907/historical-attribution-38163848907.zip"
+    },
+    {
+      "runId": 38164483629,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164483629",
+      "artifactId": 11711328459,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164483629/artifacts/11711328459",
+      "artifactName": "issue735-directional-d7db8659a2ca4287d69e5c0d7f2d8b2dafe15089-attempt1",
+      "bytes": 8104,
+      "sha256": "df787d9e6373fa2eb40b54bc2110f5d3f0062c94e840b0c13ff4fbc956fe42a4",
+      "workflowHeadSha": "d7db8659a2ca4287d69e5c0d7f2d8b2dafe15089",
+      "archivePath": "evidence/new/38164483629/directional.zip"
+    },
+    {
+      "runId": 38164483629,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164483629",
+      "artifactId": 11710959866,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164483629/artifacts/11710959866",
+      "artifactName": "issue735-historical-d7db8659a2ca4287d69e5c0d7f2d8b2dafe15089-attempt1",
+      "bytes": 15517,
+      "sha256": "2714aee73c187a21ffa5c5f85e298d2c32a9d57131c65d500073e5b89bcae46d",
+      "workflowHeadSha": "d7db8659a2ca4287d69e5c0d7f2d8b2dafe15089",
+      "archivePath": "evidence/new/38164483629/historical.zip"
+    },
+    {
+      "runId": 38164814650,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164814650",
+      "artifactId": 11712895197,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164814650/artifacts/11712895197",
+      "artifactName": "issue735-rpc-nativeaot-a0dc552fe817780cc370329e2ef08355ddc6f82a-attempt1",
+      "bytes": 59128516,
+      "sha256": "7239a0e2fb2fec3a3452bc89b3d19308a71ee6d5acf03470e82c0c853c28a0de",
+      "workflowHeadSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "archivePath": "evidence/new/38164814650/nativeaot.zip"
+    },
+    {
+      "runId": 38164814650,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164814650",
+      "artifactId": 11712845476,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164814650/artifacts/11712845476",
+      "artifactName": "issue735-rpc-jit-pgo1-a0dc552fe817780cc370329e2ef08355ddc6f82a-attempt1",
+      "bytes": 35060967,
+      "sha256": "e82cb8c5d4b9fb2fdbb4c74dc1377dfe37b33fe79a1f20596d46c8a66478f6b4",
+      "workflowHeadSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "archivePath": "evidence/new/38164814650/d-v1-jit-pgo1-original.zip"
+    },
+    {
+      "runId": 38164814650,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164814650",
+      "artifactId": 11712571300,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38164814650/artifacts/11712571300",
+      "artifactName": "issue735-rpc-jit-pgo0-a0dc552fe817780cc370329e2ef08355ddc6f82a-attempt1",
+      "bytes": 35293477,
+      "sha256": "3b62a874b4534d8aa780a7cf452c4b941be068a85b77e27921c603e669ab0d74",
+      "workflowHeadSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "archivePath": "evidence/new/38164814650/d-v1-jit-pgo0-original.zip"
+    },
+    {
+      "runId": 38165237528,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165237528",
+      "artifactId": 11712636694,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165237528/artifacts/11712636694",
+      "artifactName": "issue735-rpc-jit-pgo1-45bbe67c6920bbdac2bc5071e39d54a7e21e746c-attempt1",
+      "bytes": 34720932,
+      "sha256": "9ca8145e63fd144f6b5fdc3a6149a0433b50dd5f1a741b53000140bda4f07074",
+      "workflowHeadSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "archivePath": "evidence/new/38165237528/jit-pgo1.zip"
+    },
+    {
+      "runId": 38165237528,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165237528",
+      "artifactId": 11712621588,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165237528/artifacts/11712621588",
+      "artifactName": "issue735-rpc-jit-pgo0-45bbe67c6920bbdac2bc5071e39d54a7e21e746c-attempt1",
+      "bytes": 34353310,
+      "sha256": "2bc869769bad692bd88ae5b3a7655c5aa53925db7cff00031d1fd70a57bea119",
+      "workflowHeadSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "archivePath": "evidence/new/38165237528/jit-pgo0.zip"
+    },
+    {
+      "runId": 38165237528,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165237528",
+      "artifactId": 11712142484,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165237528/artifacts/11712142484",
+      "artifactName": "issue735-rpc-nativeaot-45bbe67c6920bbdac2bc5071e39d54a7e21e746c-attempt1",
+      "bytes": 59168288,
+      "sha256": "d6e3f51e355a2efbc3e30c144a9a773365b1cc9bf67cf42791435f174407d175",
+      "workflowHeadSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "archivePath": "evidence/new/38165237528/nativeaot.zip"
+    },
+    {
+      "runId": 38165692785,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165692785",
+      "artifactId": 11712385605,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165692785/artifacts/11712385605",
+      "artifactName": "issue735-footprint-5872f8d844fde91e20f9c01d5e4f1bf4c49a2bce-attempt1",
+      "bytes": 4835,
+      "sha256": "d1952208529be9772fb31073c1da776e930034f154a68707d93d671115ae784b",
+      "workflowHeadSha": "5872f8d844fde91e20f9c01d5e4f1bf4c49a2bce",
+      "archivePath": "evidence/new/38165692785/footprint.zip"
+    },
+    {
+      "runId": 38165866902,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165866902",
+      "artifactId": 11711699580,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38165866902/artifacts/11711699580",
+      "artifactName": "issue735-footprint-8e3055e4b59295dd210f530c33dfbc7a2c096610-attempt1",
+      "bytes": 7586838,
+      "sha256": "1ff102f45ad3d15389a7ff4e9fd9f9be1c91d0fbdf384e5f79ab0d0b91c2fd7f",
+      "workflowHeadSha": "8e3055e4b59295dd210f530c33dfbc7a2c096610",
+      "archivePath": "evidence/new/38165866902/footprint.zip"
+    },
+    {
+      "runId": 38166410894,
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38166410894",
+      "artifactId": 11712012693,
+      "artifactUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/38166410894/artifacts/11712012693",
+      "artifactName": "issue735-lease-race-d421334ed1069c276ff86113a4b436399900f070-attempt1",
+      "bytes": 2047595,
+      "sha256": "e5dc1b0ae73bffc11f7f19f98ed0161bea5eaef71ab9486f98f46d3298b7811b",
+      "workflowHeadSha": "d421334ed1069c276ff86113a4b436399900f070",
+      "archivePath": "evidence/new/38166410894/lease-race.zip"
+    }
+  ],
+  "rpcRuntimePopulations": [
+    {
+      "runId": 38164814650,
+      "runtimePopulation": "nativeaot",
+      "planSha256": "506b9263dbbe1546616e906afe3a8c08aface63de1087349479dedf786dbc509",
+      "measurementRecipeSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+      "candidateSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "cpuAffinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "reportCount": 144,
+      "abProcesses": 128,
+      "aaProcesses": 16,
+      "sourceTrees": {
+        "A": {
+          "Mode": "baseline",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "RuntimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "MeasurementSourceSha": "12e46fb788f9e7ff11666afdcd2b55e77021abcbaffff571606452f99eb4a5dc",
+          "ControllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "4ba3788b374e4b88720ee958eb65196e5f838afe5cc7a6fc76511e4b7f57d346",
+          "binarySha256": "02b5fc07bf2a09fb3555b96e64a83d38f0f4bc7d4e34b9eaa3585d060c9d9de1"
+        },
+        "B": {
+          "Mode": "D-split-direction-gates",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+          "RuntimeSourceTreeSha": "1418036cea296b02c0bd856bdc6de7e531c071d1",
+          "MeasurementSourceSha": "12e46fb788f9e7ff11666afdcd2b55e77021abcbaffff571606452f99eb4a5dc",
+          "ControllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "f8f21d8998348aec7a94ab42e20f270aafc1ddfcd786e90aac9ff9270a29db34",
+          "binarySha256": "6c714749bc665330b8f36d3345b0a0470edab51bcffd32f6be0dff402532146d"
+        }
+      }
+    },
+    {
+      "runId": 38164814650,
+      "runtimePopulation": "jit-pgo0",
+      "planSha256": "3ec87d4d4ac549d69e8a6c3f055748994fab944362a23c58f997ed970be1a96c",
+      "measurementRecipeSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+      "candidateSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "cpuAffinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "reportCount": 144,
+      "abProcesses": 128,
+      "aaProcesses": 16,
+      "sourceTrees": {
+        "A": {
+          "Mode": "baseline",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "RuntimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "MeasurementSourceSha": "12e46fb788f9e7ff11666afdcd2b55e77021abcbaffff571606452f99eb4a5dc",
+          "ControllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "4ba3788b374e4b88720ee958eb65196e5f838afe5cc7a6fc76511e4b7f57d346",
+          "binarySha256": "b6e9a17f87301a5168f9b6b85108484ff3014e077b7e67fc57779861ccfa1474"
+        },
+        "B": {
+          "Mode": "D-split-direction-gates",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+          "RuntimeSourceTreeSha": "1418036cea296b02c0bd856bdc6de7e531c071d1",
+          "MeasurementSourceSha": "12e46fb788f9e7ff11666afdcd2b55e77021abcbaffff571606452f99eb4a5dc",
+          "ControllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "f8f21d8998348aec7a94ab42e20f270aafc1ddfcd786e90aac9ff9270a29db34",
+          "binarySha256": "b561dc225e3aa8e8da1b1bf06b3bb39e6257952f255ee2907ff05a98a4ff7f31"
+        }
+      }
+    },
+    {
+      "runId": 38164814650,
+      "runtimePopulation": "jit-pgo1",
+      "planSha256": "a97e727e318bd9461017b66ef38098ac23ec508ae1292d4cb1ff6364dd299c74",
+      "measurementRecipeSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+      "candidateSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+      "cpuAffinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "reportCount": 144,
+      "abProcesses": 128,
+      "aaProcesses": 16,
+      "sourceTrees": {
+        "A": {
+          "Mode": "baseline",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "RuntimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "MeasurementSourceSha": "12e46fb788f9e7ff11666afdcd2b55e77021abcbaffff571606452f99eb4a5dc",
+          "ControllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "4ba3788b374e4b88720ee958eb65196e5f838afe5cc7a6fc76511e4b7f57d346",
+          "binarySha256": "b6e9a17f87301a5168f9b6b85108484ff3014e077b7e67fc57779861ccfa1474"
+        },
+        "B": {
+          "Mode": "D-split-direction-gates",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "a0dc552fe817780cc370329e2ef08355ddc6f82a",
+          "RuntimeSourceTreeSha": "1418036cea296b02c0bd856bdc6de7e531c071d1",
+          "MeasurementSourceSha": "12e46fb788f9e7ff11666afdcd2b55e77021abcbaffff571606452f99eb4a5dc",
+          "ControllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "f8f21d8998348aec7a94ab42e20f270aafc1ddfcd786e90aac9ff9270a29db34",
+          "binarySha256": "b561dc225e3aa8e8da1b1bf06b3bb39e6257952f255ee2907ff05a98a4ff7f31"
+        }
+      }
+    },
+    {
+      "runId": 38165237528,
+      "runtimePopulation": "nativeaot",
+      "planSha256": "b0bce4a72a97ab78f79fff80ccf187262f954145a7ead7e5711108972bd6c85c",
+      "measurementRecipeSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+      "candidateSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "cpuAffinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "reportCount": 144,
+      "abProcesses": 128,
+      "aaProcesses": 16,
+      "sourceTrees": {
+        "A": {
+          "Mode": "baseline",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "RuntimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "MeasurementSourceSha": "f9e722beda390c1ed982ab747023bea9af63575d1effc9136d6c1eb3d6734652",
+          "ControllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "cf4dc6a03ade510fb6c41a882b952b76bc4916ffa5706a1c69254f1f09a9b1d3",
+          "binarySha256": "edab4fbb28c63f4db2edd388e11fec4979c929c4d2e23b890e2fb9f775162caa"
+        },
+        "B": {
+          "Mode": "D-split-direction-gates",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+          "RuntimeSourceTreeSha": "d60bc0721e9b9f6b2b15fe274d9328280bc5ffd9",
+          "MeasurementSourceSha": "f9e722beda390c1ed982ab747023bea9af63575d1effc9136d6c1eb3d6734652",
+          "ControllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "23b2ecc0063326253c5b9b90573d7ead09917c6df2bf364f401d4c9b8081fbea",
+          "binarySha256": "445626082b35b658527f043fd16f441eadc57562e45f99e12935279c02564fe5"
+        }
+      }
+    },
+    {
+      "runId": 38165237528,
+      "runtimePopulation": "jit-pgo0",
+      "planSha256": "caab3bbc76b6675df44d3ac527a84b25a90447c010aabfb3f23c9e0e1298ceba",
+      "measurementRecipeSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+      "candidateSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "cpuAffinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "reportCount": 144,
+      "abProcesses": 128,
+      "aaProcesses": 16,
+      "sourceTrees": {
+        "A": {
+          "Mode": "baseline",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "RuntimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "MeasurementSourceSha": "f9e722beda390c1ed982ab747023bea9af63575d1effc9136d6c1eb3d6734652",
+          "ControllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "cf4dc6a03ade510fb6c41a882b952b76bc4916ffa5706a1c69254f1f09a9b1d3",
+          "binarySha256": "769919f8ae28ebe1be7a6af66645cfbe9b14f0aeac69e902f3910d2d60912f2f"
+        },
+        "B": {
+          "Mode": "D-split-direction-gates",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+          "RuntimeSourceTreeSha": "d60bc0721e9b9f6b2b15fe274d9328280bc5ffd9",
+          "MeasurementSourceSha": "f9e722beda390c1ed982ab747023bea9af63575d1effc9136d6c1eb3d6734652",
+          "ControllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "23b2ecc0063326253c5b9b90573d7ead09917c6df2bf364f401d4c9b8081fbea",
+          "binarySha256": "7ccf1ed99f7fdb1567d353129aebf266fc035cfce17f6737fca774f538317e40"
+        }
+      }
+    },
+    {
+      "runId": 38165237528,
+      "runtimePopulation": "jit-pgo1",
+      "planSha256": "c57b2164ebdb073e0d6e0e033df3373c4ddfdc9bd693ae53d943933345d97d30",
+      "measurementRecipeSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+      "candidateSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+      "cpuAffinity": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "reportCount": 144,
+      "abProcesses": 128,
+      "aaProcesses": 16,
+      "sourceTrees": {
+        "A": {
+          "Mode": "baseline",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "RuntimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "MeasurementSourceSha": "f9e722beda390c1ed982ab747023bea9af63575d1effc9136d6c1eb3d6734652",
+          "ControllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "cf4dc6a03ade510fb6c41a882b952b76bc4916ffa5706a1c69254f1f09a9b1d3",
+          "binarySha256": "769919f8ae28ebe1be7a6af66645cfbe9b14f0aeac69e902f3910d2d60912f2f"
+        },
+        "B": {
+          "Mode": "D-split-direction-gates",
+          "BaselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "CandidateSha": "45bbe67c6920bbdac2bc5071e39d54a7e21e746c",
+          "RuntimeSourceTreeSha": "d60bc0721e9b9f6b2b15fe274d9328280bc5ffd9",
+          "MeasurementSourceSha": "f9e722beda390c1ed982ab747023bea9af63575d1effc9136d6c1eb3d6734652",
+          "ControllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "SendPumpSourceSha256": "d294e6e7c2ffccdb47bb8c4b0907f461c9e332c650cb9ad9cfc6406551f5063a",
+          "productionScheduler": "dev-SendPump",
+          "b3ReadyWriterEnabled": false,
+          "productionSourceFilesChecked": 496,
+          "compiledIdentityFileSha256": "23b2ecc0063326253c5b9b90573d7ead09917c6df2bf364f401d4c9b8081fbea",
+          "binarySha256": "7ccf1ed99f7fdb1567d353129aebf266fc035cfce17f6737fca774f538317e40"
+        }
+      }
+    }
+  ],
+  "localArchiveRecovery": {
+    "jit-pgo0": {
+      "authoritativeArchive": "evidence/new/38164814650/d-v1-jit-pgo0-original.zip",
+      "authoritativeBytes": 35293477,
+      "authoritativeSha256": "3b62a874b4534d8aa780a7cf452c4b941be068a85b77e27921c603e669ab0d74",
+      "existingArchive": "evidence/new/38164814650/jit-pgo0.zip",
+      "existingBytes": 27459584,
+      "existingSha256": "eb68f2eb82b840d11f06311b6e20d21b61369142e7e27ecdb22436ffb1828a23",
+      "existingArchiveReadability": {
+        "zipOpened": false,
+        "exceptionType": "BadZipFile",
+        "message": "File is not a zip file"
+      },
+      "comparedFileEntries": 1091,
+      "entryDifferences": 0
+    },
+    "jit-pgo1": {
+      "authoritativeArchive": "evidence/new/38164814650/d-v1-jit-pgo1-original.zip",
+      "authoritativeBytes": 35060967,
+      "authoritativeSha256": "e82cb8c5d4b9fb2fdbb4c74dc1377dfe37b33fe79a1f20596d46c8a66478f6b4",
+      "existingArchive": "evidence/new/38164814650/jit-pgo1.zip",
+      "existingBytes": 26279936,
+      "existingSha256": "d3d256055e2d8ccdff2b31b23b9f2d8185608e55488f3cc5c508246712af824c",
+      "existingArchiveReadability": {
+        "zipOpened": false,
+        "exceptionType": "BadZipFile",
+        "message": "File is not a zip file"
+      },
+      "comparedFileEntries": 1091,
+      "entryDifferences": 0
+    }
+  },
+  "localArchiveRecoveryEvidence": "evidence/new/d-v1-zip-recovery-comparison.json",
+  "localNativeRpcExecutability": {
+    "README.zh-CN.md": {
+      "archivePath": "evidence/new/38164814650/nativeaot/local-execution/README.zh-CN.md",
+      "bytes": 5142,
+      "sha256": "90361273af18e86f767b1dcfffb2e3a3b94384cb34b7efd2633086813bc84d11"
+    },
+    "file-manifest.json": {
+      "archivePath": "evidence/new/38164814650/nativeaot/local-execution/file-manifest.json",
+      "bytes": 5519,
+      "sha256": "96a795ed14456ee2cb030d241bafef17f7018a25bb48bebc37754e7cf89eb421"
+    },
+    "exits.json": {
+      "archivePath": "evidence/new/38164814650/nativeaot/local-execution/exits.json",
+      "bytes": 11801,
+      "sha256": "57f99e6eaaeb6e4f65bf997024f9cadb9fedb9844f07fdaf50eab433aac16cef"
+    },
+    "conclusion.json": {
+      "archivePath": "evidence/new/38164814650/nativeaot/local-execution/conclusion.json",
+      "bytes": 479,
+      "sha256": "2c577799f94b32cbe52f78f41d5799b3a0919cc518cfcc7f2825f7d9fa10c562"
+    }
+  },
+  "managedAllocationAppendix": {
+    "runId": 38165866902,
+    "artifactId": 11711699580,
+    "classification": "current-thread managed allocation, not RPC performance or retained memory",
+    "measurementRecipeSha": "8e3055e4b59295dd210f530c33dfbc7a2c096610",
+    "measurementSourceSha256": "0046f3ce25797493c9e17510b66b1cf72c65a4d22945ad60b0db99b5f1fa24ae",
+    "provenanceJsonSha256": "1fd73dfbf156c42cc1f0914f4f58e249c7efbc911de5fec7a135899ce58175bc",
+    "samples": [
+      {
+        "archivePath": "evidence/new/38165866902/footprint/sample-A-jit-pgo0.tsv",
+        "sha256": "94e180f505c3730d52110a724007747e177376f65cdee7fdd22230b5bf3c4226",
+        "rawSampleRows": 65,
+        "metadata": {
+          "schema": "sharplink-controller-footprint-v1",
+          "classification": "current-thread-managed-allocation-appendix-not-RPC-or-retained-heap",
+          "mode": "baseline",
+          "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "candidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "runtimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "measurementSourceSha": "0046f3ce25797493c9e17510b66b1cf72c65a4d22945ad60b0db99b5f1fa24ae",
+          "controllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "runtime": ".NET 10.0.12",
+          "architecture": "X64",
+          "frameworkDynamicCode": "True",
+          "builtForNativeAot": "false",
+          "measuredBinarySha256": "674409f3aa6520b8f9f15ef06685b666173146b76866d2f71ed937a238c4ec55",
+          "runtimeAssemblySha256": "5304f5aef58c8dc93affff03c034103e4e62a3cbe2bf8f554a3ae870b0bed69d",
+          "iterations": "10000",
+          "rounds": "5",
+          "windows": "1048576/16777216",
+          "maxFramePayloadBytes": "4194304",
+          "scope": "GC.GetAllocatedBytesForCurrentThread; arrays/delegates/reporting and async waiter observation excluded",
+          "waiterScope": "return/admit includes caller-thread wake scheduling; callback-thread allocations excluded",
+          "retention": "allocated bytes are not retained heap, RSS, native memory or pool backing capacity",
+          "status": "passed"
+        },
+        "actualBinarySha256Verified": "674409f3aa6520b8f9f15ef06685b666173146b76866d2f71ed937a238c4ec55",
+        "constructorAllocatedBytes": 400.0
+      },
+      {
+        "archivePath": "evidence/new/38165866902/footprint/sample-A-jit-pgo1.tsv",
+        "sha256": "173b599a62ea7889594fe4cdb7ce86755d10cfab80a36098457de7c8634f1430",
+        "rawSampleRows": 65,
+        "metadata": {
+          "schema": "sharplink-controller-footprint-v1",
+          "classification": "current-thread-managed-allocation-appendix-not-RPC-or-retained-heap",
+          "mode": "baseline",
+          "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "candidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "runtimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "measurementSourceSha": "0046f3ce25797493c9e17510b66b1cf72c65a4d22945ad60b0db99b5f1fa24ae",
+          "controllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "runtime": ".NET 10.0.12",
+          "architecture": "X64",
+          "frameworkDynamicCode": "True",
+          "builtForNativeAot": "false",
+          "measuredBinarySha256": "674409f3aa6520b8f9f15ef06685b666173146b76866d2f71ed937a238c4ec55",
+          "runtimeAssemblySha256": "5304f5aef58c8dc93affff03c034103e4e62a3cbe2bf8f554a3ae870b0bed69d",
+          "iterations": "10000",
+          "rounds": "5",
+          "windows": "1048576/16777216",
+          "maxFramePayloadBytes": "4194304",
+          "scope": "GC.GetAllocatedBytesForCurrentThread; arrays/delegates/reporting and async waiter observation excluded",
+          "waiterScope": "return/admit includes caller-thread wake scheduling; callback-thread allocations excluded",
+          "retention": "allocated bytes are not retained heap, RSS, native memory or pool backing capacity",
+          "status": "passed"
+        },
+        "actualBinarySha256Verified": "674409f3aa6520b8f9f15ef06685b666173146b76866d2f71ed937a238c4ec55",
+        "constructorAllocatedBytes": 400.0
+      },
+      {
+        "archivePath": "evidence/new/38165866902/footprint/sample-A-nativeaot.tsv",
+        "sha256": "1c2658dd5e7a963266d7217565e685e3ee11a64fa1c0fc700470a40e37b0a0ec",
+        "rawSampleRows": 65,
+        "metadata": {
+          "schema": "sharplink-controller-footprint-v1",
+          "classification": "current-thread-managed-allocation-appendix-not-RPC-or-retained-heap",
+          "mode": "baseline",
+          "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "candidateSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "runtimeSourceTreeSha": "007c7f8b408e7c492ca3298d1e10dab92afa8a4f",
+          "measurementSourceSha": "0046f3ce25797493c9e17510b66b1cf72c65a4d22945ad60b0db99b5f1fa24ae",
+          "controllerSourceSha256": "7694add9ffc1d858c80f0aa8f1f8815717068b8ff7181b86998672e68bfe60e2",
+          "runtime": ".NET 10.0.12",
+          "architecture": "X64",
+          "frameworkDynamicCode": "False",
+          "builtForNativeAot": "true",
+          "measuredBinarySha256": "f2d2e6db6487f866e8a53bef535798c653d80713cc2c3da21590cd9cd416ef8c",
+          "iterations": "10000",
+          "rounds": "5",
+          "windows": "1048576/16777216",
+          "maxFramePayloadBytes": "4194304",
+          "scope": "GC.GetAllocatedBytesForCurrentThread; arrays/delegates/reporting and async waiter observation excluded",
+          "waiterScope": "return/admit includes caller-thread wake scheduling; callback-thread allocations excluded",
+          "retention": "allocated bytes are not retained heap, RSS, native memory or pool backing capacity",
+          "status": "passed"
+        },
+        "actualBinarySha256Verified": "f2d2e6db6487f866e8a53bef535798c653d80713cc2c3da21590cd9cd416ef8c",
+        "constructorAllocatedBytes": 400.0
+      },
+      {
+        "archivePath": "evidence/new/38165866902/footprint/sample-B-jit-pgo0.tsv",
+        "sha256": "7a3892db34a0f54c6fbb11d964357470ff9196f1088d99711242608d770a5c6c",
+        "rawSampleRows": 65,
+        "metadata": {
+          "schema": "sharplink-controller-footprint-v1",
+          "classification": "current-thread-managed-allocation-appendix-not-RPC-or-retained-heap",
+          "mode": "D-split-direction-gates",
+          "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "candidateSha": "8e3055e4b59295dd210f530c33dfbc7a2c096610",
+          "runtimeSourceTreeSha": "f374eb785434845e9338ecc7c4c0581e6834184c",
+          "measurementSourceSha": "0046f3ce25797493c9e17510b66b1cf72c65a4d22945ad60b0db99b5f1fa24ae",
+          "controllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "runtime": ".NET 10.0.12",
+          "architecture": "X64",
+          "frameworkDynamicCode": "True",
+          "builtForNativeAot": "false",
+          "measuredBinarySha256": "74d0e4528fe35ae8ce834291d1e67b9fca1631050a796c449f38ce8c9ac7a16a",
+          "runtimeAssemblySha256": "2d3cdd60f7a71f443acc43e022535b6172bd4c09bb4c4132c7ab52c824627c9d",
+          "iterations": "10000",
+          "rounds": "5",
+          "windows": "1048576/16777216",
+          "maxFramePayloadBytes": "4194304",
+          "scope": "GC.GetAllocatedBytesForCurrentThread; arrays/delegates/reporting and async waiter observation excluded",
+          "waiterScope": "return/admit includes caller-thread wake scheduling; callback-thread allocations excluded",
+          "retention": "allocated bytes are not retained heap, RSS, native memory or pool backing capacity",
+          "status": "passed"
+        },
+        "actualBinarySha256Verified": "74d0e4528fe35ae8ce834291d1e67b9fca1631050a796c449f38ce8c9ac7a16a",
+        "constructorAllocatedBytes": 448.0
+      },
+      {
+        "archivePath": "evidence/new/38165866902/footprint/sample-B-jit-pgo1.tsv",
+        "sha256": "4215726341f625d75e2d9e7013919d0e7bdd65b19f82ab87e00bb6e23d810d5b",
+        "rawSampleRows": 65,
+        "metadata": {
+          "schema": "sharplink-controller-footprint-v1",
+          "classification": "current-thread-managed-allocation-appendix-not-RPC-or-retained-heap",
+          "mode": "D-split-direction-gates",
+          "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "candidateSha": "8e3055e4b59295dd210f530c33dfbc7a2c096610",
+          "runtimeSourceTreeSha": "f374eb785434845e9338ecc7c4c0581e6834184c",
+          "measurementSourceSha": "0046f3ce25797493c9e17510b66b1cf72c65a4d22945ad60b0db99b5f1fa24ae",
+          "controllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "runtime": ".NET 10.0.12",
+          "architecture": "X64",
+          "frameworkDynamicCode": "True",
+          "builtForNativeAot": "false",
+          "measuredBinarySha256": "74d0e4528fe35ae8ce834291d1e67b9fca1631050a796c449f38ce8c9ac7a16a",
+          "runtimeAssemblySha256": "2d3cdd60f7a71f443acc43e022535b6172bd4c09bb4c4132c7ab52c824627c9d",
+          "iterations": "10000",
+          "rounds": "5",
+          "windows": "1048576/16777216",
+          "maxFramePayloadBytes": "4194304",
+          "scope": "GC.GetAllocatedBytesForCurrentThread; arrays/delegates/reporting and async waiter observation excluded",
+          "waiterScope": "return/admit includes caller-thread wake scheduling; callback-thread allocations excluded",
+          "retention": "allocated bytes are not retained heap, RSS, native memory or pool backing capacity",
+          "status": "passed"
+        },
+        "actualBinarySha256Verified": "74d0e4528fe35ae8ce834291d1e67b9fca1631050a796c449f38ce8c9ac7a16a",
+        "constructorAllocatedBytes": 448.0
+      },
+      {
+        "archivePath": "evidence/new/38165866902/footprint/sample-B-nativeaot.tsv",
+        "sha256": "ac78e83dd3acbf1e74aa3ead02fd6c29e7c77b42be5935e477e1911d0e653290",
+        "rawSampleRows": 65,
+        "metadata": {
+          "schema": "sharplink-controller-footprint-v1",
+          "classification": "current-thread-managed-allocation-appendix-not-RPC-or-retained-heap",
+          "mode": "D-split-direction-gates",
+          "baselineSha": "f8ba89121c87a6410a0139c44d7db30eab877f41",
+          "candidateSha": "8e3055e4b59295dd210f530c33dfbc7a2c096610",
+          "runtimeSourceTreeSha": "f374eb785434845e9338ecc7c4c0581e6834184c",
+          "measurementSourceSha": "0046f3ce25797493c9e17510b66b1cf72c65a4d22945ad60b0db99b5f1fa24ae",
+          "controllerSourceSha256": "a9cad11d9f80d8aedce4d412ada02ade32cd8048e0cfe133ad469d029eaf658d",
+          "runtime": ".NET 10.0.12",
+          "architecture": "X64",
+          "frameworkDynamicCode": "False",
+          "builtForNativeAot": "true",
+          "measuredBinarySha256": "0baaf646a8354308412b0291a2ad274c0ee4dae210af7c41c1b242c377fd82fd",
+          "iterations": "10000",
+          "rounds": "5",
+          "windows": "1048576/16777216",
+          "maxFramePayloadBytes": "4194304",
+          "scope": "GC.GetAllocatedBytesForCurrentThread; arrays/delegates/reporting and async waiter observation excluded",
+          "waiterScope": "return/admit includes caller-thread wake scheduling; callback-thread allocations excluded",
+          "retention": "allocated bytes are not retained heap, RSS, native memory or pool backing capacity",
+          "status": "passed"
+        },
+        "actualBinarySha256Verified": "0baaf646a8354308412b0291a2ad274c0ee4dae210af7c41c1b242c377fd82fd",
+        "constructorAllocatedBytes": 448.0
+      }
+    ],
+    "rawSampleRows": 390,
+    "constructorDeltaBytes": 48
+  },
+  "deliveredAnalysis": {
+    "independent": {
+      "bytes": 17393,
+      "sha256": "2f9aba18d8e3b20705bd21651101769bbcae930c30e8c46aaefbec9d8118cca0",
+      "repoPath": "eng/issue735/analysis/recompute_d_screen_independent.py"
+    },
+    "primary": {
+      "bytes": 31911,
+      "sha256": "5f639366b7b673a0633fe00bce103c450ec5292bb8e93b6d27323165e84622dd",
+      "repoPath": "eng/issue735/analysis/recompute_rpc_screen.py"
+    },
+    "primaryRecheck": {
+      "archivePath": "evidence/new/analysis-recheck/frozen-manifest.json",
+      "bytes": 3260,
+      "sha256": "3ca30be1109a3ea8d90e9b2badf2cc06431aaab30b9a28cf0ebed88dfb8211d8"
+    },
+    "independentCoreComparison": {
+      "archivePath": "evidence/new/d-deliverable-recomputed/core-comparison.json",
+      "bytes": 948,
+      "sha256": "440d8b3b996affe531d8a6862e48135b966754a48e0d5a2b8f982f503bcde184"
+    },
+    "independentDocumentTableCheck": {
+      "archivePath": "evidence/new/d-deliverable-recomputed/document-data-check.json",
+      "bytes": 2622,
+      "sha256": "0cc086208174a630e9e80e622199812c73f729816f227dc70294446adec75812"
+    }
+  }
+}
