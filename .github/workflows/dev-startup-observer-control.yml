@@ -1,0 +1,90 @@
+name: Dev startup observer race characterization
+'on':
+  push:
+    branches:
+    - codex/validate-dev-startup-observer-race
+permissions:
+  contents: read
+jobs:
+  deadline:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - windows-latest
+        label:
+        - baseline
+        - candidate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      BASE_SHA: f122a8b495d4799b434d272c6def2dbe4de7588b
+      CANDIDATE_SHA: edb7d684aa4a182ce6f0d9d6400be8cf3f212967
+      CONFIGURATION: Release
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TUNIT_ENABLE_JUNIT_REPORTER: 'true'
+      LABEL: ${{ matrix.label }}
+    steps:
+    - name: Checkout pinned baseline
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.BASE_SHA }}
+        path: baseline
+        persist-credentials: false
+    - name: Checkout pinned candidate
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.CANDIDATE_SHA }}
+        path: candidate
+        persist-credentials: false
+    - name: Setup SDK
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      with:
+        dotnet-version: 10.0.x
+    - name: Capture environment
+      shell: bash
+      run: 'mkdir -p evidence
+
+        dotnet --info > evidence/dotnet-info.txt
+
+        git --version > evidence/git-version.txt'
+    - name: Prove delayed startup frames and paired FIFO observer barrier
+      shell: python
+      run: "import json, os, pathlib, subprocess, xml.etree.ElementTree as ET\nroot=pathlib.Path.cwd(); evidence=root/'evidence';\
+        \ evidence.mkdir(exist_ok=True)\nlabel=os.environ['LABEL']; path=root/label\nsha=os.environ['BASE_SHA' if label=='baseline'\
+        \ else 'CANDIDATE_SHA']\nassert subprocess.check_output(['git','rev-parse','HEAD'],cwd=path,text=True).strip()==sha\n\
+        subprocess.run(['git','diff','--exit-code'],cwd=path,check=True)\ntransport=path/'test/SharpLink.UnitTests/TestClientTransportFactory.cs'\n\
+        s=transport.read_text(encoding='utf-8')\ns=s.replace('    internal void RunOnNextOutputBufferRequest(Action callback)','\
+        \    internal Task? OutputObservationGate { get; set; }\\n\\n    internal void RunOnNextOutputBufferRequest(Action\
+        \ callback)',1)\nold='''            try\n            {\n                while (ProtocolV2FrameParser.TryReadFrame('''\n\
+        new='''            try\n            {\n                if (OutputObservationGate is { } observationGate)\n       \
+        \             await observationGate.WaitAsync(cancellationToken);\n                while (ProtocolV2FrameParser.TryReadFrame('''\n\
+        assert s.count(old)==1; s=s.replace(old,new); transport.write_text(s,encoding='utf-8')\nfixture=path/'test/SharpLink.UnitTests/Client/SharpLinkClientServerStreamingTerminalSignalTests.cs'\n\
+        s=fixture.read_text(encoding='utf-8')\ns=s.replace('    [Test]\\n','    [Test]\\n    [Arguments(false)]\\n    [Arguments(true)]\\\
+        n',1)\ns=s.replace('TimedServerStreamingShouldLeaveNoFrameworkTaskWhenDeadlineWinsAStalledWrite()','TimedServerStreamingShouldLeaveNoFrameworkTaskWhenDeadlineWinsAStalledWrite(bool\
+        \ observerBarrier)',1)\ns=s.replace('        await client.ConnectAsync();','        var observationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);\\\
+        n        transport.Connection.OutputObservationGate = observationGate.Task;\\n        await client.ConnectAsync();',1)\n\
+        s=s.replace('        await DrainSentFramesAsync(transport);','        await DrainSentFramesAsync(transport);\\n  \
+        \      observationGate.SetResult();\\n        if (observerBarrier)\\n            _ = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Ping).WaitAsync(TimeSpan.FromSeconds(5));',1)\n\
+        s=s.replace('\"the transport must retain the Request accepted before the deadline won\"','$\"the transport must retain\
+        \ the Request accepted before the deadline won; first={published?.Header.Type}, second={cancelled?.Header.Type}\"\
+        ',1)\nfixture.write_text(s,encoding='utf-8')\npatch=subprocess.check_output(['git','diff','--binary'],cwd=path)\n\
+        (evidence/'diagnostic-only-overlay.patch').write_bytes(patch)\nfor name,cmd in [('build',['dotnet','build','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','-v','minimal']),('test',['dotnet','run','--project','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','--no-build','--','--treenode-filter','/*/*/SharpLinkClientServerStreamingTerminalSignalTests/*','--maximum-parallel-tests','1','--no-progress','--output','Detailed','--results-directory',str(evidence/'tests'),'--junit-output-path',str(evidence/'tests.xml')])]:\n\
+        \    with (evidence/(name+'.log')).open('w',encoding='utf-8') as f:\n        result=subprocess.run(cmd,cwd=path,stdout=f,stderr=subprocess.STDOUT)\n\
+        \    print((evidence/(name+'.log')).read_text(encoding='utf-8',errors='replace'),flush=True)\n    (evidence/(name+'.exit.txt')).write_text(str(result.returncode)+'\\\
+        n')\n    assert result.returncode==(0 if name=='build' else 2)\ncases=ET.parse(evidence/'tests.xml').findall('.//testcase')\n\
+        assert len(cases)==2\nfailed=[c for c in cases if c.find('error') is not None or c.find('failure') is not None]\n\
+        assert len(failed)==1\nproblem=failed[0].find('error')\nif problem is None: problem=failed[0].find('failure')\nassert\
+        \ 'False' in failed[0].get('name','')\nassert 'the transport must retain the Request accepted before the deadline\
+        \ won; first=HandshakeRequest' in problem.get('message',''), problem.attrib\nsummary=dict(label=label,source_sha=sha,diagnostic_overlay=True,failed=failed[0].attrib,problem=problem.attrib,barrier_control_passed=True)\n\
+        (evidence/'verified-startup-observer-race.json').write_text(json.dumps(summary,indent=2)+'\\n')\nprint(json.dumps(summary,indent=2))"
+    - name: Upload raw evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: dev-startup-observer-control-${{ matrix.label }}
+        path: evidence
+        if-no-files-found: error
+        retention-days: 30
