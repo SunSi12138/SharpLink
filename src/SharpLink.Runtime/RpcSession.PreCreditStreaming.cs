@@ -12,7 +12,8 @@ internal sealed partial class RpcSession
         IRpcCodec<T> codec,
         CancellationToken cancellationToken,
         RpcDeadline deadline = default,
-        TimeProvider? deadlineTimeProvider = null)
+        TimeProvider? deadlineTimeProvider = null,
+        StreamFlowController.SendCreditLease? grantLease = null)
     {
         ArgumentNullException.ThrowIfNull(codec);
         return SerializeUnsizedStreamChunk(
@@ -22,7 +23,8 @@ internal sealed partial class RpcSession
             codec,
             cancellationToken,
             deadline,
-            deadlineTimeProvider);
+            deadlineTimeProvider,
+            grantLease);
     }
 
     internal long PreCreditSerializedBytes
@@ -48,7 +50,8 @@ internal sealed partial class RpcSession
         IRpcCodec<T> codec,
         CancellationToken cancellationToken,
         RpcDeadline deadline,
-        TimeProvider? deadlineTimeProvider)
+        TimeProvider? deadlineTimeProvider,
+        StreamFlowController.SendCreditLease? grantLease)
     {
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
@@ -77,7 +80,9 @@ internal sealed partial class RpcSession
             cancellationToken.ThrowIfCancellationRequested();
 
             if (!HasStreamFlowControl ||
-                TryAcquireStreamSendCredit(requestId, streamId, encodedBytes))
+                (grantLease is null
+                    ? TryAcquireStreamSendCredit(requestId, streamId, encodedBytes)
+                    : grantLease.TryAcquire(encodedBytes, cancellationToken)))
             {
                 creditAcquired = HasStreamFlowControl;
                 try
@@ -89,7 +94,12 @@ internal sealed partial class RpcSession
                 catch
                 {
                     if (creditAcquired)
-                        ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+                    {
+                        if (grantLease is null)
+                            ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+                        else
+                            grantLease.ReturnUnsent(encodedBytes);
+                    }
                     throw;
                 }
                 return ValueTask.CompletedTask;
@@ -114,7 +124,8 @@ internal sealed partial class RpcSession
                 budget,
                 cancellationToken,
                 deadline,
-                deadlineTimeProvider);
+                deadlineTimeProvider,
+                grantLease);
         }
         finally
         {
@@ -132,7 +143,8 @@ internal sealed partial class RpcSession
         PreCreditSerializedBudget budget,
         CancellationToken cancellationToken,
         RpcDeadline deadline,
-        TimeProvider? deadlineTimeProvider)
+        TimeProvider? deadlineTimeProvider,
+        StreamFlowController.SendCreditLease? grantLease)
     {
         var ownsWriter = true;
         var ownsBudget = false;
@@ -142,11 +154,10 @@ internal sealed partial class RpcSession
             await pendingBudget.ConfigureAwait(false);
             ownsBudget = true;
 
-            await AcquireStreamSendCreditAsync(
-                requestId,
-                streamId,
-                encodedBytes,
-                cancellationToken).ConfigureAwait(false);
+            var admission = grantLease is null
+                ? AcquireStreamSendCreditAsync(requestId, streamId, encodedBytes, cancellationToken)
+                : grantLease.AcquireAsync(encodedBytes, cancellationToken);
+            await admission.ConfigureAwait(false);
             creditAcquired = true;
 
             budget.Release(encodedBytes);
@@ -159,7 +170,12 @@ internal sealed partial class RpcSession
         catch
         {
             if (creditAcquired)
-                ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+            {
+                if (grantLease is null)
+                    ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
+                else
+                    grantLease.ReturnUnsent(encodedBytes);
+            }
             throw;
         }
         finally

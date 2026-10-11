@@ -44,6 +44,8 @@ internal sealed partial class RpcSession
         using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
         var deadlineWon = false;
+        StreamFlowController.SendCreditLease? grantLease = null;
+        var grantSelectionCompleted = false;
         try
         {
             var exactSizeCodec = codec as IRpcSizedCodec<T>;
@@ -94,7 +96,9 @@ internal sealed partial class RpcSession
                     exactSizeCodec,
                     deadline,
                     deadlineTimeProvider,
-                    lifetimeCancellation.Token);
+                    lifetimeCancellation.Token,
+                    ref grantLease,
+                    ref grantSelectionCompleted);
                 if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
                 {
                     await send.ConfigureAwait(false);
@@ -118,11 +122,14 @@ internal sealed partial class RpcSession
             }
 
             ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
-            SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
+            SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider, grantLease);
         }
         finally
         {
             TryCancelGeneratedLifetime(lifetimeCancellation);
+            // Close future grant requests before waiting on user disposal. Any admitted
+            // exact item remains owned by its observed send helper, not by this release.
+            grantLease?.Dispose();
             try
             {
                 var dispose = enumerator.DisposeAsync();
@@ -156,7 +163,8 @@ internal sealed partial class RpcSession
         long requestId,
         ushort streamId,
         RpcDeadline deadline,
-        TimeProvider? deadlineTimeProvider)
+        TimeProvider? deadlineTimeProvider,
+        StreamFlowController.SendCreditLease? grantLease)
     {
         var writer = RentFrameWriter();
         var ownsWriter = true;
@@ -183,7 +191,10 @@ internal sealed partial class RpcSession
             }
             finally
             {
-                CompleteSendStream(requestId, streamId);
+                if (grantLease is null)
+                    CompleteSendStream(requestId, streamId);
+                else
+                    grantLease.Complete();
             }
         }
         finally
@@ -235,11 +246,37 @@ internal sealed partial class RpcSession
         IRpcSizedCodec<T>? exactSizeCodec,
         RpcDeadline deadline,
         TimeProvider? deadlineTimeProvider,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ref StreamFlowController.SendCreditLease? grantLease,
+        ref bool grantSelectionCompleted)
     {
         if (exactSizeCodec is not null &&
             exactSizeCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
         {
+            var creditAlreadyAcquired = false;
+            if (!grantSelectionCompleted)
+            {
+                grantSelectionCompleted = true;
+                try
+                {
+                    var controller = Volatile.Read(ref _protocolState).FlowController;
+                    creditAlreadyAcquired = controller is not null &&
+                        controller.TryAcquireSendCreditLease(
+                            requestId, streamId, Math.Max(1, knownEncodedBytes),
+                            cancellationToken, out grantLease);
+                }
+                catch
+                {
+                    // Admission still owns the failure; snapshot cleanup cannot replace it.
+                    if (sizedSnapshot is not null)
+                    {
+                        try { exactSizeCodec.ReleaseSnapshot(sizedSnapshot); }
+                        catch { }
+                    }
+                    throw;
+                }
+            }
+
             return SendStreamChunkKnownSizeAsync(
                 requestId,
                 streamId,
@@ -249,9 +286,15 @@ internal sealed partial class RpcSession
                 sizedSnapshot,
                 cancellationToken,
                 deadline,
-                deadlineTimeProvider);
+                deadlineTimeProvider,
+                grantLease,
+                creditAlreadyAcquired);
         }
 
+        grantSelectionCompleted = true;
+        // A codec may decline exact sizing after an earlier sized item. Retain the
+        // generation for slow admission/refund while returning its unused grant.
+        grantLease?.DisableGrant();
         return SendUnsizedStreamChunkAsync(
             requestId,
             streamId,
@@ -259,7 +302,8 @@ internal sealed partial class RpcSession
             codec,
             cancellationToken,
             deadline,
-            deadlineTimeProvider);
+            deadlineTimeProvider,
+            grantLease);
     }
 
     internal async ValueTask SendStreamChunkKnownSizeAsync<T>(
@@ -271,20 +315,25 @@ internal sealed partial class RpcSession
         IRpcSizedCodecSnapshot? sizedSnapshot,
         CancellationToken cancellationToken,
         RpcDeadline deadline = default,
-        TimeProvider? deadlineTimeProvider = null)
+        TimeProvider? deadlineTimeProvider = null,
+        StreamFlowController.SendCreditLease? grantLease = null,
+        bool creditAlreadyAcquired = false)
     {
         var creditBytes = Math.Max(1, encodedBytes);
-        var creditAcquired = false;
+        var creditAcquired = creditAlreadyAcquired;
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
+        Exception? operationError = null;
         try
         {
-            await AcquireStreamSendCreditAsync(
-                requestId,
-                streamId,
-                creditBytes,
-                cancellationToken).ConfigureAwait(false);
-            creditAcquired = true;
+            if (!creditAcquired)
+            {
+                var admission = grantLease is null
+                    ? AcquireStreamSendCreditAsync(requestId, streamId, creditBytes, cancellationToken)
+                    : grantLease.AcquireAsync(creditBytes, cancellationToken);
+                await admission.ConfigureAwait(false);
+                creditAcquired = true;
+            }
 
             writer = RuntimeContext.Buffers.Rent(
                 checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes + 4));
@@ -301,8 +350,9 @@ internal sealed partial class RpcSession
                 sizedCodec.SerializeSized(item, writer, encodedBytes, sizedSnapshot);
                 if (sizedSnapshot is not null)
                 {
-                    sizedCodec.ReleaseSnapshot(sizedSnapshot);
+                    var snapshotToRelease = sizedSnapshot;
                     sizedSnapshot = null;
+                    sizedCodec.ReleaseSnapshot(snapshotToRelease);
                 }
             }
 
@@ -317,18 +367,41 @@ internal sealed partial class RpcSession
             ownsWriter = false;
             SendPacket(writer);
         }
-        catch
+        catch (Exception exception)
         {
+            operationError = exception;
             if (creditAcquired)
-                ReturnUnsentStreamCredit(requestId, streamId, creditBytes);
+            {
+                if (grantLease is null)
+                    ReturnUnsentStreamCredit(requestId, streamId, creditBytes);
+                else
+                    grantLease.ReturnUnsent(creditBytes);
+            }
             throw;
         }
         finally
         {
-            if (sizedSnapshot is not null)
-                sizedCodec.ReleaseSnapshot(sizedSnapshot);
-            if (ownsWriter && writer is not null)
-                RuntimeContext.Buffers.Return(writer);
+            try
+            {
+                if (sizedSnapshot is not null)
+                {
+                    var snapshotToRelease = sizedSnapshot;
+                    sizedSnapshot = null;
+                    try
+                    {
+                        sizedCodec.ReleaseSnapshot(snapshotToRelease);
+                    }
+                    catch when (operationError is not null)
+                    {
+                        // Preserve the operation failure when snapshot cleanup also fails.
+                    }
+                }
+            }
+            finally
+            {
+                if (ownsWriter && writer is not null)
+                    RuntimeContext.Buffers.Return(writer);
+            }
         }
     }
 }

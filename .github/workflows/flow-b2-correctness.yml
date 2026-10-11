@@ -1,0 +1,48 @@
+name: Issue 735 B2 Production Credit Correctness
+
+on:
+  push:
+    branches: ['research/735-b2-server-grant-pilot-20261011']
+    paths:
+      - '.github/workflows/flow-b2-correctness.yml'
+      - 'eng/issue735/run_b2_correctness.py'
+      - 'src/**'
+      - 'test/SharpLink.UnitTests/**'
+      - 'test/SharpLink.Generator.Tests/**'
+      - 'test/SharpLink.LoadTest.Tests/**'
+      - 'test/SharpLink.IntegrationTests/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# No cancellation-on-update: a failure and its artifact remain evidence.
+# Performance is deliberately not invoked here. Its separately enabled workflow
+# must require this complete correctness result for the exact same candidate SHA.
+jobs:
+  b2-correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Preserve the planned gates, build identities, every test outcome and candidate-only mutant
+        shell: bash
+        run: >-
+          python3 eng/issue735/run_b2_correctness.py
+          --root "$GITHUB_WORKSPACE"
+          --output "$GITHUB_WORKSPACE/artifacts/issue735/b2-correctness"
+          --expected-sha "$GITHUB_SHA"
+          --expected-focused 41 --expected-unit 2123
+          --expected-generator 271 --expected-load 77 --expected-integration 454
+      - name: Retain failures, NotRun steps, complete reports, provenance and selected binaries
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-b2-correctness-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/b2-correctness
+          if-no-files-found: error
+          retention-days: 30
