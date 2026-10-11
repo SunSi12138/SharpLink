@@ -1,0 +1,146 @@
+name: Issue 801 - NativeAOT Trim Dynamic Plugin Removal Validation
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-aot-trim-plugin-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-native-safety-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deletion-native-safety:
+    name: Deletion experiment - ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [nativeaot, trim, dynamic]
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      AUDIT_DEV_SHA: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
+
+    steps:
+      - name: Checkout dev-derived isolated audit branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pinned .NET SDK from repository CI
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Record runner and .NET evidence
+        run: |
+          mkdir -p artifacts/issue-801-native-validation
+          dotnet --info > artifacts/issue-801-native-validation/dotnet-info.txt
+          git rev-parse HEAD > artifacts/issue-801-native-validation/audit-head.txt
+          cat artifacts/issue-801-native-validation/audit-head.txt
+
+      - name: Restore existing solution and Roslyn audit tool
+        run: |
+          dotnet restore Sharplink.slnx --verbosity minimal
+          dotnet restore eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj --verbosity minimal
+
+      - name: Build the audit tool
+        run: dotnet build eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj -c Release --no-restore -v minimal
+
+      - name: Delete identical non-public candidates in ephemeral checkout
+        run: |
+          test -f artifacts/issue-801-audit/tier-A.csv
+          dotnet run --project eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj \
+            -c Release --no-build --no-restore -- \
+            --probe-remove "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/artifacts/issue-801-native-validation"
+          git diff --stat -- src/ > artifacts/issue-801-native-validation/source-diff-stat.txt
+          sed -n '1,80p' artifacts/issue-801-native-validation/source-diff-stat.txt
+
+      - name: Build entire modified solution in Release mode
+        run: |
+          set -o pipefail
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal 2>&1 \
+            | tee artifacts/issue-801-native-validation/release-build.log
+
+      - name: Execute complete Linux NativeAOT / SharpPack / streaming smoke
+        if: matrix.check == 'nativeaot'
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+          SHARPLINK_AOT_SHM_NAME: issue801-deadcode-nativeaot-smoke
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/issue-801-native-validation/nativeaot
+        run: |
+          set -o pipefail
+          bash ./eng/run-shared-memory-aot-process-smoke.sh 2>&1 \
+            | tee artifacts/issue-801-native-validation/nativeaot-smoke.log
+          grep -q 'Shared-memory process, local endpoint-topology' \
+            artifacts/issue-801-native-validation/nativeaot-smoke.log
+
+      - name: Execute publish-trimmed full-mode project-reference smoke
+        if: matrix.check == 'trim'
+        env:
+          SHARPLINK_TRIM_RID: linux-x64
+        run: |
+          set -o pipefail
+          bash ./eng/run-project-reference-trim-smoke.sh 2>&1 \
+            | tee artifacts/issue-801-native-validation/project-reference-trim.log
+          grep -q 'PROJECT_REFERENCE_TRIM_SMOKE_PASS' \
+            artifacts/issue-801-native-validation/project-reference-trim.log
+
+      - name: Exercise dynamic assembly, collectible ALC, and stream lifecycle tests
+        if: matrix.check == 'dynamic'
+        run: |
+          set -euo pipefail
+          work=artifacts/issue-801-native-validation
+          dotnet run --project test/SharpLink.IntegrationTests -c Release --no-build --no-restore -- \
+            --list-tests json > "$work/integration-tests.json"
+          jq -r '.tests[] | select(.type.methodName == "OneHundredClientReplacementsShouldLeaveOneReusableRegistration" or .type.methodName == "MultiClusterReplacementShouldPublishCoordinatorRoutesBeforeOldDrainAndAfterCallerCancellation" or .type.methodName == "RejectedApi4DynamicRegistrationShouldReleaseItsCollectibleContext" or .type.methodName == "CollectibleContextShouldUnloadAfterFrameworkReferencesAreReleased" or .type.methodName == "Api4DynamicStreamExitShouldReleaseItsCollectibleContext") | .uid' \
+            "$work/integration-tests.json" > "$work/selected-uids.txt"
+          count=$(wc -l < "$work/selected-uids.txt")
+          echo "Selected $count dynamic lifecycle cases" | tee "$work/dynamic-summary.txt"
+          if [ "$count" -ne 9 ]; then
+            echo 'Expected 9 selected cases: replacement, routing, rejection, unload, and 5 stream exit modes' >&2
+            exit 2
+          fi
+          : > "$work/dynamic-test.log"
+          while IFS= read -r uid; do
+            printf '\nCASE %s\n' "$uid" >> "$work/dynamic-test.log"
+            dotnet run -c Release --no-build --no-restore \
+              --project test/SharpLink.IntegrationTests -- \
+              --maximum-parallel-tests 1 --timeout 120s --filter-uid "$uid" \
+              >> "$work/dynamic-test.log" 2>&1 || {
+                tail -n 130 "$work/dynamic-test.log"
+                exit 1
+              }
+          done < "$work/selected-uids.txt"
+          echo "DYNAMIC_ALC_PLUGIN_TESTS_PASS count=$count" \
+            | tee -a "$work/dynamic-summary.txt"
+          tail -n 90 "$work/dynamic-test.log"
+
+      - name: Record source diff and no-commit guarantee
+        if: always()
+        run: |
+          mkdir -p artifacts/issue-801-native-validation
+          git diff --stat -- src/ > artifacts/issue-801-native-validation/source-diff-stat-final.txt
+          git status --short > artifacts/issue-801-native-validation/git-status-after.txt
+          echo "Source edits are runner-local only; the audit branch and dev are unchanged." \
+            > artifacts/issue-801-native-validation/scope.txt
+
+      - name: Publish machine-readable logs for review
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-deletion-${{ matrix.check }}-proof
+          path: |
+            artifacts/issue-801-native-validation/*.json
+            artifacts/issue-801-native-validation/*.log
+            artifacts/issue-801-native-validation/*.txt
+            artifacts/issue-801-native-validation/nativeaot/*.log
+            artifacts/issue-801-native-validation/nativeaot/sharppack-sidecar/*.log
+            artifacts/issue-801-native-validation/nativeaot/precredit/*.log
+          if-no-files-found: warn
+          retention-days: 30
