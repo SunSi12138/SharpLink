@@ -1,0 +1,96 @@
+name: Dev deadline finite-Change red-green evidence
+'on':
+  push:
+    branches:
+    - codex/validate-dev-deadline-stale-arm
+permissions:
+  contents: read
+jobs:
+  deadline:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+        - macos-latest
+        configuration:
+        - Debug
+        - Release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      BASE_SHA: f122a8b495d4799b434d272c6def2dbe4de7588b
+      CANDIDATE_SHA: edb7d684aa4a182ce6f0d9d6400be8cf3f212967
+      CONFIGURATION: ${{ matrix.configuration }}
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+    - name: Checkout pinned baseline
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.BASE_SHA }}
+        path: baseline
+        persist-credentials: false
+    - name: Checkout pinned candidate
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ env.CANDIDATE_SHA }}
+        path: candidate
+        persist-credentials: false
+    - name: Setup SDK
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      with:
+        dotnet-version: 10.0.x
+    - name: Capture environment
+      shell: bash
+      run: 'mkdir -p evidence
+
+        dotnet --info > evidence/dotnet-info.txt
+
+        git --version > evidence/git-version.txt'
+    - name: Verify exact red-green outcomes and full unit tests
+      shell: python
+      run: "import hashlib, json, os, pathlib, shutil, subprocess, sys, xml.etree.ElementTree as ET\nroot = pathlib.Path.cwd()\n\
+        evidence = root / 'evidence'\nevidence.mkdir(exist_ok=True)\nbase = root / 'baseline'\ncandidate = root / 'candidate'\n\
+        fixture = pathlib.Path('test/SharpLink.UnitTests/Runtime/SharpLinkTimerChangeRaceTests.cs')\nconfig = os.environ['CONFIGURATION']\n\
+        records=[]\ndef run(command, cwd, name):\n    with (evidence / (name+'.log')).open('w', encoding='utf-8') as log:\n\
+        \        log.write('COMMAND: '+json.dumps(command)+'\\n'); log.flush()\n        proc=subprocess.run(command, cwd=cwd,\
+        \ stdout=log, stderr=subprocess.STDOUT, text=True)\n    print((evidence/(name+'.log')).read_text(encoding='utf-8',\
+        \ errors='replace'), flush=True)\n    (evidence/(name+'.exit.txt')).write_text(str(proc.returncode)+'\\n')\n    return\
+        \ proc.returncode\nfor label, path, expected in [('baseline',base,os.environ['BASE_SHA']),('candidate',candidate,os.environ['CANDIDATE_SHA'])]:\n\
+        \    actual=subprocess.check_output(['git','rev-parse','HEAD'],cwd=path,text=True).strip()\n    assert actual == expected,\
+        \ (label,actual,expected)\n    subprocess.run(['git','diff','--exit-code'],cwd=path,check=True)\n    (evidence/(label+'-identity.txt')).write_text(subprocess.check_output(['git','rev-parse','HEAD','HEAD^{tree}'],cwd=path,text=True))\n\
+        \    (evidence/(label+'-timer.cs')).write_bytes((path/'src/SharpLink.Abstractions/SharpLinkTimer.cs').read_bytes())\n\
+        assert not (base/fixture).exists()\nshutil.copyfile(candidate/fixture,base/fixture)\nfixture_hash=hashlib.sha256((candidate/fixture).read_bytes()).hexdigest()\n\
+        assert hashlib.sha256((base/fixture).read_bytes()).hexdigest() == fixture_hash\n(evidence/'regression.cs').write_bytes((candidate/fixture).read_bytes())\n\
+        (evidence/'regression.sha256').write_text(fixture_hash+'\\n')\nfor label, path in [('baseline',base),('candidate',candidate)]:\n\
+        \    assert run(['dotnet','build','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c',config,'-v','minimal'],path,label+'-build')\
+        \ == 0\n    for attempt in range(1, 2 if label == 'baseline' else 6):\n        name=f'{label}-{attempt}'\n       \
+        \ report=evidence/(name+'.xml')\n        code=run(['dotnet','run','--project','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c',config,'--no-build','--','--treenode-filter','/*/*/SharpLinkTimerChangeRaceTests/*','--maximum-parallel-tests','1','--no-progress','--output','Detailed','--results-directory',str(evidence/name),'--junit-output-path',str(report)],path,name)\n\
+        \        tree=ET.parse(report)\n        cases=tree.findall('.//testcase')\n        assert len(cases)==8, (name,len(cases))\n\
+        \        assert not tree.findall('.//skipped'), name\n        failed=[c for c in cases if c.find('failure') is not\
+        \ None or c.find('error') is not None]\n        if label=='baseline':\n            assert code==2 and len(failed)==5,\
+        \ (name,code,len(failed))\n            initial=[c for c in failed if 'DeadlineCrossedDuringFiniteChangeShouldCompleteWithoutAnotherTick'\
+        \ in c.get('name','')]\n            rearm=[c for c in failed if 'DeadlineCrossedDuringChunkRearmShouldCompleteWithoutAnotherTick'\
+        \ in c.get('name','')]\n            assert len(initial)==4 and len(rearm)==1, [c.attrib for c in failed]\n       \
+        \     for case in initial:\n                problem=case.find('failure')\n                if problem is None: problem=case.find('error')\n\
+        \                assert 'an expiry crossed during finite Change must complete without a second clock advance' in problem.get('message',''),\
+        \ problem.attrib\n                assert problem.get('type')=='System.Exception', problem.attrib\n            problem=rearm[0].find('failure')\n\
+        \            if problem is None: problem=rearm[0].find('error')\n            assert problem.get('type')=='System.TimeoutException',\
+        \ problem.attrib\n        else:\n            assert code==0 and not failed, (name,code,[c.attrib for c in failed])\n\
+        \        records.append(dict(label=label,attempt=attempt,tests=len(cases),failed=len(failed),exit=code))\n    subprocess.run(['git','diff','--exit-code'],cwd=path,check=True)\n\
+        (evidence/'red-green-results.json').write_text(json.dumps(records,indent=2)+'\\n')\n# Keep complete ordinary unit-test\
+        \ coverage on every target OS/configuration.\nassert run(['dotnet','run','--project','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c',config,'--no-build','--','--maximum-parallel-tests','8','--no-progress','--results-directory',str(evidence/'full-unit'),'--junit-output-path',str(evidence/'full-unit.xml')],candidate,'full-unit')==0\n\
+        full=ET.parse(evidence/'full-unit.xml')\nassert not full.findall('.//failure') and not full.findall('.//error')\n\
+        summary=dict(configuration=config,os=os.environ['RUNNER_OS'],fixture_sha256=fixture_hash,red_green=records,full_unit_count=len(full.findall('.//testcase')))\n\
+        (evidence/'verified-results.json').write_text(json.dumps(summary,indent=2)+'\\n')\nprint(json.dumps(summary,indent=2))"
+    - name: Upload raw evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: dev-deadline-${{ matrix.os }}-${{ matrix.configuration }}
+        path: evidence
+        if-no-files-found: error
+        retention-days: 30
