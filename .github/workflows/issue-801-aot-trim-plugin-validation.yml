@@ -55,6 +55,7 @@ jobs:
       - name: Delete identical non-public candidates in ephemeral checkout
         run: |
           test -f artifacts/issue-801-audit/tier-A.csv
+          cp artifacts/issue-801-audit/tier-A.csv artifacts/issue-801-native-validation/tier-A.csv
           dotnet run --project eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj \
             -c Release --no-build --no-restore -- \
             --probe-remove "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/artifacts/issue-801-native-validation"
