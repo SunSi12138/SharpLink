@@ -34,6 +34,12 @@ internal sealed partial class WriterOwnedStreamScheduler
                 handle.ProducerActive = ProducerUseMask;
                 ownsProducer = true;
             }
+            // This call already owns a serialized packet. Charge it before a full stream
+            // slot can suspend the producer; otherwise each active stream could retain an
+            // unaccounted packet outside both the byte limit and the bounded budget waiters.
+            // The writer never needs this preparation budget to dequeue an older packet.
+            await AcquirePreparedBudgetAsync(handle, bytes, cancellationToken).ConfigureAwait(false);
+            ownsBudget = true;
             while (true)
             {
                 Task? wait = null;
@@ -49,8 +55,6 @@ internal sealed partial class WriterOwnedStreamScheduler
                 if (wait is null) break;
                 await wait.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
-            await AcquirePreparedBudgetAsync(handle, bytes, cancellationToken).ConfigureAwait(false);
-            ownsBudget = true;
             // TimeProvider is an extension boundary. Never call it under a stream gate.
             if (deadlineTimeProvider is not null && deadline.IsExpired(deadlineTimeProvider))
                 throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "RPC deadline exceeded before stream publication.");
