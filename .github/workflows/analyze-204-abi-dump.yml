@@ -49,10 +49,10 @@ jobs:
           (source.parent/'analysis/module-identity.json').write_text(json.dumps(rows,indent=2))
           PYMODULE
           test -z "$(git status --porcelain --untracked-files=normal)"
-      - name: Install fixed analysis-tool release with managed-host selection fixes
-        run: dotnet tool install dotnet-dump --version 10.0.750501 --tool-path "$GITHUB_WORKSPACE/dump-tools"
-      - name: Analyze exact dump without executing tests
-        run: python3 eng/analyze-204-abi-dump.py "$GITHUB_WORKSPACE/dump-tools/dotnet-dump" "$GITHUB_WORKSPACE/captured/024-round-3.dmp" "$GITHUB_WORKSPACE/analysis"
+      - name: Read bounded lifecycle fields with managed ClrMD
+        env:
+          DOTNET_DbgEnableMiniDump: '0'
+        run: bash eng/abi-dump-reader/run-reader.sh "$GITHUB_WORKSPACE/captured/024-round-3.dmp" "$DOTNET_ROOT/shared/Microsoft.NETCore.App/10.0.12/libmscordaccore.so" "$GITHUB_WORKSPACE/analysis/managed-fields"
       - name: Upload only targeted field evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
