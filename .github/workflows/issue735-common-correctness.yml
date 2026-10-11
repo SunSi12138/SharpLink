@@ -1,0 +1,39 @@
+name: Issue 735 Common Correctness Control
+
+on:
+  push:
+    branches: ['research/735-common-correctness-control-20261011']
+    paths:
+      - '.github/workflows/issue735-common-correctness.yml'
+      - '.github/actions/setup-dotnet/**'
+      - 'eng/issue735-common-correctness/**'
+      - 'src/SharpLink.Runtime/**'
+      - 'test/SharpLink.UnitTests/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify the old failure and the actual current product
+        run: python3 eng/issue735-common-correctness/run.py --out artifacts/issue735-common-correctness
+      - name: Retain all exits, reports, patches and binary identities
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue735-common-correctness-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735-common-correctness
+          if-no-files-found: error
+          retention-days: 30

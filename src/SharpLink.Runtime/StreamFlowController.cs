@@ -156,11 +156,7 @@ internal sealed class StreamFlowController
         }
 
         return AcquireContendedSendCreditAsync(
-            key,
-            state,
-            expectedLease,
-            encodedBytes,
-            cancellationToken);
+            key, state, expectedLease, encodedBytes, cancellationToken);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -271,7 +267,7 @@ internal sealed class StreamFlowController
             if (_terminalException is not null)
                 return;
             var key = new StreamKey(requestId, streamId);
-            if (!_sendStates.TryGetValue(key, out var state) || state.AbortException is not null)
+            if (!_sendStates.TryGetValue(key, out var state) || state.CreditRefundedByAbort)
                 return;
 
             var updatedStreamCredit = checked(state.Credit + credit);
@@ -358,6 +354,7 @@ internal sealed class StreamFlowController
                 _sendConnectionCredit = checked(
                     _sendConnectionCredit + (_streamWindow - state.Credit));
                 state.Credit = _streamWindow;
+                state.CreditRefundedByAbort = true;
                 state.AbortException = exception;
                 if (state.Completed)
                     (removedKeys ??= []).Add(pair.Key);
@@ -595,6 +592,7 @@ internal sealed class StreamFlowController
             state.Credit = _streamWindow;
             state.Completed = false;
             state.AbortException = null;
+            state.CreditRefundedByAbort = false;
         }
 
         state.Lease = ++_sendStateLeaseCounter;
@@ -908,6 +906,7 @@ internal sealed class StreamFlowController
         public long Credit = initialCredit;
         public bool Completed;
         public Exception? AbortException;
+        public bool CreditRefundedByAbort;
         public long Lease;
         public SendState? Next;
     }
