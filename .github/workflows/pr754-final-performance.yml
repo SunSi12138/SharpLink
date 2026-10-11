@@ -17,8 +17,6 @@ jobs:
   same-runner-matched:
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    env:
-      HARNESS_ROOT: ${{ runner.temp }}/pr754-harness
     steps:
       - name: Checkout validation workflow
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,10 +27,11 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 10.0.102
-      - name: Materialize reviewed test-only harness
+      - name: Materialize reviewed Pr754MethodFactsEvidence.cs
         shell: bash
         run: |
           set -euo pipefail
+          export HARNESS_ROOT="$RUNNER_TEMP/pr754-harness"
           mkdir -p "$HARNESS_ROOT"
           cat > "$HARNESS_ROOT/Pr754MethodFactsEvidence.cs" <<'PR754_EOF_Pr754MethodFactsEvidence_cs'
           using System;
@@ -276,6 +275,12 @@ jobs:
                   => unchecked(facts + contract * 17 + method * 31 + timeoutTicks * 43);
           }
           PR754_EOF_Pr754MethodFactsEvidence_cs
+      - name: Materialize reviewed summarize.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HARNESS_ROOT="$RUNNER_TEMP/pr754-harness"
+          mkdir -p "$HARNESS_ROOT"
           cat > "$HARNESS_ROOT/summarize.py" <<'PR754_EOF_summarize_py'
           #!/usr/bin/env python3
           """Fail-closed paired summary; independent processes/rounds are statistical units."""
@@ -367,6 +372,12 @@ jobs:
           (root/'summary.md').write_text('\n'.join(lines)+'\n')
           print('\n'.join(lines))
           PR754_EOF_summarize_py
+      - name: Materialize reviewed run.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HARNESS_ROOT="$RUNNER_TEMP/pr754-harness"
+          mkdir -p "$HARNESS_ROOT"
           cat > "$HARNESS_ROOT/run.sh" <<'PR754_EOF_run_sh'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -498,7 +509,7 @@ jobs:
           PR754_EOF_run_sh
       - name: Build both pinned revisions and collect six matched rounds
         shell: bash
-        run: bash "$HARNESS_ROOT/run.sh"
+        run: bash "$RUNNER_TEMP/pr754-harness/run.sh"
       - name: Upload all evidence, including partial evidence on failure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
