@@ -1,0 +1,83 @@
+name: Issue 775 Exact-Source Receiver-Completed OneWay Allocation
+permissions:
+  contents: read
+'on':
+  push:
+    branches:
+    - validation/775-oneway-shm-3aedcfc
+  workflow_dispatch: null
+concurrency:
+  group: issue775-oneway-shm-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  oneway-shm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BASE_SHA: eb99fe887cf2129d9b88441245ca0a4a6406b6c2
+      PRODUCTION_SHA: 3aedcfc71e85a43fa71a266b7fd0e6d18939d4ff
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+    - name: Checkout exact production source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: 3aedcfc71e85a43fa71a266b7fd0e6d18939d4ff
+    - name: Verify exact clean source and canonical Git blobs
+      shell: bash
+      run: "set -euo pipefail\ntest \"$(git rev-parse HEAD)\" = \"3aedcfc71e85a43fa71a266b7fd0e6d18939d4ff\"\ntest -z \"$(git status --porcelain)\"\npython3 - <<'PYHASH'\nimport hashlib, subprocess\nexpected = {'.github/workflows/pr-quick.yml': '147e80457dbb7d521264521cfbe2e4dd048663276e6cf80a0b9e8c994e8d39fc', '.github/workflows/pr-extended.yml': '2490d2239113a02cd0ed8da45d63b9eacffa573f7f13ec6e62f7552bec271d35', '.github/workflows/codec-compatibility.yml': '750d773a930f4357314700e17bda0df78894bc372aeb9bec606694b01d67cec4', '.github/workflows/pr-fast.yml': '5908d85ddc3f233a54f7f57d4f2266f6d1ed7c7665885d7b2a15eeefc5492cca'}\nfor path, digest in expected.items():\n    actual = hashlib.sha256(subprocess.check_output(['git', 'show', 'HEAD:' + path])).hexdigest()\n    if actual != digest:\n        raise SystemExit(f'Canonical blob mismatch: {path}')\n    print(path, actual)\nPYHASH\n"
+    - name: Setup canonical .NET CI environment
+      uses: ./.github/actions/setup-dotnet
+    - name: Prepare exact baseline and record provenance
+      shell: bash
+      run: 'set -euo pipefail
+
+        output="$GITHUB_WORKSPACE/artifacts/validation/issue775-oneway-shm"
+
+        mkdir -p "$output"
+
+        git fetch --no-tags origin "$BASE_SHA"
+
+        git worktree add --detach "$RUNNER_TEMP/issue775-shm-base" "$BASE_SHA"
+
+        test "$(git -C "$RUNNER_TEMP/issue775-shm-base" rev-parse HEAD)" = "$BASE_SHA"
+
+        test -z "$(git -C "$RUNNER_TEMP/issue775-shm-base" status --porcelain)"
+
+        git diff --exit-code "$BASE_SHA" "$PRODUCTION_SHA" -- test/SharpLink.Benchmarks eng/perf eng/run-allocation-gate.sh > "$output/harness-diff.txt"
+
+        printf ''base_sha=%s\nproduction_sha=%s\nworkflow_definition_sha=%s\nworkflow_ref=%s\nrun_id=%s\nrun_attempt=%s\n'' "$BASE_SHA" "$PRODUCTION_SHA" "$GITHUB_SHA" "$GITHUB_WORKFLOW_REF" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$output/provenance.txt"
+
+        printf ''%s\n'' ''order=base head head base'' ''scope=canonical SHM OneWay full receiver completion, concurrency 1; 512 warmups and 5 x 4000 measured operations per slot'' ''budgets and harness unchanged; process-wide allocation includes both client and server'' >> "$output/provenance.txt"
+
+        dotnet --info > "$output/dotnet-info.txt"
+
+        uname -a > "$output/uname.txt"
+
+        lscpu > "$output/cpu.txt"
+
+        cpu_list="$(python3 -c ''import os; c=sorted(os.sched_getaffinity(0)); assert len(c)>=2; print(",".join(map(str,c[:2])))'')"
+
+        printf ''cpu_affinity=%s\nDOTNET_PROCESSOR_COUNT=2\n'' "$cpu_list" >> "$output/provenance.txt"
+
+        echo "ISSUE775_CPU_LIST=$cpu_list" >> "$GITHUB_ENV"
+
+        echo ''DOTNET_PROCESSOR_COUNT=2'' >> "$GITHUB_ENV"
+
+        '
+    - name: Build both exact revisions before timing
+      shell: bash
+      run: "set -euo pipefail\nfor label in base head; do\n  checkout=\"$GITHUB_WORKSPACE\"; sha=\"$PRODUCTION_SHA\"\n  if [[ \"$label\" == base ]]; then checkout=\"$RUNNER_TEMP/issue775-shm-base\"; sha=\"$BASE_SHA\"; fi\n  output=\"$GITHUB_WORKSPACE/artifacts/validation/issue775-oneway-shm/build/$label\"\n  mkdir -p \"$output\"\n  (\n    cd \"$checkout\"\n    test \"$(git rev-parse HEAD)\" = \"$sha\"\n    test -z \"$(git status --porcelain)\"\n    printf 'build_sha=%s\\n' \"$sha\" > \"$output/build-commit.txt\"\n    printf '%s\\n' 'dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj' 'dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -m:1 /nodeReuse:false -v minimal' > \"$output/commands.txt\"\n    dotnet restore test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj 2>&1 | tee \"$output/restore.log\"\n    dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-restore -m:1 /nodeReuse:false -v minimal 2>&1 | tee \"$output/build.log\"\n    sha256sum test/SharpLink.Benchmarks/UnaryBenchmarks.cs test/SharpLink.Benchmarks/BenchmarkEnvironment.cs test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll > \"$output/input-output-sha256.txt\"\n    dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --help > \"$output/benchmark-help.txt\"\n  )\ndone\n"
+    - name: Run receiver-completed allocation in ABBA order
+      shell: bash
+      run: "set -euo pipefail\norder=(base head head base)\nfor index in \"${!order[@]}\"; do\n  label=\"${order[$index]}\"; slot=\"$(printf '%02d-%s' \"$((index+1))\" \"$label\")\"\n  checkout=\"$GITHUB_WORKSPACE\"; sha=\"$PRODUCTION_SHA\"\n  if [[ \"$label\" == base ]]; then checkout=\"$RUNNER_TEMP/issue775-shm-base\"; sha=\"$BASE_SHA\"; fi\n  output=\"$GITHUB_WORKSPACE/artifacts/validation/issue775-oneway-shm/$slot\"\n  mkdir -p \"$output\"\n  (\n    cd \"$checkout\"\n    test \"$(git rev-parse HEAD)\" = \"$sha\"\n    test -z \"$(git status --porcelain)\"\n    printf 'source_sha=%s\\nslot=%s\\n' \"$sha\" \"$slot\" > \"$output/provenance.txt\"\n    taskset -c \"$ISSUE775_CPU_LIST\" dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release --no-build --no-restore -- --allocation-gate-self-test --output \"$output/self-test.json\"\n    export SHARPLINK_ALLOCATION_OUTPUT=\"$output/gate.json\"\n    command=(timeout 180s taskset -c \"$ISSUE775_CPU_LIST\" ./eng/run-allocation-gate.sh --filter rpc-oneway-sharedmemory-c1)\n    printf '%q ' \"${command[@]}\" > \"$output/command.txt\"; printf '\\n' >> \"$output/command.txt\"\n    set +e\n    \"${command[@]}\" 2>&1 | tee \"$output/gate.log\"\n    status=${PIPESTATUS[0]}\n    set -e\n    printf '%s\\n' \"$status\" > \"$output/process-exit-code.txt\"\n  )\ndone\n"
+    - name: Validate complete unchanged allocation samples and compare
+      shell: bash
+      run: "set -euo pipefail\npython3 - <<'PYVALIDATE'\nimport json, math, os, statistics\nfrom pathlib import Path\nroot=Path(os.environ['GITHUB_WORKSPACE'])/'artifacts/validation/issue775-oneway-shm'\nrows=[]\nfor index,label in enumerate(('base','head','head','base'),1):\n    slot=f'{index:02d}-{label}'; d=root/slot\n    assert (d/'process-exit-code.txt').read_text().strip()=='0', f'{slot}: failed process'\n    assert json.loads((d/'self-test.json').read_text())['passed'], f'{slot}: failed harness self-test'\n    r=json.loads((d/'gate.json').read_text())\n    assert r['passed'] and not r['errors'] and r['schemaVersion']==1 and r['runtimeMajor']==10 and r['configuration']=='Release'\n    assert r['filter']=='rpc-oneway-sharedmemory-c1' and r['injectedBytesPerOperation']==0\n    assert len(r['cases'])==1\n    c=r['cases'][0]\n    assert c['name']=='rpc-oneway-sharedmemory-c1' and c['passed'] and c['concurrency']==1\n    assert c['warmupOperations']==512 and c['operationsPerSample']==4000 and c['sampleCount']==5\n    assert c['maxBytesPerOperation']==960 and c['maxSpreadBytesPerOperation']==20\n    assert len(c['samples'])==5 and {s['index'] for s in c['samples']}==set(range(5))\n    for s in c['samples']:\n        assert s['completedOperations']==4000 and s['allocatedBytes']>=0\n        assert math.isfinite(s['bytesPerOperation']) and s['bytesPerOperation']==s['allocatedBytes']/4000\n        assert math.isfinite(s['elapsedMilliseconds']) and s['elapsedMilliseconds']>0\n    values=[s['bytesPerOperation'] for s in c['samples']]\n    assert statistics.median(values)==c['medianBytesPerOperation']<=960\n    assert max(values)-min(values)==c['spreadBytesPerOperation']<=20\n    rows.append({'slot':slot,'revision':label,'medianBytesPerOperation':c['medianBytesPerOperation'],'spreadBytesPerOperation':c['spreadBytesPerOperation'],'samples':c['samples']})\nbase=statistics.mean(r['medianBytesPerOperation'] for r in rows if r['revision']=='base')\nhead=statistics.mean(r['medianBytesPerOperation'] for r in rows if r['revision']=='head')\nsummary={'scope':'canonical SHM OneWay receiver-completed process-wide allocation; sender/server components are not separately attributed','completedMeasuredOperations':80000,'baseMeanOfSlotMedians':base,'headMeanOfSlotMedians':head,'deltaBytesPerOperation':head-base,'ratio':head/base,'slots':rows}\n(root/'summary.json').write_text(json.dumps(summary,indent=2)+'\\n')\nprint(json.dumps({k:v for k,v in summary.items() if k!='slots'},indent=2))\nPYVALIDATE\n"
+    - name: Always upload raw allocation and provenance evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: issue775-oneway-shm-3aedcfc-${{ github.run_id }}-${{ github.run_attempt }}
+        path: artifacts/validation/issue775-oneway-shm
+        if-no-files-found: error
+        retention-days: 30
