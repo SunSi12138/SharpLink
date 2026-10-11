@@ -2,6 +2,23 @@
 
 Baseline `dev` @ `eb99fe887cf2129d9b88441245ca0a4a6406b6c2`. A/B/C/D are **reference classifications**, not an automatic deletion plan. GitHub Actions checkout source was temporarily modified only for verification. No production file has been merged to dev.
 
+## Implementation progress on merged-#799 3.0 dev (2026-10-11)
+
+Initial semantic/experiment evidence below was captured on pre-#799 dev `eb99fe88`. The actual implementation PRs are based on the later **dev `a1f9ee2a` (which already includes merged #799)**. **None of the #801 PRs has been merged into dev.**
+
+- [#806 — retire standalone/endpoint dynamic Codec APIs](https://github.com/SunSi12138/SharpLink/pull/806), Ready; exact public API/package/desktop AOT checks passed.
+- [#807 — remove ServerDecodeExecutor compatibility queue](https://github.com/SunSi12138/SharpLink/pull/807), Ready; 3 source/test files, `+137/-318`, full Unit/Gen/Integration and PR gates passed.
+- [#808 — compact SharpLinkClient 10 test-only callback fields](https://github.com/SunSi12138/SharpLink/pull/808), Ready; source and tests, Full Release/Unit/Gen/Integration, PR gates passed.
+- [#809 — compact PooledAsyncStreamDispatcher 9 test-only callback fields](https://github.com/SunSi12138/SharpLink/pull/809), Ready; corrected initial file-LOC gate regression; current exact-head PR Fast/Package Smoke/CodeQL passed.
+- [#810 — delete exact 45 verified unused non-public methods](https://github.com/SunSi12138/SharpLink/pull/810), Draft pending final mobile evidence + overlap with #806. The frozen method index's **three stale source-line coordinates** were matched to the same declarations on merged #799; 45 removed, one bodyless logger partial skipped. Full Release/Unit 2038/Gen 271/Integration 453 passed. Note one `RpcCodecProvider.TryGetExplicitCodec` overlap with #806 requires ordering/rebase.
+- [#811 — remove IRpcChannel's fake client stream sink inheritance](https://github.com/SunSi12138/SharpLink/pull/811), Ready; 3.0 Abstractions ABI snapshot + migration guide; Release/Unit/Gen/Integration and PR gates passed.
+- [#812 — remove Server reflection-only lifecycle alias](https://github.com/SunSi12138/SharpLink/pull/812), Ready; migrate test to existing coordinator diagnostic method; PR gates passed.
+- [#813 — remove test-only unbounded RPC error sender](https://github.com/SunSi12138/SharpLink/pull/813), Ready; deadline tests now await the production backpressure method; PR gates passed.
+
+**Exact-head cross-platform NativeAOT:** [Windows x64 + macOS ARM64 GitHub Actions matrix #38115419654](https://github.com/SunSi12138/SharpLink/actions/runs/38115419654) **10/10 PASS** on the pinned source SHA of #807–#811. Each job ran real NativeAOT TCP, shared memory, SharpPack and pre-credit scenarios. Individual PR comments link job logs and artifacts. These claims concern desktops, not mobile physical hardware. #810's mobile CoreCLR matrix remains separate.
+
+All these PRs require human review before merge. [#805](https://github.com/SunSi12138/SharpLink/issues/805) covers public→internal and sealed design separately; do not mix it into these implementation PRs.
+
 ## Status update: executed next priority groups
 
 - **ServerDecodeExecutor test compatibility enqueue subsystem — independently PASS.** Replaced the test-only blocking queue with the real production reserved-before-publication queue, migrated two unit-test files, and removed the extra SemaphoreSlim/CTS/TCS plus operation accounting and entry branch. Source/test experiment delta **3 files, +137/−318 lines**. [Full UnitTests 2018, Generator 269, Integration 453 and pristine build pass](./decode-queue-compatibility-teardown.md); [three-platform NativeAOT, trim, 8-package public API and external consumers pass](https://github.com/SunSi12138/SharpLink/actions/runs/38107400102). A controlled Linux .NET 10 ctor allocation trial measured **832 B → 584 B median**, 17→13 instance fields, saving **248 B/constructor (sample-specific; not throughput)**. [Raw allocation proof](https://github.com/SunSi12138/SharpLink/actions/runs/38107583355).
@@ -13,13 +30,13 @@ Baseline `dev` @ `eb99fe887cf2129d9b88441245ca0a4a6406b6c2`. A/B/C/D are **refer
 
 The two test-hook refactors and the decode-queue overhaul are three **separate** implementation groups, and should have independent, reviewable PRs and benchmarking gates rather than being combined with the unrelated 45-method cleanup.
 
-## Clarification after reviewing unmerged PR #799 (2026-10-11)
+## Historical clarification recorded before #799 was merged (2026-10-11)
 
-**Prior issue/backlog wording “runtime fallback” should not be read as the unmanaged reflection fallback.** PR [#799](https://github.com/SunSi12138/SharpLink/pull/799) removes *automatic* reflection-based `UnsafeBlitCodec<T>` resolution for arbitrary unregistered unmanaged types but explicitly retains the **application-supplied** `UseCodecResolver(Func<Type, IRpcCodec?>)` callback invoked by `RpcCodecProvider`. Generated RPC already uses owner-local compile-time Codec/Adapter bindings and intentionally ignores both endpoint `UseCodecResolver` and standalone `AddCodec`.
+**Prior issue/backlog wording “runtime fallback” should not be read as the unmanaged reflection fallback.** Merged PR [#799](https://github.com/SunSi12138/SharpLink/pull/799) removes *automatic* reflection-based `UnsafeBlitCodec<T>` resolution for arbitrary unregistered unmanaged types but explicitly retains the **application-supplied** `UseCodecResolver(Func<Type, IRpcCodec?>)` callback invoked by `RpcCodecProvider`. Generated RPC already uses owner-local compile-time Codec/Adapter bindings and intentionally ignores both endpoint `UseCodecResolver` and standalone `AddCodec`.
 
 Prioritize **removing misleading Server `UseSerializer`** in the major-version API review: it merely forwards an endpoint resolver unused by generated RPC.
 
-For standalone `SharpLinkRuntimeContextBuilder.AddCodec<T>` and `UseCodecResolver`, decide whether 3.0 retains any standalone `context.Codecs.GetCodec<T>()` extension policy. PR #799's own [3.0 migration guide](https://github.com/SunSi12138/SharpLink/blob/work/762-generated-unsafe-blit/doc/unsafe-blit-3.0-migration.md) currently uses `AddCodec(new MyPayloadCodec())` as the recommended standalone migration after removing unmanaged reflection fallback; deleting it would be a **deliberate feature withdrawal** rather than merely pruning an unused generated RPC knob. Coordinate this decision and its replacement/upgrade guidance with #799 (still open/unmerged), rather than leaving incompatible migration instructions and 3.0 public API baselines.
+For standalone `SharpLinkRuntimeContextBuilder.AddCodec<T>` and `UseCodecResolver`, decide whether 3.0 retains any standalone `context.Codecs.GetCodec<T>()` extension policy. PR #799's own [3.0 migration guide](https://github.com/SunSi12138/SharpLink/blob/work/762-generated-unsafe-blit/doc/unsafe-blit-3.0-migration.md) originally used `AddCodec(new MyPayloadCodec())` as the recommended standalone migration after removing unmanaged reflection fallback; deleting it would be a **deliberate feature withdrawal** rather than merely pruning an unused generated RPC knob. Coordinate this decision and its replacement/upgrade guidance with #799 (now merged into dev; #806 updates migration), rather than leaving incompatible migration instructions and 3.0 public API baselines.
 
 ## Established implementation evidence
 
