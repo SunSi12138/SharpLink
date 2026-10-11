@@ -64,10 +64,10 @@ index 7fd973e..054826f 100644
  
 diff --git a/test/SharpLink.IntegrationTests/OneWayDrainTrace.cs b/test/SharpLink.IntegrationTests/OneWayDrainTrace.cs
 new file mode 100644
-index 0000000..31ce764
+index 0000000..279a3f8
 --- /dev/null
 +++ b/test/SharpLink.IntegrationTests/OneWayDrainTrace.cs
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,350 @@
 +using System.Reflection;
 +using System.Text;
 +using SharpLink.Client;
@@ -124,7 +124,11 @@ index 0000000..31ce764
 +            if (ready is not null)
 +                for (var index = 0; index < Math.Min(ready.Length, MaxEntries); index++)
 +                    Observe(text, "client-session", () =>
-+                        Session(text, "client", Read(ready.GetValue(index), "<Session>k__BackingField")));
++                    {
++                        var connection = ready.GetValue(index);
++                        Session(text, "client", Read(connection, "<Session>k__BackingField"));
++                        Observe(text, "client-pending", () => Pending(text, connection));
++                    });
 +        });
 +        Observe(text, "server-discovery", () =>
 +        {
@@ -138,6 +142,7 @@ index 0000000..31ce764
 +            }
 +            text.Append($" serverSessionsObserved={serverCount}");
 +        });
++        Observe(text, "client-framework", () => Framework(text, client));
 +        text.Append($" endMs={Elapsed():F3}");
 +        _observations.Add(text.ToString());
 +    }
@@ -217,6 +222,7 @@ index 0000000..31ce764
 +        }
 +        var flow = Read(Read(session, "_protocolState"), "<FlowController>k__BackingField");
 +        text.Append($"\n  flow={flow is not null}");
++        Observe(text, side + "-pump", () => Pump(text, session));
 +        if (flow is null)
 +            return;
 +        Values(text, flow, "_sendConnectionCredit", "_receiveConnectionCredit", "_pendingConnectionConsumed",
@@ -253,6 +259,110 @@ index 0000000..31ce764
 +            if (ReferenceEquals(node, head))
 +                break;
 +        }
++    }
++
++    private static void Pump(StringBuilder text, object? session)
++    {
++        var pump = Read(session, "_pump");
++        text.Append($"\n  pump={pump is not null}");
++        Values(text, session, "_stopped", "_cleanupStarted");
++        if (pump is null)
++            return;
++        Values(text, pump, "_queuedBytes", "_stopped", "_faulted");
++        text.Append($" pumpTask={(Read(pump, "_pumpTask") as Task)?.Status}");
++        Observe(text, "pump-wakeup", () =>
++        {
++            var wakeup = Read(pump, "_wakeup");
++            text.Append(" wakeup");
++            Values(text, wakeup, "_state", "_generation");
++            text.Append($" continuationPresent={Read(wakeup, "_pumpContinuation") is not null} deadlinePresent={Read(wakeup, "_deadline") is not null}");
++            Core(text, Read(wakeup, "_core"));
++        });
++        foreach (var name in new[] { "_progressQueue", "_normalQueue" })
++            Observe(text, name, () => Queue(text, name, Read(pump, name)));
++        Observe(text, "pump-output", () =>
++        {
++            var output = Read(pump, "_output");
++            text.Append($"\n   outputType={output?.GetType().FullName}");
++            if (output?.GetType().FullName == "System.IO.Pipelines.StreamPipeWriter")
++                Values(text, output, "_bytesBuffered", "_tailBytesBuffered", "_isCompleted");
++        });
++        Observe(text, "transport-read-ownership", () =>
++        {
++            var input = Read(Read(session, "_transport"), "<Input>k__BackingField");
++            text.Append($"\n   inputType={input?.GetType().Name}");
++            if (input?.GetType().Name == "ReadOwnershipPipeReader")
++            {
++                Values(text, input, "_readActive", "_completionRequested");
++                text.Append($" completionTask={(Read(input, "_completionTask") as Task)?.Status}");
++            }
++        });
++    }
++
++    private static void Queue(StringBuilder text, string name, object? channel)
++    {
++        text.Append($"\n   {name} type={channel?.GetType().Name}");
++        if (channel?.GetType().Name != "SingleConsumerUnboundedChannel`1")
++            return;
++        Values(text, channel, "_doneWriting");
++        var queue = Read(channel, "_items");
++        var segment = Read(queue, "_head");
++        var tail = Read(queue, "_tail");
++        var observed = 0;
++        // Raw bounded occupancy estimate, not a linearizable queue Count or frame delivery proof.
++        for (var index = 0; segment is not null && index < MaxEntries; index++)
++        {
++            var state = Read(segment, "_state");
++            var first = (int)Read(state, "_first")!;
++            var last = (int)Read(state, "_last")!;
++            var length = ((Array)Read(segment, "_array")!).Length;
++            observed += (last - first) & (length - 1);
++            text.Append($" segment[{index}]:first={first},last={last},length={length},tail={ReferenceEquals(segment, tail)}");
++            segment = Read(segment, "_next");
++        }
++        text.Append($" observedQueuedFrames={observed} segmentsTruncated={segment is not null}");
++    }
++
++    private static void Framework(StringBuilder text, object client)
++    {
++        var supervisor = Read(client, "_frameworkTasks");
++        text.Append("\n clientFramework");
++        Values(text, supervisor, "_sealed", "_drainStarted", "_totalTracked");
++        var active = Read(supervisor, "_active");
++        Values(text, active, "_count", "_freeCount");
++        foreach (var (task, registration) in Entries(active))
++            text.Append($" [operation={Read(registration, "<Operation>k__BackingField")} status={(task as Task)?.Status}]");
++        if ((int)Read(active, "_count")! > MaxEntries)
++            text.Append(" entry-prefix-truncated");
++    }
++
++    private static void Pending(StringBuilder text, object? connection)
++    {
++        var table = Read(connection, "<PendingCalls>k__BackingField");
++        var slots = Read(table, "_slots") as Array;
++        text.Append($"\n   pendingSlotsLength={slots?.Length} inspectedPrefix={Math.Min(slots?.Length ?? 0, MaxEntries)}");
++        if (slots is null)
++            return;
++        for (var index = 0; index < Math.Min(slots.Length, MaxEntries); index++)
++        {
++            var call = slots.GetValue(index);
++            if (call is null)
++                continue;
++            text.Append($" [slot={index} request={Read(call, "<Id>k__BackingField")} kind={Read(call, "<Kind>k__BackingField")}");
++            Values(text, call, "_registered", "_requestPublished");
++            var operation = Read(call, "<Operation>k__BackingField");
++            text.Append($" operationType={operation?.GetType().Name}");
++            if (operation is not null)
++                Core(text, Read(operation, "_core"));
++            text.Append(']');
++        }
++    }
++
++    private static void Core(StringBuilder text, object? core)
++    {
++        text.Append(" core");
++        Values(text, core, "_version", "_completed", "_runContinuationsAsynchronously");
++        text.Append($" continuationPresent={Read(core, "_continuation") is not null} errorPresent={Read(core, "_error") is not null}");
 +    }
 +
 +    private static void Entry(StringBuilder text, string label, object? entry)

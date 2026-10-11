@@ -32,7 +32,7 @@ jobs:
       - name: Apply independently reviewed test-only observations
         run: |
           patch="$GITHUB_WORKSPACE/definition/.github/diagnostics/754-oneway-drain-trace.patch"
-          echo "d329f7d30f76090382338c80014a7f8621b63a2a0f129bf186a4d13eabe6eecf  $patch" | sha256sum -c -
+          echo "1a73958faf3078383daf3d4e247525c36c46fa20de1dd7e8e603e8b6f796f6c4  $patch" | sha256sum -c -
           git apply --check "$patch"
           git apply "$patch"
           if git diff --name-only | grep -v '^test/SharpLink.IntegrationTests/'; then exit 1; fi
@@ -50,7 +50,7 @@ jobs:
           status=0
           for attempt in 1 2 3 4 5; do
             set +e
-            SHARPLINK_ONEWAY_DRAIN_TRACE_OUTPUT="artifacts/paired-drain/trace-$attempt.log" dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter '/*/*/IntegrationBehaviorTests/QueuedOneWayStubFailureShouldDrainReservedStreams' --maximum-parallel-tests 1 2>&1 | tee artifacts/paired-drain/run-$attempt.log
+            SHARPLINK_ONEWAY_DRAIN_TRACE_OUTPUT="$GITHUB_WORKSPACE/source/artifacts/paired-drain/trace-$attempt.log" dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter '/*/*/IntegrationBehaviorTests/QueuedOneWayStubFailureShouldDrainReservedStreams' --maximum-parallel-tests 1 2>&1 | tee artifacts/paired-drain/run-$attempt.log
             result=${PIPESTATUS[0]}
             set -e
             echo "$attempt,$result" >> artifacts/paired-drain/results.csv
