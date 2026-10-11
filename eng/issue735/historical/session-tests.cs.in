@@ -1,0 +1,32 @@
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Historical735RemoteAbortBeforeTerminalLookupPreservesExactException(bool ioFailure)
+    {
+        await using var fixture = new Fixture(window: 4);
+        // Use the real session's shared DATA/terminal implementation. Server role avoids a
+        // Request fence unrelated to this question; the session's writer is the actual pump.
+        await fixture.Session.SendClientStreamChunkAsync(73, 0, 7, new IntCodec(false),
+            default, TimeProvider.System, CancellationToken.None).AsTask().WaitAsync(Limit);
+        _ = await fixture.ReadBatch();
+        var owner = fixture.Session.WriterOwnedStreams!;
+        var handle = owner.Open(73, 0);
+        Exception expected = ioFailure ? new IOException("historical remote IO failure") :
+            new SharpLinkException(SharpLinkErrorCode.Cancelled, "historical remote canceled");
+        ValueTask terminal;
+        lock (handle.Gate)
+        {
+            // Pin the writer out of retirement until terminal resolution has executed its
+            // synchronous lookup. This injects the exact abort-before-EOF-lookup crossing,
+            // without sleeps, reflection, a timeout change or an artificial fake credit owner.
+            fixture.Session.AbortSendStreams(73, expected);
+            terminal = fixture.Session.SendClientStreamCompleteWithWriterAsync(
+                73, 0, default, TimeProvider.System, CancellationToken.None);
+        }
+        var failure = await Capture(terminal.AsTask());
+        Ensure(ReferenceEquals(failure, expected),
+            $"historical terminal lookup replaced selected error; expected={expected.GetType().Name}: {expected.Message}; " +
+            $"actual={failure.GetType().Name}: {failure.Message}");
+        Ensure(fixture.Session.IsConnected && owner.PreparedBytes == 0 && owner.CleanupFailure is null,
+            "historical terminal failure faulted its connection or retained preparation");
+    }

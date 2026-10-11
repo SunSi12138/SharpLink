@@ -1,0 +1,71 @@
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Historical735ProducerCancellationMustSettleBeforeDeferredWriterCallback(bool iteratorFails)
+    {
+        await using var fixture = new Fixture(window: 4);
+        var producerAtEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProducer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var callbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseCallback = new ManualResetEventSlim();
+        var expected = iteratorFails ? new IOException("historical iterator failure during cancellation") : null;
+        var send = fixture.Connection.SendClientStreamAsync(fixture.RequestId, 0,
+            Historical735ValuesBeforeEof(producerAtEof, releaseProducer.Task, expected),
+            new Codec(false), fixture.ProducerToken);
+        _ = await fixture.ReadThroughData();
+        await producerAtEof.Task.WaitAsync(Limit);
+        var owner = fixture.Connection.Session.WriterOwnedStreams!;
+        var expectedPrepared = 2L * (ProtocolV2Constants.HeaderBytes + sizeof(ushort) + sizeof(int));
+        Ensure(owner.PreparedBytes == expectedPrepared,
+            $"historical cancellation fixture did not reach two prepared frames; actual={owner.PreparedBytes}");
+
+        // Cancellation registrations run newest first. Hold a newer test registration so
+        // the token is already canceled while the production writer cleanup has not begun.
+        // The iterator ignores its token until explicitly released by this test.
+        using var blocker = fixture.ProducerToken.UnsafeRegister(_ =>
+        {
+            callbackEntered.TrySetResult();
+            if (!releaseCallback.Wait(Limit))
+                throw new TimeoutException("historical cancellation callback barrier was not released");
+        }, null);
+        var cancel = Task.Run(() => fixture.Cancel.Cancel());
+        Exception? failure = null;
+        long preparedAtCompletion = -1;
+        bool connectedAtCompletion = false;
+        Exception? cleanupFailure = null;
+        try
+        {
+            await callbackEntered.Task.WaitAsync(Limit);
+            Ensure(fixture.ProducerToken.IsCancellationRequested, "historical token was not canceled at the barrier");
+            releaseProducer.TrySetResult();
+            failure = await Capture(send);
+            preparedAtCompletion = owner.PreparedBytes;
+            connectedAtCompletion = fixture.Connection.Session.IsConnected;
+            cleanupFailure = owner.CleanupFailure;
+        }
+        finally
+        {
+            releaseProducer.TrySetResult();
+            releaseCallback.Set();
+            await cancel.WaitAsync(Limit);
+        }
+        Ensure(expected is null ? failure is OperationCanceledException : ReferenceEquals(failure, expected),
+            $"historical cleanup replaced producer failure; expected={expected?.Message ?? "cancellation"}; " +
+            $"actual={failure?.GetType().Name}: {failure?.Message}");
+        Ensure(connectedAtCompletion && preparedAtCompletion == 0 && cleanupFailure is null,
+            $"historical producer completed before exact preparation settlement; connected={connectedAtCompletion}, " +
+            $"prepared={preparedAtCompletion}, afterCallbackRelease={owner.PreparedBytes}, " +
+            $"cleanup={cleanupFailure?.GetType().Name ?? "none"}");
+    }
+
+    private static async IAsyncEnumerable<int> Historical735ValuesBeforeEof(
+        TaskCompletionSource entered, Task release, Exception? failure)
+    {
+        yield return 7;
+        yield return 8;
+        yield return 9;
+        entered.TrySetResult();
+        await release.ConfigureAwait(false);
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }

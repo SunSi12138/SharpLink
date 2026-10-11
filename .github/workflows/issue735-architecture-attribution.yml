@@ -1,0 +1,130 @@
+name: Issue 735 Architecture Attribution
+
+on:
+  push:
+    branches: ['research/735-production-architecture-20261012-f8ba891']
+    paths:
+      - '.github/workflows/issue735-architecture-attribution.yml'
+      - 'eng/issue735/apply_split_gate.py'
+      - 'eng/issue735/SplitGateEvidenceTests.cs'
+      - 'eng/issue735/historical/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  historical-cancellation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build and execute exact historical red and green subjects
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          repo=pathlib.Path.cwd()
+          out=repo/'artifacts/issue735/historical';out.mkdir(parents=True)
+          subject='8ac4c84938d193c9a9659e9facd71f1fff82968a'
+          rows=[]
+          def run(cmd, name, cwd=repo, limit=600):
+              with (out/f'{name}.log').open('w') as log:
+                  try: code=subprocess.run(cmd,cwd=cwd,stdout=log,stderr=subprocess.STDOUT,timeout=limit).returncode
+                  except subprocess.TimeoutExpired: code=124
+              rows.append({'name':name,'cwd':str(cwd),'command':cmd,'exitCode':code})
+              (out/'exits.json').write_text(json.dumps(rows,indent=2))
+              return code
+          assert run(['dotnet','--info'],'dotnet-info')==0
+          assert run(['git','fetch','--no-tags','--depth=1','origin',subject],'fetch')==0
+          for mode in ['red','green']:
+              work=pathlib.Path(os.environ['RUNNER_TEMP'])/('issue735-history-'+mode)
+              assert run(['git','worktree','add','--detach',str(work),subject],'worktree-'+mode)==0
+              assert run(['python3',str(repo/'eng/issue735/historical/apply.py'),'--checkout',str(work),'--mode',mode,'--manifest',str(out/f'{mode}-overlay.json')],'overlay-'+mode)==0
+              (out/f'{mode}.patch').write_bytes(subprocess.check_output(['git','diff','--binary'],cwd=work))
+              assert run(['dotnet','build','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','-p:Platform=AnyCPU','-v','minimal'],'build-'+mode,work)==0
+              binary=work/'test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll'
+              (out/f'{mode}-binary.sha256').write_text(hashlib.sha256(binary.read_bytes()).hexdigest()+'\n')
+              repeats=1 if mode=='red' else 4
+              for r in range(repeats):
+                  name=f'{mode}-focused-r{r}'
+                  code=run(['dotnet','test','--project','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','--no-build','--treenode-filter','/*/*/*/Historical735*'],name,work)
+                  text=(out/f'{name}.log').read_text()
+                  if mode=='red':
+                      assert code==2, f'expected test failure exit 2; got {code}'
+                      assert 'historical terminal lookup replaced selected error' in text
+                      assert 'historical producer completed before exact preparation settlement' in text
+                  else:
+                      assert code==0, f'green attribution failed: {name}'
+              if mode=='green':
+                  assert run(['dotnet','test','--project','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','--no-build'],'green-full',work)==0
+          PY
+      - name: Upload every historical result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-historical-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/historical
+          if-no-files-found: error
+          retention-days: 30
+
+  directional-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Pin baseline, prove isolation red first, then validate only the D overlay
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,shutil,subprocess
+          repo=pathlib.Path.cwd();out=repo/'artifacts/issue735/directional';out.mkdir(parents=True)
+          base='f8ba89121c87a6410a0139c44d7db30eab877f41'
+          rows=[]
+          def run(cmd,name,cwd=repo,limit=600):
+              with (out/f'{name}.log').open('w') as log:
+                  try: code=subprocess.run(cmd,cwd=cwd,stdout=log,stderr=subprocess.STDOUT,timeout=limit).returncode
+                  except subprocess.TimeoutExpired: code=124
+              rows.append({'name':name,'command':cmd,'exitCode':code})
+              (out/'exits.json').write_text(json.dumps(rows,indent=2))
+              return code
+          assert run(['dotnet','--info'],'dotnet-info')==0
+          assert run(['git','fetch','--no-tags','--depth=1','origin',base],'fetch')==0
+          work=pathlib.Path(os.environ['RUNNER_TEMP'])/'issue735-directional'
+          assert run(['git','worktree','add','--detach',str(work),base],'worktree')==0
+          shutil.copyfile(repo/'eng/issue735/SplitGateEvidenceTests.cs',work/'test/SharpLink.UnitTests/Runtime/SplitGateEvidenceTests.cs')
+          assert run(['dotnet','build','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','-p:Platform=AnyCPU','-v','minimal'],'baseline-build',work)==0
+          command=['dotnet','test','--project','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','--no-build']
+          red=run(command+['--treenode-filter','/*/*/SplitGateEvidenceTests/*'],'isolation-red',work)
+          assert red==2,f'expected isolation failure against coupled dev, got {red}'
+          text=(out/'isolation-red.log').read_text()
+          assert 'SendAdmissionCanProgressWhileReceiveDomainIsHeld' in text and 'ReceiveConsumptionCanProgressWhileSendDomainIsHeld' in text
+          assert run(['python3',str(repo/'eng/issue735/apply_split_gate.py'),'--root',str(work),'--record',str(out/'overlay.json')],'apply-candidate')==0
+          (out/'candidate.patch').write_bytes(subprocess.check_output(['git','diff','--binary'],cwd=work))
+          assert run(['dotnet','build','test/SharpLink.UnitTests/SharpLink.UnitTests.csproj','-c','Release','-p:Platform=AnyCPU','-v','minimal'],'candidate-build',work)==0
+          binary=work/'test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll'
+          (out/'candidate-binary.sha256').write_text(hashlib.sha256(binary.read_bytes()).hexdigest()+'\n')
+          assert run(command+['--treenode-filter','/*/*/SplitGateEvidenceTests/*'],'isolation-green',work)==0
+          for r in range(4):
+              run(command,f'candidate-full-r{r}',work)
+          failures=[r for r in rows if r['exitCode']!=0 and r['name']!='isolation-red']
+          assert not failures,failures
+          PY
+      - name: Upload complete D control evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-directional-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/directional
+          if-no-files-found: error
+          retention-days: 30
