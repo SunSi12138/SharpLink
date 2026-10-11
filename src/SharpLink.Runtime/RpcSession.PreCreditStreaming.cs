@@ -16,6 +16,14 @@ internal sealed partial class RpcSession
         CancellationToken cancellationToken = default)
     {
         var codec = RuntimeContext.Codecs.GetCodec<T>();
+        if (UsesWriterOwnedStreams)
+        {
+            var exact = codec as IRpcSizedCodec<T>;
+            if (exact is not null && !exact.CanExactSize) exact = null;
+            _ = await SendWriterOwnedChunkAsync(requestId, streamId, item, codec, exact,
+                cancellationToken, default, default, null).ConfigureAwait(false);
+            return;
+        }
         if (codec is IRpcSizedCodec<T> sizedCodec &&
             sizedCodec.CanExactSize &&
             sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
@@ -49,6 +57,9 @@ internal sealed partial class RpcSession
         TimeProvider? deadlineTimeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(codec);
+        if (UsesWriterOwnedStreams)
+            return AwaitClientStreamChunkWithoutLeaseAsync(SendWriterOwnedChunkAsync(
+                requestId, streamId, item, codec, null, cancellationToken, default, deadline, deadlineTimeProvider));
         return SerializeUnsizedStreamChunk(
             requestId,
             streamId,
@@ -71,6 +82,9 @@ internal sealed partial class RpcSession
             TimeProvider? deadlineTimeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(codec);
+        if (UsesWriterOwnedStreams)
+            return SendWriterOwnedChunkAsync(requestId, streamId, item, codec, null,
+                cancellationToken, creditLease, deadline, deadlineTimeProvider);
         return SerializeUnsizedStreamChunkWithCreditLease(
             requestId,
             streamId,
@@ -378,7 +392,7 @@ internal sealed partial class RpcSession
 
     private bool TryAcquireStreamSendCredit(long requestId, ushort streamId, int encodedBytes)
     {
-        var controller = Volatile.Read(ref _protocolState).FlowController;
+        var controller = GetLegacyStreamSendController();
         return controller is null || controller.TryAcquireSendCredit(requestId, streamId, encodedBytes);
     }
 

@@ -88,6 +88,7 @@ internal sealed partial class RpcSession
         _lifetimeToken = _cts.Token;
         Id = connection.Id;
         Role = creationOptions.Role;
+        _writerOwnedStreamMode = creationOptions.WriterOwnedStreams;
         RuntimeContext = creationOptions.RuntimeContext;
         _compressionSendPolicyState = creationOptions.CompressionSendPolicyState;
         _lastActiveTimestamp = RuntimeContext.TimeProvider.GetTimestamp();
@@ -109,113 +110,6 @@ internal sealed partial class RpcSession
 
     internal IRpcByteBufferWriter RentFrameWriter()
         => RuntimeContext.Buffers.Rent(checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes));
-
-    internal ValueTask AcquireStreamSendCreditAsync(
-        long requestId,
-        ushort streamId,
-        int encodedBytes,
-        CancellationToken cancellationToken)
-    {
-        var controller = Volatile.Read(ref _protocolState).FlowController;
-        return controller is null
-            ? ValueTask.CompletedTask
-            : controller.AcquireSendCreditAsync(requestId, streamId, encodedBytes, cancellationToken);
-    }
-
-    internal void ReturnUnsentStreamCredit(long requestId, ushort streamId, int encodedBytes)
-        => Volatile.Read(ref _protocolState).FlowController?.ReturnUnsentCredit(requestId, streamId, encodedBytes);
-
-    internal ValueTask<StreamFlowController.ResolvedSendCreditLease> AcquireStreamSendCreditAsync(
-        StreamFlowController.ResolvedSendCreditLease lease,
-        long requestId,
-        ushort streamId,
-        int encodedBytes,
-        CancellationToken cancellationToken)
-    {
-        var controller = Volatile.Read(ref _protocolState).FlowController;
-        if (controller is null)
-            return new ValueTask<StreamFlowController.ResolvedSendCreditLease>(lease);
-
-        if (lease.IsResolved)
-        {
-            var pending = controller.AcquireSendCreditAsync(in lease, encodedBytes, cancellationToken);
-            if (pending.IsCompletedSuccessfully)
-            {
-                pending.GetAwaiter().GetResult();
-                return new ValueTask<StreamFlowController.ResolvedSendCreditLease>(lease);
-            }
-
-            return AwaitResolvedSendCreditAsync(pending, lease);
-        }
-
-        return controller.AcquireSendCreditLeaseAsync(
-            requestId,
-            streamId,
-            encodedBytes,
-            cancellationToken);
-    }
-
-    private static async ValueTask<StreamFlowController.ResolvedSendCreditLease>
-        AwaitResolvedSendCreditAsync(
-            ValueTask pending,
-            StreamFlowController.ResolvedSendCreditLease lease)
-    {
-        await pending.ConfigureAwait(false);
-        return lease;
-    }
-
-    internal bool TryAcquireStreamSendCredit(
-        StreamFlowController.ResolvedSendCreditLease lease,
-        long requestId,
-        ushort streamId,
-        int encodedBytes,
-        out StreamFlowController.ResolvedSendCreditLease resolvedLease)
-    {
-        var controller = Volatile.Read(ref _protocolState).FlowController;
-        if (controller is null)
-        {
-            resolvedLease = lease;
-            return true;
-        }
-
-        if (lease.IsResolved)
-        {
-            resolvedLease = lease;
-            return controller.TryAcquireSendCredit(in lease, encodedBytes);
-        }
-
-        return controller.TryAcquireSendCreditLease(requestId, streamId, encodedBytes, out resolvedLease);
-    }
-
-    internal void ReturnUnsentStreamCredit(
-        StreamFlowController.ResolvedSendCreditLease lease,
-        long requestId,
-        ushort streamId,
-        int encodedBytes)
-    {
-        var controller = Volatile.Read(ref _protocolState).FlowController;
-        if (controller is null)
-            return;
-        if (lease.IsResolved)
-            controller.ReturnUnsentCredit(in lease, encodedBytes);
-        else
-            controller.ReturnUnsentCredit(requestId, streamId, encodedBytes);
-    }
-
-    internal void ApplyWindowUpdate(long requestId, in ProtocolV2WindowUpdate update)
-    {
-        var controller = Volatile.Read(ref _protocolState).FlowController ??
-            throw new SharpLinkProtocolViolationException(
-                ProtocolViolationReason.ProtocolState,
-                "WindowUpdate was received without negotiated flow control.");
-        controller.ApplyWindowUpdate(requestId, update.StreamId, checked((int)update.Credit));
-    }
-
-    internal void CompleteSendStream(long requestId, ushort streamId, Exception? exception = null)
-        => Volatile.Read(ref _protocolState).FlowController?.CompleteSendStream(requestId, streamId, exception);
-
-    internal void AbortSendStreams(long requestId, Exception exception)
-        => Volatile.Read(ref _protocolState).FlowController?.AbortSendStreams(requestId, exception);
 
     private StreamFlowController.ResolvedReceiveCreditLease ResolveReceiveCreditLease(
         long requestId,
@@ -312,6 +206,7 @@ internal sealed partial class RpcSession
 
         try
         {
+            RejectWriterOwnedStreamBypass(packet);
             packet = PrepareOutboundPacket(packet, CancellationToken.None);
         }
         catch
@@ -363,6 +258,7 @@ internal sealed partial class RpcSession
         {
             try
             {
+                RejectWriterOwnedStreamBypass(packet);
                 packet = PrepareOutboundPacket(packet, ct);
             }
             catch
@@ -424,6 +320,7 @@ internal sealed partial class RpcSession
 
             try
             {
+                RejectWriterOwnedStreamBypass(packet);
                 packet = PrepareOutboundPacket(packet, cancellationToken);
             }
             catch
@@ -641,6 +538,7 @@ internal sealed partial class RpcSession
 
         TransitionProtocolPhaseToTerminal();
         RecordTelemetryConnectionClosed();
+        Volatile.Read(ref _writerOwnedStreams)?.RequestStop(structured);
         CancelSession();
         Volatile.Read(ref _protocolState).FlowController?.Complete(structured);
         CapturePumpForStop()?.Stop();
@@ -732,6 +630,7 @@ internal sealed partial class RpcSession
 
         // These registrations can race the terminal transition during handshake. Repeat the
         // idempotent signal on every caller so a late publication cannot keep shutdown joined.
+        Volatile.Read(ref _writerOwnedStreams)?.RequestStop(terminal.Exception);
         Volatile.Read(ref _protocolState).FlowController?.Complete(terminal.Exception);
         CompleteReceiveStreams(terminal.Exception);
         if (existing is null)

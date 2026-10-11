@@ -107,7 +107,8 @@ internal sealed class ServerGeneratedBridge(
                 contractId,
                 methodId,
                 exception);
-            session.SendStreamErrorAsync(requestId, streamId, protocolError);
+            await session.SendStreamErrorWithWriterAsync(requestId, streamId, protocolError,
+                cancellationToken).ConfigureAwait(false);
         }
     }
 

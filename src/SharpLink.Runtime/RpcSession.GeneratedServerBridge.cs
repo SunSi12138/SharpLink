@@ -119,10 +119,15 @@ internal sealed partial class RpcSession
             }
 
             ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
-            SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
+            await SendGeneratedStreamCompleteAsync(requestId, streamId, deadline,
+                deadlineTimeProvider, lifetimeCancellation.Token).ConfigureAwait(false);
         }
         finally
         {
+            if (UsesWriterOwnedStreams && (deadlineWon || cancellationToken.IsCancellationRequested))
+                CompleteSendStream(requestId, streamId, deadlineWon
+                    ? CreateGeneratedStreamDeadlineExceededException()
+                    : new OperationCanceledException(cancellationToken));
             TryCancelGeneratedLifetime(lifetimeCancellation);
             try
             {
@@ -153,12 +158,19 @@ internal sealed partial class RpcSession
         }
     }
 
-    private void SendGeneratedStreamComplete(
+    private async ValueTask SendGeneratedStreamCompleteAsync(
         long requestId,
         ushort streamId,
         RpcDeadline deadline,
-        TimeProvider? deadlineTimeProvider)
+        TimeProvider? deadlineTimeProvider,
+        CancellationToken cancellationToken)
     {
+        if (UsesWriterOwnedStreams)
+        {
+            await SendWriterOwnedTerminalAsync(requestId, streamId, null,
+                deadline, deadlineTimeProvider, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         var writer = RentFrameWriter();
         var ownsWriter = true;
         try
@@ -225,9 +237,9 @@ internal sealed partial class RpcSession
         catch { }
     }
 
-    // Keep the generated-server path concrete and codec-bound. Exact-size codecs retain the
-    // credit-before-serialize path; only the universal unsized fallback enters the session-owned
-    // pre-credit serialized-memory admission helper.
+    // Legacy exact-size sending retains credit-before-serialization. In the explicitly
+    // selected writer-owned mode, producer serialization feeds the bounded preparation queue;
+    // the single writer alone debits protocol credit before accepting a frame into its batch.
     private ValueTask<StreamFlowController.ResolvedSendCreditLease>
         SendGeneratedStreamChunkAsync<T>(
             long requestId,
@@ -240,6 +252,9 @@ internal sealed partial class RpcSession
             CancellationToken cancellationToken,
             StreamFlowController.ResolvedSendCreditLease creditLease)
     {
+        if (UsesWriterOwnedStreams)
+            return SendWriterOwnedChunkAsync(requestId, streamId, item, codec, exactSizeCodec,
+                cancellationToken, creditLease, deadline, deadlineTimeProvider);
         if (exactSizeCodec is not null &&
             exactSizeCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
         {
