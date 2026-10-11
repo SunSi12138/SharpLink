@@ -1,0 +1,126 @@
+name: Issue 801 - 3.0 IRpcChannel Stream Sink API Shape Probe
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-rpc-channel-sink-validation.yml
+      - eng/issue801/probe-rpc-channel-sink.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-stream-interface-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api-sink-shape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+    steps:
+      - name: Checkout isolated dev-derived audit branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET SDK
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore full solution
+        run: dotnet restore Sharplink.slnx -v minimal
+
+      - name: Prune misleading IRpcChannel sink relationship in temporary checkout
+        run: |
+          mkdir -p artifacts/issue-801-channel-shape
+          python3 eng/issue801/probe-rpc-channel-sink.py artifacts/issue-801-channel-shape
+          git diff --check
+          git diff --stat -- src/ > artifacts/issue-801-channel-shape/edited-source-summary.txt
+          cat artifacts/issue-801-channel-shape/edited-source-summary.txt
+
+      - name: Compile all 65 projects with changed 3.0 interface contract
+        id: api_build
+        run: |
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-channel-shape/api-build.log 2>&1 || {
+              tail -n 130 artifacts/issue-801-channel-shape/api-build.log; exit 1;
+            }
+          tail -n 25 artifacts/issue-801-channel-shape/api-build.log
+
+      - name: Run UnitTests after IRpcChannel shape change
+        id: unit
+        if: steps.api_build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-channel-shape/unit.log 2>&1 || {
+              tail -n 130 artifacts/issue-801-channel-shape/unit.log; exit 1;
+            }
+          tail -n 30 artifacts/issue-801-channel-shape/unit.log
+
+      - name: Run Generator Tests after interface shape change
+        id: generator
+        if: always() && steps.api_build.outcome == 'success'
+        run: |
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj \
+            -c Release --no-build \
+            > artifacts/issue-801-channel-shape/generator.log 2>&1 || {
+              tail -n 130 artifacts/issue-801-channel-shape/generator.log; exit 1;
+            }
+          tail -n 30 artifacts/issue-801-channel-shape/generator.log
+
+      - name: NativeAOT transport streaming and SharpPack smoke
+        id: nativeaot
+        if: always() && steps.api_build.outcome == 'success' && steps.generator.outcome == 'success'
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+          SHARPLINK_AOT_SHM_NAME: issue801-rpc-channel-sink-shape
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/issue-801-channel-shape/nativeaot
+        run: |
+          set -o pipefail
+          bash ./eng/run-shared-memory-aot-process-smoke.sh 2>&1 \
+            | tee artifacts/issue-801-channel-shape/aot.log
+
+      - name: Restore original runtime/abstractions sources
+        if: always()
+        run: |
+          git restore -- src/
+          git diff --exit-code -- src/
+          echo 'No production source was pushed to the audit branch or dev.'
+
+      - name: Record actual 3.0 experimental evidence
+        if: always()
+        run: |
+          {
+            echo '# Issue 801 — ephemeral 3.0 IRpcChannel sink separation'
+            echo
+            echo "- Full solution Release build: ${{ steps.api_build.outcome }}"
+            echo "- UnitTests: ${{ steps.unit.outcome }}"
+            echo "- Generator Tests: ${{ steps.generator.outcome }}"
+            echo "- NativeAOT streaming / SharpPack: ${{ steps.nativeaot.outcome }}"
+            echo
+            echo 'This is only a proposal to remove the IRpcChannel inheritance of IRpcClientStreamSink and three fake Channel.SendClientStreamAsync implementations.'
+            echo 'It does not remove ClientConnection : IRpcClientStreamSink.'
+            echo 'Even a passing result does not authorize removal for existing 2.x external consumers.'
+          } > artifacts/issue-801-channel-shape/summary.md
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-irpcchannel-sink-separation
+          path: |
+            artifacts/issue-801-channel-shape/*.json
+            artifacts/issue-801-channel-shape/*.txt
+            artifacts/issue-801-channel-shape/*.md
+            artifacts/issue-801-channel-shape/*.log
+            artifacts/issue-801-channel-shape/nativeaot/*.log
+            artifacts/issue-801-channel-shape/nativeaot/sharppack-sidecar/*.log
+            artifacts/issue-801-channel-shape/nativeaot/precredit/*.log
+          if-no-files-found: warn
+          retention-days: 30
