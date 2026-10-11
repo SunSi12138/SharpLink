@@ -5,40 +5,6 @@ internal sealed partial class RpcSession
     private readonly Lock _preCreditSerializedBudgetGate = new();
     private PreCreditSerializedBudget? _preCreditSerializedBudget;
 
-    /// <summary>
-    /// Instance member owns stream-item dispatch so the exact-size path remains the first branch
-    /// while the universal unsized fallback can use session-scoped pre-credit admission.
-    /// </summary>
-    internal async ValueTask SendStreamChunkAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
-        CancellationToken cancellationToken = default)
-    {
-        var codec = RuntimeContext.Codecs.GetCodec<T>();
-        if (codec is IRpcSizedCodec<T> sizedCodec &&
-            sizedCodec.CanExactSize &&
-            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
-        {
-            await SendStreamChunkKnownSizeAsync(
-                requestId,
-                streamId,
-                item,
-                sizedCodec,
-                knownEncodedBytes,
-                sizedSnapshot,
-                cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        await SendUnsizedStreamChunkAsync(
-            requestId,
-            streamId,
-            item,
-            codec,
-            cancellationToken).ConfigureAwait(false);
-    }
-
     internal ValueTask SendUnsizedStreamChunkAsync<T>(
         long requestId,
         ushort streamId,

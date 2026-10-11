@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <Compile Include="../SharpLink.UnitTests/TestOnlyCodecBuilderExtensions.cs" Link="TestOnlyCodecBuilderExtensions.cs" />
+    <Compile Include="../SharpLink.UnitTests/TestOnlyRpcSessionSendExtensions.cs" Link="TestOnlyRpcSessionSendExtensions.cs" />
   </ItemGroup>
 
   <ItemGroup>
