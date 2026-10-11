@@ -41,18 +41,6 @@ internal sealed class ServerConnectionRegistry
         ServerConnectionState expected)
         => _active.TryUpdate(id, connection, expected);
 
-    internal bool TryRemove(string id, out ServerConnectionState connection)
-    {
-        if (_active.TryRemove(id, out var removed))
-        {
-            connection = removed;
-            return true;
-        }
-
-        connection = null!;
-        return false;
-    }
-
     /// <summary>
     /// Removes an active entry only when both the session id and connection instance still match.
     /// </summary>
