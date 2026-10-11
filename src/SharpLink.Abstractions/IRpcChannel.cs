@@ -24,8 +24,8 @@ public enum RpcMethodKind : byte
 /// <summary>Immutable metadata emitted once for an RPC contract method.</summary>
 /// <remarks>
 /// This type is the observability projection of <see cref="RpcMethodShape"/>: the RPC hot paths
-/// resolve the packed shape and only project a descriptor when a consumer (telemetry listener,
-/// interceptor, retry policy) actually reads it. Its constructor assigns explicit readonly fields
+/// resolve the packed shape and project a descriptor only when an observer or exception-mapper
+/// context is created. Its constructor assigns explicit readonly fields
 /// instead of <c>init</c> auto-properties, which keeps the projection off accessor calls and out of
 /// the generated method-fact tables.
 /// </remarks>
@@ -284,7 +284,7 @@ public readonly struct RpcNoClientStreams : IRpcClientStreamWriter
 }
 
 /// <summary>Client channel consumed by generated proxies.</summary>
-public interface IRpcChannel : IRpcClientStreamSink
+public interface IRpcChannel
 {
     /// <summary>Gets the runtime context owned by this channel.</summary>
     IRpcRuntimeContext RuntimeContext { get; }

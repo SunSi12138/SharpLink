@@ -71,15 +71,6 @@ internal sealed partial class SharpLinkClient
         }
     }
 
-    public Task SendClientStreamAsync<T>(
-        long requestId,
-        ushort streamId,
-        IAsyncEnumerable<T> stream,
-        IRpcCodec<T> codec,
-        CancellationToken cancellationToken = default)
-        => Task.FromException(new InvalidOperationException(
-            "Client streams must use the connection-bound sink supplied to generated stream writers."));
-
     private static ValueTask DispatchStreamChunkAsync(RpcSession session, long requestId, ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);

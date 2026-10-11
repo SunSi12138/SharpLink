@@ -42,7 +42,4 @@ internal sealed class SharpLinkMetadataRpcChannel(
         => inner.InvokeDuplexStreamingAsync(method, request, requestCodec, responseCodec, streams,
             callMetadata ?? metadata, cancellationToken);
 
-    public Task SendClientStreamAsync<T>(long requestId, ushort streamId,
-        IAsyncEnumerable<T> stream, IRpcCodec<T> codec, CancellationToken cancellationToken = default)
-        => inner.SendClientStreamAsync(requestId, streamId, stream, codec, cancellationToken);
 }
