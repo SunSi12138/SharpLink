@@ -4,13 +4,15 @@ permissions:
   contents: read
 
 on:
+  push:
+    branches: [validate/client-snapshot-extended-20261011]
   pull_request:
     types: [ready_for_review]
   workflow_dispatch:
 
 concurrency:
-  group: pr-extended-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: client-snapshot-extended-38037710bee9452ec69042e0b3cd6a517be2d14d-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   codec-compatibility:
@@ -26,6 +28,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 38037710bee9452ec69042e0b3cd6a517be2d14d
+
+      - name: Verify exact client cleanup product
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "38037710bee9452ec69042e0b3cd6a517be2d14d"
+          git rev-parse HEAD
+          git rev-parse HEAD^{tree}
 
       - name: Setup .NET CI environment
         uses: ./.github/actions/setup-dotnet
