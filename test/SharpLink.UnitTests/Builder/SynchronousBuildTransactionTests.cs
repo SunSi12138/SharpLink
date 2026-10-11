@@ -35,7 +35,7 @@ public sealed class SynchronousBuildTransactionTests
     }
 
     [Test]
-    public void DuplicateOwnAndOwnRangeShouldFailImmediatelyWithoutDoubleCleanup()
+    public void DuplicateOwnRegistrationShouldFailImmediatelyWithoutDoubleCleanup()
     {
         var events = new List<string>();
         var first = new TrackingResource("first", events);
@@ -50,13 +50,18 @@ public sealed class SynchronousBuildTransactionTests
             first,
             static resource => resource.Cleanup(),
             SynchronousBuildResourceMetadata.FrameworkOwned("duplicate first")));
-        var rangeDuplicate = Capture(() => transaction.OwnRange(
-            [second, first],
+        transaction.Own(
+            second,
             static resource => resource.Cleanup(),
-            SynchronousBuildResourceMetadata.FrameworkOwned("range")));
+            SynchronousBuildResourceMetadata.FrameworkOwned("second"));
+        var duplicateAfterSecond = Capture(() => transaction.Own(
+            first,
+            static resource => resource.Cleanup(),
+            SynchronousBuildResourceMetadata.FrameworkOwned("duplicate after second")));
 
         Ensure(duplicate is InvalidOperationException, "duplicate Own must be rejected immediately");
-        Ensure(rangeDuplicate is InvalidOperationException, "OwnRange must validate each item by reference identity");
+        Ensure(duplicateAfterSecond is InvalidOperationException,
+            "duplicate registration after another resource must still be rejected by reference identity");
 
         transaction.Rollback();
 
@@ -141,10 +146,10 @@ public sealed class SynchronousBuildTransactionTests
             committed,
             static resource => resource.Cleanup(),
             SynchronousBuildResourceMetadata.FrameworkOwned("committed"));
-        committedTransaction.Transfer();
+        committedTransaction.Commit();
         committedTransaction.Dispose();
 
-        Ensure(committed.DisposeCount == 0, "Dispose after Commit/Transfer must not clean transferred resources");
+        Ensure(committed.DisposeCount == 0, "Dispose after Commit must not clean committed resources");
         Ensure(Capture(committedTransaction.Commit) is InvalidOperationException,
             "a second Commit must not be silently accepted");
         Ensure(Capture(committedTransaction.Rollback) is InvalidOperationException,

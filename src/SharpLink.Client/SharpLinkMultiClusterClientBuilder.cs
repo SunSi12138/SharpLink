@@ -231,16 +231,7 @@ public sealed class SharpLinkMultiClusterClientBuilder
             configuration.Builder.UseLoggerFactoryIfUnset(loggerFactory);
     }
 
-    internal static SharpLinkPreparedCluster PrepareRuntimeCluster(
-        SharpLinkClusterKey cluster,
-        SharpClientBuilder builder,
-        bool allowDynamicContracts)
-        => PrepareRuntimeCluster(
-            cluster,
-            builder,
-            allowDynamicContracts,
-            GlobalCatalogManifestSource.Instance,
-            GlobalCatalogClusterRouteSource.Instance);
+
 
     internal static SharpLinkPreparedCluster PrepareRuntimeCluster(
         SharpLinkClusterKey cluster,

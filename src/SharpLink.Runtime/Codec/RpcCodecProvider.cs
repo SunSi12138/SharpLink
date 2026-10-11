@@ -5,20 +5,12 @@ namespace SharpLink.Runtime;
 
 internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
 {
-    private readonly Func<Type, IRpcCodec?>? _resolver;
     private readonly ConcurrentDictionary<Type, ResolvedCodec> _resolvedCodecs = new();
-    private readonly HashSet<Type> _explicitCodecTypes;
     private GeneratedRegistrationSnapshot _generatedRegistrationSnapshot;
     private int _disposed;
 
-    internal RpcCodecProvider(
-        Func<Type, IRpcCodec?>? resolver,
-        IReadOnlyDictionary<Type, IRpcCodec> explicitCodecs)
+    internal RpcCodecProvider()
     {
-        _resolver = resolver;
-        foreach (var pair in explicitCodecs)
-            _resolvedCodecs.TryAdd(pair.Key, ResolvedCodec.Explicit(pair.Value));
-        _explicitCodecTypes = [.. explicitCodecs.Keys];
         _generatedRegistrationSnapshot = new GeneratedRegistrationSnapshot(
             new Dictionary<Type, RpcGeneratedCodecRegistration>());
     }
@@ -31,8 +23,6 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
         var targetType = typeof(T);
         if (_resolvedCodecs.TryGetValue(targetType, out var fastCached))
         {
-            if (fastCached.IsExplicit)
-                return Cast<T>(fastCached.Codec);
             var fastSnapshot = Volatile.Read(ref _generatedRegistrationSnapshot);
             if (ReferenceEquals(fastCached.SnapshotIdentity, fastSnapshot.Identity))
                 return Cast<T>(fastCached.Codec);
@@ -43,18 +33,6 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
             return shared;
 
         return ResolveCodec<T>(targetType);
-    }
-
-    internal bool TryGetExplicitCodec<T>(out IRpcCodec<T> codec)
-    {
-        ThrowIfDisposed();
-        if (_resolvedCodecs.TryGetValue(typeof(T), out var resolved) && resolved.IsExplicit)
-        {
-            codec = Cast<T>(resolved.Codec);
-            return true;
-        }
-        codec = null!;
-        return false;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -68,11 +46,11 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
 
             if (_resolvedCodecs.TryGetValue(targetType, out var cached))
             {
-                if (cached.IsExplicit ||
-                    ReferenceEquals(cached.SnapshotIdentity, snapshot.Identity))
+                if (ReferenceEquals(cached.SnapshotIdentity, snapshot.Identity))
                     return Cast<T>(cached.Codec);
 
-                if (ReferenceEquals(cached.Registration, currentRegistration))
+                if (currentRegistration is not null &&
+                    ReferenceEquals(cached.Registration, currentRegistration))
                 {
                     var refreshed = cached.WithSnapshot(snapshot.Identity);
                     if (_resolvedCodecs.TryUpdate(targetType, refreshed, cached))
@@ -92,9 +70,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                     var replacement = new ResolvedCodec(
                         currentRegistration.GetCodec(),
                         currentRegistration,
-                        snapshot.Identity,
-                        isExplicit: false,
-                        isFallback: false);
+                        snapshot.Identity);
                     ThrowIfDisposed();
                     if (!IsCurrentRegistration(targetType, currentRegistration))
                         continue;
@@ -107,8 +83,6 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                     continue;
                 }
 
-                if (cached.IsFallback)
-                    return Cast<T>(cached.Codec);
                 ((ICollection<KeyValuePair<Type, ResolvedCodec>>)_resolvedCodecs)
                     .Remove(new KeyValuePair<Type, ResolvedCodec>(targetType, cached));
                 continue;
@@ -119,16 +93,12 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                 var generated = new ResolvedCodec(
                     currentRegistration.GetCodec(),
                     currentRegistration,
-                    snapshot.Identity,
-                    isExplicit: false,
-                    isFallback: false);
+                    snapshot.Identity);
                 ThrowIfDisposed();
                 if (!IsCurrentRegistration(targetType, currentRegistration))
                     continue;
                 var selected = _resolvedCodecs.GetOrAdd(targetType, generated);
                 RemoveCandidateAndThrowIfDisposed(targetType, generated, selected);
-                if (selected.IsExplicit)
-                    return Cast<T>(selected.Codec);
                 if (ReferenceEquals(selected.Registration, currentRegistration) &&
                     IsCurrentRegistration(targetType, currentRegistration))
                 {
@@ -139,36 +109,13 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
                 continue;
             }
 
-            var resolved = _resolver?.Invoke(targetType);
-            ThrowIfDisposed();
-            if (!IsCurrentRegistration(targetType, registration: null))
-                continue;
-            if (resolved is not null)
-            {
-                var typed = Cast<T>(resolved);
-                var fallback = new ResolvedCodec(
-                    typed,
-                    registration: null,
-                    snapshot.Identity,
-                    isExplicit: false,
-                    isFallback: true);
-                var selected = _resolvedCodecs.GetOrAdd(targetType, fallback);
-                RemoveCandidateAndThrowIfDisposed(targetType, fallback, selected);
-                if (selected.IsExplicit)
-                    return Cast<T>(selected.Codec);
-                if (selected.IsFallback && IsCurrentRegistration(targetType, registration: null))
-                    return Cast<T>(selected.Codec);
-                if (ReferenceEquals(selected, fallback))
-                    RemoveResolvedCodec(targetType, fallback);
-                continue;
-            }
-
             if (targetType.IsEnum)
                 return EnumCodec<T>.Instance;
             if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
             {
-                RpcUnsafeBlitPlatform.EnsureSupported(targetType);
-                return UnsafeBlitCodec<T>.Instance;
+                throw new PlatformNotSupportedException(
+                    $"UnsafeBlit Codec for '{targetType.FullName}' requires source-generated ABI metadata. " +
+                    "Use a generated RPC contract or register an explicit Codec/Adapter.");
             }
 
             throw new NotSupportedException(
@@ -222,7 +169,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
         foreach (var pair in registrations)
         {
             while (_resolvedCodecs.TryGetValue(pair.Key, out var cached) &&
-                   !cached.IsExplicit && !ReferenceEquals(cached.Registration, pair.Value))
+                   !ReferenceEquals(cached.Registration, pair.Value))
             {
                 if (((ICollection<KeyValuePair<Type, ResolvedCodec>>)_resolvedCodecs)
                     .Remove(new KeyValuePair<Type, ResolvedCodec>(pair.Key, cached)))
@@ -237,8 +184,7 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     {
         foreach (var pair in _resolvedCodecs)
         {
-            if (!_explicitCodecTypes.Contains(pair.Key) &&
-                ReferenceEquals(pair.Value.Registration?.Owner, owner))
+            if (ReferenceEquals(pair.Value.Registration?.Owner, owner))
             {
                 ((ICollection<KeyValuePair<Type, ResolvedCodec>>)_resolvedCodecs)
                     .Remove(new KeyValuePair<Type, ResolvedCodec>(pair.Key, pair.Value));
@@ -260,21 +206,14 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     private sealed class ResolvedCodec(
         IRpcCodec codec,
         RpcGeneratedCodecRegistration? registration,
-        object? snapshotIdentity,
-        bool isExplicit,
-        bool isFallback)
+        object? snapshotIdentity)
     {
         internal IRpcCodec Codec { get; } = codec;
         internal RpcGeneratedCodecRegistration? Registration { get; } = registration;
         internal object? SnapshotIdentity { get; } = snapshotIdentity;
-        internal bool IsExplicit { get; } = isExplicit;
-        internal bool IsFallback { get; } = isFallback;
-
-        internal static ResolvedCodec Explicit(IRpcCodec codec)
-            => new(codec, null, snapshotIdentity: null, isExplicit: true, isFallback: false);
 
         internal ResolvedCodec WithSnapshot(object snapshotIdentity)
-            => new(Codec, Registration, snapshotIdentity, IsExplicit, IsFallback);
+            => new(Codec, Registration, snapshotIdentity);
     }
 
     private sealed class GeneratedRegistrationSnapshot(
@@ -407,11 +346,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                     var adapterScope = factory.AdapterId is null
                         ? null
                         : scopeByAdapterId[factory.AdapterId].Scope;
+                    var targetType = factory.TargetType;
                     if (!registrations.TryAdd(
-                            factory.TargetType,
+                            targetType,
                             new RpcGeneratedCodecRegistration(
                                 ownerBox,
                                 factory,
+                                targetType,
                                 adapterScope,
                                 resolutionScope)))
                     {
@@ -472,12 +413,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         }
     }
 
-    private static void ValidateCodec(IRpcGeneratedCodecFactory factory, IRpcCodec codec)
-    {
-        if (!factory.IsCompatibleCodec(codec))
-            throw new InvalidOperationException(
-                $"Codec returned for '{factory.TargetType.FullName}' implements an incompatible IRpcCodec<T>.");
-    }
+
 
     public void Dispose()
     {
@@ -521,17 +457,22 @@ internal sealed class RpcGeneratedCodecRegistration
     internal RpcGeneratedCodecRegistration(
         RpcGeneratedManifestRegistration.OwnerBox owner,
         IRpcGeneratedCodecFactory factory,
+        Type targetType,
         IRpcCodecAdapterScope? adapterScope,
         RpcGeneratedCodecResolutionScope resolutionScope)
     {
         _owner = owner;
         Factory = factory;
+        TargetType = targetType;
+        UnsafeBlitRequirement = (factory as IRpcGeneratedUnsafeBlitCodecFactory)?.Requirement;
         _adapterScope = adapterScope;
         _resolutionScope = resolutionScope;
     }
 
     internal RpcGeneratedManifestRegistration Owner => _owner.Value;
     internal IRpcGeneratedCodecFactory Factory { get; }
+    internal Type TargetType { get; }
+    internal SharpLinkGeneratedUnsafeBlitRequirement? UnsafeBlitRequirement { get; }
 
     internal void PrepareAdapterCodec()
     {

@@ -55,7 +55,7 @@ public static class Program
 {
     private struct PackageSmokeStandaloneBlit
     {
-        public int Value;
+        public int Value { get; set; }
     }
 
     private static readonly string[] RuntimeRawDispatcherTypeNames =
@@ -72,7 +72,7 @@ public static class Program
     public static async Task Main()
     {
         AssertEnginePublicApiBoundary();
-        AssertStandaloneUnsafeBlitFallback();
+        AssertStandaloneUnsafeBlitRequiresRegistration();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await RunTransportSmokeAsync(useSharedMemory: false, timeout.Token);
         await RunTransportSmokeAsync(useSharedMemory: true, timeout.Token);
@@ -84,20 +84,19 @@ public static class Program
     {        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
     }
 
-    private static void AssertStandaloneUnsafeBlitFallback()
+    private static void AssertStandaloneUnsafeBlitRequiresRegistration()
     {
-        if (SharpLinkGeneratedUnsafeBlitCatalog.TryGet(typeof(PackageSmokeStandaloneBlit), out _))
-            throw new InvalidOperationException("Standalone UnsafeBlit fallback unexpectedly has generated ABI metadata.");
-
         using var context = new SharpLinkRuntimeContextBuilder().Build();
-        var codec = context.Codecs.GetCodec<PackageSmokeStandaloneBlit>();
-        var writer = new ArrayBufferWriter<byte>();
-        var expected = new PackageSmokeStandaloneBlit { Value = 42 };
-        codec.Serialize(in expected, writer);
-        var payload = new ReadOnlySequence<byte>(writer.WrittenMemory);
-        var actual = codec.Deserialize(in payload);
-        if (actual.Value != expected.Value)
-            throw new InvalidOperationException("Untrimmed packaged UnsafeBlit reflection fallback failed.");
+        try
+        {
+            _ = context.Codecs.GetCodec<PackageSmokeStandaloneBlit>();
+        }
+        catch (PlatformNotSupportedException exception)
+            when (exception.Message.Contains("source-generated ABI metadata", StringComparison.Ordinal))
+        {
+            return;
+        }
+        throw new InvalidOperationException("Untrimmed packaged consumer must reject an unregistered unmanaged type.");
     }
 
     private static async Task RunTransportSmokeAsync(

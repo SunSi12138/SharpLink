@@ -10,7 +10,9 @@ public class ProtocolV2NegotiatorTests
     public void ClientOfferShouldContainOnlyPolicyAndAuthenticationInputs()
     {
         var providers = Bindings("client-first", "client-second");
-        var policy = ProtocolV2Negotiator.CreateImplementedPolicy(
+        var policy = ProtocolV2NegotiationPolicy.Create(
+            ProtocolV2Constants.MinorVersion,
+            ProtocolV2Negotiator.AlwaysImplementedCapabilities | ProtocolV2Capabilities.Compression,
             8192,
             2048,
             4096,

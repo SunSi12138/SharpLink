@@ -18,8 +18,9 @@ An unsuccessful materialization releases resources in strict reverse registratio
 | `SharpLinkServerBuilder.Build` | listener, RuntimeContext, framework ServiceProvider or tracked caller provider, admission controller, each `ServiceRegistration` | final `SharpLinkServer` receives framework-owned resources; transaction commits | registrations reverse, then admission/provider/RuntimeContext/listener; caller provider is tracked without a cleanup action |
 
 The transaction uses reference identity, not `Equals` or `GetHashCode`; attempting to register the
-same object twice is an ownership error. `OwnRange` performs that check for every item. The metadata
-also distinguishes framework-owned resources, which require a cleanup action, from caller-owned
+same object twice is an ownership error. Each `Own` call validates reference identity, including
+when registering multiple resources sequentially. The metadata also distinguishes framework-owned
+resources, which require a cleanup action, from caller-owned
 resources, which may be recorded but cannot be disposed by the transaction.
 
 On a primary Build failure with no cleanup failure, the original exception is rethrown through
@@ -43,14 +44,14 @@ second local rollback path.
 The transaction uses `SharpLinkAsyncCleanup.DisposeSynchronously` only for Build rollback or explicit
 unbuilt-builder cleanup. The existing dynamic endpoint-generation helper retains its separate local
 cleanup only for a runtime factory-binding failure; it is not a build-transfer path. Successful Build
-paths call `Commit`/`Transfer`, which clears transaction tracking without disposal. Runtime stop and
+paths call `Commit`, which clears transaction tracking without disposal. Runtime stop and
 drain paths retain their asynchronous ownership behavior.
 
 ## Fault-matrix evidence
 
 | Case | Evidence |
 |---|---|
-| Transaction identity, reverse order, exact-once cleanup, primary/cleanup ordering, commit/transfer, terminal state, `OwnRange`, caller ownership, and reentrancy | `SynchronousBuildTransactionTests` |
+| Transaction identity, reverse order, exact-once cleanup, primary/cleanup ordering, commit, terminal state, sequential registration, caller ownership, and reentrancy | `SynchronousBuildTransactionTests` |
 | C0 RuntimeContext acquisition and C8 context cleanup | `BuilderOwnershipRollbackTests.ClientRuntimeContextConstructionFailureShouldRollbackTheConsumedTransport`; `StaticEndpointBuilderTests.ClientMaterializeRollbackShouldPreserveBuildAndRuntimeContextCleanupFailures` |
 | C1 direct transport profile bind; C7 final Client/logger construction; C8 direct cleanup | `BuilderOwnershipRollbackTests.ClientProfileFailureShouldDisposeTransportAndPreserveBothFailures`; `ClientFinalMaterializationFailureShouldDisposeTransportAndPreserveBothFailures` |
 | C2 endpoint-factory throw; C3 profile bind; C5 factory #N; C6 duplicate identity; C8 factory cleanup | `BuilderOwnershipRollbackTests.EndpointFactoryFailureShouldRollbackPreviouslyMaterializedFactories`; `StaticClientFactoryBindingFailureShouldRollbackFactoriesInReverseExactlyOnce`; `StaticEndpointBuilderTests.ClusterShouldRejectAFactoryInstanceSharedAcrossEndpoints`, and cleanup-aggregation cases. Phase 11 moves C4-style option validation into pure Compile, so `CompileValidationFailureShouldNotAcquireEndpointFactory` and `CompileValidationFailureShouldNotRunEndpointFactoryCleanup` prove that no factory exists to roll back. |

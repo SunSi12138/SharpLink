@@ -140,7 +140,7 @@ public class CompressionProviderTests
         var binding = context.Compression.ProviderBindings.Single();
         Ensure(binding.WireProfile == "test.mutable/v1" && ReferenceEquals(binding.Provider, provider),
             "runtime binding retains the profile validated during Build");
-        Ensure(context.Compression.FindProviderBinding("test.mutable/v2") is null,
+        Ensure(context.Compression.ProviderBindings.All(item => item.WireProfile != "test.mutable/v2"),
             "post-Build provider mutation must not change negotiation identity");
     }
 

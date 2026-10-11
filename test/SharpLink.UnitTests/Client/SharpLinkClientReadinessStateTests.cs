@@ -233,7 +233,7 @@ public sealed class SharpLinkClientReadinessStateTests
         await using var client = ClientBuilderTestHelper.Build(transport);
 
         client.PublishReadinessFacts(ReadyFacts);
-        client.TransitionToForTesting(SharpLinkConnectionState.Ready);
+        client.TransitionTo(SharpLinkConnectionState.Ready);
         var ready = client.ReadinessPublicationForTesting;
         Ensure(ready.Snapshot == new SharpLinkClientReadinessSnapshot(
                 SharpLinkConnectionState.Ready, 1, 1, 1, 1),
@@ -243,7 +243,7 @@ public sealed class SharpLinkClientReadinessStateTests
         var staleReadyInput = client.ReadinessPublicationForTesting;
         Ensure(ready.Changed.Task.IsCompleted,
             "publishing zero-ready facts must wake the prior Ready generation");
-        client.TransitionToForTesting(SharpLinkConnectionState.Ready);
+        client.TransitionTo(SharpLinkConnectionState.Ready);
         var reconnecting = client.ReadinessPublicationForTesting;
         Ensure(staleReadyInput.Changed.Task.IsCompleted &&
                reconnecting.Snapshot == new SharpLinkClientReadinessSnapshot(
@@ -254,19 +254,19 @@ public sealed class SharpLinkClientReadinessStateTests
         var staleUnavailableInput = client.ReadinessPublicationForTesting;
         Ensure(reconnecting.Changed.Task.IsCompleted,
             "publishing restored ready facts must wake the Reconnecting generation");
-        client.TransitionToForTesting(SharpLinkConnectionState.Reconnecting);
+        client.TransitionTo(SharpLinkConnectionState.Reconnecting);
         var restoredReady = client.ReadinessPublicationForTesting;
         Ensure(staleUnavailableInput.Changed.Task.IsCompleted &&
                restoredReady.Snapshot == new SharpLinkClientReadinessSnapshot(
                    SharpLinkConnectionState.Ready, 1, 1, 1, 1),
             "a stale Reconnecting request with ready facts must normalize back to Ready");
 
-        client.TransitionToForTesting(SharpLinkConnectionState.Faulted);
+        client.TransitionTo(SharpLinkConnectionState.Faulted);
         Ensure(ReferenceEquals(restoredReady, client.ReadinessPublicationForTesting) &&
                !restoredReady.Changed.Task.IsCompleted,
             "a stale Faulted request with ready facts must preserve Ready without a redundant publication");
-        client.TransitionToForTesting(SharpLinkConnectionState.Connecting);
-        client.TransitionToForTesting(SharpLinkConnectionState.Draining);
+        client.TransitionTo(SharpLinkConnectionState.Connecting);
+        client.TransitionTo(SharpLinkConnectionState.Draining);
         Ensure(ReferenceEquals(restoredReady, client.ReadinessPublicationForTesting) &&
                restoredReady.Snapshot.State == SharpLinkConnectionState.Ready,
             "stale non-stop Connecting or Draining requests cannot hide a currently routable connection");
@@ -293,10 +293,10 @@ public sealed class SharpLinkClientReadinessStateTests
                stopped.Snapshot.State == SharpLinkConnectionState.Stopped &&
                !stopped.Changed.Task.IsCompleted,
             "Stopped must publish after Draining and own the next readiness generation");
-        client.TransitionToForTesting(SharpLinkConnectionState.Draining);
-        client.TransitionToForTesting(SharpLinkConnectionState.Ready);
-        client.TransitionToForTesting(SharpLinkConnectionState.Reconnecting);
-        client.TransitionToForTesting(SharpLinkConnectionState.Faulted);
+        client.TransitionTo(SharpLinkConnectionState.Draining);
+        client.TransitionTo(SharpLinkConnectionState.Ready);
+        client.TransitionTo(SharpLinkConnectionState.Reconnecting);
+        client.TransitionTo(SharpLinkConnectionState.Faulted);
         Ensure(ReferenceEquals(stopped, client.ReadinessPublicationForTesting) &&
                client.State == SharpLinkConnectionState.Stopped,
             "late lifecycle requests must never move a terminal Client back from Stopped");

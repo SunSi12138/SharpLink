@@ -174,17 +174,6 @@ internal sealed class StripedLongMap<TValue> where TValue : class
     }
 
     /// <summary>
-    /// Copies a bounded per-stripe consistent view. Different stripes can advance between locks,
-    /// while each projected entry remains stable for the duration of its capture callback.
-    /// </summary>
-    /// <param name="destination">A destination large enough for the map's configured upper bound.</param>
-    /// <returns>The number of copied entries.</returns>
-    internal int CopyEntries(Span<KeyValuePair<long, TValue>> destination)
-        => CopyEntries(
-            destination,
-            static (key, value) => new KeyValuePair<long, TValue>(key, value));
-
-    /// <summary>
     /// Copies immutable projections while each source entry remains protected by its stripe lock.
     /// The result is per-stripe consistent rather than one whole-map instant.
     /// </summary>

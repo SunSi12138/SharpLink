@@ -16,14 +16,12 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         RuntimeConcurrencyOptions concurrency,
         BufferWriterPoolOptions bufferPool,
         TimeProvider timeProvider,
-        Func<Type, IRpcCodec?>? resolver,
-        IReadOnlyDictionary<Type, IRpcCodec> codecs,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> generatedManifests)
     {
         TimeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _options = options.CloneValidated();
         Concurrency = concurrency.CloneValidated();
-        Codecs = new RpcCodecProvider(resolver, codecs);
+        Codecs = new RpcCodecProvider();
         var generatedRegistrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
         var prepared = new List<RpcGeneratedManifestRegistration>(generatedManifests.Count);
         try
@@ -319,10 +317,8 @@ public sealed class SharpLinkRuntimeContextBuilder
     private readonly SharpLinkRuntimeOptions _options = new();
     private readonly RuntimeConcurrencyOptions _concurrency = new();
     private readonly BufferWriterPoolOptions _bufferPool = new();
-    private readonly Dictionary<Type, IRpcCodec> _codecs = [];
     private IGeneratedManifestSource _generatedManifestSource = GlobalCatalogManifestSource.Instance;
     private TimeProvider _timeProvider = TimeProvider.System;
-    private Func<Type, IRpcCodec?>? _resolver;
 
     /// <summary>Configures runtime and protocol limits.</summary>
     public SharpLinkRuntimeContextBuilder Configure(Action<SharpLinkRuntimeOptions> configure)
@@ -348,13 +344,6 @@ public sealed class SharpLinkRuntimeContextBuilder
         return this;
     }
 
-    /// <summary>Sets the optional fallback codec resolver for this context.</summary>
-    public SharpLinkRuntimeContextBuilder UseCodecResolver(Func<Type, IRpcCodec?>? resolver)
-    {
-        _resolver = resolver;
-        return this;
-    }
-
     /// <summary>
     /// Uses an application-owned time source for contexts built by this builder.
     /// The context stores the reference but never disposes it.
@@ -375,28 +364,16 @@ public sealed class SharpLinkRuntimeContextBuilder
         return this;
     }
 
-    /// <summary>Registers an explicit codec in this context.</summary>
-    public SharpLinkRuntimeContextBuilder AddCodec<T>(IRpcCodec<T> codec)
-    {
-        ArgumentNullException.ThrowIfNull(codec);
-        if (BuiltinRpcCodecs.TryGet(typeof(T), out _))
-        {
-            throw new InvalidOperationException(
-                $"The built-in codec for '{typeof(T).FullName}' is immutable and cannot be replaced.");
-        }
-        if (!_codecs.TryAdd(typeof(T), codec))
-            throw new InvalidOperationException($"A codec for '{typeof(T)}' is already registered in this context builder.");
-        return this;
-    }
-
     /// <summary>Validates and freezes a new context.</summary>
     public SharpLinkRuntimeContext Build()
         => MaterializeStandalone(Compile());
 
     internal SharpLinkRuntimeContext Build(bool includeGeneratedAssemblyCatalog)
         => MaterializeStandalone(Compile(includeGeneratedAssemblyCatalog
-            ? GlobalCatalogManifestSource.Instance
-            : FixedGeneratedManifestSource.Empty));
+            ? _generatedManifestSource
+            : ReferenceEquals(_generatedManifestSource, GlobalCatalogManifestSource.Instance)
+                ? FixedGeneratedManifestSource.Empty
+                : _generatedManifestSource));
 
     internal SharpLinkRuntimeContext Build(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> generatedManifests)
         => MaterializeStandalone(Compile(new FixedGeneratedManifestSource(generatedManifests)));
@@ -420,8 +397,6 @@ public sealed class SharpLinkRuntimeContextBuilder
             concurrency,
             bufferPool,
             _timeProvider,
-            _resolver,
-            new Dictionary<Type, IRpcCodec>(_codecs),
             generatedManifests);
     }
 

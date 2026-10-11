@@ -13,29 +13,31 @@ public class ServerPreAdmissionStreamBudgetTests
             maxDecodedBytesInFlight: 1024,
             maxPreAdmissionStreamBytes: 10);
 
-        Ensure(governor.TryAcquirePreAdmissionStreamBytes(6, out var first) && first is not null,
-            "first stream-byte permit");
-        Ensure(governor.TryAcquirePreAdmissionStreamBytes(4, out var second) && second is not null,
-            "second stream-byte permit");
+        Ensure(governor.TryReservePreAdmissionStreamBytes(6), "first stream-byte reservation");
+        Ensure(governor.TryReservePreAdmissionStreamBytes(4), "second stream-byte reservation");
         Ensure(governor.PreAdmissionStreamBytes == 10,
             "two callers must share one global stream-byte budget");
-        Ensure(!governor.TryAcquirePreAdmissionStreamBytes(1, out var rejected) && rejected is null,
+        Ensure(!governor.TryReservePreAdmissionStreamBytes(1),
             "another caller must not receive a private budget after the global limit is full");
 
-        first!.Dispose();
-        first.Dispose();
+        governor.ReleasePreAdmissionStreamBytes(6);
         Ensure(governor.PreAdmissionStreamBytes == 4,
-            "disposing a permit twice must release its physical ownership only once");
+            "release of one physical stream buffer must return only its byte ownership");
 
-        Ensure(governor.TryAcquirePreAdmissionStreamBytes(6, out var replacement) && replacement is not null,
+        Ensure(governor.TryReservePreAdmissionStreamBytes(6),
             "released capacity must be immediately reusable");
         Ensure(governor.PreAdmissionStreamBytes == 10,
             "replacement ownership must refill the shared limit exactly");
 
-        replacement!.Dispose();
-        second!.Dispose();
+        governor.ReleasePreAdmissionStreamBytes(6);
+        governor.ReleasePreAdmissionStreamBytes(4);
         Ensure(governor.PreAdmissionStreamBytes == 0,
             "all stream-buffer ownership must return to zero");
+        Ensure(CaptureFailure(() => governor.ReleasePreAdmissionStreamBytes(4))
+               is InvalidOperationException,
+            "the production release path must reject duplicate release instead of underflowing");
+        Ensure(governor.PreAdmissionStreamBytes == 0,
+            "rejected duplicate release must restore the physical byte counter");
     }
 
     [Test]
