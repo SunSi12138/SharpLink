@@ -69,7 +69,8 @@ public partial class StreamFlowGrantTests
             try { ReserveLeaseSynchronously(lease, 1); }
             catch (Exception error) { workerError = error; }
             finally { finished.Set(); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
 
         bool progressed;
         lock (owner)
