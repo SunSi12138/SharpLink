@@ -105,7 +105,7 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider, IRpcGenerate
         }
 
         // Generated defaults are resolved from the owner-local global graph. Endpoint runtime
-        // AddCodec/UseCodecResolver state is intentionally not consulted here.
+        // Generated defaults only consult owner-local bindings and referenced generated dependencies.
         if (_owner.Codecs.TryGetValue(targetType, out var ownerRegistration))
             return ResolveOwned<T>(targetType, ownerRegistration);
 

@@ -116,13 +116,6 @@ public partial class SharpClientBuilder
         return this;
     }
 
-    /// <summary>Sets a fallback codec resolver scoped to clients built by this builder.</summary>
-    internal SharpClientBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
-    {
-        Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
-        return this;
-    }
-
     /// <summary>Uses the supplied application-owned logger factory.</summary>
     public SharpClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {

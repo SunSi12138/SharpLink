@@ -229,12 +229,10 @@ namespace SharpLink.Runtime
     public sealed class SharpLinkRuntimeContextBuilder
     {
         public SharpLinkRuntimeContextBuilder() { }
-        public SharpLink.Runtime.SharpLinkRuntimeContextBuilder AddCodec<T>(SharpLink.Abstractions.IRpcCodec<T> codec) { }
         public SharpLink.Runtime.SharpLinkRuntimeContext Build() { }
         public SharpLink.Runtime.SharpLinkRuntimeContextBuilder Configure(System.Action<SharpLink.Runtime.SharpLinkRuntimeOptions> configure) { }
         public SharpLink.Runtime.SharpLinkRuntimeContextBuilder ConfigureBufferPool(System.Action<SharpLink.Runtime.BufferWriterPoolOptions> configure) { }
         public SharpLink.Runtime.SharpLinkRuntimeContextBuilder ConfigureStateStores(System.Action<SharpLink.Runtime.RuntimeConcurrencyOptions> configure) { }
-        public SharpLink.Runtime.SharpLinkRuntimeContextBuilder UseCodecResolver(System.Func<System.Type, SharpLink.Abstractions.IRpcCodec?>? resolver) { }
         public SharpLink.Runtime.SharpLinkRuntimeContextBuilder UseTimeProvider(System.TimeProvider timeProvider) { }
     }
     public sealed class SharpLinkRuntimeOptions

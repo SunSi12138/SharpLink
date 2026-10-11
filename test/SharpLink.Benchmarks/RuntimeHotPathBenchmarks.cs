@@ -318,7 +318,6 @@ public class SendFlowStateLongLivedBenchmarks
 public class CodecAndPreAdmissionHotPathBenchmarks
 {
     private SharpLinkRuntimeContext _context = null!;
-    private SharpLinkRuntimeContext _fallbackContext = null!;
     private SharpLinkRuntimeContext _generatedContext = null!;
     private StreamManager _streams = null!;
     private ReadOnlySequence<byte> _payload;
@@ -329,12 +328,6 @@ public class CodecAndPreAdmissionHotPathBenchmarks
         _context = new SharpLinkRuntimeContextBuilder()
             .AddCodec(new BenchmarkValueCodec())
             .Build(includeGeneratedAssemblyCatalog: false);
-        _fallbackContext = new SharpLinkRuntimeContextBuilder()
-            .UseCodecResolver(static type => type == typeof(FallbackBenchmarkValue)
-                ? new FallbackBenchmarkValueCodec()
-                : null)
-            .Build(includeGeneratedAssemblyCatalog: false);
-        _ = _fallbackContext.Codecs.GetCodec<FallbackBenchmarkValue>();
         _generatedContext = new SharpLinkRuntimeContextBuilder()
             .Build([BenchmarkManifest.Instance]);
         _ = _generatedContext.Codecs.GetCodec<GeneratedBenchmarkValue>();
@@ -355,17 +348,12 @@ public class CodecAndPreAdmissionHotPathBenchmarks
     {
         _streams.CompleteRequestStreams(1, exception: null);
         _generatedContext.Dispose();
-        _fallbackContext.Dispose();
         _context.Dispose();
     }
 
     [Benchmark]
     public IRpcCodec<BenchmarkValue> CachedCodecLookup()
         => _context.Codecs.GetCodec<BenchmarkValue>();
-
-    [Benchmark]
-    public IRpcCodec<FallbackBenchmarkValue> CachedFallbackCodecLookup()
-        => _fallbackContext.Codecs.GetCodec<FallbackBenchmarkValue>();
 
     [Benchmark]
     public IRpcCodec<GeneratedBenchmarkValue> CachedGeneratedCodecLookup()
@@ -376,7 +364,6 @@ public class CodecAndPreAdmissionHotPathBenchmarks
         => _streams.DispatchChunkAsync(1, 1, _payload);
 
     public sealed class BenchmarkValue;
-    public sealed class FallbackBenchmarkValue;
     public sealed class GeneratedBenchmarkValue;
 
     private sealed class BenchmarkValueCodec : IRpcCodec<BenchmarkValue>
@@ -386,12 +373,6 @@ public class CodecAndPreAdmissionHotPathBenchmarks
         }
 
         public BenchmarkValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
-    }
-
-    private sealed class FallbackBenchmarkValueCodec : IRpcCodec<FallbackBenchmarkValue>
-    {
-        public void Serialize(in FallbackBenchmarkValue value, IBufferWriter<byte> buffer) { }
-        public FallbackBenchmarkValue Deserialize(in ReadOnlySequence<byte> buffer) => new();
     }
 
     private sealed class GeneratedBenchmarkValueCodec : IRpcCodec<GeneratedBenchmarkValue>

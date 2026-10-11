@@ -1,5 +1,3 @@
-using System.Collections.Frozen;
-
 namespace SharpLink.Runtime;
 
 /// <summary>
@@ -11,7 +9,6 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
     private readonly SharpLinkRuntimeOptions _options;
     private readonly RuntimeConcurrencyOptions _concurrency;
     private readonly BufferWriterPoolOptions _bufferPool;
-    private readonly FrozenDictionary<Type, IRpcCodec> _codecs;
     private readonly GeneratedManifestSnapshot _generatedManifests;
 
     internal SharpLinkRuntimeContextBuildPlan(
@@ -19,19 +16,12 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
         RuntimeConcurrencyOptions concurrency,
         BufferWriterPoolOptions bufferPool,
         TimeProvider timeProvider,
-        Func<Type, IRpcCodec?>? resolver,
-        IReadOnlyDictionary<Type, IRpcCodec> codecs,
         GeneratedManifestSnapshot generatedManifests)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _concurrency = concurrency ?? throw new ArgumentNullException(nameof(concurrency));
         _bufferPool = bufferPool ?? throw new ArgumentNullException(nameof(bufferPool));
         TimeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
-        Resolver = resolver;
-        ArgumentNullException.ThrowIfNull(codecs);
-        _codecs = codecs.Count == 0
-            ? FrozenDictionary<Type, IRpcCodec>.Empty
-            : codecs.ToFrozenDictionary();
         _generatedManifests = generatedManifests ?? throw new ArgumentNullException(nameof(generatedManifests));
     }
 
@@ -40,9 +30,6 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
 
     /// <summary>Gets the application-owned time source. The runtime Context never disposes it.</summary>
     internal TimeProvider TimeProvider { get; }
-
-    /// <summary>Gets the optional application-owned fallback resolver.</summary>
-    internal Func<Type, IRpcCodec?>? Resolver { get; }
 
     /// <summary>
     /// Gets the exact frozen manifest snapshot shared by Runtime, Client, and Server planning.
@@ -57,7 +44,5 @@ internal sealed class SharpLinkRuntimeContextBuildPlan
             _concurrency,
             _bufferPool,
             TimeProvider,
-            Resolver,
-            _codecs,
             _generatedManifests.Manifests);
 }

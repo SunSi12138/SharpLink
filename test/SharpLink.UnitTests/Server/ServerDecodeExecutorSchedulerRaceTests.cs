@@ -22,7 +22,7 @@ public class ServerDecodeExecutorSchedulerRaceTests
             {
                 var started = NewSignal();
                 startedSignals[index] = started;
-                blockers.Add(executor.EnqueueAsync(
+                blockers.Add(EnqueueProduction(executor,
                     new object(),
                     new ServerDecodeWorkItem(async _ =>
                     {
@@ -55,7 +55,7 @@ public class ServerDecodeExecutorSchedulerRaceTests
             for (var cycle = 0; cycle < cancellationCycles; cycle++)
             {
                 using var cancellation = new CancellationTokenSource();
-                var cancelled = executor.EnqueueAsync(
+                var cancelled = EnqueueProduction(executor,
                     new object(),
                     new ServerDecodeWorkItem(_ => ValueTask.CompletedTask),
                     cancellation.Token).AsTask();
@@ -101,59 +101,46 @@ public class ServerDecodeExecutorSchedulerRaceTests
     }
 
     [Test]
-    public async Task DisposeShouldWaitForCompatibilityWriterThatAcquiredSlotBeforePublication()
+    public async Task ReservedPublicationCrossingStopMustRejectAndReleaseReservation()
     {
-        var executor = new ServerDecodeExecutor(workerCount: 1, queueCapacity: 1);
-        var slots = ReadPrivateField<SemaphoreSlim>(executor, "_compatibilitySlots");
-        var schedulerGate = ReadPrivateField<Lock>(executor, "_schedulerGate");
-        slots.Wait();
+        await using var executor = new ServerDecodeExecutor(workerCount: 1, queueCapacity: 1);
+        Ensure(executor.TryReserveQueueSlot(out var permit) && permit is not null,
+            "production publisher must reserve before retaining request payload");
+        Ensure(executor.QueueReservations == 1 && executor.QueueDepth == 0,
+            "the request owns one reservation but has not yet published a queue entry");
 
-        Task? dispose = null;
-        try
-        {
-            var enqueue = executor.EnqueueAsync(
-                new ServerDecodeWorkItem(_ => ValueTask.CompletedTask),
-                CancellationToken.None).AsTask();
-            Ensure(executor.QueueDepth == 1,
-                "compatibility writer must own pending depth while blocked on queue capacity");
+        executor.StopAccepting();
+        Ensure(!executor.IsAccepting, "stop must close queue admission");
+        Ensure(!executor.TryReserveQueueSlot(out var rejected) && rejected is null,
+            "later work cannot enter the scheduler after the stop boundary");
 
-            lock (schedulerGate)
+        var attempts = 0;
+        var unpublished = executor.EnqueueReservedAsync(new object(), permit!,
+            new ServerDecodeWorkItem(_ =>
             {
-                slots.Release();
-                Ensure(
-                    SpinWait.SpinUntil(() => slots.CurrentCount == 0, TimeSpan.FromSeconds(2)),
-                    "compatibility writer did not acquire the released slot before publication");
+                Interlocked.Increment(ref attempts);
+                return ValueTask.CompletedTask;
+            }), CancellationToken.None).AsTask();
+        await EnsureFailsAsync<ServerDecodeExecutorClosedException>(
+            unpublished, "reserved publisher crossing the stop boundary");
 
-                dispose = executor.DisposeAsync().AsTask();
-                Ensure(!dispose.IsCompleted,
-                    "dispose must remain joined to the admitted compatibility writer");
-            }
-
-            await EnsureFailsAsync<ServerDecodeExecutorClosedException>(
-                enqueue,
-                "compatibility writer crossing dispose before publication");
-            await dispose.WaitAsync(TimeSpan.FromSeconds(2));
-
-            Ensure(executor.QueueDepth == 0,
-                "compatibility writer rollback must release pending depth before disposal completes");
-        }
-        finally
-        {
-            if (dispose is null)
-                await executor.DisposeAsync();
-            else if (!dispose.IsCompleted)
-                await dispose;
-        }
+        Ensure(attempts == 0, "unpublished provider work must never run");
+        Ensure(executor.QueueReservations == 0 && executor.QueueDepth == 0,
+            "failed publication must release the previously reserved queue capacity");
+        await executor.CompleteAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
     }
 
-    private static T ReadPrivateField<T>(ServerDecodeExecutor executor, string name)
+    private static ValueTask EnqueueProduction(
+        ServerDecodeExecutor executor,
+        object schedulingKey,
+        ServerDecodeWorkItem item,
+        CancellationToken cancellationToken)
     {
-        var field = typeof(ServerDecodeExecutor).GetField(
-            name,
-            System.Reflection.BindingFlags.Instance |
-            System.Reflection.BindingFlags.NonPublic)
-            ?? throw new Exception($"cannot find executor field {name}");
-        return (T)field.GetValue(executor)!;
+        if (!executor.TryReserveQueueSlot(out var permit) || permit is null)
+            return cancellationToken.IsCancellationRequested
+                ? ValueTask.FromCanceled(cancellationToken)
+                : ValueTask.FromException(new ServerDecodeExecutorClosedException());
+        return executor.EnqueueReservedAsync(schedulingKey, permit, item, cancellationToken);
     }
 
     private static TaskCompletionSource NewSignal()
