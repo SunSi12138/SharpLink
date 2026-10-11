@@ -95,9 +95,11 @@ internal sealed partial class StreamManager
             {
                 lock (_gate)
                 {
-                    if (!_byStreamId.TryGetValue(streamId, out var current) || !ReferenceEquals(current, expected))
+                    var named = _byStreamId;
+                    if (named is null || !named.TryGetValue(streamId, out var current) ||
+                        !ReferenceEquals(current, expected))
                         return false;
-                    _byStreamId.Remove(streamId);
+                    named.Remove(streamId);
                 }
             }
             expected.MarkPeerTerminalReceived();
