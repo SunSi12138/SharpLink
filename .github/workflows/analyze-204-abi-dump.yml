@@ -13,6 +13,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Checkout exact source to restore matching module metadata only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 85f5f87c21056edc16af80d6c9c06cfca83d8cfa
+          path: source
+          persist-credentials: false
       - uses: ./.github/actions/setup-dotnet
       - name: Download only the existing original-arm diagnostic artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -22,6 +28,27 @@ jobs:
           repository: SunSi12138/SharpLink
           run-id: 38145121809
           github-token: ${{ github.token }}
+      - name: Restore module files from exact source without running tests
+        working-directory: source
+        run: |
+          mkdir -p ../analysis
+          test "$(git rev-parse HEAD)" = 85f5f87c21056edc16af80d6c9c06cfca83d8cfa
+          dotnet build test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj -c Release -m:1 -p:UseSharedCompilation=false -nodeReuse:false -v minimal > ../analysis/module-build.log 2>&1
+          python3 - <<'PYMODULE'
+          import hashlib,json,pathlib
+          source=pathlib.Path.cwd(); rows=[]
+          for line in (source.parent/'captured/binary-sha256.txt').read_text().splitlines():
+              expected,relative=line.split(maxsplit=1); path=source/relative.strip()
+              actual=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+              match=actual==expected
+              rows.append({'Path':relative.strip(),'Expected':expected,'Actual':actual,'Match':match})
+              if path.is_file() and not match:
+                  quarantine=source.parent/'unmatched-modules'/relative.strip()
+                  quarantine.parent.mkdir(parents=True,exist_ok=True)
+                  path.rename(quarantine) # Never feed SOS a mismatched module.
+          (source.parent/'analysis/module-identity.json').write_text(json.dumps(rows,indent=2))
+          PYMODULE
+          test -z "$(git status --porcelain --untracked-files=normal)"
       - name: Install repository-pinned dump analysis tool
         run: dotnet tool install dotnet-dump --version 10.0.745401 --tool-path "$GITHUB_WORKSPACE/dump-tools"
       - name: Analyze exact dump without executing tests

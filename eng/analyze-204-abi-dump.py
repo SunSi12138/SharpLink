@@ -37,9 +37,20 @@ types=[
 query("gcroot 00007efd1b8c2320", "awaited-task-roots")
 queue=[]
 for index,name in enumerate(types):
-    listing=query('dumpheap -type '+name+' -short',f'type-{index}')
-    addresses=re.findall(r'(?m)^([0-9a-fA-F]{12,16})\s*$',listing)
-    if len(addresses)>32: raise RuntimeError(f'Targeted type unexpectedly broad: {name} {len(addresses)}')
+    listing=query('dumpheap -type '+name+' -stat',f'type-{index}')
+    method_tables=[]
+    for line in listing.splitlines():
+        parts=line.split(maxsplit=3)
+        if len(parts)==4 and re.fullmatch(r'[0-9a-fA-F]{12,16}',parts[0]):
+            actual_name=parts[3]
+            if actual_name==name or (name=='SharpLink.Runtime.PooledAsyncStreamDispatcher' and actual_name.startswith(name+'<')):
+                method_tables.append(parts[0])
+    if not method_tables: raise RuntimeError(f'No exact target method table: {name}')
+    addresses=[]
+    for mt in method_tables:
+        exact=query('dumpheap -mt '+mt+' -short',f'exact-{index}-{mt}')
+        addresses+=re.findall(r'(?m)^([0-9a-fA-F]{12,16})\s*$',exact)
+    if len(addresses)>32: raise RuntimeError(f'Targeted exact type unexpectedly broad: {name} {len(addresses)}')
     for address in addresses:
         text=object_query(address,'object-'+address)
         queue.append((text,0))
