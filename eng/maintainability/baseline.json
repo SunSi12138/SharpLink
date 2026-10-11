@@ -12,12 +12,6 @@
   "allowances": [
     {
       "domain": "source",
-      "path": "src/SharpLink.Runtime/RpcSession.cs",
-      "maxLoc": 862,
-      "reason": "Issue #735 adds the internal resolved flow-control bridge beside RpcSession's existing keyed flow-control bridge so protocol/session terminal behavior and fallback semantics remain co-located. This is a reviewed narrow exception for the flow-control lifecycle."
-    },
-    {
-      "domain": "source",
       "path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
       "maxLoc": 1930,
       "reason": "Existing dev debt captured by issue #350."
