@@ -76,6 +76,10 @@ public class ClientStreamPublicationDeadlineTests
         var timeProvider = new ManualTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
         var codec = codecFactory(timeProvider);
+        // Mirror the production client-stream caller's exact-size selection.
+        var exactSizeCodec = codec as IRpcSizedCodec<int>;
+        if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+            exactSizeCodec = null;
         Exception? failure = null;
 
         try
@@ -85,6 +89,7 @@ public class ClientStreamPublicationDeadlineTests
                 0,
                 7,
                 codec,
+                exactSizeCodec,
                 deadline,
                 timeProvider,
                 CancellationToken.None);
