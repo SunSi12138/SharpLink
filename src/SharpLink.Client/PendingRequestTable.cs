@@ -437,38 +437,21 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         return false;
     }
 
-    public bool TryAcceptProducerProgress(long id)
+    /// <summary>
+    /// Validates producer progress against the authoritative request slot without acquiring the
+    /// pending-call completion gate for every stream item. The deadline belongs to the same
+    /// pending generation and was captured under that gate when stream production started.
+    /// Expiration falls back to the pending table's single terminal authority.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryAcceptProducerProgress(long id, RpcDeadline deadline)
     {
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
+        if (!Contains(id))
             return false;
+        if (!deadline.IsExpired(_timeProvider))
+            return true;
 
-        var index = (int)(id & _indexMask);
-        var current = Volatile.Read(ref slots[index]);
-        if (current is null || current.Id != id ||
-            current.Kind is not (PendingCallKind.OneWayClientStreaming or
-                                 PendingCallKind.ClientStreaming or
-                                 PendingCallKind.DuplexStreaming))
-        {
-            return false;
-        }
-
-        PendingCall? expiredCall = null;
-        lock (current.CompletionGate)
-        {
-            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
-                return false;
-            if (!current.Deadline.IsExpired(_timeProvider))
-                return true;
-            if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
-                return false;
-            current.WaitUntilRegistered();
-            expiredCall = current;
-        }
-
-        var emptyPayload = ReadOnlySequence<byte>.Empty;
-        CompleteTakenCall(
-            expiredCall!, PendingCallCompletionReason.DeadlineExceeded, exception: null, ref emptyPayload);
+        TryComplete(id, PendingCallCompletionReason.DeadlineExceeded);
         return false;
     }
 

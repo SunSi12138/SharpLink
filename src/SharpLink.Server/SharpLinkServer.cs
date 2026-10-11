@@ -194,8 +194,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
         return CreateServerInvocationContext(
             session,
-            stub,
-            methodId,
+            method,
             requestId,
             connection.AuthenticationContext,
             deadline,
@@ -207,8 +206,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     private static SharpLinkServerInvocationContext CreateServerInvocationContext(
         RpcSession session,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodDescriptor method,
         long requestId,
         SharpLinkAuthenticationContext? authenticationContext,
         RpcDeadline deadline,
@@ -217,7 +215,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         CancellationToken cancellationToken,
         ServerInterceptorGeneration? interceptors = null)
     {
-        var method = GetMethodDescriptor(stub, methodId);
         return new SharpLinkServerInvocationContext(
             method,
             requestId,

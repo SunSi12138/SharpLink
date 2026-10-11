@@ -193,6 +193,12 @@ internal static class SharpLinkTimer
 
             var dueTime = remaining > MaximumDelay ? MaximumDelay : remaining;
             _timer.Change(dueTime, Timeout.InfiniteTimeSpan);
+
+            // The clock can cross the absolute deadline after GetRemaining but before Change
+            // installs the relative delay. Complete the signal now instead of waiting for that
+            // stale delay; TrySetResult also tolerates a timer callback winning the same race.
+            if (_deadline.IsExpired(_timeProvider))
+                _completion.TrySetResult();
         }
 
         public void Dispose() => _timer.Dispose();

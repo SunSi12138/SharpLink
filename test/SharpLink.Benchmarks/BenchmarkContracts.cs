@@ -37,6 +37,8 @@ public interface IBenchmarkRpc : IService
     IAsyncEnumerable<string> DuplexAsync(IAsyncEnumerable<string> values);
     [NonCancellable]
     ValueTask<int> MergeStreamsAsync(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right);
+    [NonCancellable]
+    ValueTask<int> MergeConcurrentStreamsAsync(IAsyncEnumerable<int> left, IAsyncEnumerable<int> right);
 
     [NonCancellable]
     ValueTask<long> UploadPayloadsAsync(IAsyncEnumerable<byte[]> payloads);

@@ -78,6 +78,35 @@ public class BenchmarkRpcService : IBenchmarkRpc
         return sum;
     }
 
+    /// <summary>
+    /// Two truly independent readers, unlike MergeStreamsAsync which deliberately drains left
+    /// before right. This is a fast-consumer pressure control for issue #737, not a production
+    /// contract change.
+    /// </summary>
+    public async ValueTask<int> MergeConcurrentStreamsAsync(
+        IAsyncEnumerable<int> left, IAsyncEnumerable<int> right)
+    {
+        var leftTask = SumStreamAsync(left);
+        var rightTask = SumStreamAsync(right);
+        return await leftTask.ConfigureAwait(false) + await rightTask.ConfigureAwait(false);
+
+        static async Task<int> SumStreamAsync(IAsyncEnumerable<int> source)
+        {
+            // Start both readers independently and allow occasional scheduling fairness without
+            // adding a Task.Yield per item to the already-small progress-check hot loop.
+            await Task.Yield();
+            var sum = 0;
+            var count = 0;
+            await foreach (var value in source.ConfigureAwait(false))
+            {
+                sum += value;
+                if ((++count & 127) == 0)
+                    await Task.Yield();
+            }
+            return sum;
+        }
+    }
+
     public async ValueTask<long> UploadPayloadsAsync(IAsyncEnumerable<byte[]> payloads)
     {
         long score = 0;

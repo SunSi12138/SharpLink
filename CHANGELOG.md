@@ -4,7 +4,13 @@
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-10-11
+
 ### Changed
+
+- Reduced the internal footprint of RpcMethodDescriptor while retaining its public API, removed redundant unary retry and server service-acquisition work, and reduced suspended OneWay allocations.
+- Made pending producer-progress checks lock-free and pooled suspended transport-read async state machines, with regression coverage for ownership, completion, cancellation, and lifetime handling.
+- Restored server call-admission hot-path benchmark coverage and synchronized timed send-batch deadline tests.
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
 

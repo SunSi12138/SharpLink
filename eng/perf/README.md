@@ -30,6 +30,15 @@ dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
   --output artifacts/perf/allocation-gate-self-test.json
 ```
 
+The server call-admission benchmark also has a fast smoke test that initializes its real TCP-backed
+benchmark environment, acquires and releases one call slot, and cleans up without running the full
+BenchmarkDotNet measurement suite. CI runs this after building the benchmark project:
+
+```bash
+dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
+  -c Release --no-build -- --server-call-admission-smoke-test
+```
+
 A negative-control run can inject managed allocation into each measured target operation:
 
 ```bash

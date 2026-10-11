@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Linq;
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
@@ -31,22 +30,33 @@ public class ServerCallAdmissionHotPathBenchmarks
                 options.FlowControl.MaxConcurrentCallsPerServer = 1_024;
             });
 
-        _server = (SharpLinkServer)(typeof(BenchmarkEnvironment).GetField(
-            "_server",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(_environment)
-            ?? throw new InvalidOperationException("Cannot resolve benchmark server."));
-        var connections = (ConcurrentDictionary<string, ServerConnectionState>)(
-            typeof(SharpLinkServer).GetField(
-                "_connections",
+        _server = (SharpLinkServer)_environment.Server;
+        var registry = typeof(SharpLinkServer).GetField(
+                "_connectionRegistry",
                 BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(_server)
-            ?? throw new InvalidOperationException("Cannot resolve benchmark connection table."));
-        _connection = connections.Values.Single();
+            ?.GetValue(_server) as ServerConnectionRegistry
+            ?? throw new InvalidOperationException("Cannot resolve benchmark connection registry.");
+        _connection = registry.SnapshotActive().Single();
     }
 
     [GlobalCleanup]
     public async Task Cleanup() => await _environment.DisposeAsync();
+
+    // Exercise GlobalSetup and a balanced admission without a full BenchmarkDotNet measurement run.
+    internal static async Task RunSmokeTestAsync()
+    {
+        var benchmark = new ServerCallAdmissionHotPathBenchmarks();
+        await benchmark.Setup();
+        try
+        {
+            if (benchmark.AcquireAndRelease() != 0)
+                throw new InvalidOperationException("Call-admission benchmark did not release its capacity.");
+        }
+        finally
+        {
+            await benchmark.Cleanup();
+        }
+    }
 
     [Benchmark]
     public int AcquireAndRelease()
