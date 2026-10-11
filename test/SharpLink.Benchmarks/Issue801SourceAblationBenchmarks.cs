@@ -15,7 +15,7 @@ namespace SharpLink.Benchmarks;
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 12)]
-public sealed class Issue801AdmissionAblationBenchmarks
+public class Issue801AdmissionAblationBenchmarks
 {
     private BenchmarkEnvironment _environment = null!;
     private SharpLinkServer _server = null!;
@@ -65,7 +65,7 @@ public sealed class Issue801AdmissionAblationBenchmarks
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 12)]
-public sealed class Issue801ClientAblationBenchmarks
+public class Issue801ClientAblationBenchmarks
 {
     [GlobalSetup]
     public void VerifyVariant()
