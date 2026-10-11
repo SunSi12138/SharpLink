@@ -174,12 +174,13 @@ public class ReadOwnershipPipeReaderDispatchTests
     public async Task QueuedPublicationOrLateRegistrationShouldDispatchExactlyOnce(
         bool late, bool useSchedulingContext)
     {
+        var progress = 0;
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var registeringThread = new Thread(() =>
         {
             try
             {
-                ExerciseQueuedRegistration(late, useSchedulingContext);
+                ExerciseQueuedRegistration(late, useSchedulingContext, () => Interlocked.Increment(ref progress));
                 completed.SetResult();
             }
             catch (Exception error)
@@ -191,7 +192,7 @@ public class ReadOwnershipPipeReaderDispatchTests
         registeringThread.Start();
         try
         {
-            await completed.Task.WaitAsync(Timeout);
+            await WaitForQueuedProgressAsync(completed.Task, () => Volatile.Read(ref progress));
         }
         finally
         {
@@ -242,7 +243,7 @@ public class ReadOwnershipPipeReaderDispatchTests
     // B policy-only tests are intentionally not carried forward: there is no mutable reader
     // dispatch switch, and public continuation registration does not classify context under the
     // reader's ownership gate. Context contracts are exercised above and in the lifetime tests.
-    private static void ExerciseQueuedRegistration(bool late, bool useSchedulingContext)
+    private static void ExerciseQueuedRegistration(bool late, bool useSchedulingContext, Action reportProgress)
     {
         Ensure(Task.CurrentId is null && SynchronizationContext.Current is null,
             "the fixture requires an ordinary registering thread");
@@ -289,9 +290,48 @@ public class ReadOwnershipPipeReaderDispatchTests
             }
             Ensure(done.Wait(Timeout), "queued registration must dispatch without a lost wakeup");
             Ensure(error is null, $"the queued consumer failed: {error}");
+            reportProgress();
         }
         Ensure(consumed == 11_000 && inner.AdvanceCount == 11_000,
             "every queued consumer must run and release ownership exactly once");
+    }
+
+    // The 11,000-operation stress workload is a correctness check, not a throughput gate.
+    // Keep the per-operation lost-wakeup bound below and the assembly's 30-second test guard.
+    // An outer window may expire only while completed operations continue to advance.
+    internal static async Task WaitForQueuedProgressAsync(
+        Task completed, Func<int> readProgress, Func<Task, Task>? waitForWindow = null)
+    {
+        var previous = readProgress();
+        while (true)
+        {
+            try
+            {
+                await (waitForWindow?.Invoke(completed) ?? completed.WaitAsync(Timeout));
+                return;
+            }
+            catch (TimeoutException)
+            {
+                // A worker's own timeout is a failure, even if earlier operations progressed.
+                // Also prefer completion if it raced the outer watchdog's timer.
+                if (completed.IsCompleted)
+                {
+                    await completed;
+                    return;
+                }
+                var current = readProgress();
+                if (current <= previous)
+                {
+                    if (completed.IsCompleted)
+                    {
+                        await completed;
+                        return;
+                    }
+                    throw new TimeoutException($"Queued dispatch made no progress in the watchdog window ({current}/11000 completed).");
+                }
+                previous = current;
+            }
+        }
     }
 
     private static Exception? Capture(Action action)

@@ -1,0 +1,48 @@
+name: PR804 macOS progress watchdog validation
+on:
+  push:
+    branches: ['validation/804-dispatch-progress']
+permissions:
+  contents: read
+jobs:
+  validate-progress-watchdog:
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [full-suite, focused]
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - run: dotnet restore Sharplink.slnx
+      - run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Repeat full or focused tests with the progress watchdog
+        shell: bash
+        run: |
+          mkdir -p artifacts/dispatch-progress
+          filter=()
+          if [ '${{ matrix.profile }}' = focused ]; then
+            filter=(--treenode-filter '/*/*/ReadOwnership*/*')
+          fi
+          result=0
+          set +e
+          for attempt in 1 2; do
+            dotnet run -c Release --no-build --project test/SharpLink.UnitTests -- \
+              --maximum-parallel-tests 8 --output Detailed --no-progress "${filter[@]}" \
+              2>&1 | tee "artifacts/dispatch-progress/${{ matrix.profile }}-${attempt}.log"
+            status=${PIPESTATUS[0]}
+            echo "validation attempt=$attempt exit=$status"
+            if [ "$status" -ne 0 ]; then result=1; fi
+          done
+          exit "$result"
+      - name: Retain validation logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr804-dispatch-progress-${{ matrix.profile }}
+          path: artifacts/dispatch-progress
+          if-no-files-found: error
