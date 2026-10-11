@@ -10,6 +10,9 @@ internal sealed class StreamFlowController
     private const int MaxPooledReceiveStates = 128;
     private const int MaxPooledSendStates = 128;
     private readonly Lock _gate = new();
+    // Send and receive state are independent. Complete is the only operation
+    // taking both gates, always send first, before publishing terminal state.
+    private readonly Lock _receiveGate = new();
     private readonly int _streamWindow;
     private readonly int _connectionWindow;
     private readonly int _maxFramePayloadBytes;
@@ -388,7 +391,7 @@ internal sealed class StreamFlowController
     public void AcceptReceived(long requestId, ushort streamId, int encodedBytes)
     {
         ValidateEncodedBytes(encodedBytes);
-        lock (_gate)
+        lock (_receiveGate)
         {
             ThrowIfTerminated();
             var key = new StreamKey(requestId, streamId);
@@ -411,7 +414,7 @@ internal sealed class StreamFlowController
     public int RecordConsumed(long requestId, ushort streamId, int encodedBytes)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(encodedBytes);
-        lock (_gate)
+        lock (_receiveGate)
         {
             if (_terminalException is not null)
                 return 0;
@@ -462,7 +465,7 @@ internal sealed class StreamFlowController
             return false;
         }
 
-        lock (_gate)
+        lock (_receiveGate)
         {
             var updates = _consumedCreditUpdates;
             if (updates is null || !updates.TryDequeue(out var update))
@@ -485,7 +488,7 @@ internal sealed class StreamFlowController
 
     public int FlushConsumed(long requestId, ushort streamId)
     {
-        lock (_gate)
+        lock (_receiveGate)
         {
             var key = new StreamKey(requestId, streamId);
             if (_terminalException is not null ||
@@ -506,6 +509,7 @@ internal sealed class StreamFlowController
         ArgumentNullException.ThrowIfNull(exception);
         CreditWaiter[] waiters;
         lock (_gate)
+        lock (_receiveGate)
         {
             if (_terminalException is not null)
                 return;

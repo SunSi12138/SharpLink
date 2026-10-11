@@ -1,0 +1,35 @@
+name: Issue 735 Matched RPC Architecture Screen
+
+on:
+  push:
+    branches: ['research/735-production-architecture-20261012-f8ba891']
+    paths:
+      - '.github/workflows/issue735-rpc-screen.yml'
+      - 'eng/issue735/run_architecture_screen.py'
+      - 'test/SharpLink.FlowArchitectureEvidence/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  screen:
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [jit-pgo0, jit-pgo1, nativeaot]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Matched source-verified generated RPC ABBA and A/A
+        run: python3 eng/issue735/run_architecture_screen.py --runtime '${{ matrix.runtime }}' --out 'artifacts/issue735/rpc-${{ matrix.runtime }}'
+      - name: Retain binaries, all raw samples, source identities and every failed process
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-rpc-${{ matrix.runtime }}-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/rpc-${{ matrix.runtime }}
+          if-no-files-found: error
+          retention-days: 30
