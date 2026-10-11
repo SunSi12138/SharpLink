@@ -68,9 +68,6 @@ internal sealed class ServerConnectionRegistry
     internal bool CompleteRetired(ServerConnectionState connection)
         => _retired.TryRemove(connection, out _);
 
-    internal bool IsRetired(ServerConnectionState connection)
-        => _retired.ContainsKey(connection);
-
     /// <summary>
     /// Enumerates active entries with the weakly-consistent semantics of
     /// <see cref="ConcurrentDictionary{TKey,TValue}"/> without materializing a snapshot.

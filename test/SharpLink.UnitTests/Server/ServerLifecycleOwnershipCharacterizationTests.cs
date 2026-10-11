@@ -345,7 +345,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find connection registry");
         var registry = (ServerConnectionRegistry)field.GetValue(server)!;
-        return registry.IsRetired(connection);
+        return Array.Exists(registry.SnapshotOwned(), owned => ReferenceEquals(owned, connection));
     }
 
     private static ServiceRegistration CreateConnectionRegistration(

@@ -67,7 +67,8 @@ public class ServerRegistryTests
             await first.ServiceCleanupTask;
             Ensure(registry.CompleteRetired(first),
                 "retired ownership must remain until service cleanup completes");
-            Ensure(!registry.IsRetired(first), "completed retired cleanup must release registry ownership");
+            Ensure(!registry.SnapshotOwned().Contains(first),
+                "completed retired cleanup must release registry ownership");
             Ensure(registry.TryRemove(new KeyValuePair<string, ServerConnectionState>(id, replacement)),
                 "current connection must be removable by exact instance");
             Ensure(registry.SnapshotOwned().Length == 0,
