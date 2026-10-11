@@ -19,6 +19,7 @@ HASHES = {
     "src/SharpLink.Runtime/WriterOwnedStreamScheduler.cs": "d9c20a693ab2be881df7209100728236c3e13885fb64b5340bee88cdf5fee008",
     "src/SharpLink.Client/ClientConnection.cs": "8e07144c0b842ee90b220b04a7ca48b87a8d060479dfb63193abb8c701cf4ea8",
     "src/SharpLink.Runtime/RpcSession.WriterOwnedCancellation.cs": "f7678b3ba0060c2f78a8891a86bf2a72a06e35bb0891e760a46b6806675eaf3e",
+    "src/SharpLink.Runtime/RpcSession.WriterOwnedStreaming.cs": "b21391c93a7aca9c52467ddc797260de5c80c130796a72b4f446c158fd944b83",
 }
 
 
@@ -58,14 +59,26 @@ def main() -> None:
 
     if args.mode == "green":
         path = "src/SharpLink.Runtime/WriterOwnedStreamScheduler.cs"
-        old = """                if (Volatile.Read(ref existing.EndQueued) || Volatile.Read(ref existing.Error) is not null ||
-                    !Volatile.Read(ref existing.Attached))
-                    throw Closed();"""
-        new = """                // Attribution overlay: preserve the selected failure at the same-key terminal lookup.
-                if (Volatile.Read(ref existing.Error) is { } error)
-                    throw error;
-                if (Volatile.Read(ref existing.EndQueued) || !Volatile.Read(ref existing.Attached))
-                    throw Closed();"""
+        anchor = "    internal StreamHandle Open(long requestId, ushort streamId)"
+        helper = """    // Attribution overlay: terminal delivery belongs to an existing lifecycle.
+    // Keep Open's rejection contract for callers trying to create/reopen a stream.
+    // This immutable handle preserves a selected failure even if retirement follows.
+    internal StreamHandle? FindExistingTerminalStream(long requestId, ushort streamId)
+    {
+        lock (_mapGate)
+        {
+            ThrowIfClosing();
+            return _streams.GetValueOrDefault(new StreamKey(requestId, streamId));
+        }
+    }
+
+"""
+        transformed[path] = once(original[path], anchor, helper + anchor)
+        path = "src/SharpLink.Runtime/RpcSession.WriterOwnedStreaming.cs"
+        old = "        var stream = await ResolveWriterOwnedStreamAsync(requestId, streamId, default, cancellationToken).ConfigureAwait(false);"
+        new = """        cancellationToken.ThrowIfCancellationRequested();
+        var stream = GetOrCreateWriterOwnedStreams().FindExistingTerminalStream(requestId, streamId)
+            ?? await ResolveWriterOwnedStreamAsync(requestId, streamId, default, cancellationToken).ConfigureAwait(false);"""
         transformed[path] = once(original[path], old, new)
         path = "src/SharpLink.Runtime/RpcSession.WriterOwnedCancellation.cs"
         transformed[path] = once(original[path],
@@ -107,7 +120,7 @@ def main() -> None:
         rows.append({"path": path, "originalSha256": HASHES[path],
             "overlaidSha256": hashlib.sha256(text.encode()).hexdigest(), "changed": changed})
     args.manifest.parent.mkdir(parents=True, exist_ok=True)
-    args.manifest.write_text(json.dumps({"subjectSha": SUBJECT, "mode": args.mode,
+    args.manifest.write_text(json.dumps({"subjectSha": SUBJECT, "mode": args.mode, "overlayRevision": 2,
         "scope": "isolated-historical-root-cause-attribution; NOT a production candidate",
         "files": rows}, indent=2) + "\n")
     print(f"Applied {args.mode}: {sum(row['changed'] for row in rows)} files; exact subject {SUBJECT}")

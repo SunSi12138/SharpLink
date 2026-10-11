@@ -4,7 +4,7 @@ Pinned subject: `8ac4c84938d193c9a9659e9facd71f1fff82968a`. This directory is an
 experiment for the closed historical candidate. It does not modify current dev,
 revive #803, loosen existing tests, or establish a production Go.
 
-`apply.py` requires the exact historical Git HEAD and validates SHA-256 of all five
+`apply.py` requires the exact historical Git HEAD and validates SHA-256 of all six
 input files before editing. Run once against a pristine detached historical checkout:
 
 ```bash
@@ -20,17 +20,28 @@ a later cancellation registration, exposing token cancellation before the writer
 cleanup callback begins; the actual client producer completes while that callback
 is deferred. An optional iterator exception must retain exact identity as well.
 
-The green overlay makes only two causal corrections: preserve `existing.Error`
-during same-key terminal resolution, and explicitly settle the immutable client
+The green overlay makes only two causal corrections: reuse the existing immutable
+stream identity during terminal resolution so `ValidateOpen` preserves its selected
+failure, and explicitly settle the immutable client
 lease in `finally` on token cancellation. Making the existing abort helper internal
 allows that client call. It does not address all lifecycle, retired-key or performance
 risks of #803 and must not be offered as a repaired production implementation.
+
+Revision 1 changed `Open` globally to rethrow the selected failure. In real run
+`38163848907`, its four new cases passed on four repetitions, but the unfiltered
+suite failed three existing reentrant-cleanup cases because their attempt to reopen
+a pinned key received `IOException` instead of the existing `SharpLinkException`
+rejection contract. Those failures and the revision 1 source are retained. Revision 2
+leaves `Open` entirely unchanged and limits immutable-identity reuse to terminal
+delivery. No existing test assertion or timeout changes. The still-unresolved case
+where retirement finishes before terminal resolution is outside this causal fixture;
+the complete producer-to-terminal lease design would require broader production work.
 
 Build each overlaid checkout independently with the unchanged UnitTests project.
 Run the four new cases using the normal test platform filter:
 
 ```bash
-dotnet test --project test/SharpLink.UnitTests -c Release --no-build -p:Platform=AnyCPU -- --treenode-filter '/*/*/*/Historical735*'
+dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build --treenode-filter '/*/*/*/Historical735*'
 ```
 
 Retain build logs, raw stdout/stderr, exit codes, overlay manifests, Git diffs,
