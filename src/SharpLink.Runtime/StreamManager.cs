@@ -708,7 +708,10 @@ internal sealed partial class StreamManager
     {
         private DispatcherEntry? _defaultDispatcher;
         private readonly Lock _gate = new();
-        private readonly Dictionary<ushort, DispatcherEntry> _byStreamId = [];
+        // Stream 0 already uses the inline slot. Allocate the named dictionary
+        // only when the first nonzero route is actually registered.
+        // Named-route operations remain protected by the existing registry gate.
+        private Dictionary<ushort, DispatcherEntry>? _byStreamId;
 
         public bool TryRegister(ushort streamId, IStreamDispatcher dispatcher)
         {
@@ -720,9 +723,9 @@ internal sealed partial class StreamManager
 
             lock (_gate)
             {
-                if (_byStreamId.ContainsKey(streamId))
+                if (_byStreamId?.ContainsKey(streamId) == true)
                     return false;
-                _byStreamId.Add(streamId, new DispatcherEntry(dispatcher));
+                (_byStreamId ??= []).Add(streamId, new DispatcherEntry(dispatcher));
                 return true;
             }
         }
@@ -758,7 +761,7 @@ internal sealed partial class StreamManager
             PreAdmissionStreamDispatcher? acquiredPreAdmission;
             lock (_gate)
             {
-                if (!_byStreamId.TryGetValue(streamId, out var entry) ||
+                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) ||
                     entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
                     !entry.TryAcquire())
                 {
@@ -810,7 +813,7 @@ internal sealed partial class StreamManager
             PreAdmissionStreamDispatcher? acquiredPreAdmission;
             lock (_gate)
             {
-                if (!_byStreamId.TryGetValue(streamId, out var entry) ||
+                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) ||
                     entry.Dispatcher is not PreAdmissionStreamDispatcher preAdmission ||
                     !entry.TryAcquire())
                 {
@@ -852,7 +855,7 @@ internal sealed partial class StreamManager
             DispatcherEntry? acquiredEntry;
             lock (_gate)
             {
-                if (!_byStreamId.TryGetValue(streamId, out var entry) || !entry.TryAcquire())
+                if (_byStreamId is null || !_byStreamId.TryGetValue(streamId, out var entry) || !entry.TryAcquire())
                     return false;
                 acquiredEntry = entry;
             }
@@ -887,7 +890,7 @@ internal sealed partial class StreamManager
 
             lock (_gate)
             {
-                if (_byStreamId.TryGetValue(streamId, out var found) &&
+                if (_byStreamId is not null && _byStreamId.TryGetValue(streamId, out var found) &&
                     found.Dispatcher is PreAdmissionStreamDispatcher preAdmission &&
                     preAdmission.TryCompleteAndRetain(exception))
                 {
@@ -912,7 +915,7 @@ internal sealed partial class StreamManager
             }
             lock (_gate)
             {
-                var found = _byStreamId.TryGetValue(streamId, out var entry)
+                var found = _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var entry)
                     ? entry.Dispatcher as PreAdmissionStreamDispatcher
                     : null;
                 dispatcher = found!;
@@ -933,7 +936,7 @@ internal sealed partial class StreamManager
             }
             lock (_gate)
             {
-                var found = _byStreamId.TryGetValue(streamId, out var entry)
+                var found = _byStreamId is not null && _byStreamId.TryGetValue(streamId, out var entry)
                     ? entry.Dispatcher as DiscardingStreamDispatcher
                     : null;
                 dispatcher = found!;
@@ -947,7 +950,7 @@ internal sealed partial class StreamManager
             {
                 lock (_gate)
                 {
-                    if (_byStreamId.TryGetValue(streamId, out entry!) && entry.TryAcquire())
+                    if (_byStreamId is not null && _byStreamId.TryGetValue(streamId, out entry!) && entry.TryAcquire())
                         return true;
                     entry = null!;
                     return false;
@@ -983,7 +986,7 @@ internal sealed partial class StreamManager
 
             lock (_gate)
             {
-                if (_byStreamId.Remove(streamId, out var removed))
+                if (_byStreamId is not null && _byStreamId.Remove(streamId, out var removed))
                 {
                     removed.Close();
                     entry = removed;
@@ -1006,12 +1009,15 @@ internal sealed partial class StreamManager
 
             lock (_gate)
             {
-                foreach (var pair in _byStreamId)
+                if (_byStreamId is not null)
                 {
-                    pair.Value.Close();
-                    entries.Add(new RequestDrainEntry(pair.Key, pair.Value));
+                    foreach (var pair in _byStreamId)
+                    {
+                        pair.Value.Close();
+                        entries.Add(new RequestDrainEntry(pair.Key, pair.Value));
+                    }
+                    _byStreamId.Clear();
                 }
-                _byStreamId.Clear();
             }
             return [.. entries];
         }
@@ -1029,9 +1035,9 @@ internal sealed partial class StreamManager
             DispatcherEntry[] entries;
             lock (_gate)
             {
-                count += _byStreamId.Count;
-                entries = [.. _byStreamId.Values];
-                _byStreamId.Clear();
+                count += _byStreamId?.Count ?? 0;
+                entries = _byStreamId is null ? [] : [.. _byStreamId.Values];
+                _byStreamId?.Clear();
             }
             for (var index = 0; index < entries.Length; index++)
             {
@@ -1071,7 +1077,7 @@ internal sealed partial class StreamManager
                 if (Volatile.Read(ref _defaultDispatcher) is not null)
                     return false;
                 lock (_gate)
-                    return _defaultDispatcher is null && _byStreamId.Count == 0;
+                    return _defaultDispatcher is null && (_byStreamId is null || _byStreamId.Count == 0);
             }
         }
     }
