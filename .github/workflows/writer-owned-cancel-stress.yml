@@ -1,0 +1,62 @@
+name: Writer-Owned Cancellation and Lifecycle Stress
+
+# Additive stress diagnostic for the two exact failures first seen in
+# PR Fast 38140928742 (2059/2061). The original PR Fast gate is unchanged.
+on:
+  pull_request:
+    branches: [perf/735-resolved-flow-state]
+    paths:
+      - '.github/workflows/writer-owned-cancel-stress.yml'
+      - 'test/SharpLink.UnitTests/Client/WriterOwnedClientConnectionTests.cs'
+      - 'test/SharpLink.UnitTests/Runtime/WriterOwnedSessionIntegrationTests.cs'
+      - 'src/SharpLink.Runtime/**'
+      - 'src/SharpLink.Client/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-unit-repetition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build exactly the same full UnitTests population
+        run: |
+          dotnet restore test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-restore -v minimal
+      - name: Preserve every full-suite repeated outcome
+        shell: bash
+        run: |
+          mkdir -p artifacts/writer-owned-cancel-stress
+          set +e
+          failures=0
+          for round in $(seq -w 1 8); do
+            echo "=== full UnitTests round $round / 8 ==="
+            dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj               -c Release --no-build > "artifacts/writer-owned-cancel-stress/round-$round.log" 2>&1
+            code=$?
+            grep -E 'Test run summary:|total:|failed:|succeeded:|skipped:|failed .*WriterOwned|Test Failure'               "artifacts/writer-owned-cancel-stress/round-$round.log" | tail -40 || true
+            echo "$round,$code" >> artifacts/writer-owned-cancel-stress/exit-codes.csv
+            if (( code != 0 )); then failures=$((failures + 1)); fi
+          done
+          echo "failed_runs=$failures" | tee artifacts/writer-owned-cancel-stress/conclusion.txt
+          if (( failures != 0 )); then
+            echo "::error::Full UnitTests exhibited failures in $failures of 8 independent process launches."
+            exit 1
+          fi
+      - name: Upload all runs including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: writer-owned-cancel-stress-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/writer-owned-cancel-stress
+          retention-days: 30
+          if-no-files-found: warn

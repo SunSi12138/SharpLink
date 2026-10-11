@@ -59,8 +59,13 @@ public sealed class WriterOwnedClientConnectionTests
         var failure = await Capture(send);
         Ensure(failure is OperationCanceledException or SharpLinkException,
             "logical call cancellation did not reach the stream producer");
-        Ensure(fixture.Connection.Session.IsConnected && fixture.Connection.Session.WriterOwnedStreams!.PreparedBytes == 0,
-            "call cancellation leaked queued preparation or closed the physical connection");
+        var sender = fixture.Connection.Session.WriterOwnedStreams!;
+        var connected = fixture.Connection.Session.IsConnected;
+        var prepared = sender.PreparedBytes;
+        Ensure(connected && prepared == 0,
+            $"call cancellation leaked queued preparation or closed the physical connection; " +
+            $"connected={connected}, prepared={prepared}, retained={sender.RetainedStreams}, " +
+            $"cleanup={sender.CleanupFailure?.GetType().Name ?? "none"}");
     }
 
     [Test]

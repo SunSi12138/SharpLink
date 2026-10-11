@@ -110,7 +110,12 @@ public sealed class WriterOwnedSessionIntegrationTests
         var expected = new SharpLinkException(SharpLinkErrorCode.Cancelled, "remote canceled");
         fixture.Session.AbortSendStreams(73, expected);
         var failure = await Capture(pump);
-        Ensure(ReferenceEquals(failure, expected), "remote abort did not reach the actual producer/drain");
+        Ensure(ReferenceEquals(failure, expected),
+            "remote abort did not reach the actual producer/drain; " +
+            $"received={failure.GetType().Name}: {failure.Message}, " +
+            $"connected={fixture.Session.IsConnected}, " +
+            $"prepared={fixture.Session.WriterOwnedStreams?.PreparedBytes}, " +
+            $"retained={fixture.Session.WriterOwnedStreams?.RetainedStreams}");
         Ensure(fixture.Session.IsConnected && fixture.Session.WriterOwnedStreams!.PreparedBytes == 0,
             "stream cancellation faulted the connection or leaked preparation");
     }
