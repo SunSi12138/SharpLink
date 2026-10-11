@@ -90,7 +90,5 @@ internal sealed class GeneratedClusterRouteSnapshot
         return new GeneratedClusterRouteSnapshot(manifests);
     }
 
-    internal static GeneratedClusterRouteSnapshot FromManifests(
-        IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> manifests)
-        => Capture(new FixedGeneratedClusterRouteSource(manifests));
+
 }

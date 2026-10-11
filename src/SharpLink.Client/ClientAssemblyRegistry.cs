@@ -61,10 +61,7 @@ internal sealed partial class ClientAssemblyRegistry
     internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> CaptureProxySnapshot()
         => _proxyLookup.Capture();
 
-    internal bool TryGetProxyRegistration(
-        Type contractType,
-        out SharpLinkClient.ClientProxyRegistration registration)
-        => _proxyLookup.TryGetValue(contractType, out registration);
+
 
     internal ISharpLinkGeneratedAssemblyManifest FindOwningManifest(
         SharpLinkClient.ClientProxyRegistration registration)

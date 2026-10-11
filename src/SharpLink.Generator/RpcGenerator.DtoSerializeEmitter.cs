@@ -93,26 +93,7 @@ public partial class RpcGenerator
         sb.AppendLine($"{indent}RpcGeneratedCodecWire.WriteObjectEnd(writer);");
     }
 
-    private static void AppendDtoSuppressedSerializeBody(
-        StringBuilder sb,
-        DtoCodecAnalysisModel model,
-        Dictionary<string, int> complexIndexes,
-        string indent)
-    {
-        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
-        {
-            var member = model.Members[memberIndex];
-            if (member.Kind != GeneratedMemberKind.String)
-                continue;
 
-            var value = $"value.{EscapeIdentifier(member.Identifier)}";
-            sb.AppendLine($"{indent}var __string_{memberIndex} = {value};");
-            sb.AppendLine(
-                $"{indent}var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__string_{memberIndex});");
-        }
-
-        AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: indent);
-    }
 
     private static void AppendDtoMemberWrite(
         StringBuilder sb,

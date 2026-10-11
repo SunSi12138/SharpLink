@@ -98,11 +98,7 @@ internal sealed class AdmissionProgram
         }
     }
 
-    internal void AcquireUse()
-    {
-        if (!TryAcquireUse())
-            throw new InvalidOperationException("Retired admission program cannot acquire new generation uses.");
-    }
+
 
     /// <summary>Transitions this publication to retired exactly once without cancelling existing users.</summary>
     internal bool Retire()

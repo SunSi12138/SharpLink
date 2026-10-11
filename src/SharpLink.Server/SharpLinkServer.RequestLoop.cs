@@ -496,8 +496,7 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private void ObserveUserCall(ValueTask dispatchTask, long requestId)
-        => _ = AwaitDispatchAsync(dispatchTask, requestId);
+
 
     private async Task ObserveDecodedRequestErrorSend(ValueTask dispatchTask, long requestId)
     {

@@ -11,9 +11,9 @@ concurrency:
   group: terminal-credit-${{ github.ref }}
   cancel-in-progress: false
 env:
-  BASE_SHA: ce73ec3e68137091536a189800a792dbdba4e458
-  CANDIDATE_SHA: 973b1efd9b83cc4f68307057ddf2794715f3c10d
-  CANDIDATE_TREE: 2130d56a2d817a1b21a7676c89e3b49276c388ec
+  BASE_SHA: 6f19cd0cfd1bde4a4911bf59c413205d4ce93cd4
+  CANDIDATE_SHA: e4fa38555677b5693a77a4a3b94722f7c4361f04
+  CANDIDATE_TREE: 80952edab6704b312fe0fe9bf67a93fc34f85320
   FIXTURE: test/SharpLink.IntegrationTests/IntegrationBehaviorTests.TerminalStreamCredit.cs
   ADMISSION: test/SharpLink.IntegrationTests/IntegrationBehaviorTests.Admission.cs
   FIXTURE_SHA256: 98c6221374177e5661b4237e5ec0d1dcd9092b0552f4bf41bce8065c6956d2eb
