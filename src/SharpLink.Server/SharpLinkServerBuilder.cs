@@ -153,14 +153,6 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    /// <summary>Sets a fallback codec resolver scoped to servers built by this builder.</summary>
-    /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
-    public SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
-    {
-        Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
-        return this;
-    }
-
     /// <summary>Configures instance-scoped runtime behavior.</summary>
     public SharpLinkServerBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
     {

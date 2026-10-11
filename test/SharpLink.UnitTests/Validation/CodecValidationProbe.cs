@@ -14,7 +14,7 @@ public sealed class CodecValidationProbe
     [Test]
     public void DateTimeCrossZone()
     {
-        using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
+        using var provider = new RpcCodecProvider();
         var scalarCodec = provider.GetCodec<DateTime>();
         var nullableCodec = provider.GetCodec<DateTime?>();
         var arrayCodec = provider.GetCodec<DateTime[]>();
@@ -111,7 +111,7 @@ public sealed class CodecValidationProbe
     [Test]
     public void DateTimeOffsetFragmentation()
     {
-        using var provider = new RpcCodecProvider(null, new Dictionary<Type, IRpcCodec>());
+        using var provider = new RpcCodecProvider();
         var arrayCodec = provider.GetCodec<DateTimeOffset[]>();
         var listCodec = provider.GetCodec<List<DateTimeOffset>>();
         var measurements = new List<object>();
