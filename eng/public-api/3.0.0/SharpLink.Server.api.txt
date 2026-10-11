@@ -112,7 +112,6 @@ namespace SharpLink.Server
         public SharpLink.Server.SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLink.Abstractions.SharpLinkCompressionSendPolicy policy) { }
         public SharpLink.Server.SharpLinkServerBuilder UseRpcSessionFlush(int flushSizeThreshold, System.TimeSpan maxLatency) { }
         public SharpLink.Server.SharpLinkServerBuilder UseRuntime(System.Action<SharpLink.Runtime.SharpLinkRuntimeOptions> configure) { }
-        public SharpLink.Server.SharpLinkServerBuilder UseSerializer(System.Func<System.Type, SharpLink.Abstractions.IRpcCodec?>? codecResolver) { }
         public SharpLink.Server.SharpLinkServerBuilder UseServiceProvider(System.IServiceProvider serviceProvider) { }
         public SharpLink.Server.SharpLinkServerBuilder UseStateStoreConcurrency(System.Action<SharpLink.Runtime.RuntimeConcurrencyOptions> configure) { }
         public SharpLink.Server.SharpLinkServerBuilder UseTimeProvider(System.TimeProvider timeProvider) { }

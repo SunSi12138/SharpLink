@@ -6,26 +6,17 @@
 
 Regenerate every contract/service assembly with the matching 3.0 SDK. Generated UnsafeBlit factories carry their ABI requirements in the owning manifest. Native nested payloads and generated collection dependencies resolve through that frozen graph. Loading a generated plugin does not require arbitrary unmanaged reflection.
 
-For a custom wire representation, use the existing compile-time `[RpcCodec(typeof(MyCodec))]` or Codec/Adapter policy binding. Endpoint `UseCodecResolver` and standalone `AddCodec` do **not** override generated RPC owner policy. Missing generated metadata fails closed even if an endpoint resolver can handle that Type.
+For a custom wire representation, use compile-time `[RpcCodec(typeof(MyCodec))]` or a Codec/Adapter policy binding. The former standalone runtime `AddCodec` and `UseCodecResolver` methods have been retired in 3.0. Missing generated metadata fails closed; there is no endpoint resolver fallback.
 
 Generated API 5 requires the exact identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`. API4 binaries, or a different API5 development identity, are rejected; a shared numeric API version alone is insufficient.
 
-## Standalone runtime codec use
+## Direct codec use outside generated RPC
 
-Code such as `context.Codecs.GetCodec<MyUnmanagedStruct>()` formerly fell back to reflection when the Type had no builtin, generated or explicit codec. It now throws `PlatformNotSupportedException`.
+Code such as `context.Codecs.GetCodec<MyUnmanagedStruct>()` no longer automatically falls back to reflection for arbitrary unmanaged types. There is no standalone runtime Codec registration or fallback resolver in 3.0.
 
-For this **standalone context** case, implement `IRpcCodec<MyUnmanagedStruct>` and register it through the public `SharpLink.Runtime.SharpLinkRuntimeContextBuilder.AddCodec<T>` API:
+When a consumer needs serialization independently of generated RPC, instantiate an application-owned `IRpcCodec<MyUnmanagedStruct>` directly and invoke its `Serialize` / `Deserialize` methods. Do not construct an entire runtime context solely to locate a Codec.
 
-```csharp
-using var context = new SharpLinkRuntimeContextBuilder()
-    .AddCodec(new MyPayloadCodec())
-    .Build();
-var codec = context.Codecs.GetCodec<MyPayload>();
-```
-
-An application-owned standalone resolver may instead use `UseCodecResolver`. `AddCodec` is not a client/server-builder API, and these registrations are not a generated RPC policy override. Prefer a field-wise codec where padding or cross-runtime representation is a concern.
-
-Builtin scalars/enums and their supported builtin collections are unaffected. Low-level session/stream calls that ask the context for an otherwise unregistered unmanaged codec need the same explicit registration or generated binding.
+For RPC contracts, annotate the payload with `[RpcCodec]` or use the compile-time Codec/Adapter route, and regenerate with the matching 3.0 SDK. Prefer field-wise codecs when padding or cross-runtime representation is a concern. Low-level internal session/stream consumers use admitted owner-generated Codec factories.
 
 ## Trimming and deployment
 
