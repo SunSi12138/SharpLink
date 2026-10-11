@@ -93,7 +93,7 @@ public class Issue801ClientAblationBenchmarks
     }
 }
 
- 
+
 /// <summary>Real loopback TCP Protocol v2 request/response with Server admission enabled.</summary>
 [MemoryDiagnoser]
 [SimpleJob(RunStrategy.Throughput, launchCount: 1, warmupCount: 4, iterationCount: 12)]

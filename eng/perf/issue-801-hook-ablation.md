@@ -53,8 +53,8 @@ Release on one Ubuntu 24.04 runner. No test hook is enabled in either workload.
 The order is **base, stripped, stripped, base; stripped, base, base, stripped**
 (ABBA + BAAB). There are four independent BenchmarkDotNet processes per variant.
 The admission and Client-construction classes use 5 warmup / 12 measurement iterations;
-the real RPC class uses 4 / 12, and reconnect uses 3 / 10 with one invocation per
-measurement iteration. The job records ns/op, B/op, environment, run order,
+the real RPC class uses 4 / 12, and reconnect uses 3 / 10 with 16 invocations per measurement iteration
+(the BDN default loop unroll of 16). The job records ns/op, B/op, environment, run order,
 and original BDN JSON/CSV/logs.
 
 Results are exploratory, not a release performance assertion or a claim that
