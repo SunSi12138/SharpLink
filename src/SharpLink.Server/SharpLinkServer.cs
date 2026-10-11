@@ -326,7 +326,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     private void TransitionTo(ServerState state)
         => Interlocked.Exchange(ref _state, (int)state);
 
-    internal void ForceStop() => _lifecycle.ForceStop();
+
 
     internal static FrameworkTaskSupervisor CreateFrameworkTaskSupervisor(ILogger logger)
     {

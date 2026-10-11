@@ -1,7 +1,7 @@
 namespace SharpLink.Runtime;
 
 /// <summary>Provides concurrent request-scoped routing for active RPC streams.</summary>
-internal sealed class StreamManager
+internal sealed partial class StreamManager
 {
     private StripedLongMap<RequestDispatchers>? _dispatchersByRequestId;
     private readonly RuntimeConcurrencyOptions _concurrencyOptions;
@@ -140,9 +140,6 @@ internal sealed class StreamManager
     }
 
     /// <inheritdoc />
-    internal void Unregister(long requestId) => Unregister(requestId, 0);
-
-    /// <inheritdoc />
     internal void Unregister(long requestId, ushort streamId)
     {
         var dispatchersByRequestId = Volatile.Read(ref _dispatchersByRequestId);
@@ -251,12 +248,6 @@ internal sealed class StreamManager
         {
             entry.Release();
         }
-    }
-
-    /// <inheritdoc />
-    internal void CompleteStream(long requestId, bool isError, string? msg)
-    {
-        CompleteStream(requestId, 0, CreateCompletionException(isError, msg));
     }
 
     /// <inheritdoc />
@@ -747,7 +738,7 @@ internal sealed class StreamManager
 
     private readonly record struct RequestDrainEntry(ushort StreamId, DispatcherEntry Entry);
 
-    private sealed class RequestDispatchers
+    private sealed partial class RequestDispatchers
     {
         private DispatcherEntry? _defaultDispatcher;
         private readonly Lock _gate = new();

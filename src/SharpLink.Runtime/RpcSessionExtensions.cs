@@ -185,24 +185,12 @@ internal static class RpcSessionExtensions
             return ProtocolV2PayloadCodec.ReadCancelReason(payload);
         }
 
-        /// <summary>Sends a ping containing the current monotonic timestamp.</summary>
-        internal void SendPingAsync()
-            => SendTimestampFrame(
-                session,
-                ProtocolV2FrameType.Ping,
-                session.RuntimeContext.TimeProvider.GetTimestamp());
-
         internal ValueTask SendPingWithBackpressureAsync(CancellationToken cancellationToken = default)
             => SendTimestampFrameWithBackpressureAsync(
                 session,
                 ProtocolV2FrameType.Ping,
                 session.RuntimeContext.TimeProvider.GetTimestamp(),
                 cancellationToken);
-
-        /// <summary>Sends a pong that echoes a received ping timestamp.</summary>
-        /// <param name="timestamp">The monotonic timestamp from the ping frame.</param>
-        internal void SendPongAsync(long timestamp)
-            => SendTimestampFrame(session, ProtocolV2FrameType.Pong, timestamp);
 
         internal ValueTask SendPongWithBackpressureAsync(
             long timestamp,
@@ -220,33 +208,6 @@ internal static class RpcSessionExtensions
                 ProtocolV2FrameType.HealthCheck,
                 ProtocolV2FrameFlags.None,
                 requestId);
-
-        /// <summary>Sends a fixed-width protocol health response.</summary>
-        /// <param name="requestId">The request identifier being answered.</param>
-        /// <param name="status">The current server readiness state.</param>
-        internal void SendHealthResponse(long requestId, SharpLinkHealthStatus status)
-        {
-            IRpcByteBufferWriter? writer = null;
-            var ownsWriter = true;
-            try
-            {
-                writer = session.RentFrameWriter();
-                using (writer.BeginPacketScope(
-                           ProtocolV2FrameType.HealthResponse,
-                           ProtocolV2FrameFlags.None,
-                           unchecked((ulong)requestId)))
-                {
-                    ProtocolV2PayloadCodec.WriteHealthResponse(writer, status);
-                }
-                ownsWriter = false;
-                session.SendPacket(writer);
-            }
-            finally
-            {
-                if (ownsWriter && writer is not null)
-                    session.RuntimeContext.Buffers.Return(writer);
-            }
-        }
 
         internal async ValueTask SendHealthResponseWithBackpressureAsync(
             long requestId,
@@ -273,151 +234,6 @@ internal static class RpcSessionExtensions
             finally
             {
                 if (ownsWriter && writer is not null)
-                    session.RuntimeContext.Buffers.Return(writer);
-            }
-        }
-
-        /// <summary>Serializes and sends one flow-controlled stream item.</summary>
-        /// <typeparam name="T">The stream item type.</typeparam>
-        internal async ValueTask SendStreamChunkAsync<T>(
-            long requestId,
-            ushort streamId,
-            T item,
-            CancellationToken cancellationToken = default)
-        {
-            var codec = session.RuntimeContext.Codecs.GetCodec<T>();
-            if (codec is IRpcSizedCodec<T> sizedCodec &&
-                sizedCodec.CanExactSize &&
-                sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
-            {
-                await session.SendStreamChunkKnownSizeAsync(
-                    requestId,
-                    streamId,
-                    item,
-                    sizedCodec,
-                    knownEncodedBytes,
-                    sizedSnapshot,
-                    cancellationToken).ConfigureAwait(false);
-                return;
-            }
-
-            var writer = session.RentFrameWriter();
-            var ownsWriter = true;
-            try
-            {
-                using (writer.BeginPacketScope(
-                           ProtocolV2FrameType.StreamData,
-                           ProtocolV2FrameFlags.None,
-                           unchecked((ulong)requestId)))
-                {
-                    var idSpan = writer.GetSpan(sizeof(ushort));
-                    BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
-                    writer.Advance(sizeof(ushort));
-                    codec.Serialize(item, writer);
-                }
-                var encodedBytes = Math.Max(
-                    1,
-                    writer.WrittenCount - ProtocolV2Constants.HeaderBytes - sizeof(ushort));
-                var runtimeSession = session;
-                await runtimeSession.AcquireStreamSendCreditAsync(
-                    requestId,
-                    streamId,
-                    encodedBytes,
-                    cancellationToken).ConfigureAwait(false);
-                try
-                {
-                    ownsWriter = false;
-                    runtimeSession.SendPacket(writer);
-                }
-                catch
-                {
-                    runtimeSession.ReturnUnsentStreamCredit(requestId, streamId, encodedBytes);
-                    throw;
-                }
-            }
-            finally
-            {
-                if (ownsWriter)
-                    session.RuntimeContext.Buffers.Return(writer);
-            }
-        }
-
-        /// <summary>Sends successful completion for one request stream.</summary>
-        internal void SendStreamCompleteAsync(long requestId, ushort streamId)
-        {
-            var writer = session.RentFrameWriter();
-            var ownsWriter = true;
-            try
-            {
-                using (writer.BeginPacketScope(
-                           ProtocolV2FrameType.StreamComplete,
-                           ProtocolV2FrameFlags.None,
-                           unchecked((ulong)requestId)))
-                {
-                    var idSpan = writer.GetSpan(sizeof(ushort));
-                    BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
-                    writer.Advance(sizeof(ushort));
-                }
-                ownsWriter = false;
-                var runtimeSession = session;
-                try
-                {
-                    runtimeSession.SendPacket(writer);
-                }
-                finally
-                {
-                    runtimeSession.CompleteSendStream(requestId, streamId);
-                }
-            }
-            finally
-            {
-                if (ownsWriter)
-                    session.RuntimeContext.Buffers.Return(writer);
-            }
-        }
-
-        /// <summary>Sends a structured terminal failure for one request stream.</summary>
-        internal void SendStreamErrorAsync(
-            long requestId,
-            ushort streamId,
-            SharpLinkException exception)
-        {
-            ArgumentNullException.ThrowIfNull(exception);
-            var writer = session.RentFrameWriter();
-            var ownsWriter = true;
-            try
-            {
-                var token = writer.BeginPacket(
-                    ProtocolV2FrameType.StreamComplete,
-                    ProtocolV2FrameFlags.Error,
-                    unchecked((ulong)requestId));
-                var idSpan = writer.GetSpan(sizeof(ushort));
-                BinaryPrimitives.WriteUInt16LittleEndian(idSpan, streamId);
-                writer.Advance(sizeof(ushort));
-                ProtocolV2PayloadCodec.WriteError(
-                    writer,
-                    exception.Code,
-                    exception.DetailCode,
-                    exception.Message,
-                    GetMaxErrorMessageBytes(session),
-                    out var truncated);
-                writer.EndPacket(token);
-                if (truncated)
-                    SetTruncatedFlag(writer, token);
-                ownsWriter = false;
-                var runtimeSession = session;
-                try
-                {
-                    runtimeSession.SendPacket(writer);
-                }
-                finally
-                {
-                    runtimeSession.CompleteSendStream(requestId, streamId, exception);
-                }
-            }
-            finally
-            {
-                if (ownsWriter)
                     session.RuntimeContext.Buffers.Return(writer);
             }
         }
