@@ -1,0 +1,60 @@
+name: Issue 735 Grant Conservation Model
+
+on:
+  push:
+    branches: ['research/735-production-architecture-20261012-f8ba891']
+    paths:
+      - '.github/workflows/issue735-grant-model.yml'
+      - 'test/SharpLink.FlowGrantModelEvidence/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  serial-oracle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Compile and run the deterministic accounting oracle
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          repo=pathlib.Path.cwd();out=repo/'artifacts/issue735/grant-model';out.mkdir(parents=True)
+          rows=[]
+          def run(command,name,env=None):
+              with (out/f'{name}.log').open('w') as log:
+                  try: code=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,env=env,timeout=180).returncode
+                  except subprocess.TimeoutExpired: code=124
+              rows.append({'name':name,'command':command,'exitCode':code})
+              (out/'exits.json').write_text(json.dumps(rows,indent=2))
+              return code
+          assert run(['dotnet','--info'],'dotnet-info')==0
+          manifest={'sourceCommit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+                    'sourceTree':subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
+                    'classification':'serial-model-not-concurrent-runtime-or-RPC', 'files':{}}
+          for path in (repo/'test/SharpLink.FlowGrantModelEvidence').glob('*'):
+              if path.is_file():manifest['files'][str(path.relative_to(repo))]=hashlib.sha256(path.read_bytes()).hexdigest()
+          project='test/SharpLink.FlowGrantModelEvidence/SharpLink.FlowGrantModelEvidence.csproj'
+          assert run(['dotnet','build',project,'-c','Release','-v','minimal'],'build')==0
+          binary=repo/'test/SharpLink.FlowGrantModelEvidence/bin/Release/net10.0/SharpLink.FlowGrantModelEvidence.dll'
+          manifest['binarySha256']=hashlib.sha256(binary.read_bytes()).hexdigest()
+          (out/'provenance.json').write_text(json.dumps(manifest,indent=2))
+          for pgo in ['0','1']:
+              env=dict(os.environ,DOTNET_TieredPGO=pgo,DOTNET_ReadyToRun='0')
+              assert run(['dotnet',str(binary)],'model-pgo'+pgo,env)==0
+              result=json.loads((out/('model-pgo'+pgo+'.log')).read_text())
+              assert result['status']=='passed' and len(result['rows'])==27
+              assert len(result['tests'])>=20
+          PY
+      - name: Preserve all model outputs including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-grant-model-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/grant-model
+          if-no-files-found: error
+          retention-days: 30
