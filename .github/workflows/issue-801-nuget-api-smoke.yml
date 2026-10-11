@@ -1,0 +1,91 @@
+name: Issue 801 - 45 Dead-Method Removals NuGet API Consumer Evidence
+
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-nuget-api-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-nuget-abi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-consumer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_ALLOW_DIRTY_PACKAGE_VERIFY: 'true'
+
+    steps:
+      - name: Checkout dev-derived audit branch only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET SDK
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore solution and audit tool
+        run: |
+          dotnet restore Sharplink.slnx -v minimal
+          dotnet restore eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj -v minimal
+
+      - name: Prepare same 45 removal candidates
+        run: |
+          mkdir -p artifacts/issue-801-package-proof
+          dotnet build eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj -c Release --no-restore -v minimal
+          cp artifacts/issue-801-audit/tier-A.csv artifacts/issue-801-package-proof/tier-A.csv
+          dotnet run --project eng/SharpLink.DeadCodeAudit/SharpLink.DeadCodeAudit.csproj \
+            -c Release --no-build --no-restore -- \
+            --probe-remove "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/artifacts/issue-801-package-proof"
+          git diff --stat -- src/ > artifacts/issue-801-package-proof/remove-diff.txt
+
+      - name: Build release binaries with source removals
+        run: |
+          set -o pipefail
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            2>&1 | tee artifacts/issue-801-package-proof/release-build.log
+
+      - name: Pack all NuGet assemblies
+        run: |
+          set -o pipefail
+          dotnet pack Sharplink.slnx --no-build --no-restore -c Release \
+            -o artifacts/nuget -v minimal 2>&1 | tee artifacts/issue-801-package-proof/pack.log
+
+      - name: Verify package contracts and generator delivery
+        uses: ./.github/actions/verify-packages
+
+      - name: Compare every packaged public API with 2.0.0 compatibility baseline
+        run: |
+          set -o pipefail
+          bash eng/verify-public-api.sh artifacts/nuget 2.0.3 \
+            2>&1 | tee artifacts/issue-801-package-proof/public-api.log
+
+      - name: Test external packaged consumers including trim NativeAOT and QuickStart
+        uses: ./.github/actions/package-smoke
+
+      - name: Record no committed source edits
+        if: always()
+        run: |
+          git restore -- src/
+          git diff --exit-code -- src/
+          echo 'Experiment only: source was modified temporarily in runner, never committed.' \
+            > artifacts/issue-801-package-proof/scope.txt
+
+      - name: Upload package/API proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-private-method-removal-package-smoke
+          path: |
+            artifacts/issue-801-package-proof/*.log
+            artifacts/issue-801-package-proof/*.txt
+            artifacts/issue-801-package-proof/*.json
+          if-no-files-found: warn
+          retention-days: 30
