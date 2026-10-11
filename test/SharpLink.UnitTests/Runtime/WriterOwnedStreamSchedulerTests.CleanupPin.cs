@@ -57,7 +57,9 @@ public sealed partial class WriterOwnedStreamSchedulerTests
             fixture.Owner.Abort(victim, expected);
             fixture.PumpChanges();
             var pending = fixture.Owner.AcquirePreparedBudgetAsync(victim, 24, CancellationToken.None);
-            Ensure(pending.IsCompleted, "post-abort budget join lost its rejection and would hang");
+            // WaitForGrantAsync can still be resuming after its inner waiter is rejected.
+            // Require completion with the exact error WITHOUT releasing the blocking stream,
+            // not synchronous completion of that outer async method.
             Exception? actual = null;
             try { await pending.AsTask().WaitAsync(Limit); }
             catch (Exception error) when (error is not TimeoutException) { actual = error; }
