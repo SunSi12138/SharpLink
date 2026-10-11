@@ -1,0 +1,103 @@
+name: Issue 801 - Exact-head cleanup Windows macOS NativeAOT matrix
+on:
+  push:
+    branches:
+      - audit/issue-801-dev-3x-deadcode
+    paths:
+      - .github/workflows/issue-801-cleanup-cross-platform-aot.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  nativeaot:
+    name: PR ${{ matrix.pr }} - ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - pr: 807
+            sha: dc9f992115f6ac587cbabea2aa4e212e90f06a7b
+            os: windows-latest
+            rid: win-x64
+          - pr: 807
+            sha: dc9f992115f6ac587cbabea2aa4e212e90f06a7b
+            os: macos-14
+            rid: osx-arm64
+          - pr: 808
+            sha: cbcf3aa970794bf29165bf6db29874d451250661
+            os: windows-latest
+            rid: win-x64
+          - pr: 808
+            sha: cbcf3aa970794bf29165bf6db29874d451250661
+            os: macos-14
+            rid: osx-arm64
+          - pr: 809
+            sha: e5220a76ab23120e00c462113a1ff4c3d04740ce
+            os: windows-latest
+            rid: win-x64
+          - pr: 809
+            sha: e5220a76ab23120e00c462113a1ff4c3d04740ce
+            os: macos-14
+            rid: osx-arm64
+          - pr: 810
+            sha: 0b735a74e94838858cfc4349487d66fb5ab102d2
+            os: windows-latest
+            rid: win-x64
+          - pr: 810
+            sha: 0b735a74e94838858cfc4349487d66fb5ab102d2
+            os: macos-14
+            rid: osx-arm64
+          - pr: 811
+            sha: c494eb3380a8c45454739cb707a66f0407f4f777
+            os: windows-latest
+            rid: win-x64
+          - pr: 811
+            sha: c494eb3380a8c45454739cb707a66f0407f4f777
+            os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      SHARPLINK_AOT_RID: ${{ matrix.rid }}
+    steps:
+      - name: Checkout exact PR source commit independent of audit workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.sha }}
+          fetch-depth: 1
+      - name: Verify source provenance
+        run: |
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "${{ matrix.sha }}"
+          echo "PR ${{ matrix.pr }} exact-source-commit=$actual rid=${{ matrix.rid }}"
+      - name: Configure .NET SDK
+        uses: ./.github/actions/setup-dotnet
+      - name: Build entire 3.0 source tree for this platform
+        run: |
+          mkdir -p artifacts/issue-801-matrix
+          dotnet restore Sharplink.slnx -v minimal
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal 2>&1 | tee artifacts/issue-801-matrix/release-build.log
+      - name: Publish and execute real NativeAOT TCP SHM SharpPack PreCredit
+        env:
+          SHARPLINK_AOT_OUTPUT: ${{ github.workspace }}/artifacts/issue-801-matrix/nativeaot
+          SHARPLINK_AOT_SHM_NAME: issue801-pr${{ matrix.pr }}-${{ matrix.rid }}
+        run: |
+          set -o pipefail
+          bash ./eng/run-shared-memory-aot-process-smoke.sh 2>&1 | tee artifacts/issue-801-matrix/nativeaot-proof.log
+          grep -q 'Shared-memory process, local endpoint-topology' artifacts/issue-801-matrix/nativeaot-proof.log
+          grep -q 'AOT_SMOKE_PASS transport=tcp' artifacts/issue-801-matrix/nativeaot-proof.log
+          grep -q 'SHARPPACK_SIDECAR_AOT_PASS' artifacts/issue-801-matrix/nativeaot-proof.log
+          grep -q 'PRE_CREDIT_AOT_PASS transport=sharedmemory' artifacts/issue-801-matrix/nativeaot-proof.log
+      - name: Upload exact-head evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-pr${{ matrix.pr }}-${{ matrix.rid }}-nativeaot
+          path: artifacts/issue-801-matrix/*.log
+          retention-days: 30
+          if-no-files-found: warn
