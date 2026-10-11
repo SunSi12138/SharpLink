@@ -1,0 +1,417 @@
+name: Release 2.0.4 Limited Performance Validation
+'on':
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact immutable production commit SHA (40 hex)
+        required: true
+        type: string
+      final_main:
+        description: Require production SHA to equal current main; false is candidate-only evidence
+        required: true
+        type: boolean
+        default: true
+  push:
+    branches:
+    - validation/2.0.4-release-evidence
+permissions:
+  contents: read
+concurrency:
+  group: release-204-limited-${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+  cancel-in-progress: false
+env:
+  SHARPLINK_COMMIT: ${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+  SHARPLINK_BENCHMARK_SHA: ${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+  FINAL_MAIN: ${{ github.event_name == 'push' || inputs.final_main }}
+  EVIDENCE: ${{ github.workspace }}/release-evidence
+  PYTHONDONTWRITEBYTECODE: '1'
+  TUNIT_MAX_PARALLEL_TESTS: '8'
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+jobs:
+  tooling-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout validation tooling
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: validation
+        persist-credentials: false
+    - name: Setup .NET CI environment
+      uses: ./validation/.github/actions/setup-dotnet
+    - name: Synthetic validators and actual DLL metadata smoke
+      shell: bash
+      run: "python3 validation/eng/test-release-204-matrix.py\nfor script in validation/eng/capture-release-validation.sh\
+        \ validation/eng/capture-release-dlls.sh validation/eng/run-release-204-dll-reader.sh validation/eng/test-release-204-dll-reader.sh;\
+        \ do\n  bash -n \"$script\"\ndone\nbash validation/eng/test-release-204-dll-reader.sh"
+  sampler:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+    - name: Check exact SHA input
+      shell: bash
+      run: '[[ "$SHARPLINK_COMMIT" =~ ^[0-9a-f]{40}$ ]]'
+    - name: Checkout validation tooling
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: validation
+        persist-credentials: false
+    - name: Checkout exact production SHA
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Setup .NET CI environment
+      uses: ./validation/.github/actions/setup-dotnet
+    - name: Verify clean production checkout and record provenance
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-validation.sh "$EVIDENCE/sampler"
+    - name: Original strict sampler correctness and interference gate
+      working-directory: source
+      shell: bash
+      run: 'set -o pipefail
+
+        ./eng/run-latency-recorder-baseline.sh "$EVIDENCE/sampler/baseline" 2>&1 | tee "$EVIDENCE/sampler/run.log"
+
+        printf "%s\n" "$SHARPLINK_COMMIT" > "$EVIDENCE/sampler/completed.txt"'
+    - name: Record tested DLL identity and final clean tree
+      if: always()
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-dlls.sh "$EVIDENCE/sampler"
+    - name: Upload raw evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: release-204-sampler-${{ env.SHARPLINK_COMMIT }}
+        path: ${{ github.workspace }}/release-evidence/sampler
+        if-no-files-found: error
+        retention-days: 14
+    needs: tooling-checks
+    env:
+      REQUIRED_BINARIES: SharpLink.Benchmarks,SharpLink.LoadTest,SharpLink.StreamLoadTest
+  matrix:
+    needs: sampler
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        transport:
+        - tcp
+        - uds
+        - namedpipe
+        - anonymous
+        - sharedmemory
+        profile:
+        - balanced
+        - lowlatency
+        - throughput
+        workload:
+        - unary
+        - oneway
+        - oneway-backpressure
+        - async
+        - streams
+    env:
+      SHARD: ${{ matrix.transport }}-${{ matrix.profile }}-${{ matrix.workload }}
+      SHARPLINK_MATRIX_TIER: full
+      SHARPLINK_MATRIX_RUNTIMES: jit
+      SHARPLINK_MATRIX_TRANSPORTS: ${{ matrix.transport }}
+      SHARPLINK_MATRIX_PROFILES: ${{ matrix.profile }}
+      SHARPLINK_MATRIX_WORKLOADS: ${{ matrix.workload }}
+      SHARPLINK_MATRIX_REPETITIONS: '3'
+      SHARPLINK_MATRIX_PAYLOADS: 0,32,65536,1048576
+      SHARPLINK_MATRIX_CONCURRENCY: 1,32
+      SHARPLINK_MATRIX_WARMUP: '5'
+      SHARPLINK_MATRIX_DURATION: '20'
+      SHARPLINK_MATRIX_MAXIMUM_RECORDED_OPERATIONS: '300000000'
+      SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES: '67108864'
+      SHARPLINK_MATRIX_STREAM_OPERATION: all
+      REQUIRED_BINARIES: SharpLink.LoadTest,SharpLink.StreamLoadTest
+    steps:
+    - name: Check exact SHA input
+      shell: bash
+      run: '[[ "$SHARPLINK_COMMIT" =~ ^[0-9a-f]{40}$ ]]'
+    - name: Checkout validation tooling
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: validation
+        persist-credentials: false
+    - name: Checkout exact production SHA
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Setup .NET CI environment
+      uses: ./validation/.github/actions/setup-dotnet
+    - name: Verify clean production checkout and record provenance
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-validation.sh "$EVIDENCE/$SHARD"
+    - name: Run explicitly limited 2.0.4 matrix shard
+      working-directory: source
+      shell: bash
+      run: 'set -o pipefail
+
+        export SHARPLINK_MATRIX_OUTPUT="$EVIDENCE/$SHARD/raw"
+
+        ./eng/run-performance-matrix.sh 2>&1 | tee "$EVIDENCE/$SHARD/run.log"
+
+        printf "%s\n" "$SHARPLINK_COMMIT" > "$EVIDENCE/$SHARD/completed.txt"'
+    - name: Record tested DLL identity and final clean tree
+      if: always()
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-dlls.sh "$EVIDENCE/$SHARD"
+    - name: Upload raw evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: release-204-matrix-${{ matrix.transport }}-${{ matrix.profile }}-${{ matrix.workload }}
+        path: ${{ github.workspace }}/release-evidence/${{ env.SHARD }}
+        if-no-files-found: error
+        retention-days: 14
+  release-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        transport:
+        - tcp
+        - sharedmemory
+    env:
+      SHARPLINK_SOAK_DURATION: 10m
+      SHARPLINK_SOAK_TRANSPORT: ${{ matrix.transport }}
+      SHARPLINK_SOAK_OUTPUT: ${{ github.workspace }}/release-evidence/soak-${{ matrix.transport }}/release-soak.json
+      REQUIRED_BINARIES: SharpLink.ChaosTests
+    steps:
+    - name: Check exact SHA input
+      shell: bash
+      run: '[[ "$SHARPLINK_COMMIT" =~ ^[0-9a-f]{40}$ ]]'
+    - name: Checkout validation tooling
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: validation
+        persist-credentials: false
+    - name: Checkout exact production SHA
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Setup .NET CI environment
+      uses: ./validation/.github/actions/setup-dotnet
+    - name: Verify clean production checkout and record provenance
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-validation.sh "$EVIDENCE/soak-${{ matrix.transport }}"
+    - name: Ten-minute production release soak
+      working-directory: source
+      shell: bash
+      run: 'set -o pipefail
+
+        ./eng/run-release-soak.sh 2>&1 | tee "$EVIDENCE/soak-${{ matrix.transport }}/run.log"
+
+        printf "%s\n" "$SHARPLINK_COMMIT" > "$EVIDENCE/soak-${{ matrix.transport }}/completed.txt"'
+    - name: Record tested DLL identity and final clean tree
+      if: always()
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-dlls.sh "$EVIDENCE/soak-${{ matrix.transport }}"
+    - name: Upload raw evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: release-204-soak-${{ matrix.transport }}-${{ env.SHARPLINK_COMMIT }}
+        path: ${{ github.workspace }}/release-evidence/soak-${{ matrix.transport }}
+        if-no-files-found: error
+        retention-days: 14
+    needs: tooling-checks
+  abi-churn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SHARPLINK_P3_DYNAMIC_SOAK_DURATION_SECONDS: '600'
+      SHARPLINK_P3_DYNAMIC_SOAK_OUTPUT: ${{ github.workspace }}/release-evidence/abi-churn/churn
+      REQUIRED_BINARIES: SharpLink.IntegrationTests
+    steps:
+    - name: Check exact SHA input
+      shell: bash
+      run: '[[ "$SHARPLINK_COMMIT" =~ ^[0-9a-f]{40}$ ]]'
+    - name: Checkout validation tooling
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: validation
+        persist-credentials: false
+    - name: Checkout exact production SHA
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Setup .NET CI environment
+      uses: ./validation/.github/actions/setup-dotnet
+    - name: Verify clean production checkout and record provenance
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-validation.sh "$EVIDENCE/abi-churn"
+    - name: Ten-minute complete-round ABI churn
+      working-directory: source
+      shell: bash
+      run: 'set -o pipefail
+
+        ./eng/run-generated-abi-dynamic-module-soak.sh 2>&1 | tee "$EVIDENCE/abi-churn/run.log"
+
+        printf "%s\n" "$SHARPLINK_COMMIT" > "$EVIDENCE/abi-churn/completed.txt"'
+    - name: Record tested DLL identity and final clean tree
+      if: always()
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-dlls.sh "$EVIDENCE/abi-churn"
+    - name: Upload raw evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: release-204-abi-churn-${{ env.SHARPLINK_COMMIT }}
+        path: ${{ github.workspace }}/release-evidence/abi-churn
+        if-no-files-found: error
+        retention-days: 14
+    needs: tooling-checks
+  aggregate:
+    if: always()
+    needs:
+    - tooling-checks
+    - sampler
+    - matrix
+    - release-soak
+    - abi-churn
+    - dependency-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - name: Checkout validation tooling
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: validation
+        persist-credentials: false
+    - name: Checkout exact production for independent hash comparison
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Save every job conclusion
+      if: always()
+      env:
+        RESULTS: ${{ toJSON(needs) }}
+      shell: bash
+      run: printf "%s\n" "$RESULTS" > job-conclusions.json
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: release-204-*
+        path: downloaded
+    - name: Normalize matrix artifact directory names
+      shell: bash
+      run: "mkdir matrix\nfor dir in downloaded/release-204-matrix-*; do\n  test -d \"$dir\"\n  mv \"$dir\" \"matrix/${dir##*/release-204-matrix-}\"\
+        \ndone"
+    - name: Validate exact limited matrix completeness and accounting
+      shell: bash
+      run: python3 validation/eng/validate-release-204-matrix.py matrix "$SHARPLINK_COMMIT" matrix-validation.json --tooling-sha
+        "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --final-main "$FINAL_MAIN" --source-root
+        source
+    - name: Aggregate every independent result without inferring external release approval
+      if: always()
+      shell: bash
+      run: python3 validation/eng/aggregate-release-204-validation.py downloaded "$SHARPLINK_COMMIT" matrix-validation.json
+        job-conclusions.json limited-validation.json --tooling-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+        --final-main "$FINAL_MAIN" --source-root source
+    - name: Upload limited validation summary
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: release-204-limited-summary-${{ env.SHARPLINK_COMMIT }}
+        path: 'matrix-validation.json
+
+          limited-validation.json
+
+          job-conclusions.json'
+        if-no-files-found: error
+        retention-days: 14
+  dependency-scan:
+    needs: tooling-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+    - name: Check exact SHA input
+      shell: bash
+      run: '[[ "$SHARPLINK_COMMIT" =~ ^[0-9a-f]{40}$ ]]'
+    - name: Checkout validation tooling
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        path: validation
+        persist-credentials: false
+    - name: Checkout exact production SHA
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.source_sha || '85f5f87c21056edc16af80d6c9c06cfca83d8cfa' }}
+        path: source
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Setup .NET CI environment
+      uses: ./validation/.github/actions/setup-dotnet
+    - name: Verify clean production checkout and record provenance
+      working-directory: source
+      shell: bash
+      run: bash ../validation/eng/capture-release-validation.sh "$EVIDENCE/dependencies"
+    - name: Restore and scan all transitive dependencies
+      working-directory: source
+      shell: bash
+      run: 'set -o pipefail
+
+        mkdir -p "$EVIDENCE/dependencies"
+
+        dotnet restore Sharplink.slnx --force --no-cache -v minimal 2>&1 | tee "$EVIDENCE/dependencies/run.log"
+
+        dotnet package list --project Sharplink.slnx --no-restore --include-transitive --vulnerable --format json --output-version
+        1 > "$EVIDENCE/dependencies/vulnerable.json" 2> "$EVIDENCE/dependencies/vulnerable.stderr"
+
+        dotnet package list --project Sharplink.slnx --no-restore --include-transitive --deprecated --format json --output-version
+        1 > "$EVIDENCE/dependencies/deprecated.json" 2> "$EVIDENCE/dependencies/deprecated.stderr"
+
+        cat "$EVIDENCE/dependencies/vulnerable.stderr" "$EVIDENCE/dependencies/deprecated.stderr"
+
+        python3 ../validation/eng/validate-release-204-dependencies.py "$EVIDENCE/dependencies" "$PWD"
+
+        test "$(git rev-parse HEAD)" = "$SHARPLINK_COMMIT"
+
+        test -z "$(git status --porcelain --untracked-files=normal)"
+
+        git rev-parse HEAD > "$EVIDENCE/dependencies/source-sha.txt"
+
+        printf ''%s\n'' "$SHARPLINK_COMMIT" > "$EVIDENCE/dependencies/completed.txt"'
+    - name: Upload dependency evidence
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: release-204-dependencies-${{ env.SHARPLINK_COMMIT }}
+        path: ${{ github.workspace }}/release-evidence/dependencies
+        if-no-files-found: error
+        retention-days: 14
