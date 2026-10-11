@@ -1,4 +1,4 @@
-name: Method Facts Paired OneWay Drain
+name: Method Facts Paired OneWay Drain Trace
 on:
   push:
     branches: [validate/754-oneway-drain-paired]
@@ -17,11 +17,25 @@ jobs:
             source: a1f9ee2a7addfdf2bc86ae0598d99d5e5596cfe5
           - label: combined-candidate
             source: cc31c1f79315d8c6f3ad6f8be0c25f3bd965e507
+    defaults:
+      run:
+        working-directory: source
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          path: definition
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
           ref: ${{ matrix.source }}
-      - uses: ./.github/actions/setup-dotnet
+          path: source
+      - uses: ./source/.github/actions/setup-dotnet
+      - name: Apply independently reviewed test-only observations
+        run: |
+          patch="$GITHUB_WORKSPACE/definition/.github/diagnostics/754-oneway-drain-trace.patch"
+          echo "d329f7d30f76090382338c80014a7f8621b63a2a0f129bf186a4d13eabe6eecf  $patch" | sha256sum -c -
+          git apply --check "$patch"
+          git apply "$patch"
+          if git diff --name-only | grep -v '^test/SharpLink.IntegrationTests/'; then exit 1; fi
       - name: Build pinned integration source
         run: |
           git rev-parse HEAD
@@ -31,10 +45,12 @@ jobs:
         run: |
           mkdir -p artifacts/paired-drain
           git rev-parse HEAD > artifacts/paired-drain/source.txt
+          sha256sum "$GITHUB_WORKSPACE/definition/.github/diagnostics/754-oneway-drain-trace.patch" > artifacts/paired-drain/patch.sha256
+          echo 'Instrumented non-atomic stage snapshots; tracing may perturb timing. No fix or pass claim substitutes for uninstrumented evidence.' > artifacts/paired-drain/README.txt
           status=0
           for attempt in 1 2 3 4 5; do
             set +e
-            dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter '/*/*/IntegrationBehaviorTests/QueuedOneWayStubFailureShouldDrainReservedStreams' --maximum-parallel-tests 1 2>&1 | tee artifacts/paired-drain/run-$attempt.log
+            SHARPLINK_ONEWAY_DRAIN_TRACE_OUTPUT="artifacts/paired-drain/trace-$attempt.log" dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests -- --treenode-filter '/*/*/IntegrationBehaviorTests/QueuedOneWayStubFailureShouldDrainReservedStreams' --maximum-parallel-tests 1 2>&1 | tee artifacts/paired-drain/run-$attempt.log
             result=${PIPESTATUS[0]}
             set -e
             echo "$attempt,$result" >> artifacts/paired-drain/results.csv
@@ -44,6 +60,6 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: method-facts-drain-${{ matrix.label }}
-          path: artifacts/paired-drain
+          name: method-facts-drain-trace-${{ matrix.label }}
+          path: source/artifacts/paired-drain
           if-no-files-found: warn
