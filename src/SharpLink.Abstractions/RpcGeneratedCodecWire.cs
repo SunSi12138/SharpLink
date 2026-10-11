@@ -444,12 +444,7 @@ public static class RpcGeneratedCodecWire
         return BinaryPrimitives.ReadInt32LittleEndian(temporary);
     }
 
-    private static void WriteUInt32(IBufferWriter<byte> writer, uint value)
-    {
-        var span = writer.GetSpan(sizeof(uint));
-        BinaryPrimitives.WriteUInt32LittleEndian(span, value);
-        writer.Advance(sizeof(uint));
-    }
+
 
     private static uint ReadUInt32(ref SequenceReader<byte> reader)
     {

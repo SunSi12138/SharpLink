@@ -253,11 +253,7 @@ internal sealed class StreamManager
         }
     }
 
-    /// <inheritdoc />
-    internal void CompleteStream(long requestId, bool isError, string? msg)
-    {
-        CompleteStream(requestId, 0, CreateCompletionException(isError, msg));
-    }
+    ///
 
     /// <inheritdoc />
     internal void CompleteStream(long requestId, ushort streamId, bool isError, string? msg)
