@@ -581,11 +581,9 @@ internal sealed partial class SharpLinkAdmissionController : IAsyncDisposable
             ? AdmissionDecision.Reject("deadline", SharpLinkErrorCode.DeadlineExceeded)
             : AdmissionDecision.Reject(failedSlot.Reason, failedSlot.Scope);
 
-    internal bool TryReserveAdditionalQueuedBytes(int retainedBytes)
-        => _kernel.TryReserveAdditionalQueuedBytes(retainedBytes, _maxQueuedBytes);
 
-    internal void ReleaseAdditionalQueuedBytes(int retainedBytes)
-        => _kernel.ReleaseAdditionalQueuedBytes(retainedBytes);
+
+
 
     internal int ActivePermits => _kernel.ActivePermits;
     internal int QueuedCalls => _kernel.QueuedCalls;
@@ -987,29 +985,7 @@ internal sealed class AdmissionRuleRuntime : IDisposable
         string scope)
         => new(concurrency, rate, scope, ownsStates: false);
 
-    internal static AdmissionRuleRuntime CreateOwned(
-        SharpLinkAdmissionRuleOptions options,
-        string scope,
-        TimeProvider timeProvider)
-    {
-        var concurrency = options.Concurrency is { } concurrencyOptions
-            ? new ResizableConcurrencyState(concurrencyOptions.PermitLimit)
-            : null;
-        AdmissionRateState? rate = null;
-        try
-        {
-            rate = options.RateLimit is not null
-                ? AdmissionRateState.Create(options, timeProvider)
-                : null;
-            return new AdmissionRuleRuntime(concurrency, rate, scope, ownsStates: true);
-        }
-        catch
-        {
-            concurrency?.Dispose();
-            rate?.Dispose();
-            throw;
-        }
-    }
+
 
     internal void AppendTo(AdmissionLimiterSlot[] destination, ref int count)
     {

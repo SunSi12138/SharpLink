@@ -2,53 +2,9 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private static ImmutableArray<RpcInterfaceModel> GetReferencedInterfaceModels(
-        Compilation compilation,
-        CancellationToken _)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var models = ImmutableArray.CreateBuilder<RpcInterfaceModel>();
-        var candidateAssemblyNames = ResolveReferenceAssemblyNames(compilation);
 
-        foreach (var reference in compilation.References)
-        {
-            if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
-                continue;
 
-            if (!candidateAssemblyNames.Contains(assembly.Identity.Name))
-                continue;
 
-            CollectReferencedInterfaces(assembly.GlobalNamespace, models, seen);
-        }
-
-        return models
-            .OrderBy(static m => m.FullName, StringComparer.Ordinal)
-            .ToImmutableArray();
-    }
-
-    private static ImmutableArray<RpcServiceModel> GetReferencedServiceModels(
-        Compilation compilation,
-        CancellationToken _)
-    {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var models = ImmutableArray.CreateBuilder<RpcServiceModel>();
-        var candidateAssemblyNames = ResolveReferenceAssemblyNames(compilation);
-
-        foreach (var reference in compilation.References)
-        {
-            if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
-                continue;
-
-            if (!candidateAssemblyNames.Contains(assembly.Identity.Name))
-                continue;
-
-            CollectReferencedServices(assembly.GlobalNamespace, models, seen);
-        }
-
-        return models
-            .OrderBy(static m => m.ServiceFullName, StringComparer.Ordinal)
-            .ToImmutableArray();
-    }
 
     private static ImmutableArray<StaticRouteConflictModel> AnalyzeStaticRouteConflicts(
         Compilation compilation,
