@@ -386,8 +386,8 @@ internal sealed partial class SharpLinkServer
                             Status: SharpLinkInvocationStatus.Pending
                         } interceptorContext)
                         interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
-                    TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken);
                     DrainCompletedOneWayStreams(session, requestId, descriptor.ClientStreamCount);
+                    TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken);
                     ReleaseOneWayDispatchResources(
                         callState,
                         requestId,
@@ -460,10 +460,12 @@ internal sealed partial class SharpLinkServer
                     Status: SharpLinkInvocationStatus.Pending
                 } interceptorContext)
                 interceptorContext.Status = SharpLinkInvocationStatus.Succeeded;
+            DrainCompletedOneWayStreams(session, requestId, clientStreamCount);
             TryClaimCallCompletion(callState);
         }
         catch (Exception ex)
         {
+            DrainCompletedOneWayStreams(session, requestId, clientStreamCount);
             if (TryClaimCallCompletion(callState))
             {
                 LogOnewayRpcDispatchFailed(_logger, MapServiceException(
