@@ -1,0 +1,69 @@
+name: PR804 finite Change deadline validation
+on:
+  push:
+    branches: ['validation/804-timer-change-race']
+permissions:
+  contents: read
+jobs:
+  deadline-race-red-green:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        mode: [baseline, candidate]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: ./.github/actions/setup-dotnet
+      - name: Use original production timer for the negative control
+        if: matrix.mode == 'baseline'
+        run: git show 9af86207047fdf4355123c6e50b92c94ced8abc1:src/SharpLink.Abstractions/SharpLinkTimer.cs > src/SharpLink.Abstractions/SharpLinkTimer.cs
+      - run: dotnet restore Sharplink.slnx
+      - run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Verify deterministic finite Change regression
+        shell: bash
+        run: |
+          mkdir -p artifacts/timer-change
+          set +e
+          dotnet run -c Release --no-build --project test/SharpLink.UnitTests -- \
+            --treenode-filter '/*/*/SharpLinkTimerChangeRaceTests/*' \
+            --maximum-parallel-tests 8 --output Detailed --no-progress \
+            2>&1 | tee artifacts/timer-change/regression.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ '${{ matrix.mode }}' = baseline ]; then
+            test "$status" -eq 2
+            python3 - <<'PY'
+          import pathlib, re
+          s = re.sub(r'\x1b\[[0-9;]*m', '', pathlib.Path('artifacts/timer-change/regression.log').read_text())
+          assert re.search(r'\btotal:\s*8\b', s), s[-3000:]
+          assert re.search(r'\bfailed:\s*5\b', s), s[-3000:]
+          assert re.search(r'\bsucceeded:\s*3\b', s), s[-3000:]
+          assert 'an expiry crossed during finite Change must complete without a second clock advance' in s
+          print('Negative control verified: original timer fails exactly five expiry-during-Change cases; three controls pass.')
+          PY
+          else
+            test "$status" -eq 0
+          fi
+      - name: Validate all Unit tests with the candidate
+        if: matrix.mode == 'candidate'
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet run -c Release --no-build --project test/SharpLink.UnitTests -- \
+            --maximum-parallel-tests 8 --output Detailed --no-progress \
+            2>&1 | tee artifacts/timer-change/unit.log
+      - name: Retain exact red-green evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr804-timer-change-${{ matrix.os }}-${{ matrix.mode }}
+          path: artifacts/timer-change
+          if-no-files-found: error
