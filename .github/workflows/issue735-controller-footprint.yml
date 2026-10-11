@@ -1,0 +1,33 @@
+name: Issue 735 Controller Allocation Appendix
+
+on:
+  push:
+    branches: ['research/735-production-architecture-20261012-f8ba891']
+    paths:
+      - '.github/workflows/issue735-controller-footprint.yml'
+      - 'eng/issue735/run_footprint_evidence.py'
+      - 'test/SharpLink.FlowControllerFootprintEvidence/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  allocation-appendix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify source, compile and execute JIT and NativeAOT allocation appendix
+        run: python3 eng/issue735/run_footprint_evidence.py
+      - name: Preserve every sample, binary, failure and build identity
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue735-footprint-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/issue735/footprint
+          if-no-files-found: error
+          retention-days: 30
