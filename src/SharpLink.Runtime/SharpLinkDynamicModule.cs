@@ -178,44 +178,6 @@ internal static class SharpLinkAssemblyManifestLoader
 
 
 
-    private static bool IsFingerprint(string? value)
-    {
-        if (value?.Length != 64)
-            return false;
-        for (var index = 0; index < value.Length; index++)
-        {
-            var character = value[index];
-            if (character is not (>= '0' and <= '9') and not (>= 'a' and <= 'f') and
-                not (>= 'A' and <= 'F'))
-                return false;
-        }
-        return true;
-    }
-
-    private static SharpLinkAssemblyRegistrationError Error(
-        SharpLinkAssemblyRegistrationErrorCode code,
-        string message,
-        Assembly assembly,
-        string? artifact = null,
-        string? contractName = null,
-        long? contractId = null,
-        string? methodName = null,
-        long? methodId = null,
-        string? existingFingerprint = null,
-        string? incomingFingerprint = null)
-        => new(
-            code,
-            message,
-            GetAssemblyIdentity(assembly),
-            IncomingLoadContext: GetLoadContextIdentity(assembly),
-            Artifact: artifact,
-            ContractName: contractName,
-            ContractId: contractId,
-            MethodName: methodName,
-            MethodId: methodId,
-            ExistingFingerprint: existingFingerprint,
-            IncomingFingerprint: incomingFingerprint);
-
     private static SharpLinkAssemblyRegistrationResult Failure(
         SharpLinkAssemblyRegistrationErrorCode code,
         string message,
