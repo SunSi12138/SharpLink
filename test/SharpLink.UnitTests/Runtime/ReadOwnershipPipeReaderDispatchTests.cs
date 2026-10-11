@@ -174,16 +174,20 @@ public class ReadOwnershipPipeReaderDispatchTests
     public async Task QueuedPublicationOrLateRegistrationShouldDispatchExactlyOnce(
         bool late, bool useSchedulingContext)
     {
+        var progress = 0;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Exception? workerError = null;
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var registeringThread = new Thread(() =>
         {
             try
             {
-                ExerciseQueuedRegistration(late, useSchedulingContext);
+                ExerciseQueuedRegistration(late, useSchedulingContext, count => Volatile.Write(ref progress, count));
                 completed.SetResult();
             }
             catch (Exception error)
             {
+                workerError = error;
                 completed.SetException(error);
             }
         })
@@ -195,7 +199,9 @@ public class ReadOwnershipPipeReaderDispatchTests
         }
         finally
         {
-            Ensure(registeringThread.Join(Timeout), "the registering thread must exit");
+            var joined = registeringThread.Join(Timeout);
+            Console.WriteLine($"DISPATCH_DIAGNOSTIC late={late} context={useSchedulingContext} progress={Volatile.Read(ref progress)} elapsedMs={watch.Elapsed.TotalMilliseconds:F3} workerTask={completed.Task.Status} joined={joined} workerError={workerError}");
+            Ensure(joined, "the registering thread must exit");
         }
     }
 
@@ -242,7 +248,7 @@ public class ReadOwnershipPipeReaderDispatchTests
     // B policy-only tests are intentionally not carried forward: there is no mutable reader
     // dispatch switch, and public continuation registration does not classify context under the
     // reader's ownership gate. Context contracts are exercised above and in the lifetime tests.
-    private static void ExerciseQueuedRegistration(bool late, bool useSchedulingContext)
+    private static void ExerciseQueuedRegistration(bool late, bool useSchedulingContext, Action<int>? reportProgress = null)
     {
         Ensure(Task.CurrentId is null && SynchronizationContext.Current is null,
             "the fixture requires an ordinary registering thread");
@@ -289,6 +295,7 @@ public class ReadOwnershipPipeReaderDispatchTests
             }
             Ensure(done.Wait(Timeout), "queued registration must dispatch without a lost wakeup");
             Ensure(error is null, $"the queued consumer failed: {error}");
+            reportProgress?.Invoke(i + 1);
         }
         Ensure(consumed == 11_000 && inner.AdvanceCount == 11_000,
             "every queued consumer must run and release ownership exactly once");
