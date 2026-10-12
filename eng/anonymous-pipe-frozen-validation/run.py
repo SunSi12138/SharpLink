@@ -9,7 +9,7 @@ import subprocess
 import traceback
 
 BASELINE = '1d9cbc7a68fec1bf716ccd35ca3c74f5b6b2a093'
-CANDIDATE = '04b0796621bb46bcfcf6863ecdc242b75fd4a958'
+CANDIDATE = 'be2fc93a6f346f1ddcb41efc4787684aac4d25f9'
 SOURCE = 'src/SharpLink.Hosting/AnonymousPipeAllocatorAccessor.cs'
 PROBE = 'test/SharpLink.UnitTests/Hosting/AnonymousPipeFrozenCaptureProbe.cs'
 PROJECT = 'test/SharpLink.UnitTests/SharpLink.UnitTests.csproj'
@@ -102,7 +102,7 @@ try:
             validate(code, text, 'candidate-capture-ownership', 4, 0)
             code, text = run(['dotnet', 'test', '--project', PROJECT, '-c', 'Release', '--no-build',
                               '--maximum-parallel-tests', '8'], work, 'candidate-clean-full')
-            validate(code, text, 'candidate-clean-full', 2110, 0)
+            validate(code, text, 'candidate-clean-full', 2121, 0)
     result['status'] = 'expected-baseline-red-and-candidate-green-passed'
     save()
 except BaseException as error:
