@@ -23,6 +23,7 @@ on:
       - 'src/SharpLink.Abstractions/**'
       - 'src/SharpLink.Client/**'
       - 'src/SharpLink.Server/**'
+      - 'src/SharpLink.Hosting/**'
       - 'test/SharpLink.PackageSmoke/**'
       - 'test/SharpLink.PackageAotSmoke/**'
       - 'test/SharpLink.PackageTrimSmoke/**'
