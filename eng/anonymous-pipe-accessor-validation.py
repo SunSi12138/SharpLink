@@ -10,7 +10,7 @@ import subprocess
 import traceback
 
 BASELINE = 'fbaf3e40a1d36133846f101bf1aacfbec6ec4a3d'
-CANDIDATE = 'd0ea436cdab159ebbb354f88b1e9700ddd6704eb'
+CANDIDATE = '1d9cbc7a68fec1bf716ccd35ca3c74f5b6b2a093'
 FIXTURE = 'test/SharpLink.UnitTests/Hosting/AnonymousPipeAllocatorAccessorTests.cs'
 PROJECT = 'test/SharpLink.UnitTests/SharpLink.UnitTests.csproj'
 repo = Path.cwd()
@@ -40,8 +40,12 @@ def validate(code, text, name, total, failed, expected_error=None):
     save()
     if counts != expected or ((code == 0) != (failed == 0)):
         raise RuntimeError(f'{name}: unexpected exit/counts: {row}')
-    if expected_error and expected_error not in text:
-        raise RuntimeError(f'{name}: original missing-accessor failure was not reproduced')
+    if expected_error:
+        for marker in [expected_error,
+                       'failed ConfiguredAllocatorShouldRemainAvailableAcrossStartup(True, False)',
+                       'failed ConfiguredAllocatorShouldRemainAvailableAcrossStartup(True, True)']:
+            if marker not in text:
+                raise RuntimeError(f'{name}: original missing-accessor failure was not reproduced: {marker}')
 
 try:
     result['workflowSha'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
