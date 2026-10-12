@@ -324,6 +324,7 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
     }
 
     /// <summary>Uses an application-owned provider for service dependencies and per-call scopes.</summary>
+    /// <remarks>In hosted mode this explicit provider takes precedence over the Host provider.</remarks>
     public SharpLinkServerBuilder UseServiceProvider(IServiceProvider serviceProvider)
     {
         Configure(() =>
@@ -332,6 +333,16 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
             _serviceProvider = serviceProvider;
         });
         return this;
+    }
+
+    /// <summary>Uses the Host provider only when no application provider was configured.</summary>
+    internal void UseServiceProviderIfUnset(IServiceProvider serviceProvider)
+    {
+        Configure(() =>
+        {
+            ArgumentNullException.ThrowIfNull(serviceProvider);
+            _serviceProvider ??= serviceProvider;
+        });
     }
 
     /// <summary>Disables automatic service exposure for this builder; explicitly enabled and replaced services remain.</summary>

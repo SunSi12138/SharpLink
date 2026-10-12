@@ -27,7 +27,7 @@ internal sealed class SharpLinkServerHostedService(
                 throw new InvalidOperationException("The SharpLink server host has already started.");
 
             builder.UseLoggerFactoryIfUnset(loggerFactory);
-            builder.UseServiceProvider(serviceProvider);
+            builder.UseServiceProviderIfUnset(serviceProvider);
             server = builder.Build();
             _server = server;
         }
