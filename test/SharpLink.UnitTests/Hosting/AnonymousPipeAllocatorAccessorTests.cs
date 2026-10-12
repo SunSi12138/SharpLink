@@ -123,7 +123,11 @@ public class AnonymousPipeAllocatorAccessorTests
             "repeated registration must expose one singleton accessor");
         Ensure(ReferenceEquals(accessor.AnonymousPipeAllocator, transport),
             "the accessor must read the builder actually registered in DI");
-        var hosted = GetHostedService(provider);
+        // Isolate the registered SharpLink descriptor from the separate, pre-existing
+        // duplicate health-check-name behavior on repeated AddSharpLinkServer calls.
+        var descriptor = services.Single(value => value.ServiceType == typeof(IHostedService) &&
+            value.ImplementationType == typeof(SharpLinkServerHostedService));
+        var hosted = (IHostedService)ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType!);
         try
         {
             await hosted.StartAsync(CancellationToken.None);
@@ -206,6 +210,7 @@ public class AnonymousPipeAllocatorAccessorTests
     {
         var services = new ServiceCollection();
         services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
+        services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
         services.AddSingleton<IHostApplicationLifetime>(new TestHostApplicationLifetime());
         return services;
     }
