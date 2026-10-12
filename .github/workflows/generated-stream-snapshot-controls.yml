@@ -1,0 +1,33 @@
+name: Generated Stream Snapshot Allocation Controls
+
+on:
+  push:
+    branches: ['fix/generated-stream-snapshot-ownership-20261011']
+    paths:
+      - '.github/workflows/generated-stream-snapshot-controls.yml'
+      - 'eng/generated-stream-snapshot-regression/control_matrix.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixed-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Run all eight full-suite and 32 allocation controls in fixed AB/BA order
+        run: python3 eng/generated-stream-snapshot-regression/control_matrix.py --out artifacts/generated-stream-snapshot-controls
+      - name: Retain every declared position, failure, report and source/binary identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-stream-snapshot-controls-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/generated-stream-snapshot-controls
+          if-no-files-found: error
+          retention-days: 30
