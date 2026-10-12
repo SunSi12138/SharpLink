@@ -1,0 +1,41 @@
+name: Hosting Registration Regression
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/hosting-registration-regression.yml'
+      - '.github/actions/setup-dotnet/**'
+      - 'eng/hosting-registration-regression/**'
+      - 'src/SharpLink.Hosting/**'
+      - 'test/SharpLink.UnitTests/Hosting/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify identical fixtures against old products and the exact candidate
+        run: python3 eng/hosting-registration-regression/run.py --out artifacts/hosting-registration-regression
+      - name: Retain every attempt, report, fixture and binary identity
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hosting-registration-regression-${{ github.event.pull_request.head.sha || github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/hosting-registration-regression
+          if-no-files-found: error
+          retention-days: 30

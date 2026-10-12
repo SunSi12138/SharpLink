@@ -22,7 +22,7 @@ public class SharpLinkServerHostedServiceTests
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var readiness = new SharpLinkServerReadiness();
         var lifetime = new TestHostApplicationLifetime();
-        var hosted = new SharpLinkServerHostedService(
+        var hosted = CreateHostedService(
             builder,
             NullLoggerFactory.Instance,
             provider,
@@ -48,7 +48,7 @@ public class SharpLinkServerHostedServiceTests
         var transport = new DelayedDisposeTransport();
         var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
-        var hosted = new SharpLinkServerHostedService(
+        var hosted = CreateHostedService(
             builder,
             NullLoggerFactory.Instance,
             provider,
@@ -103,7 +103,7 @@ public class SharpLinkServerHostedServiceTests
     {
         var lifetime = new TestHostApplicationLifetime();
         await using var provider = new ServiceCollection().BuildServiceProvider();
-        var hosted = new SharpLinkServerHostedService(
+        var hosted = CreateHostedService(
             SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new FailingDisposeTransport()),
             NullLoggerFactory.Instance,
             provider,
@@ -124,7 +124,7 @@ public class SharpLinkServerHostedServiceTests
     public async Task CompletedHostedStopShouldRejectLaterStart()
     {
         await using var provider = new ServiceCollection().BuildServiceProvider();
-        var duplicateHosted = new SharpLinkServerHostedService(
+        var duplicateHosted = CreateHostedService(
             SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new BlockingTransport()),
             NullLoggerFactory.Instance,
             provider,
@@ -144,7 +144,7 @@ public class SharpLinkServerHostedServiceTests
             await firstServer.DisposeAsync();
 
         var readiness = new SharpLinkServerReadiness();
-        var hosted = new SharpLinkServerHostedService(
+        var hosted = CreateHostedService(
             SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(new BlockingTransport()),
             NullLoggerFactory.Instance,
             provider,
@@ -175,7 +175,7 @@ public class SharpLinkServerHostedServiceTests
         var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var lifetime = new TestHostApplicationLifetime();
-        var hosted = new SharpLinkServerHostedService(
+        var hosted = CreateHostedService(
             builder,
             NullLoggerFactory.Instance,
             provider,
@@ -199,7 +199,7 @@ public class SharpLinkServerHostedServiceTests
         var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
         var readiness = new SharpLinkServerReadiness();
-        var hosted = new SharpLinkServerHostedService(
+        var hosted = CreateHostedService(
             builder,
             NullLoggerFactory.Instance,
             provider,
@@ -253,7 +253,7 @@ public class SharpLinkServerHostedServiceTests
         var transport = new DelayedFailingDisposeTransport();
         var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty).UseTransport(transport);
         await using var provider = new ServiceCollection().BuildServiceProvider();
-        var hosted = new SharpLinkServerHostedService(
+        var hosted = CreateHostedService(
             builder,
             NullLoggerFactory.Instance,
             provider,
@@ -398,6 +398,15 @@ public class SharpLinkServerHostedServiceTests
         Ensure(provider.ActiveTimerCount == 0,
             "owner completion must dispose the provider timer without a real-time wait");
     }
+
+    private static SharpLinkServerHostedService CreateHostedService(
+        SharpLinkServerBuilder builder,
+        ILoggerFactory loggerFactory,
+        IServiceProvider serviceProvider,
+        SharpLinkServerReadiness readiness,
+        IHostApplicationLifetime applicationLifetime) =>
+        new(builder, loggerFactory, serviceProvider, readiness, applicationLifetime,
+            new AnonymousPipeAllocatorAccessor(builder));
 
     private static void Ensure(bool condition, string message)
     {
