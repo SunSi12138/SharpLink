@@ -10,7 +10,7 @@ import subprocess
 import traceback
 
 BASELINE = 'fbaf3e40a1d36133846f101bf1aacfbec6ec4a3d'
-CANDIDATE = '04b0796621bb46bcfcf6863ecdc242b75fd4a958'
+CANDIDATE = 'be2fc93a6f346f1ddcb41efc4787684aac4d25f9'
 FIXTURE = 'test/SharpLink.UnitTests/Hosting/AnonymousPipeAllocatorAccessorTests.cs'
 PROJECT = 'test/SharpLink.UnitTests/SharpLink.UnitTests.csproj'
 repo = Path.cwd()
@@ -78,7 +78,7 @@ try:
             validate(code, text, arm + '-focused', 11, 0)
             code, text = run(['dotnet', 'test', '--project', PROJECT, '-c', 'Release', '--no-build',
                               '--maximum-parallel-tests', '8'], work, arm + '-full')
-            validate(code, text, arm + '-full', 2110, 0)
+            validate(code, text, arm + '-full', 2121, 0)
     result['status'] = 'expected-baseline-red-and-candidate-green-passed'
     save()
 except BaseException as error:
