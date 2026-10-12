@@ -11,7 +11,7 @@ import traceback
 
 BASELINE = 'fbaf3e40a1d36133846f101bf1aacfbec6ec4a3d'
 CURRENT_BASE = '51ec03928aa841f2c27b257e93a2fa0353edf641'
-CANDIDATE = 'c70053b604e74dcce0822fcbda71ba4f7fdfb07a'
+CANDIDATE = 'db21e97b81b30e87bf1f63f132da9628da8290a5'
 FIXTURE = 'test/SharpLink.IntegrationTests/HostedServiceProviderIntegrationTests.cs'
 PROJECT = 'test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj'
 repo = Path.cwd()

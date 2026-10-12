@@ -254,16 +254,6 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
-    public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
-    {
-        Configure(() =>
-        {
-            ArgumentNullException.ThrowIfNull(loggerFactory);
-            _loggerFactory ??= loggerFactory;
-        });
-    }
-
     /// <summary>Configures the heartbeat inspection interval and peer-inactivity timeout.</summary>
     public SharpLinkServerBuilder UseHeartbeat(TimeSpan checkInterval, TimeSpan timeout)
     {
@@ -333,16 +323,6 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
             _serviceProvider = serviceProvider;
         });
         return this;
-    }
-
-    /// <summary>Uses the Host provider only when no application provider was configured.</summary>
-    internal void UseServiceProviderIfUnset(IServiceProvider serviceProvider)
-    {
-        Configure(() =>
-        {
-            ArgumentNullException.ThrowIfNull(serviceProvider);
-            _serviceProvider ??= serviceProvider;
-        });
     }
 
     /// <summary>Disables automatic service exposure for this builder; explicitly enabled and replaced services remain.</summary>
