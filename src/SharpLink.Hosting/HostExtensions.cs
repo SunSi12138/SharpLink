@@ -23,12 +23,8 @@ public static class HostExtensions
                     new AnonymousPipeAllocatorAccessor { AnonymousPipeAllocator = anonymousPipeAllocator });
             }
 
-            if (!HasHostedService<SharpLinkServerHostedService>(services))
-            {
-                services.AddHealthChecks()
-                    .AddCheck<SharpLinkServerHealthCheck>("sharplink_server", tags: ["ready"]);
-                services.AddHostedService<SharpLinkServerHostedService>();
-            }
+            AddHealthCheckOnce<SharpLinkServerHealthCheck>(services, "sharplink_server");
+            services.AddHostedService<SharpLinkServerHostedService>();
             return builder;
         }
 
@@ -41,12 +37,8 @@ public static class HostExtensions
                 services, SharpClientBuilder.Create, configure);
             services.TryAddSingleton<SharpLinkClientAccessor>();
             services.TryAddSingleton<ISharpLinkClientAccessor>(sp => sp.GetRequiredService<SharpLinkClientAccessor>());
-            if (!HasHostedService<SharpLinkClientHostedService>(services))
-            {
-                services.AddHealthChecks()
-                    .AddCheck<SharpLinkRemoteHealthCheck>("sharplink_remote", tags: ["ready"]);
-                services.AddHostedService<SharpLinkClientHostedService>();
-            }
+            AddHealthCheckOnce<SharpLinkRemoteHealthCheck>(services, "sharplink_remote");
+            services.AddHostedService<SharpLinkClientHostedService>();
             return builder;
         }
 
@@ -59,8 +51,7 @@ public static class HostExtensions
             services.TryAddSingleton<SharpLinkMultiClusterClientAccessor>();
             services.TryAddSingleton<ISharpLinkMultiClusterClientAccessor>(static provider =>
                 provider.GetRequiredService<SharpLinkMultiClusterClientAccessor>());
-            if (!HasHostedService<SharpLinkMultiClusterClientHostedService>(services))
-                services.AddHostedService<SharpLinkMultiClusterClientHostedService>();
+            services.AddHostedService<SharpLinkMultiClusterClientHostedService>();
             return builder;
         }
     }
@@ -109,19 +100,20 @@ public static class HostExtensions
         return builder;
     }
 
-    private static bool HasHostedService<THostedService>(IServiceCollection services)
-        where THostedService : class, IHostedService
+    private static void AddHealthCheckOnce<THealthCheck>(IServiceCollection services, string name)
+        where THealthCheck : class, IHealthCheck
     {
+        // Hosted services may already exist independently of their readiness checks.
+        // AddCheck itself does not deduplicate registrations, so track each role separately.
         foreach (var descriptor in services)
         {
-            if (descriptor.IsKeyedService || descriptor.ServiceType != typeof(IHostedService))
-                continue;
-            if (descriptor.ImplementationType == typeof(THostedService) ||
-                descriptor.ImplementationInstance is THostedService)
-            {
-                return true;
-            }
+            if (descriptor.ServiceType == typeof(HealthCheckRegistration<THealthCheck>))
+                return;
         }
-        return false;
+
+        services.AddHealthChecks().AddCheck<THealthCheck>(name, tags: ["ready"]);
+        services.AddSingleton(new HealthCheckRegistration<THealthCheck>());
     }
+
+    private sealed class HealthCheckRegistration<THealthCheck> where THealthCheck : class, IHealthCheck;
 }

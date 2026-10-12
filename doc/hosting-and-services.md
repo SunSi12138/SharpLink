@@ -18,6 +18,8 @@ services.AddSharpLinkClient(builder => builder
 注册，或同一 Builder 类型存在多份非 keyed 注册，则调用会明确抛出配置错误。
 不会创建新的、随后被 `TryAddSingleton` 忽略的临时 Builder，
 也不会把后续 `Use*` 配置悄悄丢弃。
+每个角色的 health check 独立保持幂等；提前注册 HostedService 不会阻止
+Hosting 扩展补齐对应的 readiness health check。
 
 Hosted Client 与直接构建的 Client 一样，必须显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；未指定会在 Host materialize Client 时失败。
 

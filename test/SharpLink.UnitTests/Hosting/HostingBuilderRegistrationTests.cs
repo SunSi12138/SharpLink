@@ -182,6 +182,80 @@ public sealed class HostingBuilderRegistrationTests
             "an ambiguous Builder configuration must fail rather than silently choosing a DI registration");
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public void PreRegisteredServerHostedServiceMustStillRegisterOneReadinessHealthCheck(bool useFactory)
+    {
+        var services = new ServiceCollection();
+        services.AddHealthChecks();
+        if (useFactory)
+            services.AddHostedService<SharpLinkServerHostedService>(static provider =>
+                ActivatorUtilities.CreateInstance<SharpLinkServerHostedService>(provider));
+        else
+            services.AddHostedService<SharpLinkServerHostedService>();
+
+        var hostedRegistrations = services.Where(static descriptor =>
+            !descriptor.IsKeyedService && descriptor.ServiceType == typeof(IHostedService)).ToArray();
+        var first = services.AddSharpLinkServer();
+        var second = services.AddSharpLinkServer();
+
+        using var provider = services.BuildServiceProvider();
+        Ensure(ReferenceEquals(first, second), "the Server Builder must remain shared");
+        Ensure(services.Where(static descriptor =>
+                !descriptor.IsKeyedService && descriptor.ServiceType == typeof(IHostedService))
+            .SequenceEqual(hostedRegistrations),
+            "framework registration must preserve the one existing Server hosted service");
+        Ensure(HealthCheckCount(provider, "sharplink_server") == 1,
+            "a pre-registered Server hosted service must not suppress its readiness health check");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public void PreRegisteredClientHostedServiceMustStillRegisterOneReadinessHealthCheck(bool useFactory)
+    {
+        var services = new ServiceCollection();
+        services.AddHealthChecks();
+        if (useFactory)
+            services.AddHostedService<SharpLinkClientHostedService>(static provider =>
+                ActivatorUtilities.CreateInstance<SharpLinkClientHostedService>(provider));
+        else
+            services.AddHostedService<SharpLinkClientHostedService>();
+
+        var hostedRegistrations = services.Where(static descriptor =>
+            !descriptor.IsKeyedService && descriptor.ServiceType == typeof(IHostedService)).ToArray();
+        var first = services.AddSharpLinkClient();
+        var second = services.AddSharpLinkClient();
+
+        using var provider = services.BuildServiceProvider();
+        Ensure(ReferenceEquals(first, second), "the Client Builder must remain shared");
+        Ensure(services.Where(static descriptor =>
+                !descriptor.IsKeyedService && descriptor.ServiceType == typeof(IHostedService))
+            .SequenceEqual(hostedRegistrations),
+            "framework registration must preserve the one existing Client hosted service");
+        Ensure(HealthCheckCount(provider, "sharplink_remote") == 1,
+            "a pre-registered Client hosted service must not suppress its readiness health check");
+    }
+
+    [Test]
+    public void ServerAndClientHealthCheckMarkersMustBeIndependent()
+    {
+        var services = new ServiceCollection();
+        services.AddSharpLinkServer();
+        services.AddSharpLinkClient();
+        services.AddSharpLinkClient();
+        services.AddSharpLinkServer();
+
+        using var provider = services.BuildServiceProvider();
+        Ensure(HealthCheckCount(provider, "sharplink_server") == 1 &&
+               HealthCheckCount(provider, "sharplink_remote") == 1,
+            "each Hosting role must retain exactly one independent readiness health check");
+        Ensure(CountHosted<SharpLinkServerHostedService>(services) == 1 &&
+               CountHosted<SharpLinkClientHostedService>(services) == 1,
+            "each Hosting role must retain exactly one independent hosted service");
+    }
+
     private static int CountHosted<T>(IServiceCollection services) where T : IHostedService
         => services.Count(descriptor =>
             !descriptor.IsKeyedService &&
