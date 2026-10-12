@@ -149,6 +149,7 @@ internal sealed partial class RpcSession
         var creditAcquired = false;
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
+        var operationFailed = false;
         try
         {
             await AcquireStreamSendCreditAsync(
@@ -173,8 +174,9 @@ internal sealed partial class RpcSession
                 sizedCodec.SerializeSized(item, writer, encodedBytes, sizedSnapshot);
                 if (sizedSnapshot is not null)
                 {
-                    sizedCodec.ReleaseSnapshot(sizedSnapshot);
+                    var snapshotToRelease = sizedSnapshot;
                     sizedSnapshot = null;
+                    sizedCodec.ReleaseSnapshot(snapshotToRelease);
                 }
             }
 
@@ -191,16 +193,34 @@ internal sealed partial class RpcSession
         }
         catch
         {
+            operationFailed = true;
             if (creditAcquired)
                 ReturnUnsentStreamCredit(requestId, streamId, creditBytes);
             throw;
         }
         finally
         {
-            if (sizedSnapshot is not null)
-                sizedCodec.ReleaseSnapshot(sizedSnapshot);
-            if (ownsWriter && writer is not null)
-                RuntimeContext.Buffers.Return(writer);
+            try
+            {
+                if (sizedSnapshot is not null)
+                {
+                    var snapshotToRelease = sizedSnapshot;
+                    sizedSnapshot = null;
+                    try
+                    {
+                        sizedCodec.ReleaseSnapshot(snapshotToRelease);
+                    }
+                    catch when (operationFailed)
+                    {
+                        // Cleanup must not replace the serialization or credit failure.
+                    }
+                }
+            }
+            finally
+            {
+                if (ownsWriter && writer is not null)
+                    RuntimeContext.Buffers.Return(writer);
+            }
         }
     }
 

@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/SendCreditTerminalAccountingTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/SendCreditTerminalAccountingTests/*"
 FOCUSED_COUNT = 1
-FULL_COUNT = 2085  # Update only alongside a reviewed change to the existing suite.
+FULL_COUNT = 2095  # Update only alongside a reviewed change to the existing suite.
 
 
 def digest(path):
