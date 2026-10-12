@@ -23,7 +23,7 @@ public class AnonymousPipeAllocatorCaptureTests
         var build = LongRunningTestWorker.Run(() =>
         {
             Ensure(configured.Wait(TimeSpan.FromSeconds(5)), "configuration did not finish before Build");
-            return builder.Build(accessor.CaptureTransport);
+            return builder.BuildWithTransportCapture(accessor.CaptureTransport);
         });
         ISharpLinkServer? server = null;
         try
@@ -62,7 +62,7 @@ public class AnonymousPipeAllocatorCaptureTests
         using var captured = new ManualResetEventSlim();
         using var releaseCapture = new ManualResetEventSlim();
         ISharpLinkServer? server = null;
-        var build = LongRunningTestWorker.Run(() => Capture(() => server = builder.Build(snapshot =>
+        var build = LongRunningTestWorker.Run(() => Capture(() => server = builder.BuildWithTransportCapture(snapshot =>
         {
             accessor.CaptureTransport(snapshot);
             captured.Set();
@@ -79,10 +79,10 @@ public class AnonymousPipeAllocatorCaptureTests
             releaseCapture.Set();
             var buildFailure = await build.WaitAsync(TimeSpan.FromSeconds(5));
             Ensure(configureFailure is InvalidOperationException
-                { Message: "This SharpLink builder has already been consumed." },
+            { Message: "This SharpLink builder has already been consumed." },
                 "a configuration racing frozen capture must fail with the existing consumed contract");
             Ensure(buildFailure is InvalidOperationException
-                { Message: "Transport must be set before building the server." },
+            { Message: "Transport must be set before building the server." },
                 "the unconfigured build must preserve its validation failure");
             Ensure(accessor.AnonymousPipeAllocator is null && transport.DisposeCount == 0,
                 "a rejected listener must not be captured or disposed by the builder");
@@ -110,7 +110,7 @@ public class AnonymousPipeAllocatorCaptureTests
         var builder = CreateBuilder().UseTransport(transport);
         var accessor = new AnonymousPipeAllocatorAccessor(builder);
         var captureFailure = new InvalidOperationException("frozen transport capture failed");
-        var failure = Capture(() => builder.Build(snapshot =>
+        var failure = Capture(() => builder.BuildWithTransportCapture(snapshot =>
         {
             accessor.CaptureTransport(snapshot);
             throw captureFailure;
@@ -132,8 +132,8 @@ public class AnonymousPipeAllocatorCaptureTests
             "capture failure must consume the builder and roll back its owned listener exactly once");
         Ensure(ReferenceEquals(accessor.AnonymousPipeAllocator, transport),
             "the accessor keeps only its non-owning reference after rollback");
-        Ensure(Capture(() => builder.Build(accessor.CaptureTransport)) is InvalidOperationException
-            { Message: "This SharpLink builder has already been consumed." },
+        Ensure(Capture(() => builder.BuildWithTransportCapture(accessor.CaptureTransport)) is InvalidOperationException
+        { Message: "This SharpLink builder has already been consumed." },
             "retrying a failed capture must not rebuild a consumed builder");
         Ensure(transport.DisposeCount == 1, "a rejected retry must not repeat listener cleanup");
     }

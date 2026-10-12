@@ -9,7 +9,7 @@ import subprocess
 import traceback
 
 BASELINE = '1d9cbc7a68fec1bf716ccd35ca3c74f5b6b2a093'
-CANDIDATE = '95e3adc7b696ab181ffee3b1ab9a63f366113a98'
+CANDIDATE = '04b0796621bb46bcfcf6863ecdc242b75fd4a958'
 SOURCE = 'src/SharpLink.Hosting/AnonymousPipeAllocatorAccessor.cs'
 PROBE = 'test/SharpLink.UnitTests/Hosting/AnonymousPipeFrozenCaptureProbe.cs'
 PROJECT = 'test/SharpLink.UnitTests/SharpLink.UnitTests.csproj'
