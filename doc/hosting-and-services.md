@@ -48,6 +48,8 @@ Generator 为 `[RpcService]` 产生 Manifest，并在引用它的应用编译中
 
 `UseServiceProvider` 接受应用拥有的 provider。Server 不释放它，但会为 Connection/Call 生命周期创建和释放 scope。开启 `ValidateScopes` 有助于在启动时发现 singleton 捕获 scoped 依赖。
 
+Hosted Server 的 provider 优先级为：启动前最后一次显式 `UseServiceProvider(...)` > Host 的 provider（仅在未显式配置时使用）。这同时适用于 `AddSharpLinkServer` 的配置回调和返回 builder 后的 fluent 配置。选中的 provider 独立负责所有业务服务依赖及 scope；缺少依赖时不会再向另一个 provider 回退。Hosting 自身的 readiness、日志和 `IHostApplicationLifetime` 仍由 Host 容器提供。无论启动成功、失败或停止，SharpLink 都不会释放应用或 Host 拥有的根 provider。
+
 Service lifetime：
 
 - Singleton：Server 实例共享，必须线程安全。
