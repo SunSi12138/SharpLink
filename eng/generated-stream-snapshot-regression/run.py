@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/GeneratedStreamSnapshotOwnershipTests.c
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/GeneratedStreamSnapshotOwnershipTests/*"
 FOCUSED_COUNT = 2
-FULL_COUNT = 2106  # Update only alongside a reviewed change to the existing suite.
+FULL_COUNT = 2110  # Update only alongside a reviewed change to the existing suite.
 
 
 def digest(path):
