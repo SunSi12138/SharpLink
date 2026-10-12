@@ -1,0 +1,50 @@
+name: Generated Stream Snapshot Ownership
+
+on:
+  push:
+    branches: ['fix/generated-stream-snapshot-ownership-20261011']
+    paths:
+      - '.github/workflows/generated-stream-snapshot-regression.yml'
+      - '.github/actions/setup-dotnet/**'
+      - 'eng/generated-stream-snapshot-regression/**'
+      - 'src/SharpLink.Runtime/**'
+      - 'test/SharpLink.UnitTests/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/generated-stream-snapshot-regression.yml'
+      - '.github/actions/setup-dotnet/**'
+      - 'eng/generated-stream-snapshot-regression/**'
+      - 'src/SharpLink.Runtime/**'
+      - 'test/SharpLink.UnitTests/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify the old failure and the actual current product
+        run: python3 eng/generated-stream-snapshot-regression/run.py --out artifacts/generated-stream-snapshot-regression
+      - name: Retain all exits, reports, patches and binary identities
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-stream-snapshot-regression-${{ github.sha }}-attempt${{ github.run_attempt }}
+          path: artifacts/generated-stream-snapshot-regression
+          if-no-files-found: error
+          retention-days: 30

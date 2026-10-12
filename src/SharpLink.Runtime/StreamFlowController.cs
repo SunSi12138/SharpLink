@@ -125,6 +125,7 @@ internal sealed class StreamFlowController
 
         var key = new StreamKey(requestId, streamId);
         SendState? state;
+        long expectedLease;
         lock (_gate)
         {
             ThrowIfTerminated();
@@ -151,9 +152,11 @@ internal sealed class StreamFlowController
                     return ValueTask.CompletedTask;
                 }
             }
+            expectedLease = state?.Lease ?? 0L;
         }
 
-        return AcquireContendedSendCreditAsync(key, state, state?.Lease ?? 0L, encodedBytes, cancellationToken);
+        return AcquireContendedSendCreditAsync(
+            key, state, expectedLease, encodedBytes, cancellationToken);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
