@@ -46,7 +46,8 @@ public class HostedServiceProviderIntegrationTests
             builder.UseServiceProvider(application);
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var host = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
-        var hosted = host.GetServices<IHostedService>().Single();
+        var hosted = host.GetServices<IHostedService>().Single(static service =>
+            service.GetType().FullName == "SharpLink.Hosting.SharpLinkServerHostedService");
         var readiness = host.GetRequiredService<ISharpLinkServerReadiness>();
         var selected = mode == 2 ? hostState : applicationState;
         await hosted.StartAsync(CancellationToken.None);
@@ -108,7 +109,8 @@ public class HostedServiceProviderIntegrationTests
         });
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var host = services.BuildServiceProvider();
-        var hosted = host.GetServices<IHostedService>().Single();
+        var hosted = host.GetServices<IHostedService>().Single(static service =>
+            service.GetType().FullName == "SharpLink.Hosting.SharpLinkServerHostedService");
         await hosted.StartAsync(CancellationToken.None);
         try
         {

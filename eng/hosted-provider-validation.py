@@ -10,7 +10,7 @@ import subprocess
 import traceback
 
 BASELINE = 'fbaf3e40a1d36133846f101bf1aacfbec6ec4a3d'
-CANDIDATE = 'e3543d7de95c5c3c90cf5f9557d5f00c278084ca'
+CANDIDATE = 'd4b77f91d0a8914c9e4e1530ef5ebf0857b4834d'
 FIXTURE = 'test/SharpLink.IntegrationTests/HostedServiceProviderIntegrationTests.cs'
 PROJECT = 'test/SharpLink.IntegrationTests/SharpLink.IntegrationTests.csproj'
 repo = Path.cwd()
