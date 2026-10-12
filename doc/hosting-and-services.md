@@ -11,6 +11,14 @@ services.AddSharpLinkClient(builder => builder
     .UseRequestTimeout());
 ```
 
+重复调用同一种 `AddSharpLinkServer`、`AddSharpLinkClient` 或
+`AddSharpLinkMultiClusterClient` 会复用 **DI 中实际注册的 Builder 实例**，
+并对该实例执行后续 `configure` 回调；HostedService 和同名 health check
+只注册一次。已存在的 Builder 如果通过类型/工厂（而非 Singleton 实例）
+注册，或同一 Builder 类型存在多份非 keyed 注册，则调用会明确抛出配置错误。
+不会创建新的、随后被 `TryAddSingleton` 忽略的临时 Builder，
+也不会把后续 `Use*` 配置悄悄丢弃。
+
 Hosted Client 与直接构建的 Client 一样，必须显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；未指定会在 Host materialize Client 时失败。
 
 Host 启动 Client/Server，停止时执行有界排空和异步释放。Server HostedService 直接映射 `StartAsync / StopAsync`，不再持有独立的 accept-loop task 或 lifetime CTS；长期 accept/background runtime 由 Server 自己持有和观察。Client HostedService 调用 `StartAsync` 启动本地 runtime 与连接 supervisor；它不会等待远端 endpoint ready，因此远端暂时不可用不会阻塞整个 Generic Host 启动。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client 本地 runtime 发布；不要在容器构建期间同步阻塞获取连接。
