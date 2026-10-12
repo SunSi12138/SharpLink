@@ -405,7 +405,7 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
     public ISharpLinkServer Build() => Materialize(CompileForBuild());
 
     // Hosting observes the same frozen listener as the build, before ownership transfer or rollback.
-    internal ISharpLinkServer Build(Action<IServerTransportListener?> captureTransport)
+    internal ISharpLinkServer BuildWithTransportCapture(Action<IServerTransportListener?> captureTransport)
         => Materialize(CompileForBuildCore(captureTransport));
 
     private ServerBuildPlan CompileForBuild() => CompileForBuildCore(null);
