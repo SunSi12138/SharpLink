@@ -7,7 +7,8 @@ internal sealed class SharpLinkServerHostedService(
     ILoggerFactory loggerFactory,
     IServiceProvider serviceProvider,
     SharpLinkServerReadiness readiness,
-    IHostApplicationLifetime applicationLifetime) : IHostedService
+    IHostApplicationLifetime applicationLifetime,
+    AnonymousPipeAllocatorAccessor allocatorAccessor) : IHostedService
 {
     private readonly Lock _stopGate = new();
     private ISharpLinkServer? _server;
@@ -28,6 +29,7 @@ internal sealed class SharpLinkServerHostedService(
 
             builder.UseLoggerFactoryIfUnset(loggerFactory);
             builder.UseServiceProvider(serviceProvider);
+            allocatorAccessor.CaptureTransport();
             server = builder.Build();
             _server = server;
         }

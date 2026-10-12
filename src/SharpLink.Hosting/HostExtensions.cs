@@ -1,5 +1,3 @@
-using SharpLink.Runtime;
-
 namespace SharpLink.Hosting;
 
 /// <summary>Registers SharpLink servers, clients, health checks, and lifecycle services with a generic host.</summary>
@@ -20,8 +18,9 @@ public static class HostExtensions
                 provider.GetRequiredService<SharpLinkServerReadiness>());
             services.AddHealthChecks()
                 .AddCheck<SharpLinkServerHealthCheck>("sharplink_server", tags: ["ready"]);
-            if (builder.Transport is IAnonymousPipeAllocator anonymousPipeAllocator)
-                services.AddSingleton<IAnonymousPipeAllocatorAccessor>(new AnonymousPipeAllocatorAccessor { AnonymousPipeAllocator = anonymousPipeAllocator });
+            services.TryAddSingleton<AnonymousPipeAllocatorAccessor>();
+            services.TryAddSingleton<IAnonymousPipeAllocatorAccessor>(static provider =>
+                provider.GetRequiredService<AnonymousPipeAllocatorAccessor>());
 
             services.AddHostedService<SharpLinkServerHostedService>();
             return builder;

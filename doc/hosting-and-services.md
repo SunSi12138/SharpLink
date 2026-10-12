@@ -50,6 +50,6 @@ Service lifetime：
 
 ## AnonymousPipe Hosting
 
-若 Server transport 实现 `IAnonymousPipeAllocator`，Hosting 注册 `IAnonymousPipeAllocatorAccessor`，供父进程服务安全生成一次性子进程句柄。不要把 allocator 或 offer 暴露给不可信调用方。
+`AddSharpLinkServer` 注册 `IAnonymousPipeAllocatorAccessor`。若最终配置的 Server transport 实现 `IAnonymousPipeAllocator`，accessor 会返回该 allocator；其他 transport 返回 `null`。配置既可以写在回调中，也可以在返回的 builder 上链式追加。启动前和启动后首次解析 accessor 均可访问同一 allocator；accessor 不拥有 transport，关闭和构建失败时的释放仍由 Server 或构建事务负责。不要把 allocator 或 offer 暴露给不可信调用方。
 
 完整用法见 `demo/HostApplication`。
