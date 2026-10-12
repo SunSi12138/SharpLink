@@ -404,11 +404,18 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
     /// <inheritdoc />
     public ISharpLinkServer Build() => Materialize(CompileForBuild());
 
-    private ServerBuildPlan CompileForBuild()
+    // Hosting observes the same frozen listener as the build, before ownership transfer or rollback.
+    internal ISharpLinkServer BuildWithTransportCapture(Action<IServerTransportListener?> captureTransport)
+        => Materialize(CompileForBuildCore(captureTransport));
+
+    private ServerBuildPlan CompileForBuild() => CompileForBuildCore(null);
+
+    private ServerBuildPlan CompileForBuildCore(Action<IServerTransportListener?>? captureTransport)
     {
         BeginBuild();
         try
         {
+            captureTransport?.Invoke(_transport);
             var plan = CompilePlan();
             lock (_configurationGate)
                 _pendingResources = plan.Resources;
