@@ -29,8 +29,7 @@ internal sealed class SharpLinkServerHostedService(
 
             builder.UseLoggerFactoryIfUnset(loggerFactory);
             builder.UseServiceProvider(serviceProvider);
-            allocatorAccessor.CaptureTransport();
-            server = builder.Build();
+            server = builder.Build(allocatorAccessor.CaptureTransport);
             _server = server;
         }
 
