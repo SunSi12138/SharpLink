@@ -192,16 +192,24 @@ def summarize(root):
              f"Base `{provenance['commits']['base']}`; head `{provenance['commits']['head']}`.", "",
              "All eight ABBA/BAAB slots ran on one host with the same SDK, two-CPU affinity, Release configuration and benchmark inputs. Ratios are head/base; no throughput or tail budget is silently introduced or relaxed.", "",
              "## Historical OneWay sender workload", "",
-             "BDN values use the historical median hierarchy: 15 actual iterations per launch, three launches per slot, and four slots per arm. They are not individual-request tail latency. Both inherited parameter labels send identical arguments.", "",
+             "BDN values use the historical median hierarchy: 15 actual iterations per launch, three launches per slot, and four slots per arm. They are not individual-request tail latency. Both inherited parameter labels execute the same OneWay invocation expression; PayloadSize does not change its payload shape.", "",
              "| Parameter label | Base ns/queued call | Head ns/queued call | Head/base |", "|---|---:|---:|---:|"]
     for label, item in report["senderQueuedBdnActualIterationNsPerOperation"].items():
         lines.append(f"| {label} | {item['baseMedian']:.3f} | {item['headMedian']:.3f} | {item['headOverBase']:.4f} |")
     lines += ["", "## Generated RPC throughput and per-request tails", "",
               "For `oneway-sender`, throughput and tails stop at local queue completion. Its independently observed final receiver count and drain throughput are retained in JSON. `oneway-receiver` waits for the business counter after every request and is a single-in-flight completion-barrier workload, not a maximum-throughput claim.", "",
-              "| Transport/scenario | Base op/s | Head op/s | Head/base | Base p99 us | Head p99 us | Head p99.9 us |", "|---|---:|---:|---:|---:|---:|---:|"]
+              "| Transport/scenario | Base op/s | Head op/s | Head/base | Base p99 us | Head p99 us | Base p99.9 us | Head p99.9 us |", "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for key, metrics in report["rpc"].items():
         qps, p99, p999 = (metrics[name] for name in ("throughputPerSecond", "p99Microseconds", "p999Microseconds"))
-        lines.append(f"| {key} | {qps['baseMedian']:.1f} | {qps['headMedian']:.1f} | {qps['headOverBase']:.4f} | {p99['baseMedian']:.3f} | {p99['headMedian']:.3f} | {p999['headMedian']:.3f} |")
+        lines.append(f"| {key} | {qps['baseMedian']:.1f} | {qps['headMedian']:.1f} | {qps['headOverBase']:.4f} | {p99['baseMedian']:.3f} | {p99['headMedian']:.3f} | {p999['baseMedian']:.3f} | {p999['headMedian']:.3f} |")
+    lines += ["", "### OneWay sender workload through final business completion", "",
+              "The same sender workload also records its final receiver barrier after stopping the queue-completion timer. These values expose outstanding business work; they do not add a protocol ACK.", "",
+              "| Transport | Base receiver-completed op/s | Head receiver-completed op/s | Head/base | Base final drain ms | Head final drain ms |", "|---|---:|---:|---:|---:|---:|"]
+    for transport in provenance["transports"]:
+        metrics = report["rpc"][f"{transport}-oneway-sender"]
+        qps = metrics["receiverCompletedThroughputPerSecond"]
+        drain = metrics["drainSecondsAfterSendCompletion"]
+        lines.append(f"| {transport} | {qps['baseMedian']:.1f} | {qps['headMedian']:.1f} | {qps['headOverBase']:.4f} | {drain['baseMedian'] * 1000:.3f} | {drain['headMedian'] * 1000:.3f} |")
     lines += ["", "## Unchanged canonical allocation gate", "",
               "These medians retain all four checked-in budgets, five samples per case, original workloads and an explicitly rejected 512-byte negative control. Focused-runner aggregate allocations are diagnostic only and remain separate in JSON.", "",
               "| Case | Base B/op | Head B/op | Delta B/op |", "|---|---:|---:|---:|"]

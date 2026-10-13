@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/SendCreditTerminalAccountingTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/SendCreditTerminalAccountingTests/*"
 FOCUSED_COUNT = 1
-FULL_COUNT = 2121  # Update only alongside a reviewed change to the existing suite.
+FULL_COUNT = 2166  # 2121 existing cases + 45 contract-routing and stream-admission cases.
 
 
 def digest(path):

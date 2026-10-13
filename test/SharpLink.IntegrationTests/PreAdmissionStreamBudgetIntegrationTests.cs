@@ -13,8 +13,8 @@ public class PreAdmissionStreamBudgetIntegrationTests
         await using var harness = await BudgetHarness.CreateAsync();
         var serviceA = harness.ClientA.Get<ITestService>();
         var serviceB = harness.ClientB.Get<ITestService>();
-        var uploadAService = harness.ClientA.Get<ICompressionService>();
-        var uploadBService = harness.ClientB.Get<ICompressionService>();
+        var uploadAService = EarlyClientStreamPeer.CreateProxy<ICompressionService>(harness.ClientA);
+        var uploadBService = EarlyClientStreamPeer.CreateProxy<ICompressionService>(harness.ClientB);
         var producerRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -91,7 +91,7 @@ public class PreAdmissionStreamBudgetIntegrationTests
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            queued = harness.ClientB.Get<ICompressionService>()
+            queued = EarlyClientStreamPeer.CreateProxy<ICompressionService>(harness.ClientB)
                 .UploadBytesAsync(TwoItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > ItemBytes * 2 &&

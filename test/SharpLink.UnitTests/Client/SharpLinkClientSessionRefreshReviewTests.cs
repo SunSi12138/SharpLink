@@ -1,3 +1,4 @@
+using System.Reflection;
 using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
@@ -6,7 +7,7 @@ namespace SharpLink.UnitTests.Client;
 public sealed class SharpLinkClientSessionRefreshReviewTests
 {
     [Test]
-    public async Task FixedEligibilityCutShouldRouteConcurrentUnaryToReplacement()
+    public async Task FixedEligibilityCutShouldRejectUnpublishedReplacementAndThenUseItsRoute()
     {
         var factory = new ReviewRefreshTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(
@@ -18,6 +19,18 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
             }));
         await client.ConnectAsync();
         var source = SharpLinkClientLifecycleSharedSupport.GetOnlyReadyConnection(client);
+        var sourceTransport = factory.GetConnection(0);
+        var poolGate = (Lock)typeof(SharpLinkClient).GetField("_poolGate", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(client)!;
+        var requestCodec = new RequestSerializationProbe();
+        var method = new RpcMethodDescriptor(1, 2, RpcMethodKind.Unary,
+            HasResponsePayload: true, HasClientStreams: false, HasMethodTimeout: false, MethodTimeout: null);
+        Task<int> InvokeAsync()
+        {
+            var channel = (IRpcChannel)client;
+            return channel.InvokeUnaryAsync(method, default(RpcEmptyRequest), requestCodec,
+                channel.RuntimeContext.Codecs.GetCodec<int>(), null).AsTask();
+        }
 
         var cutEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var redirected = new TaskCompletionSource<ClientConnection>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -44,18 +57,30 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
             await cutEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
             var replacement = factory.GetConnection(1);
-            var next = Task.Run(async () => await ClientInvokerTestHelper.InvokeUnaryAsync(client));
-            var admitted = await redirected.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            Ensure(!ReferenceEquals(admitted, source),
-                "a stale fixed snapshot observed during the eligibility cut must redirect admission to the Ready replacement");
+            var replacementRequest = replacement.WaitForSentPacket(ProtocolV2FrameType.Request);
+            var failure = await CaptureFailureAsync(Task.Run(InvokeAsync));
+            Ensure(failure is SharpLinkException
+            { Code: SharpLinkErrorCode.Unavailable, DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
+                "a source-only route must fail fast while the replacement identity is not yet published");
+            Ensure(!redirected.Task.IsCompleted && !replacementRequest.IsCompleted && requestCodec.Count == 0,
+                "a stale route must neither redirect to an unselected session nor serialize a rejected payload");
 
             releaseCut.Set();
+            // The refresh owns this gate through topology publication; joining it fences the
+            // event without adding a retry or a polling budget to the actual RPC.
+            await Task.Run(() => { lock (poolGate) { } }).WaitAsync(TimeSpan.FromSeconds(2));
+            var next = Task.Run(InvokeAsync);
+            var admitted = await redirected.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(!ReferenceEquals(admitted, source) &&
+                   ReferenceEquals(admitted, SharpLinkClientLifecycleSharedSupport.GetOnlyReadyConnection(client)),
+                "the next call must reserve the exact replacement selected from the published contract route");
             releaseAdmission.Set();
-            var request = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
-                .WaitAsync(TimeSpan.FromSeconds(2));
+            var request = await replacementRequest.WaitAsync(TimeSpan.FromSeconds(2));
             await replacement.InjectInt32ResponseAsync(unchecked((long)request.RequestId));
-            Ensure(await next.WaitAsync(TimeSpan.FromSeconds(2)) == 0,
-                "a unary racing the refresh cut must be admitted by the Ready replacement, not observe false Unavailable");
+            Ensure(await next.WaitAsync(TimeSpan.FromSeconds(2)) == 0 && requestCodec.Count == 1,
+                "publication must permit one payload and one successful call on the selected replacement");
+            Ensure(!await sourceTransport.TryWaitForSentPacket(ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(20)),
+                "the retired source must receive no new Request across the routing cut");
         }
         finally
         {
@@ -368,6 +393,13 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
     {
         if (!condition)
             throw new InvalidOperationException(message);
+    }
+
+    private sealed class RequestSerializationProbe : IRpcCodec<RpcEmptyRequest>
+    {
+        internal int Count;
+        public void Serialize(in RpcEmptyRequest value, IBufferWriter<byte> buffer) => Interlocked.Increment(ref Count);
+        public RpcEmptyRequest Deserialize(in ReadOnlySequence<byte> buffer) => default;
     }
 
     private sealed class ReviewRefreshTransportFactory : IClientTransportFactory

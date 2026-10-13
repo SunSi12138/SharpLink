@@ -9,16 +9,17 @@ public sealed class Stack13HeaderSpanTests
     [Test]
     public void ParsingFirstFrameShouldNotConsumeSecondFrameAtAnySplit()
     {
-        var a = Frame(new byte[24], ProtocolV2FrameFlags.HasReturn);
-        var b = Frame(new byte[16], 0);
+        var prefix = ProtocolV2Constants.RequestPrefixBytes;
+        var a = Frame(new byte[prefix + 8], ProtocolV2FrameFlags.HasReturn);
+        var b = Frame(new byte[prefix], 0);
         var bytes = a.Concat(b).ToArray();
         for (var split = 0; split <= bytes.Length; split++)
         {
             var buffer = Split(bytes, split);
             Check(ProtocolV2FrameParser.TryReadFrame(ref buffer, new(), out _, out var payload), "first complete");
-            Check(payload.Length == 24 && buffer.Length == b.Length, "second preserved");
+            Check(payload.Length == prefix + 8 && buffer.Length == b.Length, "second preserved");
             Check(ProtocolV2FrameParser.TryReadFrame(ref buffer, new(), out _, out payload), "second complete");
-            Check(payload.Length == 16 && buffer.IsEmpty, "second consumed exactly");
+            Check(payload.Length == prefix && buffer.IsEmpty, "second consumed exactly");
         }
     }
 

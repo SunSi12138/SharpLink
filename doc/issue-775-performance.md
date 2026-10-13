@@ -26,7 +26,7 @@ The independent parser checks all 720 raw `Workload/Actual` iteration records, i
 | `PayloadSize=16` | 1,670.534 | 3,139.852 | **1.87955** | 1.75322 | 1.87584 |
 | `PayloadSize=256` | 1,668.307 | 3,179.113 | **1.90559** | 2.00825 | 1.87786 |
 
-Both labels call `PublishEventAsync(7, 11, "bench")`. They are two inherited parameter labels for the same OneWay payload. These results establish an approximately 88–91% increase in the historical sender completion cost under this workload. They do not measure confirmed delivery, isolated receiver throughput, a payload-size effect, or per-request P99/P99.9. Profiled launches are excluded from these ratios.
+Both labels execute `PublishEventAsync(7, Environment.TickCount64, "bench")`, as shown in the [historical benchmark source](https://github.com/SunSi12138/SharpLink/blob/eb99fe887cf2129d9b88441245ca0a4a6406b6c2/test/SharpLink.Benchmarks/UnaryBenchmarks.cs). `PayloadSize` does not change this expression or its payload shape; the timestamp naturally varies between calls. These results establish an approximately 88–91% increase in the historical sender completion cost under this workload. They do not measure confirmed delivery, isolated receiver throughput, a payload-size effect, or per-request P99/P99.9. Profiled launches are excluded from these ratios.
 
 ### What the CPU profiles show
 
@@ -115,7 +115,7 @@ The final negative control injects 512 bytes per operation into `rpc-add-sharedm
 
 ### Current evidence and review decision
 
-The first complete comparison was started by [run 38329394037](https://github.com/SunSi12138/SharpLink/actions/runs/38329394037) for head `72c30a8b5399a43eb2ea6c6ce7aeb0f096ef26a4`. Results are **pending**. The final reviewed source SHA and its completed artifact must replace this provisional status before making a performance acceptance claim.
+The first comparison attempt was scheduled by [run 38329394037](https://github.com/SunSi12138/SharpLink/actions/runs/38329394037) for head `72c30a8b5399a43eb2ea6c6ce7aeb0f096ef26a4`. Its compile gate found two test-fixture constructor migrations, so the comparison job was skipped and produced no timing evidence. Results are **pending**. The final reviewed source SHA and its completed artifact must replace this provisional status before making a performance acceptance claim.
 
 The workflow uploads `issue775-performance-<sha>-<attempt>` with raw BenchmarkDotNet JSON, per-operation ticks, separate sender/receiver counts, allocation samples, build logs and provenance. `summary.json` retains base/head samples and ratios for throughput, receiver-completed throughput, tails, CPU, diagnostic allocation and drain time. `summary.md` presents the main comparisons. To independently validate a downloaded artifact:
 

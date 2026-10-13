@@ -69,7 +69,7 @@ def execute(command, root, directory, environment, timeout=300, expected_failure
         "expectedFailure": expected_failure,
         "environment": {key: environment.get(key) for key in (
             "DOTNET_PROCESSOR_COUNT", "DOTNET_TieredCompilation", "DOTNET_TieredPGO",
-            "SHARPLINK_BENCHMARK_SHA")},
+            "SHARPLINK_BENCHMARK_SHA", "SHARPLINK_ALLOCATION_BUDGETS", "SHARPLINK_ALLOCATION_OUTPUT")},
     }
     save(directory / "command.json", record)
     print(f"RUN {directory.name}: {' '.join(record['argv'])}", flush=True)
@@ -145,6 +145,7 @@ def main():
     if len(cpus) != 2:
         raise ValueError("Matched evidence requires two available CPUs")
     affinity = ["taskset", "-c", ",".join(map(str, cpus))]
+    canonical_environment = os.environ.copy()
     environment = os.environ.copy()
     environment.update(DOTNET_PROCESSOR_COUNT="2", DOTNET_TieredCompilation="1", DOTNET_TieredPGO="1")
     versions = {arm: subprocess.check_output(["dotnet", "--version"], cwd=root, text=True).strip()
@@ -154,10 +155,16 @@ def main():
     provenance.update(cpuAffinity=cpus, sdkVersions=versions,
                       configuration="Release", dotnetProcessorCount=2,
                       tieredCompilation=1, tieredPgo=1,
+                      allocationExecution={
+                          "entryPoint": "eng/run-allocation-gate.sh",
+                          "cpuAffinity": sorted(os.sched_getaffinity(0)),
+                          "environment": {key: canonical_environment.get(key) for key in (
+                              "DOTNET_PROCESSOR_COUNT", "DOTNET_TieredCompilation", "DOTNET_TieredPGO")},
+                          "scope": "Unmodified canonical CI environment; the two-CPU timing overrides do not apply to allocation gates."},
                       bdn={"launchCount": 3, "warmupCount": 6,
                            "iterationCount": 15, "invocationCount": 4096,
                            "parameterLabels": ["PayloadSize=16", "PayloadSize=256"],
-                           "parameterMeaning": "Both labels send identical OneWay arguments; neither is a payload-size comparison."})
+                           "parameterMeaning": "Both labels execute the same OneWay invocation expression; PayloadSize is unused by this method and the timestamp varies per call."})
     save(output / "provenance.json", provenance)
     execute(["dotnet", "--info"], roots["head"], output / "environment/dotnet", environment)
     execute(["lscpu"], roots["head"], output / "environment/cpu", environment)
@@ -189,19 +196,22 @@ def main():
                                       scenario, str(warmup), str(operations), str(case / "result.json")]
                 if not execute(command, root, case, environment, 120):
                     failures.append(f"{slot.name}/{case.name}")
-        command = affinity + ["dotnet", BENCHMARK, "--allocation-gate",
-                              "--budgets", str(root / "eng/perf/allocation-budgets.json"),
-                              "--output", str(slot / "allocation/result.json")]
-        if not execute(command, root, slot / "allocation", environment, 180):
+        gate_environment = canonical_environment.copy()
+        gate_environment.update(SHARPLINK_BENCHMARK_SHA=expected[arm],
+                                SHARPLINK_ALLOCATION_BUDGETS=str(root / "eng/perf/allocation-budgets.json"),
+                                SHARPLINK_ALLOCATION_OUTPUT=str(slot / "allocation/result.json"))
+        if not execute(["bash", "eng/run-allocation-gate.sh"], root,
+                       slot / "allocation", gate_environment, 180):
             failures.append(f"{slot.name}/allocation")
 
-    environment["SHARPLINK_BENCHMARK_SHA"] = expected["head"]
     negative = output / "negative-control"
-    command = affinity + ["dotnet", BENCHMARK, "--allocation-gate", "--filter", "rpc-add-sharedmemory-c1",
-                          "--inject-bytes-per-operation", "512",
-                          "--budgets", str(roots["head"] / "eng/perf/allocation-budgets.json"),
-                          "--output", str(negative / "result.json")]
-    if not execute(command, roots["head"], negative, environment, 120, expected_failure=True):
+    gate_environment = canonical_environment.copy()
+    gate_environment.update(SHARPLINK_BENCHMARK_SHA=expected["head"],
+                            SHARPLINK_ALLOCATION_BUDGETS=str(roots["head"] / "eng/perf/allocation-budgets.json"),
+                            SHARPLINK_ALLOCATION_OUTPUT=str(negative / "result.json"))
+    command = ["bash", "eng/run-allocation-gate.sh", "--filter", "rpc-add-sharedmemory-c1",
+               "--inject-bytes-per-operation", "512"]
+    if not execute(command, roots["head"], negative, gate_environment, 120, expected_failure=True):
         failures.append("allocation negative control did not fail")
     save(output / "execution-failures.json", failures)
     try:

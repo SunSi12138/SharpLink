@@ -48,7 +48,7 @@ public partial class SharpLinkServerInvocationTests
             var context = CreateInterceptedContext(server, connection, stub, requestId: 42);
 
             Ensure(stub.LookupCount == 1,
-                "interceptor context must reuse the descriptor resolved for stream reservation");
+                "interceptor context must capture the admitted descriptor exactly once");
             Ensure(context.Method == descriptor,
                 "interceptor context must expose the exact previously resolved descriptor");
             Ensure(context.RequestId == 42 && context.ConnectionId == session.Id,
@@ -110,13 +110,78 @@ public partial class SharpLinkServerInvocationTests
                     44L,
                     default(RpcDeadline),
                     null,
-                    CancellationToken.None
+                    CancellationToken.None,
+                    RpcMethodKind.Unary
                 ]) ?? throw new Exception("CreateCallContext returned null"));
 
             Ensure(stub.LookupCount == 0,
                 "no-interceptor fast path must not query method metadata");
             Ensure(ReferenceEquals(context, connection.DefaultCallContext),
                 "no-interceptor fast path must still reuse the default call context");
+        }
+        finally
+        {
+            await connection.CloseAsync();
+        }
+    }
+
+    [Test]
+    [Arguments(RpcMethodKind.ClientStreaming)]
+    [Arguments(RpcMethodKind.ServerStreaming)]
+    [Arguments(RpcMethodKind.DuplexStreaming)]
+    public async Task UninterceptedStreamMappingMustNotNeedACurrentRegistryEntry(RpcMethodKind kind)
+    {
+        var mapper = new CallContextRecordingMapper();
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(new IdleListener())
+            .UseExceptionMapper(mapper)
+            .Build();
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "stream-descriptor-without-current-registration",
+            input.Reader,
+            output.Writer,
+            RpcSessionTestFixture.ServerOptions());
+        var connection = CreateConnection(session);
+        Ensure(connection.MarkReady(null), "connection ready");
+
+        try
+        {
+            var descriptor = new RpcMethodDescriptor(
+                81, 17, kind,
+                HasResponsePayload: true,
+                HasClientStreams: kind != RpcMethodKind.ServerStreaming,
+                HasMethodTimeout: false,
+                MethodTimeout: null,
+                ClientStreamCount: kind != RpcMethodKind.ServerStreaming ? 1 : 0);
+            var stub = new CallContextCountingStub(descriptor, found: true);
+            var context = (SharpLinkServerInvocationContext)(CreateCallContextMethod.Invoke(
+                server,
+                [
+                    connection,
+                    stub,
+                    17L,
+                    45L,
+                    default(RpcDeadline),
+                    null,
+                    CancellationToken.None,
+                    kind
+                ]) ?? throw new Exception("CreateCallContext returned null"));
+
+            Ensure(stub.LookupCount == 1 && context.Method == descriptor,
+                "stream context must freeze its admitted descriptor without interceptors");
+            using (SharpLinkCallContext.Push(context))
+            {
+                server.MapStreamServiceException(connection.CallCancellations, session,
+                    45, descriptor.ContractId, descriptor.MethodId, new InvalidOperationException("stream failure"));
+            }
+            Ensure(ReferenceEquals(mapper.Context, context) && mapper.Context?.Method == descriptor,
+                "stream exception mapping must use the captured registration after its current entry disappears");
+            Ensure(stub.LookupCount == 1,
+                "mapping must not consult a generated descriptor again during retirement");
         }
         finally
         {
@@ -138,7 +203,8 @@ public partial class SharpLinkServerInvocationTests
                 requestId,
                 default(RpcDeadline),
                 null,
-                CancellationToken.None
+                CancellationToken.None,
+                RpcMethodKind.Unary
             ]) ?? throw new Exception("CreateCallContext returned null"));
 
     private sealed class CallContextTestInterceptor : ISharpLinkServerInterceptor
@@ -147,6 +213,17 @@ public partial class SharpLinkServerInvocationTests
             SharpLinkServerInvocationContext context,
             SharpLinkServerInvocationDelegate next)
             => next(context);
+    }
+
+    private sealed class CallContextRecordingMapper : IRpcExceptionMapper
+    {
+        internal SharpLinkServerInvocationContext? Context { get; private set; }
+
+        public SharpLinkException Map(Exception exception, SharpLinkServerInvocationContext context)
+        {
+            Context = context;
+            return new SharpLinkException(SharpLinkErrorCode.Internal, "Mapped stream failure.", exception);
+        }
     }
 
     private sealed class CallContextCountingStub(RpcMethodDescriptor descriptor, bool found) : IRpcStub

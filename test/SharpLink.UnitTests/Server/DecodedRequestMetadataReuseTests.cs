@@ -14,9 +14,10 @@ public sealed class DecodedRequestMetadataReuseTests
     public async Task DecodedEnvelopeShouldMatchOriginalParserAcrossBoundaries()
     {
         await using var session = CreateSession(ProtocolV2Capabilities.Metadata);
-        // Retains the independent corpus from the performance study. Every second
-        // parse below compares the original parser with the production ReadDecoded.
-        Ensure(Validate(session) == 2924, "the full differential corpus must run");
+        // Retains the independent corpus from the performance study and covers every added
+        // identity byte. The 36-byte routing prefix adds 600 truncation/mutation cases and four
+        // previously unavailable source splits to the original 2924-case corpus.
+        Ensure(Validate(session) == 3528, "the full differential corpus must run");
     }
 
     [Test]
@@ -182,7 +183,7 @@ public sealed class DecodedRequestMetadataReuseTests
         try
         {
             var envelope = action();
-            return $"{envelope.InterfaceHash}:{envelope.MethodHash}:{envelope.RpcDeadline.Timestamp}:" +
+            return $"{envelope.Identity}:{envelope.RpcDeadline.Timestamp}:" +
                    string.Join(";", envelope.Metadata?.Select(entry => $"{entry.Key}={entry.Value}") ?? []) +
                    ":" + Convert.ToHexString(envelope.Arguments.ToArray());
         }

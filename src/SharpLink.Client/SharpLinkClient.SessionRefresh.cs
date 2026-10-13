@@ -407,10 +407,9 @@ internal sealed partial class SharpLinkClient
                         {
                             CompleteSessionRefreshDebtLocked(
                                 _sessionRefreshDebt, source, publishedReplacement, processedRequest);
-                            // Deliberately place the deterministic cut hook before immutable snapshot
-                            // publication. A reader retaining the old source-only snapshot must redirect
-                            // through source admission to this already-Ready replacement instead of seeing
-                            // a transient Unavailable gap.
+                            // Keep the deterministic cut before contract-route publication. Calls
+                            // retaining the source-only route fail fast here; the replacement becomes
+                            // eligible only when its own identity is published with the new topology.
                             _afterSessionRefreshEligibilitySwapTestHook?.Invoke();
                             PublishReadySnapshotLocked();
                             published = true;

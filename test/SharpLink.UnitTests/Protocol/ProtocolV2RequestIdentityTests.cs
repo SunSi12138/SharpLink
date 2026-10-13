@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Binary;
 
 namespace SharpLink.UnitTests.Protocol;
 
@@ -104,6 +105,49 @@ public sealed class ProtocolV2RequestIdentityTests
         Ensure(actual == expected, "server identity comes from the connection handshake, independent of manifest broadcasts");
         Ensure(ProtocolV2Constants.MinimumCompatibleMinorVersion == 5,
             "the previous request format must not be negotiated");
+    }
+
+    [Test]
+    public void StreamAdmissionFrameMustBeEmptyUnflaggedAndRequestScoped()
+    {
+        var bytes = new byte[ProtocolV2Constants.HeaderBytes];
+        bytes[0] = ProtocolV2Constants.Magic;
+        bytes[5] = (byte)ProtocolV2FrameType.RequestAccepted;
+        BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(7), 19);
+        var limits = new SharpLinkProtocolOptions();
+        for (var split = 1; split < bytes.Length; split++)
+        {
+            var first = new Segment(bytes.AsMemory(0, split));
+            var last = first.Append(bytes.AsMemory(split));
+            var sequence = new ReadOnlySequence<byte>(first, 0, last, last.Memory.Length);
+            Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, limits, out var header, out var payload) &&
+                   header.Type == ProtocolV2FrameType.RequestAccepted && header.RequestId == 19 &&
+                   payload.IsEmpty && sequence.IsEmpty, "fragmented admission ACK retains its pending request identity");
+        }
+
+        var withPayload = new byte[bytes.Length + 1];
+        bytes.CopyTo(withPayload, 0);
+        BinaryPrimitives.WriteInt32LittleEndian(withPayload.AsSpan(1), 1);
+        ExpectInvalidFrame(withPayload);
+        bytes[6] = (byte)ProtocolV2FrameFlags.OneWay;
+        ExpectInvalidFrame(bytes);
+        bytes[6] = 0;
+        bytes.AsSpan(7).Clear();
+        ExpectInvalidFrame(bytes);
+    }
+
+    private static void ExpectInvalidFrame(byte[] bytes)
+    {
+        try
+        {
+            var sequence = new ReadOnlySequence<byte>(bytes);
+            _ = ProtocolV2FrameParser.TryReadFrame(ref sequence, new SharpLinkProtocolOptions(), out _, out _);
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            return;
+        }
+        throw new InvalidOperationException("Malformed stream admission frame was accepted.");
     }
 
     private static void ExpectViolation(ReadOnlyMemory<byte> bytes)

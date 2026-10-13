@@ -54,9 +54,7 @@ internal static class ContractRoutingEvidenceRunner
         };
         try
         {
-#if DEBUG
-            throw new InvalidOperationException("Contract routing performance evidence requires a Release build.");
-#endif
+            RequireReleaseBuild();
             var receiver = new BenchmarkRpcService();
             await using var environment = transport switch
             {
@@ -203,6 +201,13 @@ internal static class ContractRoutingEvidenceRunner
                 throw new TimeoutException($"OneWay receiver did not execute operation {expected} within ten seconds.");
             spin.SpinOnce();
         }
+    }
+
+    private static void RequireReleaseBuild()
+    {
+#if DEBUG
+        throw new InvalidOperationException("Contract routing performance evidence requires a Release build.");
+#endif
     }
 
     private static double Percentile(long[] ordered, double percentile)

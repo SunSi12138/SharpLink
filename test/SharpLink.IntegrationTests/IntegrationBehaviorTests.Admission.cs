@@ -326,7 +326,7 @@ public partial class IntegrationBehaviorTests
         var service = harness.Client.Get<ITestService>();
         var active = service.SlowAddWithoutTimeoutAsync(10, 1).AsTask();
         await Task.Delay(75);
-        var oversized = service.UploadAsync(ToAsyncEnumerable(
+        var oversized = EarlyClientStreamPeer.CreateProxy<ITestService>(harness.Client).UploadAsync(ToAsyncEnumerable(
             Enumerable.Range(1, 100), CancellationToken.None)).AsTask();
 
         // The initial request fits, then pre-admission stream frames exhaust the

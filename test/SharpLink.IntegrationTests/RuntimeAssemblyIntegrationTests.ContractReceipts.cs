@@ -10,8 +10,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     {
         using var previous = PluginBundle.Load("receipt-previous");
         using var replacement = PluginBundle.Load("receipt-replacement", replacement: true);
-        var previousIdentity = ReadPublicContractIdentity(previous.ContractType);
-        var replacementIdentity = ReadPublicContractIdentity(replacement.ContractType);
+        (long ContractId, RpcHash128 Hash) replacementIdentity = default;
         DynamicHarness? current = null;
         var controlService = new ManifestReadinessControl
         {
@@ -31,17 +30,21 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         };
         await using var harness = await DynamicHarness.CreateAsync(control: controlService);
         current = harness;
-        Ensure(harness.Client.RegisterAssembly(previous.ContractAssembly).Succeeded, "initial local registration");
-        Ensure(harness.Server.RegisterAssembly(previous.ContractAssembly).Succeeded, "initial server contract");
-        Ensure(harness.Server.RegisterAssembly(previous.ServiceAssembly).Succeeded, "initial server service");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await harness.Client.WaitForRemoteContractAsync(
-            previousIdentity.ContractId, previousIdentity.Hash, timeout.Token);
-        var oldProxy = GetProxy(harness.Client, previous.ContractType);
+        // Freeze all three runtimes before materializing collectible generated manifests.
+        // Manifest construction can bootstrap the process catalog for later builders.
         await using var control = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), harness.Port).Build();
         await control.ConnectAsync(timeout.Token);
         var controlProxy = control.CreateProxy<IManifestReadinessControl>();
+        var previousIdentity = ReadPublicContractIdentity(previous.ContractType);
+        replacementIdentity = ReadPublicContractIdentity(replacement.ContractType);
+        Ensure(harness.Client.RegisterAssembly(previous.ContractAssembly).Succeeded, "initial local registration");
+        Ensure(harness.Server.RegisterAssembly(previous.ContractAssembly).Succeeded, "initial server contract");
+        Ensure(harness.Server.RegisterAssembly(previous.ServiceAssembly).Succeeded, "initial server service");
+        await harness.Client.WaitForRemoteContractAsync(
+            previousIdentity.ContractId, previousIdentity.Hash, timeout.Token);
+        var oldProxy = GetProxy(harness.Client, previous.ContractType);
         var broadcastStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseBroadcast = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ((SharpLinkServer)harness.Server).ContractManifestPublishBarrierForTesting = () =>
@@ -129,8 +132,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     public async Task SameHashReplacementMustDistinguishMinimumVersionAndExactRegistration()
     {
         using var plugin = PluginBundle.Load("receipt-same-hash");
-        var identity = ReadPublicContractIdentity(plugin.ContractType);
         await using var harness = await DynamicHarness.CreateAsync();
+        var identity = ReadPublicContractIdentity(plugin.ContractType);
         Ensure(harness.Client.RegisterAssembly(plugin.ContractAssembly).Succeeded, "local contract registration");
         Ensure(harness.Server.RegisterAssembly(plugin.ContractAssembly).Succeeded, "server contract registration");
         var first = harness.Server.RegisterAssembly(plugin.ServiceAssembly).Receipts.Single(

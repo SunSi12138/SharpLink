@@ -35,7 +35,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task UnknownOneWayMethodShapeShouldTerminateInsteadOfStallingOversizedStream()
+    public async Task UnknownOneWayMethodShouldUseWireShapeToDrainOversizedStream()
     {
         OneWayInboundDrainService.Reset();
         await using var harness = await Harness.CreateAsync(options =>
@@ -50,18 +50,18 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
             var failure = await CaptureFailureAsync(send);
 
-            Ensure(failure is not null,
-                "an unresolved OneWay method shape should terminate the connection instead of completing successfully");
-            Ensure(failure is not TimeoutException,
-                "an unresolved OneWay method shape must not leave oversized client-stream data stalled behind receive flow control");
+            Ensure(failure is null,
+                "the bounded wire shape must drain unknown-method OneWay data beyond its window without acknowledging execution");
             Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
                 "an unresolved OneWay method must not invoke the service method");
         }
+        Ensure(await service.PingAsync(51).AsTask().WaitAsync(PhaseTimeout) == 52,
+            "the same connection remains usable after an unknown-method stream is discarded");
     }
 
     [Test]
     [NotInParallel]
-    public async Task UnknownOneWayMethodShapeShouldTerminateBeforeCompressedDecodeAndStreamWindowStalls()
+    public async Task UnknownOneWayMethodShouldDrainBeforeCompressedDecodeAndStreamWindowStalls()
     {
         OneWayInboundDrainService.Reset();
         var compression = new CorruptingCompressionProvider();
@@ -84,14 +84,14 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             Ensure(Volatile.Read(ref compression.CompressCount) > 0,
                 "the large OneWay request payload must use the negotiated compression provider");
             Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
-                "an unresolved OneWay method shape must terminate before invoking the request decompressor");
-            Ensure(failure is not null,
-                "an unresolved compressed OneWay shape should terminate the connection");
-            Ensure(failure is not TimeoutException,
-                "an unresolved compressed OneWay shape must not leave subsequent StreamData stalled behind receive flow control");
+                "an unresolved OneWay method must reject before invoking the request decompressor");
+            Ensure(failure is null,
+                "the wire shape allows compressed unknown-method OneWay data to drain without producer stalls");
             Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
                 "an unresolved compressed OneWay request must not invoke the service method");
         }
+        Ensure(await service.PingAsync(51).AsTask().WaitAsync(PhaseTimeout) == 52,
+            "discarding a compressed unknown-method request preserves the healthy connection");
     }
 
     private static async Task<Exception?> CaptureFailureAsync(Task operation)
@@ -230,6 +230,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 new OneWayInboundDrainService(),
                 ownsService: false,
                 module: module);
+            replacement.PublishReceipt(target.Value.Receipt);
             var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
             updated[target.Key] = replacement;
             ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
@@ -248,6 +249,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 new UnknownMethodShapeStub(target.Value.Stub.InterfaceHash),
                 new OneWayInboundDrainService(),
                 ownsService: false);
+            replacement.PublishReceipt(target.Value.Receipt);
             var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
             updated[target.Key] = replacement;
             ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
