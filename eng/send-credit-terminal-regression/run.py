@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/SendCreditTerminalAccountingTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/SendCreditTerminalAccountingTests/*"
 FOCUSED_COUNT = 1
-FULL_COUNT = 2173  # 2170 prior cases + 3 pooled admission-signal lifetime cases.
+FULL_COUNT = 2174  # 2170 prior cases + 3 admission-signal cases + 1 disabled-telemetry case.
 
 
 def digest(path):

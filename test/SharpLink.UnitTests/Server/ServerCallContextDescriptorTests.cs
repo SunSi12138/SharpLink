@@ -189,6 +189,40 @@ public partial class SharpLinkServerInvocationTests
         }
     }
 
+    [Test]
+    [NotInParallel]
+    public async Task DisabledServerTelemetryShouldNotResolveAnUnusedDescriptor()
+    {
+        await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
+            .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+            .DisableAutomaticServiceRegistration()
+            .UseTransport(new IdleListener())
+            .Build();
+        var input = new Pipe();
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "disabled-telemetry-descriptor", input.Reader, output.Writer,
+            RpcSessionTestFixture.ServerOptions());
+        var connection = CreateConnection(session);
+        Ensure(connection.MarkReady(null), "connection ready");
+        try
+        {
+            Ensure(!SharpLinkTelemetry.ServerCallsEnabled, "isolated test has no telemetry observers");
+            var stub = new CallContextCountingStub(new RpcMethodDescriptor(
+                81, 17, RpcMethodKind.OneWay, false, false, false, null), found: true);
+            var invoke = typeof(SharpLinkServer).GetMethod("InvokeServiceTrackedAsync",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            await (ValueTask)invoke.Invoke(server,
+                [stub, new object(), session, connection.GeneratedBridge, 17L, 46L,
+                 ReadOnlySequence<byte>.Empty, null, CancellationToken.None, connection.DefaultCallContext, null])!;
+            Ensure(stub.LookupCount == 0, "disabled telemetry must not resolve method metadata");
+        }
+        finally
+        {
+            await connection.CloseAsync();
+        }
+    }
+
     private static SharpLinkServerInvocationContext CreateInterceptedContext(
         SharpLinkServer server,
         ServerConnectionState connection,

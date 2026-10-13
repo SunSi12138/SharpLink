@@ -13,8 +13,9 @@ from run import BENCHMARK, PROJECT, SCENARIOS, digest, execute, git, save
 
 GROUPS = {
     "tcs": ["src/SharpLink.Client/PendingClientCall.cs"],
-    "full-context": ["src/SharpLink.Server/SharpLinkServer.cs", "src/SharpLink.Server/SharpLinkServer.Interceptors.cs"],
-    "repeat-descriptor": ["src/SharpLink.Server/SharpLinkServer.StreamEstablishment.cs",
+    "full-context": ["src/SharpLink.Server/SharpLinkServer.cs"],
+    "telemetry-and-static": ["src/SharpLink.Abstractions/SharpLinkTelemetry.cs",
+                          "src/SharpLink.Server/SharpLinkServer.StreamEstablishment.cs",
                           "src/SharpLink.Server/SharpLinkServer.InvocationContinuation.cs",
                           "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs"],
 }
@@ -49,6 +50,30 @@ def main():
         subprocess.run(["git", "-C", str(head), "worktree", "add", "--detach", str(root), commits["head"]], check=True)
         for relative in files:
             shutil.copyfile(previous / relative, root / relative)
+        # Two independent changes share Interceptors.cs. Undo exact non-overlapping
+        # fragments, not the whole file, so each experiment changes only its own factor.
+        interceptors = root / "src/SharpLink.Server/SharpLinkServer.Interceptors.cs"
+        code = interceptors.read_text()
+        replacements = []
+        if name == "full-context":
+            replacements = [
+                ("callContext is StreamCallContextSnapshot stream ? stream.Method : GetMethodDescriptor(stub, methodId)",
+                 "GetMethodDescriptor(stub, methodId)"),
+                ("""        if (SharpLinkCallContext.Current is StreamCallContextSnapshot stream)
+            return MapServiceException(exception, CreateServerInvocationContext(
+                session, stream.Method, stream.RequestId, stream.Authentication,
+                stream.LocalRpcDeadline, stream.DeadlineTimeProvider!, stream.Metadata, stream.CancellationToken));
+""", "")]
+        if name == "telemetry-and-static":
+            replacements = [("""        if (!SharpLinkTelemetry.ServerCallsEnabled)
+            return InvokeServiceCoreAsync(stub, service, session, generatedBridge, methodId, requestId,
+                arguments, output, cancellationToken, context);
+""", "")]
+        for old, new in replacements:
+            if code.count(old) != 1:
+                raise ValueError(f"Ablation fragment changed: {name}")
+            code = code.replace(old, new)
+        interceptors.write_text(code)
         patch = git(root, "diff", "--", "src")
         (output / (name + ".patch")).write_text(patch + "\n")
         roots[name] = root

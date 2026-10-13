@@ -24,7 +24,7 @@ BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 CORE_FILTER = "/*/*/HostingBuilderRegistrationTests/Repeated*"
 HEALTH_FILTER = "/*/*/HostingBuilderRegistrationTests/PreRegistered*"
 ALL_FILTER = "/*/*/HostingBuilderRegistrationTests/*"
-FULL_COUNT = 2173  # 2170 prior cases + 3 pooled admission-signal lifetime cases.
+FULL_COUNT = 2174  # 2170 prior cases + 3 admission-signal cases + 1 disabled-telemetry case.
 
 
 def digest(path):

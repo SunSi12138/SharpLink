@@ -293,6 +293,9 @@ internal sealed partial class SharpLinkServer
         SharpLinkCallContextSnapshot context,
         RpcMethodDescriptor? methodDescriptor = null)
     {
+        if (!SharpLinkTelemetry.ServerCallsEnabled)
+            return InvokeServiceCoreAsync(stub, service, session, generatedBridge, methodId, requestId,
+                arguments, output, cancellationToken, context);
         var telemetry = StartServerTelemetryCall(
             methodDescriptor ?? GetMethodDescriptor(stub, methodId), requestId);
         try

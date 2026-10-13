@@ -17,7 +17,7 @@ JIT_METHODS = " ".join((
     "*SharpLinkContractRpcChannel:InvokeOneWay*", "*ClientContractRouteTable:TryGetRoute*",
     "*ClientContractRoute:SelectConnection*", "*ProtocolV2RequestIdentityCodec:*",
     "*PendingCall:*", "*RequestAdmissionWaiter:*", "*SharpLinkServer:CreateCallContext*",
-    "*SharpLinkServer:InvokeAdmittedServiceAsync*", "*StreamCallContextSnapshot:*",
+    "*SharpLinkServer:InvokeAdmittedServiceAsync*", "*SharpLinkServer:InvokeServiceTrackedAsync*", "*StreamCallContextSnapshot:*",
     "*ServerContractAdmission:*", "*DecodedRequestEnvelope:*", "*ServerRequestEnvelopeReader:Read*",
 ))
 
