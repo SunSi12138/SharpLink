@@ -16,6 +16,8 @@ JIT_METHODS = " ".join((
     "*SharpLinkClient:SendRpcCall*", "*SharpLinkClient:InvokeOneWay*", "*InvokeOneWayPlainCoreAsync*:MoveNext",
     "*SharpLinkContractRpcChannel:InvokeOneWay*", "*ClientContractRouteTable:TryGetRoute*",
     "*ClientContractRoute:SelectConnection*", "*ProtocolV2RequestIdentityCodec:*",
+    "*PendingCall:*", "*RequestAdmissionWaiter:*", "*SharpLinkServer:CreateCallContext*",
+    "*SharpLinkServer:InvokeAdmittedServiceAsync*", "*StreamCallContextSnapshot:*",
     "*ServerContractAdmission:*", "*DecodedRequestEnvelope:*", "*ServerRequestEnvelopeReader:Read*",
 ))
 
@@ -108,6 +110,30 @@ def main():
                        for path in logs if path.exists())
         if listings == 0:
             failures.append(f"{arm}: no JIT assembly was captured")
+    # Short-stream CPU captures and JIT processes are separate from unprofiled ablations.
+    stream_common = ["dotnet", "run", "--project", PROJECT, "-c", "Release", "--no-build", "--no-restore",
+                     "--", "--filter", "*StreamingBenchmarks.Rpc_ClientStreamUpload*", "*StreamingBenchmarks.Rpc_DuplexStream*",
+                     "--launchCount", "1", "--warmupCount", "3", "--iterationCount", "6", "--invocationCount", "1024",
+                     "--exporters", "json", "--keepFiles", "--buildTimeout", "180"]
+    for index, arm in enumerate(ORDER, 1):
+        slot = output / "stream-profiles" / f"{index:02d}-{arm}"
+        environment["SHARPLINK_BENCHMARK_SHA"] = commits[arm]
+        if not execute(affinity + stream_common + ["--profiler", "EP", "--artifacts", str(slot / "bdn")],
+                       roots[arm], slot, environment, 360):
+            failures.append(f"{slot.name}: stream CPU profiler failed")
+        if not list(slot.rglob("*.nettrace")) or not list(slot.rglob("*.speedscope.json")):
+            failures.append(f"{slot.name}: missing stream CPU trace")
+    for arm, root in roots.items():
+        directory = output / "stream-disassembly" / arm
+        jit_environment = environment.copy()
+        jit_environment.update(SHARPLINK_BENCHMARK_SHA=commits[arm],
+                               DOTNET_JitDisasm=JIT_METHODS, DOTNET_JitDisasmDiffable="1")
+        if not execute(affinity + stream_common + ["--artifacts", str(directory / "bdn")],
+                       root, directory, jit_environment, 360):
+            failures.append(f"{arm}: stream JIT diagnostic failed")
+        logs = list(directory.rglob("*.log"))
+        if not any("Assembly listing for method" in path.read_text(errors="replace") for path in logs):
+            failures.append(f"{arm}: missing stream JIT assembly")
     try:
         summarize_profiles(output)
     except Exception as error:

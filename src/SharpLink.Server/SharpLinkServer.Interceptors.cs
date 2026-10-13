@@ -582,7 +582,7 @@ internal sealed partial class SharpLinkServer
         var invocationContext = callContext as SharpLinkServerInvocationContext ??
             CreateServerInvocationContext(
                 session,
-                GetMethodDescriptor(stub, methodId),
+                callContext is StreamCallContextSnapshot stream ? stream.Method : GetMethodDescriptor(stub, methodId),
                 requestId,
                 callContext.Authentication,
                 callContext.LocalRpcDeadline,
@@ -644,6 +644,10 @@ internal sealed partial class SharpLinkServer
 
         if (SharpLinkCallContext.Current is SharpLinkServerInvocationContext context)
             return MapServiceException(exception, context);
+        if (SharpLinkCallContext.Current is StreamCallContextSnapshot stream)
+            return MapServiceException(exception, CreateServerInvocationContext(
+                session, stream.Method, stream.RequestId, stream.Authentication,
+                stream.LocalRpcDeadline, stream.DeadlineTimeProvider!, stream.Metadata, stream.CancellationToken));
         if (SharpLinkCallContext.Current is { } callContext &&
             Volatile.Read(ref _services).TryGetValue(contractId, out var serviceInfo))
         {

@@ -158,7 +158,7 @@ public partial class SharpLinkServerInvocationTests
                 MethodTimeout: null,
                 ClientStreamCount: kind != RpcMethodKind.ServerStreaming ? 1 : 0);
             var stub = new CallContextCountingStub(descriptor, found: true);
-            var context = (SharpLinkServerInvocationContext)(CreateCallContextMethod.Invoke(
+            var context = (StreamCallContextSnapshot)(CreateCallContextMethod.Invoke(
                 server,
                 [
                     connection,
@@ -178,7 +178,7 @@ public partial class SharpLinkServerInvocationTests
                 server.MapStreamServiceException(connection.CallCancellations, session,
                     45, descriptor.ContractId, descriptor.MethodId, new InvalidOperationException("stream failure"));
             }
-            Ensure(ReferenceEquals(mapper.Context, context) && mapper.Context?.Method == descriptor,
+            Ensure(mapper.Context?.Method == descriptor && mapper.Context.RequestId == context.RequestId,
                 "stream exception mapping must use the captured registration after its current entry disappears");
             Ensure(stub.LookupCount == 1,
                 "mapping must not consult a generated descriptor again during retirement");

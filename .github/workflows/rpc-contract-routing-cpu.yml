@@ -24,9 +24,9 @@ concurrency:
 jobs:
   cpu-and-disassembly:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
-      PROFILE_BASE: '3332559cf4db455e0249448cf16ad43f4fc36564'
+      PROFILE_BASE: '2149ca799dca38bcb7f97583572406b0d0b41890'
       PROFILE_HEAD: ${{ inputs.candidate_sha || github.sha }}
     steps:
       - name: Checkout diagnostic driver at the workflow SHA

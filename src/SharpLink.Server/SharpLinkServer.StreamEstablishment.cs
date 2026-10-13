@@ -11,8 +11,16 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        RpcMethodKind admittedKind,
+        int admittedClientStreamCount)
     {
+        // The wire shape was already checked against this retained registration before decoding.
+        // Ordinary static calls need neither stream reservation nor another descriptor lookup.
+        if (!registration.HasModule && admittedClientStreamCount == 0 &&
+            admittedKind is RpcMethodKind.Unary or RpcMethodKind.OneWay)
+            return InvokeRegisteredServiceAsync(registration, connection, session, methodId, requestId,
+                arguments, output, cancellationToken, context, moduleLeaseRetained: true);
         var descriptor = GetMethodDescriptor(registration.Stub, methodId);
         if (descriptor.Kind != RpcMethodKind.OneWay)
         {

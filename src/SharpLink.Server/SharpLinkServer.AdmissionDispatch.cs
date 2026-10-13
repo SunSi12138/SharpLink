@@ -379,7 +379,9 @@ internal sealed partial class SharpLinkServer
                     request.Arguments,
                     output: null,
                     invokeToken,
-                    callContext);
+                    callContext,
+                    request.Identity.Kind,
+                    request.Identity.ClientStreamCount);
                 if (invokeTask.IsCompletedSuccessfully)
                 {
                     if (callContext is SharpLinkServerInvocationContext

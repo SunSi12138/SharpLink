@@ -181,9 +181,14 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     {
         var session = connection.Session;
         var interceptors = Volatile.Read(ref _serverInterceptorGeneration);
-        if (interceptors.Count == 0 && kind is not (RpcMethodKind.ClientStreaming or
-                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming))
-            return connection.GetCallContextSnapshot(deadline, metadata);
+        if (interceptors.Count == 0)
+        {
+            if (kind is not (RpcMethodKind.ClientStreaming or RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming))
+                return connection.GetCallContextSnapshot(deadline, metadata);
+            return new StreamCallContextSnapshot(session.Id, connection.AuthenticationContext,
+                deadline, _runtimeContext.TimeProvider, metadata, GetMethodDescriptor(stub, methodId),
+                requestId, cancellationToken);
+        }
 
         // A stream keeps the admitted descriptor for its entire lifetime, including exception
         // mapping after a replacement. The dispatch entry separately reserves its receive routes

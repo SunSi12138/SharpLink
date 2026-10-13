@@ -14,7 +14,7 @@ internal sealed class PendingCall
     private int _registered;
     private bool _requestPublished;
     private bool _requestAccepted;
-    private TaskCompletionSource<bool>? _requestAdmission;
+    private RequestAdmissionWaiter? _requestAdmission;
 
     public object CompletionGate { get; } = new();
 
@@ -47,21 +47,21 @@ internal sealed class PendingCall
     public ValueTask<bool> WaitForRequestAdmissionAsync()
         => _requestAccepted
             ? ValueTask.FromResult(true)
-            : new ValueTask<bool>((_requestAdmission ??= new(TaskCreationOptions.RunContinuationsAsynchronously)).Task);
+            : (_requestAdmission ??= RequestAdmissionWaiter.Rent()).WaitAsync();
 
     public bool TryAcceptRequest()
     {
         if (_requestAccepted)
             return false;
         _requestAccepted = true;
-        _requestAdmission?.TrySetResult(true);
+        _requestAdmission?.Complete(true);
         _requestAdmission = null;
         return true;
     }
 
     public void RejectRequestAdmission()
     {
-        _requestAdmission?.TrySetResult(false);
+        _requestAdmission?.Complete(false);
         _requestAdmission = null;
     }
 
