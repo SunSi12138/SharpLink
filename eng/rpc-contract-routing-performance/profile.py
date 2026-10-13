@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture diagnostic CPU stacks and JIT output for an already observed production pair."""
+"""Capture diagnostic CPU stacks and JIT output for an exact production pair."""
 
 import argparse
 import os

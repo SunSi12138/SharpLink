@@ -125,7 +125,7 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 ### Proxy 与 endpoint 语义
 
-- Add 后新 `Get<T>()` 选择新 slot；若调用要求立即远端可用，应先显式 `WaitForReadyAsync(cluster)`。
+- Add 后新 `CreateProxy<T>()` / `Get<T>()` 在本地选择新 slot，不要求远端 Ready。若需要观察连接就绪，可显式 `WaitForReadyAsync(cluster)`；该观察不保证随后 RPC 成功，调用仍按当前 Picker 资格执行或 FailFast。
 - Replace 后新 `Get<T>()` 绑定新 child；Replace 前缓存的 Proxy 继续绑定旧 child，并在旧 child开始停止后拒绝新调用。
 - Remove 后新 `Get<T>()` 立即失败；旧 Proxy 最终观察到 child 已停止。
 - 不自动重绑定旧 Proxy，因此 RPC 热路径没有 coordinator 查询或额外的 slot indirection。

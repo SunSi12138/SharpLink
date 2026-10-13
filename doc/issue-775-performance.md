@@ -1,6 +1,6 @@
 # Issue #775 contract routing performance evidence
 
-Status: the historical #802 regression has been independently reproduced from retained raw evidence. Three complete new comparisons still show approximately 24–30% greater OneWay sender cost and slower receiver-completed throughput. CPU samples and emitted assembly identify concrete serialization and copying work for follow-up; they do not establish the full regression's cause. Attribution and performance acceptance remain open. Successful compilation or successful benchmark execution alone is not a performance acceptance decision.
+Status: the historical #802 investigation and the candidate comparison are complete. Exact production head `b806d892ef9d204f823e7bdafad23ef835859afd` passes the original execution, allocation and canonical verification gates described below. The candidate removes demonstrated redundant ordinary-path copies and parsing. It still costs approximately 18% more per OneWay sender call and retains receiver-throughput, short-stream latency and diagnostic allocation increases. The implementation is ready for review with those measured costs explicit; baseline performance parity and a merge-time performance acceptance decision are not claimed.
 
 This document separates sender queue completion, receiver business execution, request latency, and allocation. It records the investigation requested by [issue #775](https://github.com/SunSi12138/SharpLink/issues/775) and the reproducible evidence for the new implementation in [PR #861](https://github.com/SunSi12138/SharpLink/pull/861).
 
@@ -209,16 +209,105 @@ This job ran on an AMD EPYC 7763 host with four available logical CPUs, while th
 
 Final receiver-completed OneWay batch throughput is **182,727.8 to 142,803.9 op/s on TCP (0.7815×)** and **166,424.6 to 133,804.2 op/s on SharedMemory (0.8040×)**. Short client-stream and duplex workloads also remain slower: throughput ratios are 0.7383 and 0.7661 on TCP, and 0.6619 and 0.6488 on SharedMemory. SharedMemory client-stream P99 is 421.960 to 1,109.441 microseconds, and duplex P99 is 1,016.341 to 1,826.042 microseconds. All original per-slot P50/P99/P99.9 samples remain in the artifact, including the highly variable extreme tails. Successful execution and allocation gates do not accept these timing regressions.
 
-The next source candidate specializes ordinary identity writing, isolates receipt-only work, publishes client routes atomically, and reuses already parsed identity on immediate admitted dispatch. These changes are motivated by the emitted work and a separately reproduced publication race. Their performance effect is not yet measured. The CPU workflow now defaults to the exact workflow SHA, with an optional exact SHA override, so the next explicitly triggered capture can verify the candidate's emitted work against the same frozen base. Profiled timings remain diagnostic only.
+The subsequent `b806d892` source candidate specializes ordinary identity writing, isolates receipt-only work, publishes client routes atomically, and reuses already parsed identity on immediate admitted dispatch. These changes are motivated by the emitted work and a separately reproduced publication race. The diagnostic and unprofiled candidate results below evaluate them separately. The CPU workflow defaults to the exact workflow SHA, with an optional exact SHA override. Profiled timings remain diagnostic only.
+
+### Candidate `b806d892`: verified removal of redundant ordinary-path work
+
+The candidate production SHA is `b806d892ef9d204f823e7bdafad23ef835859afd`. [CPU attribution run 38332967392](https://github.com/SunSi12138/SharpLink/actions/runs/38332967392), job `115086643732`, compared this exact source against the same frozen `3332559` base. Artifact `11783637137` has verified ZIP SHA-256 `90889f8fa48ba085bb68c609f5f7b3ff79cb398947fefb38fedc3a4ea4a72a53`. It retains all eight EventPipe traces, their stack projections and independent JIT processes. Both this and the prior CPU capture report AMD EPYC 7763 hosts; this does not establish that separate CI jobs occupied the same physical machine.
+
+The emitted methods are again Tier0. The concrete publication `SendRpcCall` now reserves **512 bytes**, compared with **816 bytes** in the previous head and **528 bytes** in the frozen base. Its emitted code is **2,007 bytes**, compared with 2,242 and 1,922 bytes respectively. The ordinary branch tests `HasReceipt`, calls the scalar `WriteOrdinary`, and no longer calls the nullable receipt getter or constructs a full `ProtocolV2RequestIdentity`. The previous 88-byte nullable constructor-argument copy has disappeared. The receipt-specific construction remains in a separate non-inlined helper for explicit receipt calls. `WriteOrdinary` reserves 96 bytes and emits 177 bytes of code; its shape validator and scalar prefix writer remain separate visible methods.
+
+The route check also tests `HasReceipt` before entering the receipt-specific branch. This avoids the ordinary route's nullable receipt getter/value copy. It does not imply that every route stack frame has lost all space used by receipt-only locals: the shared route helper still includes both branches.
+
+The immediate admitted server path now emits `ReadAfterIdentity` followed by `ReadRemainder`. Neither method calls the identity codec; the original outer parse remains. Their stack reservations are 320 and 816 bytes respectively, versus the previous combined reader's 1,712-byte frame. Queue-resume and decompression paths still use their full parse wrappers against their retained owners. This is direct evidence that the additional immediate-path identity parse was removed, while source and differential tests preserve those ownership boundaries. It is not a measurement of the total performance benefit.
+
+The first published candidate CPU summary's identity-write category matched only the old `Write` and `Validate` method names, so its zero for that column omitted the new scalar helpers. The corrected parser explicitly includes `WriteOrdinary`, `WritePrefix`, and `ValidateShape`, and reprocesses the same raw exports without resampling. The corrected candidate sender identity-helper shares are **1.09–2.76%**. All prior `dd0881ae` profile row values are unchanged by this mapping correction. Candidate sender queue-slowpath shares are 41.05–61.85%, route/call-control shares 4.01–11.04%, and whole-capture server identity-read shares 3.11–4.89%. These category shares retain the same overlapping-subtree, capture-phase, sampling and Tier0 limitations; none is substituted for the unprofiled timing result.
+
+The existing [RPC Session Flush Performance Evidence run 38332972058](https://github.com/SunSi12138/SharpLink/actions/runs/38332972058), job `115086657557`, now completes all static-base, runtime-no-update and post-update scenarios without the preceding head's warmup `No eligible connection` failure. The benchmark's connection setup, timed payloads, flush policies, operation counts and waits were unchanged. This supplies additional real-TCP coverage for the atomic route-publication fix. Its separate baseline is current dev `1a54993d3550911f5979a7b4d3f9f5f63ee86a64`, so its timing rows are not mixed into the frozen-`3332559` comparison.
+
+The existing [Producer Progress RPC Evidence run 38332971198](https://github.com/SunSi12138/SharpLink/actions/runs/38332971198), job `115086654879`, also completed its separate current-dev-to-`b806d892` stream workload. Artifact `11783363935` retains 168 result documents: six AB/BA pairs, seven generated-stream scenarios, two transports, 50 warmup operations and two-second measurement windows. Completion and correctness checks pass, but this workflow has no numerical throughput acceptance threshold. Thirteen of its fourteen transport/scenario aggregate throughput comparisons are negative. For `Client100x16`, TCP throughput is down 12.69% and SharedMemory throughput is down 23.62%, with CPU/op up 19.95% and 29.22% respectively. The SharedMemory gated scenario is up 6.08%. Process-wide allocation remains a separate diagnostic quantity. This corroborating stream evidence does not cover OneWay or Unary, does not replace the fixed-baseline matrix, and is not presented as a claim of regression-free performance.
+
+### Final candidate matched measurement: `b806d892`
+
+[Run 38332967385](https://github.com/SunSi12138/SharpLink/actions/runs/38332967385), matched-performance job `115087019017`, completed successfully for exact head `b806d892ef9d204f823e7bdafad23ef835859afd` against frozen base `3332559cf4db455e0249448cf16ad43f4fc36564`. Artifact `11784251516` has verified ZIP SHA-256 `03500cb9fb53ddc02c4956d0138b13c8f4bc611d580f8ff92d44d7a2f5c76e62`. The host is AMD EPYC 7763, with the same two-CPU timing affinity and runtime settings for both arms. Independent parsing validates all eight slots, **1,261,568 focused RPC operations**, **2,949,120 BDN sender calls**, and **563,840 canonical allocation operations**, including every expected process exit and completion boundary.
+
+| BDN inherited label | Base ns/queued call | Candidate ns/queued call | Candidate/base |
+|---|---:|---:|---:|
+| `PayloadSize=16` | 2,718.412 | 3,214.402 | **1.18246** |
+| `PayloadSize=256` | 2,718.427 | 3,205.841 | **1.17930** |
+
+Every candidate slot median still exceeds every base slot median for both labels. The approximately **18% sender regression remains measured**. Its ratio is smaller than the earlier candidates' ratios, but the candidate contains several changes and runs in a separate job; this comparison does not isolate the timing benefit of one optimization. The assembly evidence establishes removed work, while the matched timing establishes the remaining end-to-end cost.
+
+| Transport/scenario | Base op/s | Candidate op/s | Candidate/base | Base P99 us | Candidate P99 us | Base P99.9 us | Candidate P99.9 us |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| TCP Unary | 8,393.1 | 7,867.1 | 0.9373 | 199.608 | 207.002 | 252.677 | 288.694 |
+| TCP OneWay sender | 252,779.1 | 226,720.3 | 0.8969 | 11.757 | 16.181 | 31.029 | 32.385 |
+| TCP OneWay receiver | 3,532.2 | 3,437.8 | 0.9733 | 1,111.057 | 1,111.337 | 1,176.519 | 1,171.879 |
+| TCP client streaming | 2,602.1 | 1,821.7 | 0.7001 | 467.511 | 702.748 | 516.431 | 966.240 |
+| TCP server streaming | 2,717.5 | 2,959.3 | 1.0890 | 616.391 | 442.067 | 1,218.492 | 514.024 |
+| TCP duplex | 1,976.4 | 1,200.8 | 0.6076 | 731.778 | 1,627.792 | 1,059.625 | 3,491.256 |
+| SharedMemory Unary | 6,798.3 | 6,666.3 | 0.9806 | 306.518 | 311.022 | 423.587 | 464.368 |
+| SharedMemory OneWay sender | 219,166.2 | 227,433.3 | 1.0377 | 14.843 | 16.616 | 30.733 | 32.090 |
+| SharedMemory OneWay receiver | 2,375.4 | 2,507.2 | 1.0555 | 1,115.495 | 1,115.850 | 1,192.088 | 1,171.874 |
+| SharedMemory client streaming | 2,921.2 | 1,959.4 | 0.6708 | 407.797 | 927.004 | 457.722 | 1,446.248 |
+| SharedMemory server streaming | 3,219.5 | 2,851.5 | 0.8857 | 576.582 | 640.390 | 1,578.860 | 1,407.434 |
+| SharedMemory duplex | 1,714.3 | 1,260.7 | 0.7354 | 1,424.878 | 1,824.561 | 2,735.888 | 3,122.801 |
+
+These tails are per-request observations, not BDN iteration tails. Four samples per arm remain available for each metric; 1,024-operation stream samples provide limited extreme-tail resolution. Client-stream and duplex throughput and tails remain material review items. The server-stream results vary by transport, so a single favorable row cannot represent all stream shapes.
+
+| OneWay sender workload through final business completion | Base op/s | Candidate op/s | Candidate/base | Base final drain ms | Candidate final drain ms |
+|---|---:|---:|---:|---:|---:|
+| TCP | 183,494.6 | 158,749.1 | 0.8651 | 95.787 | 123.626 |
+| SharedMemory | 168,902.5 | 148,876.2 | 0.8814 | 93.426 | 149.213 |
+
+The favorable SharedMemory sender-only row does not erase slower final business completion. TCP and SharedMemory batch receiver throughput remain approximately 13.5% and 11.9% lower respectively. The per-request receiver-barrier scenario has different pacing and likewise cannot replace this batch observation.
+
+All **32 unchanged canonical allocation cases pass** their five-sample median and spread limits. The 512-byte injected negative control fails as required at **1,876.308 B/op against 1,450 B/op**. The median of each arm's four slot medians is:
+
+| Canonical allocation case | Base B/completed op | Candidate B/completed op | Delta B/op |
+|---|---:|---:|---:|
+| `rpc-add-sharedmemory-c1` | 1,336.837 | 1,350.594 | +13.757 |
+| `rpc-add-sharedmemory-c8` | 549.355 | 556.275 | +6.920 |
+| `rpc-oneway-sharedmemory-c1` | 800.444 | 800.444 | +0.000 |
+| `send-pump-idle-wake-balanced` | 616.640 | 616.572 | -0.068 |
+
+The focused workloads additionally retain process-wide CPU and allocation through their documented business-completion boundary. These measurements include both endpoints and their in-process harness. They are diagnostic, not replacements for the canonical policy:
+
+| Transport/scenario | Base CPU us/completed op | Candidate CPU us/completed op | Base diagnostic B/completed op | Candidate diagnostic B/completed op |
+|---|---:|---:|---:|---:|
+| TCP Unary | 237.657 | 253.671 | 489.111 | 489.122 |
+| TCP OneWay sender | 9.415 | 10.657 | 518.598 | 890.526 |
+| TCP OneWay receiver | 230.191 | 238.989 | 168.633 | 168.316 |
+| TCP client streaming | 768.708 | 1,091.345 | 7,523.496 | 9,011.887 |
+| TCP server streaming | 726.434 | 664.408 | 1,552.145 | 1,745.301 |
+| TCP duplex | 1,010.178 | 1,656.307 | 9,566.480 | 10,999.977 |
+| SharedMemory Unary | 293.613 | 298.985 | 1,518.569 | 1,484.229 |
+| SharedMemory OneWay sender | 10.352 | 11.542 | 700.145 | 985.252 |
+| SharedMemory OneWay receiver | 327.183 | 315.323 | 776.016 | 776.740 |
+| SharedMemory client streaming | 684.496 | 1,017.926 | 9,206.023 | 11,262.027 |
+| SharedMemory server streaming | 623.727 | 697.102 | 3,088.875 | 3,326.586 |
+| SharedMemory duplex | 1,160.514 | 1,582.671 | 11,906.141 | 14,434.246 |
+
+The long 65,536-call OneWay sender workload and the 32-item stream workloads show diagnostic allocation increases even though the canonical 4,000-operation OneWay case is unchanged. These are different workloads and completion windows. The canonical pass must not be used to erase the burst/stream observations; the diagnostic differences must not be attributed to a new allocation in a particular client or server method without allocation-stack evidence.
 
 ### Current evidence and review decision
 
-The earlier [run 38329394037](https://github.com/SunSi12138/SharpLink/actions/runs/38329394037) for head `72c30a8b5399a43eb2ea6c6ce7aeb0f096ef26a4` stopped at two test-fixture constructor migrations and produced no timing evidence. The first complete comparison above identifies remaining regressions. The final reviewed source SHA, completed artifact and explicit disposition of those regressions are still required before making a performance acceptance claim.
+**Disposition: ready for review with explicit remaining performance costs.** Historical raw evidence has been independently reproduced; the suspected Manifest-only explanation was not adopted; current sender, receiver, all five RPC shapes, tails and allocation are measured separately; and the candidate's targeted removal of redundant work is confirmed in emitted Tier0 assembly. No original queue, allocation or regression limit was weakened. The complete candidate evidence run also passes its compilation, regression, public API, NativeAOT, Trim, package, generated ABI and protocol compatibility jobs. All of those results identify exact production head `b806d892ef9d204f823e7bdafad23ef835859afd`.
 
-The workflow uploads `issue775-performance-<sha>-<attempt>` with raw BenchmarkDotNet JSON, per-operation ticks, separate sender/receiver counts, allocation samples, build logs and provenance. `summary.json` retains base/head samples and ratios for throughput, receiver-completed throughput, tails, CPU, diagnostic allocation and drain time. `summary.md` presents the main comparisons. To independently validate a downloaded artifact:
+Performance equivalence to baseline is **not** established. The merge review must explicitly consider the approximately 18% OneWay sender cost, lower receiver-completed batch throughput, short client-stream/duplex throughput and tail changes, and the diagnostic burst/stream allocation increases above. Earlier failures, different execution environments and slower rows remain in this document and their artifacts. Passing execution and allocation gates establishes those defined checks; it does not silently accept every throughput or tail result.
+
+Client-stream and duplex producers now wait for service acceptance before advancing. That ordering implements the issue's required failure semantics and adds a synchronization boundary compared with the baseline. The whole-implementation comparisons do not isolate how much of each stream ratio comes from that boundary versus other admission, serialization or scheduling work. Removing the required acceptance ordering is not proposed as a performance fix. Further optimizations must preserve the service's pre-business checks and the stream/session ownership boundaries.
+
+The earlier [run 38329394037](https://github.com/SunSi12138/SharpLink/actions/runs/38329394037) for head `72c30a8b5399a43eb2ea6c6ce7aeb0f096ef26a4` stopped at two test-fixture constructor migrations and produced no timing evidence. The later complete runs above supersede that execution failure without concealing it.
+
+The workflow uploads `issue775-performance-<sha>-<attempt>` with raw BenchmarkDotNet JSON, per-operation ticks, separate sender/receiver counts, allocation samples, build logs and provenance. `summary.json` retains all base/head samples and ratios; `summary.md` presents the main comparisons. To independently validate a downloaded artifact:
 
 ```bash
 python3 eng/rpc-contract-routing-performance/summarize.py /path/to/performance-artifact
 ```
 
-Review must account for every RPC shape and both transports. In particular, client-stream and duplex calls now wait for stream acceptance before advancing producers; short-stream measurements must retain the actual cost of that ordering. A persistent regression requires investigation against the unchanged control workload, including sender/receiver pacing and queue contention when indicated by the old profiles. Passing the execution and allocation checks establishes evidence integrity; the measured throughput and tail ratios still require an explicit, source-matched performance decision.
+To reproduce CPU category weights, including the corrected scalar identity-helper mapping, use the retained raw CPU artifact:
+
+```bash
+python3 eng/rpc-contract-routing-performance/profile_summary.py /path/to/cpu-artifact
+```
