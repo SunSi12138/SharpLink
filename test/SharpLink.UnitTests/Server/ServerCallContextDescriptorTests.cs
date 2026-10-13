@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Reflection;
 using System.Threading;
@@ -193,6 +194,8 @@ public partial class SharpLinkServerInvocationTests
     [NotInParallel]
     public async Task DisabledServerTelemetryShouldNotResolveAnUnusedDescriptor()
     {
+        if (await RunDisabledTelemetryProbeProcessAsync())
+            return;
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
             .DisableAutomaticServiceRegistration()
@@ -221,6 +224,41 @@ public partial class SharpLinkServerInvocationTests
         {
             await connection.CloseAsync();
         }
+    }
+
+    private static async Task<bool> RunDisabledTelemetryProbeProcessAsync()
+    {
+        const string probe = "SHARPLINK_DISABLED_TELEMETRY_PROBE";
+        if (Environment.GetEnvironmentVariable(probe) == "1")
+            return false;
+        // Process-wide observers from other fixtures can outlive their test's scheduling slot.
+        // A fresh filtered process validates the real disabled branch without changing telemetry.
+        var start = new ProcessStartInfo
+        {
+            FileName = Environment.ProcessPath!,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        if (string.Equals(Path.GetFileNameWithoutExtension(start.FileName), "dotnet", StringComparison.OrdinalIgnoreCase))
+            start.ArgumentList.Add(typeof(SharpLinkServerInvocationTests).Assembly.Location);
+        start.ArgumentList.Add("--treenode-filter");
+        start.ArgumentList.Add("/*/*/SharpLinkServerInvocationTests/DisabledServerTelemetryShouldNotResolveAnUnusedDescriptor");
+        start.Environment[probe] = "1";
+        using var child = Process.Start(start) ?? throw new InvalidOperationException("Cannot start telemetry probe.");
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        try
+        {
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            Ensure(child.ExitCode == 0, "isolated telemetry probe: " + await stdout + await stderr);
+        }
+        finally
+        {
+            if (!child.HasExited)
+                child.Kill(entireProcessTree: true);
+        }
+        return true;
     }
 
     private static SharpLinkServerInvocationContext CreateInterceptedContext(
