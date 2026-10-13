@@ -288,9 +288,7 @@ internal sealed partial class RpcSession
             return -1;
 
         var reader = new SequenceReader<byte>(payload);
-        if (reader.Remaining < ProtocolV2Constants.RequestPrefixBytes)
-            throw ProtocolV2FrameParser.Violation("Request routing prefix is truncated.");
-        reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        reader.Advance(ProtocolV2RequestIdentityCodec.GetPrefixLength(payload));
         if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
             if (reader.Remaining < sizeof(long))

@@ -4,8 +4,8 @@ internal sealed partial class SharpLinkClient
 {
     private ValueTask SendRpcCall<TRequest>(
         RpcSession session,
-        long contractId,
-        long methodId,
+        RpcMethodDescriptor method,
+        ClientContractBinding? binding,
         long requestId,
         ProtocolV2FrameFlags flags,
         in TRequest request,
@@ -17,6 +17,12 @@ internal sealed partial class SharpLinkClient
         IRequestEmissionFailureObserver? failureObserver = null,
         PendingRequestTable? publicationTable = null)
     {
+        binding ??= ResolveLocalBinding(method);
+        if (method.ContractId != binding.ContractId)
+            throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "The method does not belong to this proxy contract.");
+        var identity = new ProtocolV2RequestIdentity(method.ContractId, method.MethodId,
+            binding.RpcAssemblyHash, method.Kind, checked((ushort)method.ClientStreamCount),
+            binding.Receipt, binding.Requirement);
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
         if (deadline.HasValue)
@@ -48,15 +54,14 @@ internal sealed partial class SharpLinkClient
                        flags,
                        unchecked((ulong)requestId)))
             {
-                var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
-                var span = writer.GetSpan(prefixLength);
-                BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
-                BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
+                ProtocolV2RequestIdentityCodec.Write(writer, identity);
                 if (deadline.HasValue)
-                    BinaryPrimitives.WriteInt64LittleEndian(
-                        span[ProtocolV2Constants.RequestPrefixBytes..],
+                {
+                    var span = writer.GetSpan(sizeof(long));
+                    BinaryPrimitives.WriteInt64LittleEndian(span,
                         deadline.GetRemaining(_runtimeContext.TimeProvider).Ticks);
-                writer.Advance(prefixLength);
+                    writer.Advance(sizeof(long));
+                }
                 if (hasMetadata)
                 {
                     ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataLength));

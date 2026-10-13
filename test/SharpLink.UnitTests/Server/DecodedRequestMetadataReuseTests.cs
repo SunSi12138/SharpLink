@@ -195,13 +195,10 @@ public sealed class DecodedRequestMetadataReuseTests
     private static byte[] Build(int entries, bool timed, int argumentBytes)
     {
         var writer = new ArrayBufferWriter<byte>();
-        var prefix = writer.GetSpan(16);
-        BinaryPrimitives.WriteInt64LittleEndian(prefix, 123);
-        BinaryPrimitives.WriteInt64LittleEndian(prefix[8..], 456);
-        writer.Advance(16);
+        ServerRequestTestWire.WriteIdentity(writer, 123, 456);
         if (timed)
         {
-            prefix = writer.GetSpan(8);
+            var prefix = writer.GetSpan(8);
             BinaryPrimitives.WriteInt64LittleEndian(prefix, TimeSpan.TicksPerSecond);
             writer.Advance(8);
         }

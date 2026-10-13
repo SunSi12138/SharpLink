@@ -2,6 +2,24 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
+    private RegistryIdentity? _remoteRegistryIdentity;
+
+    internal Guid RemoteServerInstanceId => Volatile.Read(ref _remoteRegistryIdentity)?.ServerInstanceId ?? Guid.Empty;
+
+    internal Guid RemoteRegistryEpoch => Volatile.Read(ref _remoteRegistryIdentity)?.RegistryEpoch ?? Guid.Empty;
+
+    internal void SetRemoteRegistryIdentity(Guid serverInstanceId, Guid registryEpoch)
+    {
+        if (serverInstanceId == Guid.Empty || registryEpoch == Guid.Empty)
+            throw NegotiationViolation("Handshake registry identity must contain both server instance and epoch.");
+        var identity = new RegistryIdentity(serverInstanceId, registryEpoch);
+        var existing = Interlocked.CompareExchange(ref _remoteRegistryIdentity, identity, null);
+        if (existing is not null && existing != identity)
+            throw NegotiationViolation("A physical session cannot change its remote registry identity.");
+    }
+
+    private sealed record RegistryIdentity(Guid ServerInstanceId, Guid RegistryEpoch);
+
     internal bool TryCompleteHandshake(NegotiatedSessionOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);

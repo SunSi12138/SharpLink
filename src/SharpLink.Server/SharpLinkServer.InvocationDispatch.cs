@@ -10,6 +10,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
+        ServiceRegistration serviceInfo,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
@@ -41,45 +42,6 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
-            {
-                ValueTask responseSend;
-                try
-                {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unimplemented,
-                            $"Service {request.InterfaceHash} is not implemented."),
-                        connection.ConnectionToken);
-                }
-                finally
-                {
-                    if (admittedCallState is not null)
-                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
-                }
-                return responseSend;
-            }
-            if (!serviceInfo.AcceptsCalls)
-            {
-                ValueTask responseSend;
-                try
-                {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unavailable,
-                            "RPC module is draining"),
-                        connection.ConnectionToken);
-                }
-                finally
-                {
-                    if (admittedCallState is not null)
-                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
-                }
-                return responseSend;
-            }
-
             if (admissionProgram is not null && !admissionGranted)
             {
                 admittedCallState = CreateAdmissionWaitState(
@@ -154,7 +116,8 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         serverLoopToken,
                         admittedCallState,
-                        admissionProgram);
+                        admissionProgram,
+                        serviceInfo);
                 }
 
                 var decision = admissionTask.Result;

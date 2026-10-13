@@ -1,6 +1,6 @@
 namespace SharpLink.Client;
 
-internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLinkDynamicModule module) : IRpcChannel
+internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLinkDynamicModule module, ClientContractBinding binding) : IRpcChannel
 {
     public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;
 
@@ -13,7 +13,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         var combined = Combine(cancellationToken, module.ForcedCancellation);
         try
         {
-            var call = inner.InvokeUnaryAsync(method, request, requestCodec, responseCodec, metadata, combined.Token);
+            var call = inner.InvokeUnaryBoundAsync(method, request, requestCodec, responseCodec, metadata, combined.Token, binding);
             if (call.IsCompletedSuccessfully)
             {
                 lease.Dispose();
@@ -34,7 +34,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         var combined = Combine(cancellationToken, module.ForcedCancellation);
         try
         {
-            var call = inner.InvokeOneWayAsync(method, request, requestCodec, streams, metadata, combined.Token);
+            var call = inner.InvokeOneWayBoundAsync(method, request, requestCodec, streams, metadata, combined.Token, binding);
             if (call.IsCompletedSuccessfully)
             {
                 lease.Dispose();
@@ -65,8 +65,8 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
             ValueTask<TResponse> call;
             using (SharpLinkClientStreamModuleLeaseContext.Push(producerLifetime))
             {
-                call = inner.InvokeClientStreamingAsync(
-                    method, request, requestCodec, responseCodec, streams, metadata, combined.Token);
+                call = inner.InvokeClientStreamingBoundAsync(
+                    method, request, requestCodec, responseCodec, streams, metadata, combined.Token, binding);
             }
             if (call.IsCompletedSuccessfully)
             {
@@ -87,7 +87,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         var requestValue = request;
         var interceptors = inner.CaptureInterceptorGenerationForInvocation();
         var control = inner.ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors);
+            method, metadata, includeClientDefault: false, interceptors) with { ContractBinding = binding };
         return InvokeServerStreamingDeferred(
             method, requestValue, requestCodec, responseCodec, interceptors, control, cancellationToken);
     }
@@ -101,7 +101,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         var streamsValue = streams;
         var interceptors = inner.CaptureInterceptorGenerationForInvocation();
         var control = inner.ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors);
+            method, metadata, includeClientDefault: false, interceptors) with { ContractBinding = binding };
         return InvokeDuplexStreamingDeferred(
             method, requestValue, requestCodec, responseCodec, streamsValue, interceptors, control, cancellationToken);
     }

@@ -114,15 +114,11 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var wait = harness.Client.WaitForRemoteContractAsync(
                 contractId, module.Manifest.RpcAssemblyHash, timeout.Token).AsTask();
             Ensure(!wait.IsCompleted, "ordinary Ready and registration success do not complete the contract barrier");
-            try
-            {
-                _ = GetProxy(harness.Client, plugin.ContractType);
-                throw new Exception("Get must fail while the remote manifest is still missing");
-            }
-            catch (System.Reflection.TargetInvocationException exception)
-                when (exception.InnerException is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition })
-            {
-            }
+            var localProxy = GetProxy(harness.Client, plugin.ContractType);
+            await ExpectContractFailureAsync(
+                () => InvokeValueTaskAsync<int>(localProxy, plugin.ContractType,
+                    "UnaryAsync", 4, timeout.Token),
+                SharpLinkErrorCode.Unavailable, SharpLinkErrorDetails.Unavailable.NoRoutableTarget);
             releaseBroadcast.TrySetResult();
             await wait;
             var proxy = GetProxy(harness.Client, plugin.ContractType);
@@ -142,6 +138,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 public interface IManifestReadinessControl : IService
 {
     ValueTask<int> ChangeAsync(int phase, CancellationToken cancellationToken);
+
+    ValueTask<ContractReceiptData> ChangeWithReceiptAsync(int phase, CancellationToken cancellationToken);
 }
 
 [RpcService]
@@ -149,9 +147,18 @@ public sealed class ManifestReadinessControl : IManifestReadinessControl
 {
     internal Func<int, ValueTask<int>>? Operation { get; init; }
 
+    internal Func<int, ValueTask<ContractReceiptData>>? ReceiptOperation { get; init; }
+
     public ValueTask<int> ChangeAsync(int phase, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Operation is { } operation ? operation(phase) : ValueTask.FromResult(0);
+    }
+
+    public ValueTask<ContractReceiptData> ChangeWithReceiptAsync(int phase, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ReceiptOperation is { } operation ? operation(phase) :
+            ValueTask.FromException<ContractReceiptData>(new InvalidOperationException("No receipt operation is configured."));
     }
 }

@@ -387,8 +387,16 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
+        SharpLinkDynamicModuleLease registrationLease = default;
         try
         {
+            var identity = ReadRequestIdentity(payload);
+            if (identity.ClientStreamCount > _protocolOptions.MaxConcurrentStreamsPerConnection)
+            {
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    "Request client-stream count exceeds the connection's bounded stream capacity.");
+            }
             if (!TryAcceptRequest(connection, requestId))
             {
                 if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
@@ -398,7 +406,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-                        ResolveRawRequestClientStreamCount(payload));
+                        identity.ClientStreamCount);
                     return;
                 }
 
@@ -414,11 +422,30 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            var admissionProgram = CaptureAdmissionProgram(requestId);
-            ValueTask dispatchTask;
-            try
+            if (!ServerContractAdmission.TryAcquire(
+                    _serviceModuleRegistry, in identity, flags,
+                    out var serviceInfo, out registrationLease, out var rejection))
             {
-                dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
+                // The wire prefix owns the stream shape. Rejection can retire receive credit
+                // without probing an incompatible generated stub or starting a business producer.
+                DrainRejectedOneWayStreams(connection.Session, requestId, identity.ClientStreamCount);
+                if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
+                {
+                    Interlocked.Increment(ref _rejectedOneWayCalls);
+                    LogOnewayRpcDispatchFailed(_logger, rejection!);
+                    return;
+                }
+
+                var rejectionSend = connection.Session.SendRpcErrorWithBackpressureAsync(
+                    requestId, rejection!, connection.ConnectionToken);
+                payload = default;
+                if (!rejectionSend.IsCompletedSuccessfully)
+                    await rejectionSend.ConfigureAwait(false);
+                return;
+            }
+
+            var admissionProgram = CaptureAdmissionProgram(requestId);
+            var dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
                     ? DispatchOneWayRpc(
                         connection,
                         requestId,
@@ -426,7 +453,8 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram)
+                        admissionProgram,
+                        serviceInfo)
                     : DispatchRpcAsync(
                         connection,
                         requestId,
@@ -434,31 +462,8 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram);
-            }
-            catch (SharpLinkException exception) when (
-                exception.Code == SharpLinkErrorCode.ProtocolViolation)
-            {
-                SharpLinkTelemetry.RecordProtocolFailure("server");
-                var reason = SharpLinkProtocolViolationException.Classify(exception);
-                if (reason == ProtocolViolationReason.InternalState)
-                {
-                    LogServerBackgroundLoopUnhandledException(
-                        _logger,
-                        nameof(ProcessRequestLoop),
-                        exception);
-                }
-                else
-                {
-                    LogProtocolViolationRateLimited(reason);
-                }
-
-                payload = default;
-                var closeTask = connection.CloseAsync();
-                if (!closeTask.IsCompletedSuccessfully)
-                    await closeTask.ConfigureAwait(false);
-                return;
-            }
+                        admissionProgram,
+                        serviceInfo);
 
             payload = default;
             if (!dispatchTask.IsCompletedSuccessfully)
@@ -468,12 +473,30 @@ internal sealed partial class SharpLinkServer
         {
         }
         catch (SharpLinkException exception) when (
+            exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            SharpLinkTelemetry.RecordProtocolFailure("server");
+            var reason = SharpLinkProtocolViolationException.Classify(exception);
+            if (reason == ProtocolViolationReason.InternalState)
+                LogServerBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), exception);
+            else
+                LogProtocolViolationRateLimited(reason);
+            payload = default;
+            var closeTask = connection.CloseAsync();
+            if (!closeTask.IsCompletedSuccessfully)
+                await closeTask.ConfigureAwait(false);
+        }
+        catch (SharpLinkException exception) when (
             exception.Code == SharpLinkErrorCode.ConnectionClosed)
         {
         }
         catch (Exception ex)
         {
             LogRpcDispatchUnhandledException(_logger, ex);
+        }
+        finally
+        {
+            registrationLease.Dispose();
         }
     }
 

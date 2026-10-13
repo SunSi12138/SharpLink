@@ -89,19 +89,26 @@ internal sealed partial class SharpLinkClient
         public ClientConnection GetReadyConnection(
             RpcMethodDescriptor? method,
             EndpointRetrySelectionState? retrySelection,
-            AttemptOutcomeState? attemptOutcome)
+            AttemptOutcomeState? attemptOutcome,
+            ClientContractBinding? binding = null)
         {
             var snapshot = _current.SelectionSnapshot;
             var selectionPolicy = _current.CaptureSelectionPolicy();
             var endpoints = snapshot.Endpoints;
+            ClientContractRoute? route = null;
+            if (binding is not null && !_client._contractRoutes.TryGetRoute(binding, snapshot, out route))
+                throw CreateNoRoutableTargetException();
             if (endpoints.Length == 0)
             {
                 SharpLinkTelemetry.RecordSelectionFailure("no_ready_endpoint");
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint is ready.");
             }
 
-            var excluded = retrySelection?.GetExcludedMask(snapshot, endpoints.Length) ?? 0UL;
-            for (var attempt = 0; attempt < endpoints.Length; attempt++)
+            var selectionSnapshot = (object?)route ?? snapshot;
+            var unavailable = route?.ExcludedEndpoints ?? 0UL;
+            var excluded = unavailable | (retrySelection?.GetExcludedMask(selectionSnapshot, endpoints.Length, unavailable) ?? 0UL);
+            var availableMask = endpoints.Length == 64 ? ulong.MaxValue : (1UL << endpoints.Length) - 1;
+            for (var attempt = 0; attempt < endpoints.Length && (excluded & availableMask) != availableMask; attempt++)
             {
                 int selectedIndex;
                 if (selectionPolicy.HasCustomSelector)
@@ -132,13 +139,15 @@ internal sealed partial class SharpLinkClient
                 var candidate = snapshot.Candidates[selectedIndex];
                 if (method is not null && attemptOutcome is not null && !attemptOutcome.TryAcquire(candidate))
                 {
-                    retrySelection?.Exclude(snapshot, selectedIndex);
+                    retrySelection?.Exclude(selectionSnapshot, selectedIndex);
                     excluded |= 1UL << selectedIndex;
                     continue;
                 }
                 var endpoint = endpoints[selectedIndex];
-                var connection = DynamicClusterTopologyState.SelectConnection(endpoint);
-                retrySelection?.Exclude(snapshot, selectedIndex);
+                var connection = route is null
+                    ? DynamicClusterTopologyState.SelectConnection(endpoint)
+                    : route.SelectConnection(selectedIndex);
+                retrySelection?.Exclude(selectionSnapshot, selectedIndex);
                 if (connection is not null)
                 {
                     if (connection.ActiveCallCount != 0)
@@ -153,7 +162,9 @@ internal sealed partial class SharpLinkClient
             }
 
             SharpLinkTelemetry.RecordSelectionFailure("no_admitted_connection");
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint connection is ready.");
+            throw binding is null
+                ? new SharpLinkException(SharpLinkErrorCode.Unavailable, "No SharpLink endpoint connection is ready.")
+                : CreateNoRoutableTargetException();
         }
 
         public void MarkConnectionDraining(ClientConnection connection)
@@ -852,6 +863,9 @@ internal sealed partial class SharpLinkClient
         {
             _connections.PublishReadyConnections(_current.Current);
             var readiness = _current.PublishReadySnapshot(force);
+            var routeTopology = _current.SelectionSnapshot;
+            _client._contractRoutes.PublishTopology(routeTopology,
+                routeTopology.Endpoints.Select(static endpoint => endpoint.ReadyConnections).ToArray());
             if (readiness.MembershipChanged)
             {
                 SharpLinkTelemetry.AddClientReadyEndpoints(

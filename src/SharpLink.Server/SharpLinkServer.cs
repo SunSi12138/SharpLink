@@ -82,6 +82,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _exceptionMapper = composition.ExceptionMapper;
         _serviceProvider = composition.ServiceProvider;
         _staticManifests = composition.StaticManifests;
+        InitializeStaticRegistrationReceipts();
         _admissionController = composition.AdmissionController;
         _connectionAdmission = composition.ConnectionAdmission;
         _shutdownPlan = composition.ShutdownPlan;

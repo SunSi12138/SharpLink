@@ -96,6 +96,7 @@ public sealed class ServerRequestEnvelopeReaderTests
     [Arguments(0)]
     [Arguments(sizeof(long))]
     [Arguments((sizeof(long) * 2) - 1)]
+    [Arguments(ProtocolV2Constants.RequestPrefixBytes - 1)]
     public async Task ReadShouldRejectEveryTruncatedRoutingPrefix(int payloadBytes)
     {
         await using var session = CreateSession(ProtocolV2Capabilities.None);
@@ -108,7 +109,7 @@ public sealed class ServerRequestEnvelopeReaderTests
             1));
         Ensure(exception.Code == SharpLinkErrorCode.ProtocolViolation,
             $"routing prefix error code for {payloadBytes} bytes");
-        Ensure(exception.Message == "Request routing prefix is truncated.",
+        Ensure(exception.Message == "Request identity prefix is truncated.",
             $"routing prefix error message for {payloadBytes} bytes");
     }
 
@@ -257,10 +258,7 @@ public sealed class ServerRequestEnvelopeReaderTests
         byte[] arguments)
     {
         var writer = new ArrayBufferWriter<byte>();
-        var routing = writer.GetSpan(sizeof(long) * 2);
-        BinaryPrimitives.WriteInt64LittleEndian(routing, InterfaceHash);
-        BinaryPrimitives.WriteInt64LittleEndian(routing[sizeof(long)..], MethodHash);
-        writer.Advance(sizeof(long) * 2);
+        ServerRequestTestWire.WriteIdentity(writer, InterfaceHash, MethodHash);
         if (timeBudgetTicks is { } budget)
         {
             var budgetBytes = writer.GetSpan(sizeof(long));
@@ -280,11 +278,10 @@ public sealed class ServerRequestEnvelopeReaderTests
 
     private static byte[] CreateRoutingPayload(byte[] tail)
     {
-        var payload = new byte[(sizeof(long) * 2) + tail.Length];
-        BinaryPrimitives.WriteInt64LittleEndian(payload, InterfaceHash);
-        BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(sizeof(long)), MethodHash);
-        tail.CopyTo(payload, sizeof(long) * 2);
-        return payload;
+        var writer = new ArrayBufferWriter<byte>();
+        ServerRequestTestWire.WriteIdentity(writer, InterfaceHash, MethodHash);
+        writer.Write(tail);
+        return writer.WrittenSpan.ToArray();
     }
 
     private static ServerRequestEnvelope Read(

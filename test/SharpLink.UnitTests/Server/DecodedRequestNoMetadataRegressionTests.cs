@@ -57,7 +57,7 @@ public sealed class DecodedRequestNoMetadataRegressionTests
         }
         for (var split = 0; split <= encoded.Length; split++)
             Check(new(decoded), Split(encoded, split), original);
-        var prefixLength = timed ? 24 : 16;
+        var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (timed ? sizeof(long) : 0);
         for (var offset = 0; offset < prefixLength; offset++)
         {
             decoded[offset] ^= 0xff;
@@ -122,11 +122,15 @@ public sealed class DecodedRequestNoMetadataRegressionTests
 
     private static byte[] Build(bool timed, int arguments)
     {
-        var bytes = new byte[(timed ? 24 : 16) + arguments];
-        BinaryPrimitives.WriteInt64LittleEndian(bytes, 123);
-        BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(8), 456);
-        if (timed) BinaryPrimitives.WriteInt64LittleEndian(bytes.AsSpan(16), TimeSpan.TicksPerSecond);
-        return bytes;
+        var writer = new ArrayBufferWriter<byte>();
+        ServerRequestTestWire.WriteIdentity(writer, 123, 456);
+        if (timed)
+        {
+            BinaryPrimitives.WriteInt64LittleEndian(writer.GetSpan(sizeof(long)), TimeSpan.TicksPerSecond);
+            writer.Advance(sizeof(long));
+        }
+        writer.Write(new byte[arguments]);
+        return writer.WrittenSpan.ToArray();
     }
 
     private static string Outcome(Func<ServerRequestEnvelope> parse)

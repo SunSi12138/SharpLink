@@ -438,7 +438,18 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
         CancellationToken cancellationToken = default);
 
-    /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
+    /// <summary>Synchronously creates a local proxy without checking or waiting for remote availability.</summary>
+    /// <typeparam name="TContract">The locally registered generated RPC contract interface.</typeparam>
+    /// <param name="options">Immutable invocation constraints captured by the proxy.</param>
+    /// <remarks>
+    /// Calls use the current eligible connection and fail fast when no route exists. Local module
+    /// retirement prevents new calls through an old proxy; a proxy never silently changes codecs.
+    /// </remarks>
+    TContract CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+        => options is null ? Get<TContract>() : throw new NotSupportedException(
+            "This client does not support proxy registration constraints.");
+
+    /// <summary>Creates the local generated proxy with the default invocation options.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     TContract Get<TContract>() where TContract : IService;
 

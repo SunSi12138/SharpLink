@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Collections.Generic;
@@ -345,6 +344,7 @@ public class SharpLinkServerRequestScopeReviewTests
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;
+            ServerRequestTestWire.Bind(registration, serviceRegistry);
             Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
             {
                 [stub.InterfaceHash] = registration
@@ -377,18 +377,7 @@ public class SharpLinkServerRequestScopeReviewTests
             ])!;
 
         private ReadOnlySequence<byte> CreateRequestPayload(TimeSpan? timeBudget)
-        {
-            var request = new byte[sizeof(long) * (timeBudget.HasValue ? 3 : 2)];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
-            if (timeBudget is { } value)
-            {
-                BinaryPrimitives.WriteInt64LittleEndian(
-                    request.AsSpan(sizeof(long) * 2),
-                    value.Ticks);
-            }
-            return new ReadOnlySequence<byte>(request);
-        }
+            => new(ServerRequestTestWire.Create(_stub, ControlledStub.MethodHash, timeBudget));
 
         public async ValueTask DisposeAsync()
         {

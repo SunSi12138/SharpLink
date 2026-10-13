@@ -233,16 +233,15 @@ internal sealed partial class SharpLinkClient
     private ClientConnection GetReadyConnection(
         RpcMethodDescriptor method,
         EndpointRetrySelectionState? retrySelection,
-        AttemptOutcomeState? attemptOutcome)
+        AttemptOutcomeState? attemptOutcome,
+        ClientContractBinding? binding = null)
     {
+        binding ??= ResolveLocalBinding(method);
         if (_cluster is not null)
-            return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome);
+            return _cluster.GetReadyConnection(method, retrySelection, attemptOutcome, binding);
 
-        if (attemptOutcome is null || _fixedEndpoint is null)
-            return GetReadyConnection();
-
-        if (ReadyConnectionCount == 0)
-            return GetReadyConnection();
+        if (attemptOutcome is null || _fixedEndpoint is null || ReadyConnectionCount == 0)
+            return GetReadyRoutedConnection(binding);
 
         var candidate = new SharpLinkEndpointCandidate(
             _fixedEndpoint,
@@ -253,7 +252,7 @@ internal sealed partial class SharpLinkClient
             throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "The configured endpoint admission policy rejected the endpoint.");
         try
         {
-            return GetReadyConnection();
+            return GetReadyRoutedConnection(binding);
         }
         catch (Exception exception)
         {
@@ -261,6 +260,31 @@ internal sealed partial class SharpLinkClient
             throw;
         }
     }
+
+    private ClientConnection GetReadyRoutedConnection(ClientContractBinding binding)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var topology = Volatile.Read(ref _readyConnections);
+            if (Volatile.Read(ref _stopStarted) != 0 || topology.Length == 0)
+                break;
+            if (!_contractRoutes.TryGetRoute(binding, topology, out var route))
+                continue;
+            if (route.SelectConnection(0) is { } connection)
+            {
+                if (connection.ActiveCallCount != 0)
+                    EnsureExpansion();
+                return connection;
+            }
+        }
+        if (Volatile.Read(ref _stopStarted) != 0 || State == SharpLinkConnectionState.Stopped)
+            throw CreateConnectionClosedException("Client is not accepting new calls.");
+        throw CreateNoRoutableTargetException();
+    }
+
+    private static SharpLinkException CreateNoRoutableTargetException()
+        => new(SharpLinkErrorCode.Unavailable, SharpLinkErrorDetails.Unavailable.NoRoutableTarget,
+            "No eligible connection is currently known for this RPC contract and target scope.");
 
     private bool RemoveReadyConnection(ClientConnection connection)
     {

@@ -12,6 +12,21 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context)
+        => InvokeRegisteredServiceAsync(registration, connection, session, methodId, requestId,
+            arguments, output, cancellationToken, context, moduleLeaseRetained: false);
+
+    private ValueTask InvokeRegisteredServiceAsync(
+        ServiceRegistration registration,
+        ServerConnectionState connection,
+        RpcSession session,
+        long methodId,
+        long requestId,
+        ReadOnlySequence<byte> arguments,
+        IRpcByteBufferWriter? output,
+        CancellationToken cancellationToken,
+        SharpLinkCallContextSnapshot context,
+        bool moduleLeaseRetained,
+        RpcMethodDescriptor? methodDescriptor = null)
     {
         if (registration.TryGetStaticSingleton(
                 connection.GeneratedBridge,
@@ -28,15 +43,15 @@ internal sealed partial class SharpLinkServer
                 arguments,
                 output,
                 cancellationToken,
-                context);
+                context,
+                methodDescriptor);
         }
 
         var isStream = false;
         var hasRequestStreams = false;
-        RpcMethodDescriptor? methodDescriptor = null;
         if (registration.HasModule)
         {
-            var descriptor = GetMethodDescriptor(registration.Stub, methodId);
+            var descriptor = methodDescriptor ?? GetMethodDescriptor(registration.Stub, methodId);
             methodDescriptor = descriptor;
             isStream = descriptor.Kind is RpcMethodKind.ClientStreaming or
                 RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
@@ -52,7 +67,8 @@ internal sealed partial class SharpLinkServer
                     connection.GeneratedBridge,
                     requestId,
                     out var dynamicSingleton,
-                    out dynamicSingletonLease))
+                    out dynamicSingletonLease,
+                    moduleLeaseRetained))
             {
                 var invocation = InvokeServiceTrackedAsync(
                     registration.Stub,
@@ -94,7 +110,8 @@ internal sealed partial class SharpLinkServer
                 connection,
                 isStream,
                 connection.GeneratedBridge,
-                requestId);
+                requestId,
+                moduleLeaseRetained);
         }
         catch (Exception exception)
         {
@@ -190,7 +207,7 @@ internal sealed partial class SharpLinkServer
         bool hasRequestStreams,
         RpcMethodDescriptor? methodDescriptor)
     {
-        if (!lease.RequiresDisposal)
+        if (!lease.RequiresDisposal && !hasRequestStreams)
         {
             return InvokeServiceTrackedAsync(
                 stub,
