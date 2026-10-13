@@ -94,7 +94,7 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <remarks>
     /// A missing contract waits for manifest propagation; an advertised different hash fails closed
     /// immediately. This is a point-in-time observation, not a lease: reconnect, replacement or
-    /// unregister can change availability before a subsequent synchronous Get. Manifest generations
+    /// unregister can change availability before a subsequent invocation. Proxy creation is local. Manifest generations
     /// are ordered within each connection, never across connections. The wait does not acquire a
     /// proxy or retain a contract Type/Assembly and does not retry RPC payloads. Cancellation affects
     /// only this wait. Custom implementations must override this member to support the barrier.

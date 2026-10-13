@@ -426,11 +426,12 @@ internal sealed partial class SharpLinkServer
                     _serviceModuleRegistry, in identity, flags,
                     out var serviceInfo, out registrationLease, out var rejection))
             {
-                // The wire prefix owns the stream shape. Rejection can retire receive credit
-                // without probing an incompatible generated stub or starting a business producer.
-                DrainRejectedOneWayStreams(connection.Session, requestId, identity.ClientStreamCount);
                 if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
                 {
+                    // OneWay publishes producers without an acknowledgement. Its wire shape
+                    // permits draining without probing an incompatible generated stub. Two-way
+                    // producers are still waiting for RequestAccepted and own no receive routes.
+                    DrainRejectedOneWayStreams(connection.Session, requestId, identity.ClientStreamCount);
                     Interlocked.Increment(ref _rejectedOneWayCalls);
                     LogOnewayRpcDispatchFailed(_logger, rejection!);
                     return;

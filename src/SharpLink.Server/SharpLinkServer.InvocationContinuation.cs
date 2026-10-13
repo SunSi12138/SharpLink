@@ -123,7 +123,7 @@ internal sealed partial class SharpLinkServer
         {
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
-                request.RpcDeadline, request.Metadata, invokeToken);
+                request.RpcDeadline, request.Metadata, invokeToken, request.Identity.Kind);
             try
             {
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
@@ -238,7 +238,7 @@ internal sealed partial class SharpLinkServer
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
         var responseCallContext = CreateCallContext(
             connection, serviceInfo.Stub, request.MethodHash, requestId,
-            request.RpcDeadline, request.Metadata, invokeToken);
+            request.RpcDeadline, request.Metadata, invokeToken, request.Identity.Kind);
         try
         {
             using var callContextScope = SharpLinkCallContext.Push(responseCallContext);

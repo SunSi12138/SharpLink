@@ -95,6 +95,8 @@ jobs:
           dotnet --info > artifacts/validation/issue775/regression/dotnet-info.txt
           dotnet restore Sharplink.slnx
       - name: Existing source and formatting guards
+        id: guards
+        continue-on-error: true
         run: |
           python3 eng/check-project-reference-boundaries.py
           python3 eng/test-verify-maintainability.py
@@ -103,21 +105,37 @@ jobs:
           python3 eng/verify-release-versions.py
           dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
       - name: Release build and generated dependency guard
+        id: build
+        continue-on-error: true
         run: |
           dotnet build Sharplink.slnx --no-restore -c Release -v minimal
           bash eng/verify-generated-assembly-dependencies.sh
-      - name: Complete unit and generator suites
-        run: |
-          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/unit.log
-          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/generator.log
-          dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/load-test-unit.log
-          dotnet test --project test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/stream-load-test-unit.log
+      - name: Complete unit suite
+        id: unit
+        continue-on-error: true
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/unit.log
+      - name: Complete generator suite
+        id: generator
+        continue-on-error: true
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/generator.log
+      - name: Complete load-test unit suite
+        id: load
+        continue-on-error: true
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/load-test-unit.log
+      - name: Complete stream-load-test unit suite
+        id: streamload
+        continue-on-error: true
+        run: dotnet test --project test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/stream-load-test-unit.log
       - name: Complete real transport integration suite
+        id: integration
+        continue-on-error: true
         run: >-
           dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests --
           --maximum-parallel-tests 1 --timeout 120s
           2>&1 | tee artifacts/validation/issue775/regression/integration.log
       - name: Canonical Debug admission rollback
+        id: debug
+        continue-on-error: true
         run: |
           dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
           dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Debug --no-build --treenode-filter "/*/*/ServerCallAdmissionTests/LifecycleChangeAfterCapacityAcquisitionShouldRollbackBothScopes" 2>&1 | tee artifacts/validation/issue775/regression/debug-admission.log
@@ -128,6 +146,21 @@ jobs:
           path: artifacts/validation/issue775/regression
           if-no-files-found: error
           retention-days: 14
+
+      - name: Fail if any required regression step failed or was skipped
+        if: always()
+        env:
+          STEP_RESULTS: ${{ toJSON(steps) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          steps = json.loads(os.environ['STEP_RESULTS'])
+          required = ['guards', 'build', 'unit', 'generator', 'load', 'streamload', 'integration', 'debug']
+          failures = [name for name in required if steps.get(name, {}).get('outcome') != 'success']
+          if failures:
+              raise SystemExit('Required regression steps did not pass: ' + ', '.join(failures))
+          PY
 
   packages-aot-trim:
     needs: compile

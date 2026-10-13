@@ -333,7 +333,7 @@ internal sealed partial class SharpLinkServer
 
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
-                request.RpcDeadline, request.Metadata, invokeToken);
+                request.RpcDeadline, request.Metadata, invokeToken, request.Identity.Kind);
             try
             {
                 // #299 deliberately excludes OneWay from generic pre-invocation reservation. Install

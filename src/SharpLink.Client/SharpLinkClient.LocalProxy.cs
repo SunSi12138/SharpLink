@@ -11,10 +11,10 @@ internal sealed partial class SharpLinkClient
             var existing = Volatile.Read(ref registration.Proxy);
             if (existing is not null)
                 return (T)existing;
-            var created = registration.Descriptor.ProxyFactory(CreateBoundChannel(registration, binding), registration.Codecs);
+            var created = CreateProxyInstance(registration, binding);
             return (T)(Interlocked.CompareExchange(ref registration.Proxy, created, null) ?? created);
         }
-        return (T)registration.Descriptor.ProxyFactory(CreateBoundChannel(registration, binding), registration.Codecs);
+        return (T)CreateProxyInstance(registration, binding);
     }
 
     private ClientProxyRegistration GetLocalProxyRegistration<T>() where T : IService
@@ -29,7 +29,8 @@ internal sealed partial class SharpLinkClient
         if (registration.Binding.RpcAssemblyHash.IsEmpty)
             throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "The local contract has no RPC assembly hash.");
         if (registration.Module is { State: not SharpLinkDynamicModuleState.Running })
-            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "RPC module is draining.");
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
+                SharpLinkErrorDetails.Unavailable.RegistrationRetired, "RPC module is draining.");
         return registration;
     }
 
@@ -37,6 +38,23 @@ internal sealed partial class SharpLinkClient
         => registration.Module is { } module
             ? new SharpLinkModuleRpcChannel(this, module, binding)
             : new SharpLinkContractRpcChannel(this, binding);
+
+    private object CreateProxyInstance(ClientProxyRegistration registration, ClientContractBinding binding,
+        SharpLinkMetadata? metadata = null)
+    {
+        SharpLinkDynamicModuleLease lease = default;
+        if (registration.Module is { } module && !module.TryAcquire(false, out lease))
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
+                SharpLinkErrorDetails.Unavailable.RegistrationRetired, "RPC module is draining.");
+        try
+        {
+            var channel = CreateBoundChannel(registration, binding);
+            if (metadata is { Count: > 0 })
+                channel = new SharpLinkMetadataRpcChannel(channel, metadata);
+            return registration.Descriptor.ProxyFactory(channel, registration.Codecs);
+        }
+        finally { lease.Dispose(); }
+    }
 
     private ClientContractBinding ResolveLocalBinding(RpcMethodDescriptor method)
     {

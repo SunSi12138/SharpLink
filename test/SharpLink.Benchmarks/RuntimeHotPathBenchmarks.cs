@@ -65,7 +65,8 @@ public class RuntimeHotPathBenchmarks
             ProtocolV2FrameType.Request,
             ProtocolV2FrameFlags.None,
             1);
-        _frameWriter.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        ProtocolV2RequestIdentityCodec.Write(_frameWriter, new ProtocolV2RequestIdentity(
+            11, 22, new RpcHash128(33, 44), RpcMethodKind.Unary, ClientStreamCount: 0));
         ProtocolV2FrameWriter.EndFrame(_frameWriter, token);
         return _frameWriter.WrittenCount;
     }
@@ -121,10 +122,8 @@ public class RuntimeHotPathBenchmarks
             ? ProtocolV2FrameFlags.HasMetadata
             : ProtocolV2FrameFlags.None;
         var token = ProtocolV2FrameWriter.BeginFrame(writer, ProtocolV2FrameType.Request, flags, 1);
-        var prefix = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
-        BinaryPrimitives.WriteInt64LittleEndian(prefix, 11);
-        BinaryPrimitives.WriteInt64LittleEndian(prefix[8..], 22);
-        writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        ProtocolV2RequestIdentityCodec.Write(writer, new ProtocolV2RequestIdentity(
+            11, 22, new RpcHash128(33, 44), RpcMethodKind.Unary, ClientStreamCount: 0));
         if (includeMetadata)
         {
             var metadata = new SharpLinkMetadata(

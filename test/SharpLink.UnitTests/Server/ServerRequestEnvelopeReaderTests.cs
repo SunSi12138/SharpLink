@@ -93,6 +93,47 @@ public sealed class ServerRequestEnvelopeReaderTests
     }
 
     [Test]
+    public async Task ReceiptPrefixMustRemainOutsideMetadataAndDecodedArguments()
+    {
+        await using var session = CreateSession(ProtocolV2Capabilities.Metadata);
+        var hash = ServerRequestTestWire.Hash;
+        var receipt = new ContractRegistrationReceipt(Guid.NewGuid(), Guid.NewGuid(), 7,
+            InterfaceHash, hash, Guid.NewGuid());
+        var identity = new ProtocolV2RequestIdentity(InterfaceHash, MethodHash, hash,
+            RpcMethodKind.Unary, 0, receipt, RpcRegistrationRequirement.ExactRegistration);
+        var writer = new ArrayBufferWriter<byte>();
+        ProtocolV2RequestIdentityCodec.Write(writer, in identity);
+        BinaryPrimitives.WriteInt64LittleEndian(writer.GetSpan(sizeof(long)), TimeSpan.TicksPerSecond);
+        writer.Advance(sizeof(long));
+        using var metadataWriter = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteMetadata(metadataWriter,
+            new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "receipt-owner")));
+        ProtocolV2PayloadCodec.WriteVarUInt32(writer, checked((uint)metadataWriter.WrittenCount));
+        writer.Write(metadataWriter.WrittenSpan);
+        var prefix = writer.WrittenSpan.ToArray();
+        writer.Write(new byte[] { 1, 2, 3 });
+        var encoded = writer.WrittenSpan.ToArray();
+        var decoded = new byte[prefix.Length + 128];
+        prefix.CopyTo(decoded, 0);
+        decoded[^1] = 71;
+        var clock = new FixedTimeProvider(UtcNow, 123);
+        var flags = ProtocolV2FrameFlags.HasTimeBudget | ProtocolV2FrameFlags.HasMetadata;
+        var original = ServerRequestEnvelopeReader.Read(session, new(encoded), flags, MaxMetadataBytes, clock);
+        var rebound = ServerRequestEnvelopeReader.ReadDecoded(session, new(decoded), new(encoded),
+            in original, flags, MaxMetadataBytes, clock);
+
+        Ensure(rebound.Identity == identity, "receipt and requested registration requirement remain exact");
+        Ensure(ReferenceEquals(rebound.Metadata, original.Metadata),
+            "metadata reuse begins after the variable-length receipt prefix");
+        Ensure(rebound.Arguments.Length == 128 && rebound.Arguments.ToArray()[^1] == 71,
+            "decoded arguments must not include receipt, budget or metadata bytes");
+        var segmented = ServerRequestEnvelopeReader.Read(session, CreateSegmented(encoded, 1),
+            flags, MaxMetadataBytes, clock);
+        Ensure(segmented.Identity == identity && segmented.Metadata is { Count: 1 },
+            "fragmented receipt prefix parses before metadata without business decoding");
+    }
+
+    [Test]
     [Arguments(0)]
     [Arguments(sizeof(long))]
     [Arguments((sizeof(long) * 2) - 1)]

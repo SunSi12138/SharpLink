@@ -1,4 +1,5 @@
 using System.Reflection;
+using SharpLink.Sdk;
 
 namespace SharpLink.UnitTests.Client;
 

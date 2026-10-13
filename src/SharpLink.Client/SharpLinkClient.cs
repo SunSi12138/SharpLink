@@ -302,6 +302,8 @@ internal sealed partial class SharpLinkClient :
             UpdateReadySignalLevelLocked();
         }
         changed?.TrySetResult();
+        if (state == SharpLinkConnectionState.Stopped)
+            ClearRemoteContractRoutes();
         PulseRemoteContractWaiters();
     }
 

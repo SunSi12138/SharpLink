@@ -85,9 +85,11 @@ internal static class ServerContractAdmission
                 "The requested RPC method is not implemented.");
             return false;
         }
+        var hasResponseFramePayload = descriptor.HasResponsePayload &&
+            descriptor.Kind is RpcMethodKind.Unary or RpcMethodKind.ClientStreaming;
         if (descriptor.Kind != identity.Kind || descriptor.ClientStreamCount != identity.ClientStreamCount ||
             ((flags & ProtocolV2FrameFlags.OneWay) != 0) != (descriptor.Kind == RpcMethodKind.OneWay) ||
-            ((flags & ProtocolV2FrameFlags.HasReturn) != 0) != descriptor.HasResponsePayload)
+            ((flags & ProtocolV2FrameFlags.HasReturn) != 0) != hasResponseFramePayload)
         {
             throw new SharpLinkProtocolViolationException(
                 ProtocolViolationReason.MalformedFrame,

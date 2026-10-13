@@ -28,11 +28,27 @@ public sealed class ServerContractAdmissionTests
         Ensure(!ServerContractAdmission.TryAcquire(registry, in identity, Flags(kind),
                 out _, out var lease, out var error), "incompatible request must fail admission");
         Ensure(!lease.IsAcquired, "rejected admission must not own a module lease");
-        Ensure(error is { Code: SharpLinkErrorCode.FailedPrecondition,
-                DetailCode: SharpLinkErrorDetails.FailedPrecondition.ContractMismatch },
+        Ensure(error is
+            {
+                Code: SharpLinkErrorCode.FailedPrecondition,
+                DetailCode: SharpLinkErrorDetails.FailedPrecondition.ContractMismatch
+            },
             "wire mismatch must have a stable structured failure");
         Ensure(stub.DescriptorReads == 0 && stub.Invocations == 0,
             "incompatible code must remain untouched for every invocation shape");
+    }
+
+    [Test]
+    [Arguments(RpcMethodKind.ServerStreaming, 0)]
+    [Arguments(RpcMethodKind.DuplexStreaming, 1)]
+    public void StreamReturnPayloadMustNotRequireTheUnaryHasReturnFlag(RpcMethodKind kind, int streamCount)
+    {
+        var registration = CreateRegistration(new AdmissionStub(kind, streamCount, responsePayload: true));
+        var registry = CreateRegistry(registration);
+        var identity = new ProtocolV2RequestIdentity(ContractId, MethodId, Hash, kind, checked((ushort)streamCount));
+        Ensure(ServerContractAdmission.TryAcquire(registry, in identity, ProtocolV2FrameFlags.Cancellable,
+            out _, out var lease, out _), "stream elements travel outside the final response frame");
+        lease.Dispose();
     }
 
     [Test]
@@ -106,8 +122,10 @@ public sealed class ServerContractAdmissionTests
             Ensure(!ServerContractAdmission.TryAcquire(registry, in identity, ProtocolV2FrameFlags.None,
                     out _, out var rejectedLease, out var rejection), "new exact calls must reject the replaced registration");
             Ensure(!rejectedLease.IsAcquired && rejection is
-                { Code: SharpLinkErrorCode.FailedPrecondition,
-                  DetailCode: SharpLinkErrorDetails.FailedPrecondition.ReceiptMismatch },
+                {
+                    Code: SharpLinkErrorCode.FailedPrecondition,
+                    DetailCode: SharpLinkErrorDetails.FailedPrecondition.ReceiptMismatch
+                },
                 "stale exact registration must reject before lease acquisition");
         }
         finally
@@ -136,15 +154,21 @@ public sealed class ServerContractAdmissionTests
 
         Ensure(!ServerContractAdmission.TryAcquire(registry, in identity, ProtocolV2FrameFlags.None,
                 out _, out _, out var retiring), "draining registry must fail admission");
-        Ensure(retiring is { Code: SharpLinkErrorCode.Unavailable,
-                DetailCode: SharpLinkErrorDetails.Unavailable.RegistrationRetired },
+        Ensure(retiring is
+            {
+                Code: SharpLinkErrorCode.Unavailable,
+                DetailCode: SharpLinkErrorDetails.Unavailable.RegistrationRetired
+            },
             "lease failure must have a structured retirement error");
         lock (registry.Gate)
             registry.ServicesStorage = FrozenDictionary<long, ServiceRegistration>.Empty;
         Ensure(!ServerContractAdmission.TryAcquire(registry, in identity, ProtocolV2FrameFlags.None,
                 out _, out _, out var missing), "removed registry must fail admission");
-        Ensure(missing is { Code: SharpLinkErrorCode.Unimplemented,
-                DetailCode: SharpLinkErrorDetails.Unimplemented.ContractNotRegistered },
+        Ensure(missing is
+            {
+                Code: SharpLinkErrorCode.Unimplemented,
+                DetailCode: SharpLinkErrorDetails.Unimplemented.ContractNotRegistered
+            },
             "unregistered contract has a distinct stable failure");
         Ensure(module.RemainingCalls == 0, "neither rejection may retain the retired module");
     }
@@ -158,8 +182,11 @@ public sealed class ServerContractAdmissionTests
         var unknown = new ProtocolV2RequestIdentity(ContractId, MethodId + 1, Hash, RpcMethodKind.Unary, 0);
         Ensure(!ServerContractAdmission.TryAcquire(registry, in unknown, ProtocolV2FrameFlags.None,
                 out _, out _, out var missing), "unknown method cannot activate a service");
-        Ensure(missing is { Code: SharpLinkErrorCode.Unimplemented,
-                DetailCode: SharpLinkErrorDetails.Unimplemented.MethodNotImplemented },
+        Ensure(missing is
+            {
+                Code: SharpLinkErrorCode.Unimplemented,
+                DetailCode: SharpLinkErrorDetails.Unimplemented.MethodNotImplemented
+            },
             "unknown method needs a stable detail code");
         var forgedShape = unknown with { MethodId = MethodId, Kind = RpcMethodKind.OneWay };
         try
@@ -217,7 +244,7 @@ public sealed class ServerContractAdmissionTests
             throw new Exception(message);
     }
 
-    private sealed class AdmissionStub(RpcMethodKind kind, int streamCount = 0) : IRpcStub
+    private sealed class AdmissionStub(RpcMethodKind kind, int streamCount = 0, bool responsePayload = false) : IRpcStub
     {
         internal bool RejectDescriptorAccess { get; init; }
         internal int DescriptorReads { get; private set; }
@@ -229,7 +256,7 @@ public sealed class ServerContractAdmissionTests
             if (RejectDescriptorAccess)
                 throw new Exception("an incompatible generated stub was accessed");
             DescriptorReads++;
-            descriptor = new RpcMethodDescriptor(ContractId, MethodId, kind, false,
+            descriptor = new RpcMethodDescriptor(ContractId, MethodId, kind, responsePayload,
                 streamCount != 0, false, null, ClientStreamCount: streamCount);
             return methodHash == MethodId;
         }

@@ -13,6 +13,17 @@ internal sealed class ClientContractRouteTable
     private ClientConnection[][] _connections = [];
     private RoutePublication _publication = RoutePublication.Empty;
 
+    internal void Clear()
+    {
+        lock (_gate)
+        {
+            _manifests.Clear();
+            _connections = [];
+            _topology = new();
+            Volatile.Write(ref _publication, RoutePublication.Empty);
+        }
+    }
+
     internal void PublishManifest(RpcSession session, ProtocolV2ContractManifest manifest)
     {
         lock (_gate)

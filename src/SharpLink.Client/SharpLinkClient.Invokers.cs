@@ -16,7 +16,10 @@ internal sealed partial class SharpLinkClient
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: true, interceptors) with { ContractBinding = binding };
+            method, metadata, includeClientDefault: true, interceptors) with
+        {
+            ContractBinding = binding
+        };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -50,7 +53,10 @@ internal sealed partial class SharpLinkClient
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { ContractBinding = binding };
+            method, metadata, includeClientDefault: false, interceptors) with
+        {
+            ContractBinding = binding
+        };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -86,7 +92,10 @@ internal sealed partial class SharpLinkClient
         cancellationToken.ThrowIfCancellationRequested();
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { ContractBinding = binding };
+            method, metadata, includeClientDefault: false, interceptors) with
+        {
+            ContractBinding = binding
+        };
         Interlocked.Increment(ref _activeLogicalInvocations);
         try
         {
@@ -117,7 +126,10 @@ internal sealed partial class SharpLinkClient
     {
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { ContractBinding = binding };
+            method, metadata, includeClientDefault: false, interceptors) with
+        {
+            ContractBinding = binding
+        };
         return InvokeServerStreamingResolved(
             method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
     }
@@ -182,7 +194,10 @@ internal sealed partial class SharpLinkClient
     {
         var interceptors = CaptureInterceptorGenerationForInvocation();
         var control = ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { ContractBinding = binding };
+            method, metadata, includeClientDefault: false, interceptors) with
+        {
+            ContractBinding = binding
+        };
         return InvokeDuplexStreamingResolved(
             method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
     }
@@ -729,7 +744,6 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    // The pending call owns producer cancellation and request publication.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls);
                 await emission.ConfigureAwait(false);
@@ -813,9 +827,6 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    // Same ownership rule as the one-way client-stream shape: this call is owned by
-                    // its pending entry, so the emission wait has to observe the token that entry
-                    // cancels when it reaches a terminal reason.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls).ConfigureAwait(false);
                 if (await connection.PendingCalls.WaitForRequestAdmissionAsync(requestId).ConfigureAwait(false))
@@ -955,9 +966,6 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 control.Metadata,
                 observeEmission: control.Deadline.HasValue,
-                // This head Request is owned by its pending entry, so the emission wait has to
-                // observe the token that entry cancels: the deadline that ends the call also has
-                // to release the producer side from a stalled transport write.
                 cancellationToken: streamCancellationToken,
                 publicationTable: connection.PendingCalls).ConfigureAwait(false);
             if (await connection.PendingCalls.WaitForRequestAdmissionAsync(requestId).ConfigureAwait(false))

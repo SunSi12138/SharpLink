@@ -334,8 +334,7 @@ internal sealed partial class SharpLinkClient
         if (metadata.Count == 0)
             return CreateProxy<T>();
         var registration = GetLocalProxyRegistration<T>();
-        var channel = new SharpLinkMetadataRpcChannel(CreateBoundChannel(registration, registration.Binding), metadata);
-        return (T)registration.Descriptor.ProxyFactory(channel, registration.Codecs);
+        return (T)CreateProxyInstance(registration, registration.Binding, metadata);
     }
 
     private async Task<Exception?> ProcessHandshakeAsync(RpcSession session, CancellationToken ct)

@@ -7,6 +7,16 @@ internal sealed partial class SharpLinkClient
     private readonly Dictionary<RpcSession, ProtocolV2ContractManifest> _remoteContractManifests = [];
     private RemoteContractManifestBinding[] _remoteContractManifestSnapshot = [];
 
+    private void ClearRemoteContractRoutes()
+    {
+        lock (_remoteContractManifestGate)
+        {
+            _remoteContractManifests.Clear();
+            Volatile.Write(ref _remoteContractManifestSnapshot, []);
+        }
+        _contractRoutes.Clear();
+    }
+
     private void PublishRemoteContractManifest(
         RpcSession session,
         ProtocolV2ContractManifest manifest)

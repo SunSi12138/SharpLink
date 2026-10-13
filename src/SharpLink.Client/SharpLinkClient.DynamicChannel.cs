@@ -87,7 +87,10 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         var requestValue = request;
         var interceptors = inner.CaptureInterceptorGenerationForInvocation();
         var control = inner.ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { ContractBinding = binding };
+            method, metadata, includeClientDefault: false, interceptors) with
+        {
+            ContractBinding = binding
+        };
         return InvokeServerStreamingDeferred(
             method, requestValue, requestCodec, responseCodec, interceptors, control, cancellationToken);
     }
@@ -101,7 +104,10 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLink
         var streamsValue = streams;
         var interceptors = inner.CaptureInterceptorGenerationForInvocation();
         var control = inner.ResolveCallControlForInvocation(
-            method, metadata, includeClientDefault: false, interceptors) with { ContractBinding = binding };
+            method, metadata, includeClientDefault: false, interceptors) with
+        {
+            ContractBinding = binding
+        };
         return InvokeDuplexStreamingDeferred(
             method, requestValue, requestCodec, responseCodec, streamsValue, interceptors, control, cancellationToken);
     }

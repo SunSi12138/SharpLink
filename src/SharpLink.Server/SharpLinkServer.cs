@@ -176,23 +176,19 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         long requestId,
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RpcMethodKind kind)
     {
         var session = connection.Session;
         var interceptors = Volatile.Read(ref _serverInterceptorGeneration);
-        if (interceptors.Count == 0)
+        if (interceptors.Count == 0 && kind is not (RpcMethodKind.ClientStreaming or
+                RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming))
             return connection.GetCallContextSnapshot(deadline, metadata);
 
+        // A stream keeps the admitted descriptor for its entire lifetime, including exception
+        // mapping after a replacement. The dispatch entry separately reserves its receive routes
+        // inside the request's resource-cleanup boundary, before publishing RequestAccepted.
         var method = GetMethodDescriptor(stub, methodId);
-        if (method.Kind != RpcMethodKind.OneWay)
-        {
-            ReservePreInvocationRequestStreams(
-                session,
-                method.ClientStreamCount,
-                requestId,
-                cancellationToken);
-        }
-
         return CreateServerInvocationContext(
             session,
             method,

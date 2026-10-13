@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using SharpLink.Abstractions;
 using SharpLink.Client;
+using SharpLink.Runtime;
 
 namespace SharpLink.Benchmarks;
 

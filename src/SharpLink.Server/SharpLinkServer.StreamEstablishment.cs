@@ -14,6 +14,11 @@ internal sealed partial class SharpLinkServer
         SharpLinkCallContextSnapshot context)
     {
         var descriptor = GetMethodDescriptor(registration.Stub, methodId);
+        if (descriptor.Kind != RpcMethodKind.OneWay)
+        {
+            ReservePreInvocationRequestStreams(
+                session, descriptor.ClientStreamCount, requestId, cancellationToken);
+        }
         if (descriptor.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming)
         {
             var acceptance = session.SendRequestAcceptedAsync(requestId, cancellationToken);

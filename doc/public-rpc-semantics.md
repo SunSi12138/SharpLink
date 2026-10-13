@@ -127,9 +127,11 @@ Coordinator 的 `ReplaceClusterAsync` 先把 candidate child connect/validate �
 Server-side dynamic service/module replacement 的 publication boundary 与 multi-cluster proxy binding 不同：
 
 - 已经开始的调用继续使用其捕获的旧 server generation/service/codec；
-- replacement publication 之后到达 Server 的新调用使用新 generation；
+- replacement publication 之后到达 Server 的新调用先以请求中的 contract/hash 和可选 receipt 校验当前 generation，再取得该注册的 lease；不兼容请求在业务解码之前拒绝；
 - 旧 generation 在 drain 完成后才可卸载；
 - 普通 client proxy 只绑定自己的 client/channel，并不持有某个 server service object，因此仅仅因为 Server 发布了新 service/module generation，**不需要重新 `Get<T>()`**。
+
+`CreateProxy<T>(options)` 与 `Get<T>()` 都是同步本地操作；它们不保证远端可用。普通调用从控制面维护的兼容路由项选择并保留实际 Session，没有候选时以 `Unavailable/NoRoutableTarget` 立即失败。携带显式 receipt 的 proxy 只选择 receipt 所属 server instance/registry epoch，并仍受原 cluster/endpoint 范围约束。详见 [RPC wire identity](rpc-wire-identity.md)。
 
 如果替换的是 **client-side collectible contract assembly** 本身，则旧 proxy/type/codec 仍属于旧 AssemblyLoadContext；要使用新 contract assembly 并允许旧 ALC 卸载，必须释放旧 proxy/type 等强引用，并从新 contract generation 获取新的 proxy。这是 client module ownership 问题，不是 server service rebind。
 

@@ -136,16 +136,9 @@ public class CompressionPersistentDecodeReviewTests
         var request = ProtocolV2FrameWriter.BeginFrame(
             frames,
             ProtocolV2FrameType.Request,
-            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable,
+            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable | ProtocolV2FrameFlags.HasReturn,
             requestId);
-        Span<byte> requestPrefix = stackalloc byte[ProtocolV2Constants.RequestPrefixBytes];
-        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
-            requestPrefix,
-            harness.InterfaceHash);
-        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
-            requestPrefix[sizeof(long)..],
-            1L);
-        frames.Write(requestPrefix);
+        ProtocolV2RequestIdentityCodec.Write(frames, harness.Identity);
         Span<byte> originalLength = stackalloc byte[sizeof(uint)];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
             originalLength,
@@ -368,17 +361,17 @@ public class CompressionPersistentDecodeReviewTests
             Task serverTask,
             ISharpLinkServer server,
             int port,
-            long interfaceHash)
+            ProtocolV2RequestIdentity identity)
             : base(server)
         {
             _serverCts = serverCts;
             _serverTask = serverTask;
             Port = port;
-            InterfaceHash = interfaceHash;
+            Identity = identity;
         }
 
         internal int Port { get; }
-        internal long InterfaceHash { get; }
+        internal ProtocolV2RequestIdentity Identity { get; }
 
         internal static Task<RawInputHarness> CreateAsync(ISharpLinkCompressionProvider provider)
         {
@@ -396,14 +389,14 @@ public class CompressionPersistentDecodeReviewTests
                 .UseTcp(0, IPAddress.Loopback.ToString());
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
-            var interfaceHash = ReadAnyInterfaceHash(server);
+            var identity = ReadRequestIdentity();
             var serverTask = RunServerAsync(server, serverCts.Token);
             return Task.FromResult(new RawInputHarness(
                 serverCts,
                 serverTask,
                 server,
                 port,
-                interfaceHash));
+                identity));
         }
 
         public async ValueTask DisposeAsync()
@@ -417,11 +410,14 @@ public class CompressionPersistentDecodeReviewTests
             _serverCts.Dispose();
         }
 
-        private static long ReadAnyInterfaceHash(ISharpLinkServer server)
+        private static ProtocolV2RequestIdentity ReadRequestIdentity()
         {
-            foreach (var key in ServerRegistryTestAccessor.Services((SharpLinkServer)server).Keys)
-                return key;
-            throw new Exception("server has no registered service hash");
+            var manifest = GlobalCatalogManifestSource.Instance.CreateSnapshot().Single(candidate =>
+                candidate.Contracts.Any(contract => contract.ContractType == typeof(IPersistentDecodeReviewService)));
+            var contract = manifest.Contracts.Single(contract => contract.ContractType == typeof(IPersistentDecodeReviewService));
+            var method = contract.Methods.Single(method => method.Name == nameof(IPersistentDecodeReviewService.MeasureAsync));
+            return new ProtocolV2RequestIdentity(contract.ContractId, method.MethodId,
+                manifest.RpcAssemblyHash, method.Kind, 0);
         }
     }
 
