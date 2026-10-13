@@ -417,4 +417,3 @@ Failure history is part of this round's evidence. The new disabled-telemetry tes
 The .NET 10.0.112 SDK and matching NuGet cache were extracted and checksum-verified locally, with a workspace activation script. This sandbox cannot initialize CoreCLR (`0x8007000E`), so it is not represented as a successfully runnable local .NET host. All actual C# execution reported here is from the linked Actions jobs.
 
 **Review boundary:** the implementation preserves acceptance-before-producer and reduces targeted construction work, but baseline performance equivalence is not established. The OneWay sender/receiver and short-stream regressions remain material; the adverse single-factor rows and failed baseline allocation spread are explicitly retained. PR #861 stays Ready for review. Exact final-head CI and any subsequent unchanged-budget rerun are recorded in the PR summary, separately from this immutable-source experiment.
-
