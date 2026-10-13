@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -82,9 +81,7 @@ public class SharpLinkServerRequestScopeAmbientTests
         IRpcStub stub,
         long requestId)
     {
-        var payload = new byte[sizeof(long) * 2];
-        BinaryPrimitives.WriteInt64LittleEndian(payload, stub.InterfaceHash);
-        BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(sizeof(long)), 1);
+        var payload = ServerRequestTestWire.Create(stub, 1);
         return (Task)DispatchRequestMethod.Invoke(
             server,
             [

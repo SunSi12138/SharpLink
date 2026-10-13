@@ -89,6 +89,11 @@ internal sealed class ClientConnection :
     internal SessionRefreshRedirect? SessionRefreshRedirect
         => Volatile.Read(ref _sessionRefreshRedirect);
 
+    // A routed call may reserve exactly the connection selected from its contract snapshot.
+    // Following a refresh redirect here would validate A but send through an unselected B.
+    internal bool TryReserveSelectedCallAdmission()
+        => TryReserveOwnCallAdmission(notifyTestHook: true);
+
     internal bool TryReserveCallAdmission(out ClientConnection admitted)
     {
         if (TryReserveOwnCallAdmission(notifyTestHook: true))

@@ -43,7 +43,7 @@ public class MalformedRequestProtocolIntegrationTests
                 ProtocolV2FrameType.Request,
                 ProtocolV2FrameFlags.None,
                 1);
-            // A request routing prefix requires both interface and method hashes (16 bytes).
+            // A generation-five request requires the complete 36-byte contract/shape prefix.
             frames.Write(new byte[sizeof(long)]);
             ProtocolV2FrameWriter.EndFrame(frames, requestToken);
 

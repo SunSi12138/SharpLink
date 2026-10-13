@@ -76,7 +76,11 @@ internal sealed partial class SharpLinkServer
                             request.ResponseCompressionPreferenceGeneration,
                             request.AllowResponseCompression);
                         await session.SendHandshakeResponseAndFlushAsync(
-                            acceptedNegotiation.Response,
+                            acceptedNegotiation.Response with
+                            {
+                                ServerInstanceId = _serviceModuleRegistry.ServerInstanceId,
+                                RegistryEpoch = _serviceModuleRegistry.RegistryEpoch
+                            },
                             ct).ConfigureAwait(false);
                         if (!runtimeSession.TryCompleteHandshake(acceptedNegotiation.Options))
                         {

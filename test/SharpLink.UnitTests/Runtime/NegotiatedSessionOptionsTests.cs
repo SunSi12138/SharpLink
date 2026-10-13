@@ -291,6 +291,7 @@ public class NegotiatedSessionOptionsTests
             ProtocolV2FrameType.Ping,
             ProtocolV2FrameType.Pong,
             ProtocolV2FrameType.Response,
+            ProtocolV2FrameType.RequestAccepted,
             ProtocolV2FrameType.Cancel,
             ProtocolV2FrameType.StreamData,
             ProtocolV2FrameType.StreamComplete,

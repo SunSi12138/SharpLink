@@ -5,20 +5,31 @@ namespace SharpLink.Client;
 /// <summary>Lock-free proxy lookup facade whose immutable snapshot is owned by <see cref="ClientAssemblyRegistry"/>.</summary>
 internal sealed class ClientProxyLookup
 {
-    private FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> _snapshot;
+    private ProxyCatalog _snapshot;
 
     internal ClientProxyLookup(FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> snapshot)
-        => _snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
+        => _snapshot = CreateCatalog(snapshot);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetValue(Type contractType, out SharpLinkClient.ClientProxyRegistration registration)
-        => Volatile.Read(ref _snapshot).TryGetValue(contractType, out registration!);
+        => Volatile.Read(ref _snapshot).Proxies.TryGetValue(contractType, out registration!);
 
     internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> Capture()
-        => Volatile.Read(ref _snapshot);
+        => Volatile.Read(ref _snapshot).Proxies;
 
     internal void Publish(FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> snapshot)
-        => Volatile.Write(ref _snapshot, snapshot);
+        => Volatile.Write(ref _snapshot, CreateCatalog(snapshot));
+
+    internal bool TryGetBinding(long contractId, out ClientContractBinding binding)
+        => Volatile.Read(ref _snapshot).Bindings.TryGetValue(contractId, out binding!);
+
+    private static ProxyCatalog CreateCatalog(FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> proxies)
+        => new(proxies, proxies.Values.ToFrozenDictionary(static registration => registration.Descriptor.ContractId,
+            static registration => registration.Binding));
+
+    private sealed record ProxyCatalog(
+        FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> Proxies,
+        FrozenDictionary<long, ClientContractBinding> Bindings);
 }
 
 /// <summary>
@@ -475,7 +486,8 @@ internal sealed partial class ClientAssemblyRegistry
                 registrations.Add(contract.ContractType, new SharpLinkClient.ClientProxyRegistration(
                     contract,
                     null,
-                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType)));
+                    RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType),
+                    manifest.RpcAssemblyHash));
             }
         }
         return registrations.ToFrozenDictionary();

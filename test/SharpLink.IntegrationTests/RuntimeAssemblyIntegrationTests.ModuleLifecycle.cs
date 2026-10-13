@@ -536,11 +536,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         catch (SharpLinkException exception)
         {
             Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "draining server route error code");
-            Ensure(exception.Message.Contains("module is draining", StringComparison.Ordinal),
-                "draining server route diagnostic");
+            Ensure(exception.DetailCode is SharpLinkErrorDetails.Unavailable.RegistrationRetired or
+                SharpLinkErrorDetails.Unavailable.NoRoutableTarget,
+                "draining registration is rejected by server admission or its updated client route");
         }
-
-        plugin.ReleaseBlock();
+        finally
+        {
+            plugin.ReleaseBlock();
+        }
         try
         {
             _ = await blocked.WaitAsync(TimeSpan.FromSeconds(3));

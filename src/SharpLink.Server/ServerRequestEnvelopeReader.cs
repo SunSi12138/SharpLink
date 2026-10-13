@@ -19,7 +19,7 @@ internal static class ServerRequestEnvelopeReader
         if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0 &&
             (session.NegotiatedCapabilities & ProtocolV2Capabilities.Metadata) != 0)
         {
-            var metadataOffset = ProtocolV2Constants.RequestPrefixBytes +
+            var metadataOffset = ProtocolV2RequestIdentityCodec.GetPrefixLength(encodedPayload) +
                 ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0 ? sizeof(long) : 0);
             var prefixLength = encodedPayload.Length - original.Arguments.Length;
             if (prefixLength >= ProtocolV2Constants.RequestPrefixBytes &&
@@ -49,14 +49,40 @@ internal static class ServerRequestEnvelopeReader
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
         var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out long interfaceHash) ||
-            !reader.TryReadLittleEndian(out long methodHash))
-        {
-            throw new SharpLinkProtocolViolationException(
-                ProtocolViolationReason.MalformedFrame,
-                "Request routing prefix is truncated.");
-        }
+        var identity = ProtocolV2RequestIdentityCodec.Read(ref reader);
+        return ReadRemainder(session, ref reader, in identity, flags, maxMetadataBytes,
+            timeProvider, resolvedDeadline);
+    }
 
+    /// <summary>Continues the validated identity parse over the same still-owned encoded payload.</summary>
+    internal static ServerRequestEnvelope ReadAfterIdentity(
+        RpcSession session,
+        ReadOnlySequence<byte> payload,
+        in ProtocolV2RequestIdentity identity,
+        ProtocolV2FrameFlags flags,
+        int maxMetadataBytes,
+        TimeProvider timeProvider,
+        RpcDeadline resolvedDeadline = default)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        // Only the synchronous admission entry supplies a prevalidated identity. Queue resumes
+        // and decoded payloads use Read/ReadDecoded against their own owners and validation.
+        var prefixLength = ProtocolV2Constants.RequestPrefixBytes +
+            (identity.Receipt.HasValue ? ProtocolV2RequestIdentityCodec.ReceiptBytes : 0);
+        var reader = new SequenceReader<byte>(payload.Slice(prefixLength));
+        return ReadRemainder(session, ref reader, in identity, flags, maxMetadataBytes,
+            timeProvider, resolvedDeadline);
+    }
+
+    private static ServerRequestEnvelope ReadRemainder(
+        RpcSession session,
+        ref SequenceReader<byte> reader,
+        in ProtocolV2RequestIdentity identity,
+        ProtocolV2FrameFlags flags,
+        int maxMetadataBytes,
+        TimeProvider timeProvider,
+        RpcDeadline resolvedDeadline)
+    {
         var deadline = resolvedDeadline;
         if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
@@ -99,8 +125,7 @@ internal static class ServerRequestEnvelopeReader
         }
 
         return new ServerRequestEnvelope(
-            interfaceHash,
-            methodHash,
+            identity,
             reader.UnreadSequence,
             deadline,
             metadata);
@@ -108,8 +133,11 @@ internal static class ServerRequestEnvelopeReader
 }
 
 internal readonly record struct ServerRequestEnvelope(
-    long InterfaceHash,
-    long MethodHash,
+    ProtocolV2RequestIdentity Identity,
     ReadOnlySequence<byte> Arguments,
     RpcDeadline RpcDeadline,
-    SharpLinkMetadata? Metadata);
+    SharpLinkMetadata? Metadata)
+{
+    internal long InterfaceHash => Identity.ContractId;
+    internal long MethodHash => Identity.MethodId;
+}

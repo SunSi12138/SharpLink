@@ -248,7 +248,11 @@ public class ReadOwnershipPipeReaderDispatchTests
             "the fixture requires an ordinary registering thread");
         var inner = new ControlledReader();
         var reader = new ReadOwnershipPipeReader(inner);
-        using var done = new ManualResetEventSlim();
+        // Four parameter cases repeatedly hand work to the shared pool. Spinning here consumes
+        // the processors those queued publishers need and turns the 11,000-operation workload
+        // into a scheduler-contention measurement. Park immediately while preserving the real
+        // queued dispatch, every operation, and both existing completion bounds.
+        using var done = new ManualResetEventSlim(initialState: false, spinCount: 0);
         ValueTask<ReadResult> read = default;
         Exception? error = null;
         var consumed = 0;

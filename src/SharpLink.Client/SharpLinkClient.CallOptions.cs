@@ -210,5 +210,6 @@ internal sealed partial class SharpLinkClient
         ClientCallLifetimeSource LifetimeSource = ClientCallLifetimeSource.None,
         SharpLinkTelemetryDetailMode TelemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed,
         TimeProvider? TimeProvider = null,
-        ClientRetryGeneration? RetryGeneration = null);
+        ClientRetryGeneration? RetryGeneration = null,
+        ClientContractBinding? ContractBinding = null);
 }

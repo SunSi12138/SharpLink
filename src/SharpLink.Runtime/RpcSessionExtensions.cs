@@ -112,6 +112,12 @@ internal static class RpcSessionExtensions
             }
         }
 
+        internal ValueTask SendRequestAcceptedAsync(
+            long requestId,
+            CancellationToken cancellationToken = default)
+            => session.SendPacketWithBackpressureAsync(
+                ProtocolV2FrameType.RequestAccepted, ProtocolV2FrameFlags.None, requestId, cancellationToken);
+
         internal ValueTask SendRpcErrorWithBackpressureAsync(
             long requestId,
             SharpLinkException exception,

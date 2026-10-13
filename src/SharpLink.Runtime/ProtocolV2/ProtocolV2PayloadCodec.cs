@@ -12,7 +12,7 @@ public static partial class ProtocolV2PayloadCodec
         sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) +
         sizeof(ulong) + sizeof(byte);
     private const int HandshakeResponseBytes =
-        sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
+        sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) + 32;
 
     /// <summary>Writes a bounded handshake request payload.</summary>
     public static void WriteHandshakeRequest(
@@ -120,6 +120,10 @@ public static partial class ProtocolV2PayloadCodec
         WriteInt32(writer, response.MaxFramePayloadBytes);
         WriteInt32(writer, response.StreamReceiveWindowBytes);
         WriteInt32(writer, response.ConnectionReceiveWindowBytes);
+        var identity = writer.GetSpan(32);
+        response.ServerInstanceId.TryWriteBytes(identity);
+        response.RegistryEpoch.TryWriteBytes(identity[16..]);
+        writer.Advance(32);
         if (response.CompressionProfile is null)
         {
             WriteByte(writer, 0);
@@ -146,11 +150,14 @@ public static partial class ProtocolV2PayloadCodec
             !reader.TryReadLittleEndian(out long capabilitiesBits) ||
             !reader.TryReadLittleEndian(out int maxFrame) ||
             !reader.TryReadLittleEndian(out int streamWindow) ||
-            !reader.TryReadLittleEndian(out int connectionWindow) ||
-            !reader.TryRead(out var profileLength))
+            !reader.TryReadLittleEndian(out int connectionWindow))
         {
             throw ProtocolV2FrameParser.Violation("HandshakeResponse payload is truncated.");
         }
+        var serverInstanceId = ProtocolV2RequestIdentityCodec.ReadGuid(ref reader);
+        var registryEpoch = ProtocolV2RequestIdentityCodec.ReadGuid(ref reader);
+        if (!reader.TryRead(out var profileLength))
+            throw ProtocolV2FrameParser.Violation("HandshakeResponse compression token is truncated.");
         if (reader.Remaining != profileLength)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse compression token length does not match the frame.");
         var profile = profileLength == 0 ? null : ReadCompressionProfile(ref reader, profileLength);
@@ -164,7 +171,9 @@ public static partial class ProtocolV2PayloadCodec
             maxFrame,
             streamWindow,
             connectionWindow,
-            profile);
+            profile,
+            serverInstanceId,
+            registryEpoch);
         ValidateInboundCompressionSelection(response);
         return response;
     }

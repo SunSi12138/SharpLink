@@ -126,7 +126,14 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     /// <summary>Stops every cluster slot and releases coordinator-owned state.</summary>
     ValueTask StopAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Creates a proxy by looking up the contract's cluster route exactly once.</summary>
+    /// <summary>Synchronously binds a local proxy to its registered cluster route without waiting for connectivity.</summary>
+    /// <typeparam name="TContract">The locally registered generated RPC contract.</typeparam>
+    /// <param name="options">Immutable invocation constraints scoped to the selected cluster.</param>
+    TContract CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+        => options is null ? Get<TContract>() : throw new NotSupportedException(
+            "This coordinator does not support proxy registration constraints.");
+
+    /// <summary>Creates a local proxy by looking up the contract's cluster route exactly once.</summary>
     TContract Get<TContract>() where TContract : IService;
 
     /// <summary>Creates a routed proxy that attaches one immutable metadata snapshot to every invocation.</summary>

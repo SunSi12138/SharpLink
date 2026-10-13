@@ -123,13 +123,13 @@ internal sealed partial class SharpLinkServer
         {
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
-                request.RpcDeadline, request.Metadata, invokeToken);
+                request.RpcDeadline, request.Metadata, invokeToken, request.Identity.Kind);
             try
             {
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
-                var invokeTask = InvokeServiceAsync(
+                var invokeTask = InvokeAdmittedServiceAsync(
                     serviceInfo, connection, session, request.MethodHash, requestId,
-                    request.Arguments, output: null, invokeToken, callContext);
+                    request.Arguments, output: null, invokeToken, callContext, request.Identity.Kind, request.Identity.ClientStreamCount);
                 if (!invokeTask.IsCompletedSuccessfully)
                 {
                     callState = EnsureTrackedCallState(
@@ -238,13 +238,13 @@ internal sealed partial class SharpLinkServer
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
         var responseCallContext = CreateCallContext(
             connection, serviceInfo.Stub, request.MethodHash, requestId,
-            request.RpcDeadline, request.Metadata, invokeToken);
+            request.RpcDeadline, request.Metadata, invokeToken, request.Identity.Kind);
         try
         {
             using var callContextScope = SharpLinkCallContext.Push(responseCallContext);
-            var invokeTask = InvokeServiceAsync(
+            var invokeTask = InvokeAdmittedServiceAsync(
                 serviceInfo, connection, session, request.MethodHash, requestId,
-                request.Arguments, writer, invokeToken, responseCallContext);
+                request.Arguments, writer, invokeToken, responseCallContext, request.Identity.Kind, request.Identity.ClientStreamCount);
             if (!invokeTask.IsCompletedSuccessfully)
             {
                 callState = EnsureTrackedCallState(

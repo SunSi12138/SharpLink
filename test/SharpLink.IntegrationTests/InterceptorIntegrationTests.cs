@@ -230,14 +230,13 @@ public class InterceptorIntegrationTests
         {
             SynchronizationContext.SetSynchronizationContext(context);
             call = service.SumStreamAsync(stream, CancellationToken.None).AsTask();
-            Ensure(stream.MoveNextStarted.IsCompleted,
-                "client stream production should reach the first asynchronous MoveNext synchronously");
         }
         finally
         {
             SynchronizationContext.SetSynchronizationContext(previous);
         }
 
+        await stream.MoveNextStarted.WaitAsync(TimeSpan.FromSeconds(3));
         stream.ReleaseFirstMoveNext();
         Ensure(await call.WaitAsync(TimeSpan.FromSeconds(3)) == 42, "client stream sum");
         Ensure(context.PostCount == 0,

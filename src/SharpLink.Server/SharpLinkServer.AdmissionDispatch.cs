@@ -10,6 +10,27 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
+        ServiceRegistration serviceInfo,
+        ServerCallCancellationState? admittedCallState = null,
+        bool admissionGranted = false,
+        int admittedClientStreamCount = 0,
+        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
+        => DispatchOneWayRpcCore(
+            connection, requestId, flags, payload, requestCancellationMap, serverLoopToken,
+            admissionProgram, serviceInfo, identity: default, identityValidated: false,
+            admittedCallState, admissionGranted, admittedClientStreamCount, retainedAdmissionPayload);
+
+    private ValueTask DispatchOneWayRpcCore(
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        AdmissionProgram? admissionProgram,
+        ServiceRegistration serviceInfo,
+        in ProtocolV2RequestIdentity identity,
+        bool identityValidated,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         int admittedClientStreamCount = 0,
@@ -21,19 +42,11 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
-            {
-                if (admittedCallState is not null)
-                {
-                    DrainRejectedOneWayStreams(session, requestId, admittedClientStreamCount);
-                    ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
-                    return ValueTask.CompletedTask;
-                }
-                return TerminateUnresolvableOneWayRequest(session, requestId);
-            }
-
+            var request = identityValidated
+                ? ServerRequestEnvelopeReader.ReadAfterIdentity(
+                    session, payload, in identity, flags, _protocolOptions.MaxMetadataBytes,
+                    _runtimeContext.TimeProvider, admittedCallState?.Deadline ?? default)
+                : ReadRequestEnvelope(session, payload, flags, admittedCallState?.Deadline ?? default);
             // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
             // client streams still needs a receive route so the peer can finish sending and recover
             // its receive credit even though no user invocation will run. If the method shape cannot
@@ -62,19 +75,6 @@ internal sealed partial class SharpLinkServer
                     ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
                 return ValueTask.CompletedTask;
             }
-            if (!serviceInfo.AcceptsCalls)
-            {
-                DrainRejectedOneWayStreams(
-                    session,
-                    requestId,
-                    admittedCallState is null
-                        ? descriptor.ClientStreamCount
-                        : admittedClientStreamCount);
-                if (admittedCallState is not null)
-                    ReleaseAdmissionCallState(requestCancellationMap, requestId, admittedCallState);
-                return ValueTask.CompletedTask;
-            }
-
             if (admissionProgram is not null && !admissionGranted)
             {
                 admittedCallState = CreateAdmissionWaitState(
@@ -141,7 +141,8 @@ internal sealed partial class SharpLinkServer
                         serverLoopToken,
                         descriptor.ClientStreamCount,
                         admittedCallState,
-                        admissionProgram));
+                        admissionProgram,
+                        serviceInfo));
                 }
 
                 var decision = admissionTask.Result;
@@ -355,7 +356,7 @@ internal sealed partial class SharpLinkServer
 
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
-                request.RpcDeadline, request.Metadata, invokeToken);
+                request.RpcDeadline, request.Metadata, invokeToken, request.Identity.Kind);
             try
             {
                 // #299 deliberately excludes OneWay from generic pre-invocation reservation. Install
@@ -369,7 +370,7 @@ internal sealed partial class SharpLinkServer
                     retainUntilLocalCompletion: true);
 
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
-                var invokeTask = InvokeServiceAsync(
+                var invokeTask = InvokeAdmittedServiceAsync(
                     serviceInfo,
                     connection,
                     session,
@@ -378,7 +379,9 @@ internal sealed partial class SharpLinkServer
                     request.Arguments,
                     output: null,
                     invokeToken,
-                    callContext);
+                    callContext,
+                    request.Identity.Kind,
+                    request.Identity.ClientStreamCount);
                 if (invokeTask.IsCompletedSuccessfully)
                 {
                     if (callContext is SharpLinkServerInvocationContext
@@ -448,7 +451,8 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         int clientStreamCount,
         ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram)
+        AdmissionProgram admissionProgram,
+        ServiceRegistration serviceInfo)
     {
         var transferred = false;
         try
@@ -481,6 +485,7 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 admissionProgram,
+                serviceInfo,
                 callState,
                 admissionGranted: true,
                 admittedClientStreamCount: clientStreamCount,
@@ -506,7 +511,8 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram)
+        AdmissionProgram admissionProgram,
+        ServiceRegistration serviceInfo)
     {
         var transferred = false;
         try
@@ -541,6 +547,7 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 admissionProgram,
+                serviceInfo,
                 callState,
                 admissionGranted: true,
                 retainedAdmissionPayload: retainedPayload);

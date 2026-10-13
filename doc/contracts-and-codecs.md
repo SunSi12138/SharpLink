@@ -31,7 +31,7 @@ DTO 演进规则：
 - 字段 id 是 wire identity；发布后不要重用或改变含义。
 - 新增可选字段通常兼容；删除字段前确认所有对端已停止发送。
 - required、nullable、wire type 或嵌套 schema 变化可能不兼容。
-- 当前 Phase 1 identity 模型由最终 Codec graph 上的 fixed-width `CodecHash`、方法/契约 hash 与 `RpcAssemblyHash` 组成；dispatch route ID 只负责路由，不承担 wire compatibility identity。远端 assembly hash 发布与 bind-time exact equality 仍属于 #396 后续阶段。
+- identity 模型由最终 Codec graph 上的 fixed-width `CodecHash`、方法/契约 hash 与 `RpcAssemblyHash` 组成；dispatch route ID 只负责路由，不承担 wire compatibility identity。3.0 的远端 Manifest 发布 assembly hash，控制面据此维护普通调用的路由资格。`CreateProxy<T>` / `Get<T>` 仅固定本地契约与 Codec；所有 Request 都在服务端业务解码前校验 assembly hash 精确相等，并持有同一注册的调用 lease。跨连接注册顺序由显式 receipt 表达，见 [RPC identity 与注册 receipt](rpc-wire-identity.md)。
 
 ## 自定义 Codec
 

@@ -193,18 +193,22 @@ internal sealed partial class SharpLinkServer
             session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
     }
 
-    private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
+    private static ProtocolV2RequestIdentity ReadRequestIdentity(ReadOnlySequence<byte> payload)
     {
         var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out long contractId) ||
-            !reader.TryReadLittleEndian(out long methodId) ||
-            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration) ||
-            !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
+        return ProtocolV2RequestIdentityCodec.Read(ref reader);
+    }
+
+    private static int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
+    {
+        try
+        {
+            return ReadRequestIdentity(payload).ClientStreamCount;
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
         {
             return UnresolvedClientStreamCount;
         }
-
-        return descriptor.ClientStreamCount;
     }
 
     private static void CompleteFailedRequestStreams(

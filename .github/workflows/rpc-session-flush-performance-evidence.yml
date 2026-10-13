@@ -59,6 +59,10 @@ jobs:
           # Keep the copied CLI and its helper in sync when building the historical base.
           cp test/SharpLink.Benchmarks/ServerCallAdmissionHotPathBenchmarks.cs \
             "$BASE_WORKTREE/test/SharpLink.Benchmarks/ServerCallAdmissionHotPathBenchmarks.cs"
+          # The shared CLI also includes issue #775's additive runner. Copy its
+          # declaration for compilation; the flush workloads below are unchanged.
+          cp test/SharpLink.Benchmarks/ContractRoutingEvidenceRunner.cs \
+            "$BASE_WORKTREE/test/SharpLink.Benchmarks/ContractRoutingEvidenceRunner.cs"
           echo "BASE_WORKTREE=$BASE_WORKTREE" >> "$GITHUB_ENV"
 
       - name: Build exact base benchmark harness

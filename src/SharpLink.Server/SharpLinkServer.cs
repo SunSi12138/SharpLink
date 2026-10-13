@@ -82,6 +82,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         _exceptionMapper = composition.ExceptionMapper;
         _serviceProvider = composition.ServiceProvider;
         _staticManifests = composition.StaticManifests;
+        InitializeStaticRegistrationReceipts();
         _admissionController = composition.AdmissionController;
         _connectionAdmission = composition.ConnectionAdmission;
         _shutdownPlan = composition.ShutdownPlan;
@@ -175,23 +176,24 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         long requestId,
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RpcMethodKind kind)
     {
         var session = connection.Session;
         var interceptors = Volatile.Read(ref _serverInterceptorGeneration);
         if (interceptors.Count == 0)
-            return connection.GetCallContextSnapshot(deadline, metadata);
-
-        var method = GetMethodDescriptor(stub, methodId);
-        if (method.Kind != RpcMethodKind.OneWay)
         {
-            ReservePreInvocationRequestStreams(
-                session,
-                method.ClientStreamCount,
-                requestId,
-                cancellationToken);
+            if (kind is not (RpcMethodKind.ClientStreaming or RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming))
+                return connection.GetCallContextSnapshot(deadline, metadata);
+            return new StreamCallContextSnapshot(session.Id, connection.AuthenticationContext,
+                deadline, _runtimeContext.TimeProvider, metadata, GetMethodDescriptor(stub, methodId),
+                requestId, cancellationToken);
         }
 
+        // A stream keeps the admitted descriptor for its entire lifetime, including exception
+        // mapping after a replacement. The dispatch entry separately reserves its receive routes
+        // inside the request's resource-cleanup boundary, before publishing RequestAccepted.
+        var method = GetMethodDescriptor(stub, methodId);
         return CreateServerInvocationContext(
             session,
             method,

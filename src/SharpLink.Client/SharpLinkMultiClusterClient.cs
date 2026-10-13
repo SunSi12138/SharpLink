@@ -118,14 +118,16 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
 
     public ValueTask DisposeAsync() => StopAsync();
 
-    public TContract Get<TContract>() where TContract : IService
+    public TContract Get<TContract>() where TContract : IService => CreateProxy<TContract>();
+
+    public TContract CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
     {
         var state = State;
         if (state is SharpLinkMultiClusterState.Draining or SharpLinkMultiClusterState.Stopped or SharpLinkMultiClusterState.Faulted)
             throw new InvalidOperationException($"Multi-cluster client state '{state}' does not create proxies.");
 
         if (Volatile.Read(ref _snapshot).Routes.TryGetValue(typeof(TContract), out var route))
-            return route.Slot.Client.Get<TContract>();
+            return route.Slot.Client.CreateProxy<TContract>(options);
 
         throw new InvalidOperationException($"Proxy for service interface {typeof(TContract).FullName} is not routed to a cluster.");
     }

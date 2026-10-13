@@ -11,7 +11,8 @@ public sealed class Stack13RequestShapeTests
     {
         foreach (var timed in new[] { false, true })
         {
-            for (var length = 0; length <= 32; length++)
+            var minimumLength = ProtocolV2Constants.RequestPrefixBytes + (timed ? sizeof(long) : 0);
+            for (var length = 0; length <= ProtocolV2Constants.RequestPrefixBytes + 16; length++)
             {
                 var bytes = Frame(new byte[length], timed ? ProtocolV2FrameFlags.HasTimeBudget : 0);
                 for (var split = 0; split <= bytes.Length; split++)
@@ -21,11 +22,11 @@ public sealed class Stack13RequestShapeTests
                     try
                     {
                         var ok = ProtocolV2FrameParser.TryReadFrame(ref buffer, new(), out _, out var payload);
-                        Check(length >= (timed ? 24 : 16) && ok && payload.Length == length && buffer.IsEmpty, "fixed request valid boundary");
+                        Check(length >= minimumLength && ok && payload.Length == length && buffer.IsEmpty, "fixed request valid boundary");
                     }
                     catch (SharpLinkException exception)
                     {
-                        Check(length < (timed ? 24 : 16), "unexpected fixed validation error");
+                        Check(length < minimumLength, "unexpected fixed validation error");
                         Check(exception.Code == SharpLinkErrorCode.ProtocolViolation && buffer.Start.Equals(start), "error without source consumption");
                     }
                 }

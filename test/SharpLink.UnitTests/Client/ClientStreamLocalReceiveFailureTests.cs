@@ -57,10 +57,8 @@ public class ClientStreamLocalReceiveFailureTests
                    ProtocolV2FrameFlags.None,
                    unchecked((ulong)requestId)))
         {
-            var prefix = request.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
-            BinaryPrimitives.WriteInt64LittleEndian(prefix, 1);
-            BinaryPrimitives.WriteInt64LittleEndian(prefix[8..], 1);
-            request.Advance(ProtocolV2Constants.RequestPrefixBytes);
+            ProtocolV2RequestIdentityCodec.Write(request, new ProtocolV2RequestIdentity(
+                1, 1, ClientInvocationTestManifest.Hash, RpcMethodKind.ServerStreaming, 0));
         }
         var preparedRequest = session.PrepareOutboundFrame(request, CancellationToken.None);
         if (!connection.PendingCalls.TryPublishRequest(

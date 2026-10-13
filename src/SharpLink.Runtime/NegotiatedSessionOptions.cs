@@ -64,6 +64,7 @@ internal static class RpcSessionProtocolRules
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or
                     ProtocolV2FrameType.Request or
+                    ProtocolV2FrameType.RequestAccepted or
                     ProtocolV2FrameType.Response or
                     ProtocolV2FrameType.Cancel or
                     ProtocolV2FrameType.StreamData or
@@ -79,6 +80,7 @@ internal static class RpcSessionProtocolRules
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or
+                    ProtocolV2FrameType.RequestAccepted or
                     ProtocolV2FrameType.Response or
                     ProtocolV2FrameType.Cancel or
                     ProtocolV2FrameType.StreamData or

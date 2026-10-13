@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
-using System.Buffers.Binary;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO.Pipelines;
@@ -437,6 +436,7 @@ public partial class SharpLinkServerInvocationTests
         private readonly Pipe _input = new();
         private readonly PipeWriter _output;
         private readonly IRpcStub _stub;
+        private readonly ServiceRegistration _registration;
 
         internal ServerDispatchHarness(IRpcStub stub, PipeWriter output, int maxSendQueueBytes)
         {
@@ -469,10 +469,12 @@ public partial class SharpLinkServerInvocationTests
                 stub,
                 new ThrowingService(),
                 ownsService: false);
+            _registration = registration;
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry",
                     BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;
+            ServerRequestTestWire.Bind(registration, serviceRegistry);
             Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
             {
                 [stub.InterfaceHash] = registration
@@ -489,9 +491,7 @@ public partial class SharpLinkServerInvocationTests
 
         internal ValueTask Dispatch(long requestId, ProtocolV2FrameFlags flags)
         {
-            var request = new byte[sizeof(long) * 2];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 1);
+            var request = ServerRequestTestWire.Create(_stub, 1);
             return (ValueTask)DispatchMethod.Invoke(Server,
             [
                 Connection,
@@ -501,6 +501,7 @@ public partial class SharpLinkServerInvocationTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
+                _registration,
                 null,
                 (flags & ProtocolV2FrameFlags.Cancellable) != 0,
                 null

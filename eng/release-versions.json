@@ -47,18 +47,18 @@
       "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
       "pattern": "const ushort MinorVersion = (\\d+);",
       "published": 4,
-      "current": 4,
-      "policy": "unchanged",
-      "reason": "Unchanged from the published 2.0.3 release."
+      "current": 5,
+      "policy": "increment",
+      "reason": "Issue #775: generation 5 requires pre-decode request contract identity and receipt constraints, plus handshake server/registry identity; generation 4 fails closed."
     },
     {
       "name": "Minimum compatible minor",
       "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
       "pattern": "const ushort MinimumCompatibleMinorVersion = (\\d+);",
       "published": 4,
-      "current": 4,
-      "policy": "unchanged",
-      "reason": "Unchanged from the published 2.0.3 release."
+      "current": 5,
+      "policy": "increment",
+      "reason": "Issue #775: generation 5 requires pre-decode request contract identity and receipt constraints, plus handshake server/registry identity; generation 4 fails closed."
     },
     {
       "name": "Contract Manifest JSON",

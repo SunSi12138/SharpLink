@@ -90,8 +90,13 @@ public sealed class SharpLinkClientSessionRefreshInteractionTests
                 await secondCut.Task.WaitAsync(Timeout);
             else
                 await workerReleased.Task.WaitAsync(Timeout);
-            Ensure(factory.Count == (advance ? 3 : 2),
-                "advanced debt triggers another replacement without a new rollout; duplicate or older debt does not");
+            // The eligibility-cut hook runs before the atomic contract-route publication.
+            // Acquiring the same gate waits for that publication before issuing the next RPC.
+            lock (GetGate(owner, pool))
+            {
+                Ensure(factory.Count == (advance ? 3 : 2),
+                    "advanced debt triggers another replacement without a new rollout; duplicate or older debt does not");
+            }
             await CompleteUnary(client, factory.Get(advance ? 2 : 1));
         }
         finally

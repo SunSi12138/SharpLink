@@ -238,7 +238,7 @@ internal sealed partial class SharpLinkClient
         try
         {
             EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, selection, outcome);
+            connection = GetReadyConnection(method, selection, outcome, control.ContractBinding);
             try
             {
                 EnsureLogicalCallProgress(control);
@@ -271,8 +271,7 @@ internal sealed partial class SharpLinkClient
 
             return StartUnaryCall(
                 connection,
-                contractId,
-                methodId,
+                method,
                 requestId,
                 hasResponsePayload,
                 request,

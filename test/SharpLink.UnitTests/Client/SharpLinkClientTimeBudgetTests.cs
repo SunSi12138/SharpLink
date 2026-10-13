@@ -176,7 +176,7 @@ public class SharpLinkClientTimeBudgetTests
     }
 
     [Test]
-    public async Task TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline()
+    public async Task TimedClientStreamAdmissionShouldKeepCreationTimeBudgetAndRejectElapsedDeadline()
     {
         var timeProvider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
@@ -200,9 +200,8 @@ public class SharpLinkClientTimeBudgetTests
         var request = default(RpcEmptyRequest);
 
         // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
-        // The ownership gate is unchanged: the producer still starts only after the owning
-        // Request finished emission. What changed is that emission no longer re-samples or
-        // arbitrates the TimeBudget, so the frame carries the remaining sampled at creation.
+        // The Request keeps the budget sampled at creation. Its admission ACK must still
+        // observe the same pending deadline before allowing the producer to start.
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         transport.Connection.RunOnNextOutputBufferRequest(
@@ -219,16 +218,11 @@ public class SharpLinkClientTimeBudgetTests
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
             "the wire TimeBudget must be the remaining sampled once when the frame is created");
-        await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Ensure(!invocation.IsCompleted,
-            "starting the client-stream producer must not complete the call on its own");
-
-        // The pending deadline owns the terminal decision now that the send pump publishes
-        // frames verbatim, so the elapsed budget fails the call and cancels the remote stream.
-        timeProvider.Advance(TimeSpan.Zero);
-        var failure = await CaptureSharpLinkExceptionAsync(invocation);
+        var failure = await CaptureSharpLinkExceptionAsync(invocation.WaitAsync(TimeSpan.FromSeconds(5)));
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "an emitted client-stream Request whose budget elapsed must fail through its pending deadline");
+            "an admission ACK after the original pending deadline must preserve DeadlineExceeded");
+        Ensure(!probe.Started.Task.IsCompleted && client.PendingCallCount == 0,
+            "expired stream admission must not start its producer and must release the pending owner");
     }
 
     [Test]
@@ -249,7 +243,7 @@ public class SharpLinkClientTimeBudgetTests
             typeof(SharpLinkClientTimeBudgetTests).Assembly,
             manifest,
             registration);
-        var channel = new SharpLinkModuleRpcChannel(client, module);
+        var channel = new SharpLinkModuleRpcChannel(client, module, new ClientContractBinding(1, ClientInvocationTestManifest.Hash));
         var method = new RpcMethodDescriptor(
             ContractId: 1,
             MethodId: 289,

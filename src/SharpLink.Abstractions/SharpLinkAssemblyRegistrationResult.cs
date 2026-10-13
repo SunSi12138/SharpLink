@@ -65,10 +65,12 @@ public readonly record struct SharpLinkAssemblyRegistrationResult
 {
     internal SharpLinkAssemblyRegistrationResult(
         bool succeeded,
-        SharpLinkAssemblyRegistrationError? error)
+        SharpLinkAssemblyRegistrationError? error,
+        IReadOnlyList<ContractRegistrationReceipt>? receipts = null)
     {
         Succeeded = succeeded;
         Error = error;
+        Receipts = receipts ?? Array.Empty<ContractRegistrationReceipt>();
     }
 
     /// <summary>Gets whether the complete manifest was published.</summary>
@@ -77,7 +79,17 @@ public readonly record struct SharpLinkAssemblyRegistrationResult
     /// <summary>Gets the rejection reason, or <see langword="null"/> after success.</summary>
     public SharpLinkAssemblyRegistrationError? Error { get; }
 
-    internal static SharpLinkAssemblyRegistrationResult Success() => new(true, null);
+    /// <summary>Gets server registration receipts, or an empty list for a client-local registration.</summary>
+    public IReadOnlyList<ContractRegistrationReceipt> Receipts
+    {
+        get => _receipts ?? Array.Empty<ContractRegistrationReceipt>();
+        init => _receipts = value;
+    }
+
+    private readonly IReadOnlyList<ContractRegistrationReceipt>? _receipts;
+
+    internal static SharpLinkAssemblyRegistrationResult Success(
+        IReadOnlyList<ContractRegistrationReceipt>? receipts = null) => new(true, null, receipts);
 
     internal static SharpLinkAssemblyRegistrationResult Failure(SharpLinkAssemblyRegistrationError error)
         => new(false, error ?? throw new ArgumentNullException(nameof(error)));
@@ -109,6 +121,15 @@ public readonly record struct SharpLinkAssemblyReplacementResult
     /// <summary>Gets the preparation or publication rejection, or <see langword="null"/> after publication.</summary>
     public SharpLinkAssemblyRegistrationError? Error { get; init; }
 
+    /// <summary>Gets receipts from the successful server publication, including when its old calls still drain.</summary>
+    public IReadOnlyList<ContractRegistrationReceipt> Receipts
+    {
+        get => _receipts ?? Array.Empty<ContractRegistrationReceipt>();
+        init => _receipts = value;
+    }
+
+    private readonly IReadOnlyList<ContractRegistrationReceipt>? _receipts;
+
     /// <summary>Gets whether SharpLink released all framework-owned references to the old registration before returning.</summary>
     public bool ReferencesReleased { get; init; }
 
@@ -121,10 +142,13 @@ public readonly record struct SharpLinkAssemblyReplacementResult
     internal static SharpLinkAssemblyReplacementResult Failure(SharpLinkAssemblyRegistrationError error)
         => new() { Error = error ?? throw new ArgumentNullException(nameof(error)) };
 
-    internal static SharpLinkAssemblyReplacementResult Published(SharpLinkAssemblyUnregisterResult drain)
+    internal static SharpLinkAssemblyReplacementResult Published(
+        SharpLinkAssemblyUnregisterResult drain,
+        IReadOnlyList<ContractRegistrationReceipt>? receipts = null)
         => new()
         {
             Succeeded = true,
+            Receipts = receipts ?? Array.Empty<ContractRegistrationReceipt>(),
             ReferencesReleased = drain.ReferencesReleased,
             RemainingCalls = drain.RemainingCalls,
             RemainingStreams = drain.RemainingStreams
