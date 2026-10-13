@@ -311,3 +311,110 @@ To reproduce CPU category weights, including the corrected scalar identity-helpe
 ```bash
 python3 eng/rpc-contract-routing-performance/profile_summary.py /path/to/cpu-artifact
 ```
+
+
+## Follow-up: reusable admission signals and deferred stream contexts (2026-10-13)
+
+This section supersedes the **current candidate** designation above, not the historical measurements. Production source is `7d3447d233993fd1c9dc6e0f426f3b4a2c3e963b`; subsequent commits fix test isolation/reporting only. The previous production candidate is frozen at `2149ca799dca38bcb7f97583572406b0d0b41890`. The original pre-feature performance baseline remains `3332559cf4db455e0249448cf16ad43f4fc36564`. Do not compare timings taken on different runner hosts as a new paired experiment.
+
+### Changes and retained invariants
+
+- Ordinary static Unary/OneWay dispatch uses the already validated request shape to bypass stream establishment. When server call telemetry has no observers, dispatch enters the existing invocation core before resolving otherwise unused telemetry descriptors/details. No Manifest rescan, selection change or admission bypass is introduced. Authentication/interceptors still run through the same core.
+- ClientStreaming/Duplex admission replaces the per-call `TaskCompletionSource<bool>`/Task pair with a bounded pooled `IValueTaskSource<bool>`. Completion and result consumption own separate references; reset/reuse waits for both. The signal is independent of the reusable pending-call slot, so a delayed consumer cannot observe a replacement call's admission. Three tests cover delayed consumption, slot reuse and 8 × 1,024 concurrent completion/consumption races.
+- **Producer admission ordering is unchanged.** `RunContinuationsAsynchronously` remains enabled: this change removes the TCS/Task allocation pair but does not claim to remove the required scheduling/acceptance boundary or start user producer code inline on the receive loop. Completion before waiting retains the synchronous accepted fast path.
+- Unintercepted streams retain a smaller call-context snapshot containing the admitted descriptor, request ID, authentication, deadline, metadata and cancellation token. A complete invocation context is constructed only for interception or exception mapping. Error mapping uses the captured descriptor, including after retirement, rather than consulting the current registry.
+- Atomic route snapshots, the Picker-selected Session, server predecode identity checks, registration leases, failure handling and the original allocation policy are preserved. This round does not change their implementation files or their budgets.
+
+The first `ce4f8ef` experiment revealed that bypassing stream setup merely moved descriptor resolution into disabled telemetry. The `7d3447d` guard removes that remaining resolution. The first experiment is retained in [run 38408537599](https://github.com/SunSi12138/SharpLink/actions/runs/38408537599), rather than being used as evidence for the final implementation.
+
+### Controlled removal experiments: mixed results, not a blanket performance win
+
+[Run 38410063138](https://github.com/SunSi12138/SharpLink/actions/runs/38410063138) compares the unmodified production candidate against three separate one-factor removal variants. Each variant restores only its own change group from `2149ca7`; shared-file changes use exact non-overlapping replacements. The telemetry/static group is a combined factor, so this experiment does **not** distinguish the effects of its two internal changes. Diagnostic overlays are not shipping commits.
+
+All arms use the same runner, two pinned CPUs, .NET 10.0.112, tiered PGO, unchanged workload and `old,new,new,old,new,old,old,new` ordering. Each group executes both TCP and SharedMemory and all six focused scenarios. All **288 case processes** completed; independently checking completion counts and every raw P50/P99/P99.9 vector accounts for **3,784,704 RPCs**. Raw patches, all slot values, process exits and assembly hashes remain in artifact `11821112072` (ZIP SHA-256 `18d8ab278106e11771a4399b2f9eb1a81fa8d9d0e04a5b12a4000d56acc3737c`).
+
+Ratios below are **candidate / corresponding factor-restored arm**. Higher throughput is faster; CPU/allocation ratios below 1 are smaller. ABBA and BAAB are separately calculated from their two observations per arm; the combined ratio uses all four observations per arm.
+
+| Removed factor / scenario | Throughput ratio | ABBA | BAAB | CPU/op ratio | Diagnostic allocation/op ratio |
+|---|---:|---:|---:|---:|---:|
+| tcs / tcp/clientstream | 1.0028 | 0.9352 | 1.0673 | 1.0019 | 0.9874 |
+| tcs / tcp/duplex | 1.0537 | 1.0545 | 1.0530 | 0.9502 | 0.9895 |
+| tcs / sharedmemory/clientstream | 1.0375 | 0.9736 | 1.1065 | 0.9793 | 0.9992 |
+| tcs / sharedmemory/duplex | 1.0661 | 1.0486 | 1.0853 | 0.9385 | 0.9997 |
+| full-context / tcp/clientstream | 0.8932 | 0.8738 | 0.9121 | 1.1210 | 0.9382 |
+| full-context / tcp/serverstream | 1.0404 | 1.0207 | 1.0591 | 0.9653 | 0.9182 |
+| full-context / tcp/duplex | 1.0316 | 0.9773 | 1.0895 | 0.9643 | 1.0205 |
+| full-context / sharedmemory/clientstream | 1.0903 | 1.1506 | 1.0352 | 0.9139 | 0.9940 |
+| full-context / sharedmemory/serverstream | 1.0738 | 1.1003 | 1.0496 | 0.9317 | 0.9913 |
+| full-context / sharedmemory/duplex | 1.0642 | 1.0400 | 1.0898 | 0.9440 | 0.9623 |
+| telemetry-and-static / tcp/unary | 0.9973 | 1.0287 | 0.9671 | 1.0027 | 1.0000 |
+| telemetry-and-static / tcp/oneway-sender | 0.9359 | 0.9250 | 0.9455 | 1.0205 | 0.8324 |
+| telemetry-and-static / sharedmemory/unary | 1.0145 | 0.9925 | 1.0371 | 0.9870 | 0.9955 |
+| telemetry-and-static / sharedmemory/oneway-sender | 0.9639 | 1.0792 | 0.8590 | 0.9412 | 0.8242 |
+
+The reusable signal has repeatable positive Duplex ratios in this run, but ClientStreaming block directions disagree. Lightweight contexts reduce TCP ClientStreaming diagnostic allocation while **throughput falls 10.68% and CPU/op rises 12.10%**; both ordering blocks are slower. The ordinary-path factor also has a **6.41% TCP sender-only decline** despite reduced diagnostic allocation. Those adverse rows remain review risks, not discarded outliers. Conversely, unchanged controls move substantially: SharedMemory OneWay sender is 0.8735 in the TCS factor even though it does not execute the changed admission waiter. This dispersion limits causal claims from a single hosted-runner experiment. The data does not establish a uniform speedup or identify all remaining stream cost as TCS overhead.
+
+### CPU and emitted-code attribution
+
+[Run 38410062652](https://github.com/SunSi12138/SharpLink/actions/runs/38410062652) captures a separate same-host ABBA of `2149ca7` versus `7d3447d`: eight OneWay CPU profiles and sixteen stream CPU profiles, plus independent JIT runs. Original `.nettrace`, speedscope, process logs, assembly hashes and provenance are in artifact `11821302459` (ZIP SHA-256 `eb28dea8bb1ba863e4307477d0b76be00c8f84490f1360af6874f800d5192374`). Profiled/disassembly timings do not enter unprofiled throughput acceptance.
+
+Emitted Tier0/Instrumented Tier0 code confirms that `PendingCall.WaitForRequestAdmissionAsync` changes from TCS construction/Task retrieval to `RequestAdmissionWaiter.Rent/WaitAsync`, and `CreateCallContext` has a lightweight snapshot branch while retaining the intercepted full-context branch. `InvokeServiceTrackedAsync` branches directly to the existing invocation core before `GetMethodDescriptor` when telemetry is disabled. Tier1 output is also retained; inlining means a missing named helper alone is not proof of removed work.
+
+The existing actual-tagged synchronous OneWay sender classifier reports queue monitor slowpath weights of 30.71–51.91% in base slots and 44.36–61.61% in candidate slots. These are overlapping CPU-stack projections, not lock-wait durations or causal throughput percentages. Whole-capture server identity/admission stacks are reported separately, never divided by synchronous sender samples.
+
+For asynchronous streams, `stream_profile_summary.py` intentionally uses the **whole capture**, including warmup/runtime threads; it does not assume the synchronous benchmark frame covers resumed work. Average scheduling-category percentages across the two slots are:
+
+| Stream shape / items | Previous % | Candidate % |
+|---|---:|---:|
+| ClientStreaming / 32 | 10.822 | 8.835 |
+| ClientStreaming / 256 | 11.153 | 10.080 |
+| Duplex / 32 | 9.062 | 9.965 |
+| Duplex / 256 | 12.676 | 13.115 |
+
+Named admission helpers account for less than 0.03%, and context helpers less than 0.004% of these whole-capture weights. They are too sparsely sampled, and too susceptible to inlining, to quantify a per-call TCS/context CPU saving. Scheduling projections do not consistently decrease for Duplex. No allocation-stack capture was taken, so process-wide allocation differences are not assigned to a particular constructor. Reproduce both classifications with:
+
+```bash
+python3 eng/rpc-contract-routing-performance/profile_summary.py /path/to/cpu-artifact
+python3 eng/rpc-contract-routing-performance/stream_profile_summary.py /path/to/cpu-artifact
+```
+
+### Validation and original-baseline comparison
+
+[Run 38412340340](https://github.com/SunSi12138/SharpLink/actions/runs/38412340340) compares original baseline `3332559` with `6c06c7d` (production source identical to `7d3447d`). All eight unprofiled ABBA/BAAB slots completed on one host. Independent re-parsing verifies **1,261,568 focused RPCs**, **2,949,120 BDN sender-queued calls** and **563,840 allocation operations**. Artifact `11823253197`, ZIP SHA-256 `fe037524084fe93e2b7e97b7596b7c0bc015c08cd82b8a102db93202ea6c611e`, retains all raw samples.
+
+**This evidence run failed its original allocation gate:** baseline slot `07-base`, `rpc-add-sharedmemory-c8`, spread **108.016 B/op > 90 B/op** (samples 538.152, 570.355, 539.584, 646.168, 551.168; median 551.168). All 16 candidate allocation cases and 15/16 baseline cases pass. The injected negative control fails as required at **1,863.692 B/op > 1,450**. No sample is dropped and no budget is changed. Timing rows remain observations, not an accepted all-green experiment. A subsequent docs/test-only head reruns the same unchanged gate; its artifact and exact-head status are separately linked in the PR review summary.
+
+Historical BDN labels yield **1,777.262 → 2,160.206 ns (1.2155×)** and **1,782.172 → 2,152.620 ns (1.2079×)**. Both labels execute the same expression; neither is a receiver-completion measurement.
+
+| Transport/scenario | Throughput candidate/base | Base P99 us | Candidate P99 us | Base P99.9 us | Candidate P99.9 us |
+|---|---:|---:|---:|---:|---:|
+| sharedmemory-clientstream | 0.7205 | 290.620 | 568.006 | 377.471 | 958.472 |
+| sharedmemory-duplex | 0.7883 | 747.108 | 1209.508 | 951.733 | 1792.713 |
+| sharedmemory-oneway-receiver | 0.7384 | 1105.652 | 1109.788 | 1150.003 | 1158.167 |
+| sharedmemory-oneway-sender | 0.8281 | 10.120 | 12.099 | 17.642 | 21.342 |
+| sharedmemory-serverstream | 0.9338 | 239.296 | 376.899 | 331.261 | 509.060 |
+| sharedmemory-unary | 0.9754 | 194.248 | 198.909 | 303.122 | 296.212 |
+| tcp-clientstream | 0.8027 | 454.382 | 550.102 | 1491.495 | 1083.621 |
+| tcp-duplex | 0.6620 | 860.177 | 1140.474 | 1061.105 | 1708.110 |
+| tcp-oneway-receiver | 1.2568 | 1099.838 | 1104.936 | 1164.581 | 1181.972 |
+| tcp-oneway-sender | 0.8671 | 8.463 | 9.254 | 17.476 | 19.259 |
+| tcp-serverstream | 0.9174 | 410.529 | 326.582 | 960.298 | 702.011 |
+| tcp-unary | 0.9172 | 113.922 | 136.976 | 203.632 | 204.213 |
+
+The batch OneWay workload through final receiver business completion is **264,692.5 → 233,605.5 op/s (0.8826×) TCP**, and **259,147.3 → 228,717.4 op/s (0.8826×) SharedMemory**. Sender-only completion and per-request receiver barriers are distinct boundaries and cannot replace these results. ClientStreaming remains **19.73% / 27.95%** slower and Duplex **33.80% / 21.17%** slower for TCP / SharedMemory against the original baseline. Different runner hosts prevent treating these ratios versus historical ratios above as a paired measurement of this round's gain.
+
+The median-of-slot canonical OneWay allocation is **800.156 → 800.120 B/completed op**. The independently passing [PR Fast allocation job](https://github.com/SunSi12138/SharpLink/actions/runs/38412357710/job/115347685458) does not override the baseline spread failure in this separate experiment.
+
+| Validation on `6c06c7d` | Observed result |
+|---|---|
+| [Compilation](https://github.com/SunSi12138/SharpLink/actions/runs/38412340340/job/115347852430) and [complete regression](https://github.com/SunSi12138/SharpLink/actions/runs/38412340340/job/115348298095) | Release/Debug builds: zero warnings/errors. Unit 2,174; Generator 271; Load 77; StreamLoad 21; real-transport Integration 469; Debug admission rollback 1. All zero failures/skips. Formatting and architecture guards pass. |
+| [NativeAOT, Trim, packages](https://github.com/SunSi12138/SharpLink/actions/runs/38412340340/job/115348297771) | Project/package consumers, TCP/SharedMemory AOT, SharpPack/pre-credit, rooting, partial/late Trim, eight package/symbol pairs, ABI-mixing rejection, wire-process gate and quickstart pass. |
+| [Packaged public API](https://github.com/SunSi12138/SharpLink/actions/runs/38412340340/job/115348297697) | Complete public/protected surface and SDK forwards match the reviewed baseline of all eight packages. |
+| Repeated parallel suites | [Hosting](https://github.com/SunSi12138/SharpLink/actions/runs/38412358258), [Snapshot](https://github.com/SunSi12138/SharpLink/actions/runs/38412357597), [Terminal](https://github.com/SunSi12138/SharpLink/actions/runs/38412357379) pass their unchanged full-suite/old-negative checks. [Lease](https://github.com/SunSi12138/SharpLink/actions/runs/38412357779) fails the fourth full run at the refresh fixture described below; this row is not called green. |
+
+Failure history is part of this round's evidence. The new disabled-telemetry test initially failed because a fresh filtered TUnit process still installs the default HTML reporter's external Activity collector. Only its child now sets `TUNIT_DISABLE_HTML_REPORTER=true`; the assertions that no observers exist and no descriptor is resolved remain mandatory. Parent reporting stays enabled. An earlier refresh interaction test, and the fourth Lease full run's `FixedReplacementDisconnectShouldCleanupAndReconnect`, treated the pre-publication fixed-pool eligibility hook as completed route publication. The test corrections join the existing owning publication gate before the next RPC. No retry, longer timeout, skipped test or production routing change is used.
+
+The .NET 10.0.112 SDK and matching NuGet cache were extracted and checksum-verified locally, with a workspace activation script. This sandbox cannot initialize CoreCLR (`0x8007000E`), so it is not represented as a successfully runnable local .NET host. All actual C# execution reported here is from the linked Actions jobs.
+
+**Review boundary:** the implementation preserves acceptance-before-producer and reduces targeted construction work, but baseline performance equivalence is not established. The OneWay sender/receiver and short-stream regressions remain material; the adverse single-factor rows and failed baseline allocation spread are explicitly retained. PR #861 stays Ready for review. Exact final-head CI and any subsequent unchanged-budget rerun are recorded in the PR summary, separately from this immutable-source experiment.
+

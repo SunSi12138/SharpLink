@@ -313,9 +313,19 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
             await InjectRefreshAsync(factory.GetConnection(0), Guid.NewGuid(), 2);
             await factory.ReplacementStarted.WaitAsync(TimeSpan.FromSeconds(3));
             factory.ReleaseReplacement();
-            // The replacement can send its first Ping before the source loses call eligibility.
-            // Observe the actual routing cut before issuing a call intended for the replacement.
+            // The fixed-pool eligibility hook runs before the atomic contract route is published.
+            // Join its owning gate before issuing a call intended for the replacement.
             await eligibilityCut.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var cluster = typeof(SharpLinkClient).GetField("_cluster", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(client);
+            var owner = cluster ?? client;
+            var gate = (Lock)owner.GetType().GetField(cluster is null ? "_poolGate" : "_gate",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owner)!;
+            lock (gate)
+            {
+                Ensure(client.ReadyConnectionCount == 1,
+                    "after replacement publication the refreshed connection should be the sole Ready connection");
+            }
         }
         finally
         {
@@ -324,9 +334,6 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
         }
 
         var replacement = factory.GetConnection(1);
-        Ensure(client.ReadyConnectionCount == 1,
-            "after replacement publication the refreshed connection should be the sole Ready connection");
-
         var pending = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         _ = await replacement.WaitForSentPacket(ProtocolV2FrameType.Request)
             .WaitAsync(TimeSpan.FromSeconds(2));
