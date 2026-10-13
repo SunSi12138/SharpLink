@@ -1,0 +1,50 @@
+name: Issue 775 Hotpath Lab
+
+on:
+  push:
+    branches: ['perf/775-hotpath-lab']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-and-toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 2149ca799dca38bcb7f97583572406b0d0b41890
+          persist-credentials: false
+      - name: Export exact source without credentials
+        run: |
+          mkdir -p artifacts/development
+          git archive --format=tar.gz HEAD > artifacts/development/source.tar.gz
+          git rev-parse HEAD > artifacts/development/source-sha.txt
+          sha256sum artifacts/development/source.tar.gz > artifacts/development/source-sha256.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue775-source-2149ca79
+          path: artifacts/development/source*
+          retention-days: 7
+      - uses: ./.github/actions/setup-dotnet
+      - name: Restore development dependencies and record exact SDK
+        run: |
+          dotnet --info > artifacts/development/dotnet-info.txt
+          dotnet restore Sharplink.slnx
+          sdk=$(dotnet --version)
+          root=$(dirname "$(readlink -f "$(command -v dotnet)")")
+          tar -czf artifacts/development/sdk.tar.gz -C "$root" dotnet host shared packs "sdk/$sdk"
+          tar -czf artifacts/development/nuget.tar.gz -C "$HOME/.nuget/packages" .
+          sha256sum artifacts/development/sdk.tar.gz artifacts/development/nuget.tar.gz > artifacts/development/toolchain-sha256.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue775-offline-development-toolchain
+          path: |
+            artifacts/development/sdk.tar.gz
+            artifacts/development/nuget.tar.gz
+            artifacts/development/dotnet-info.txt
+            artifacts/development/toolchain-sha256.txt
+          compression-level: 0
+          retention-days: 7
