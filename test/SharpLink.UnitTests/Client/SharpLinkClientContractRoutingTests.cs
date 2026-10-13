@@ -53,7 +53,7 @@ public sealed class SharpLinkClientContractRoutingTests
             clientStreams, false, null, ClientStreamCount: clientStreams ? 1 : 0);
         var failure = await CaptureFailureAsync(InvokeShapeAsync(channel, method, probe));
         Ensure(failure is SharpLinkException
-            { Code: SharpLinkErrorCode.Unavailable, DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
+        { Code: SharpLinkErrorCode.Unavailable, DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
             "FailFast reports current absence of a legal route with a stable detail code");
         Ensure(probe.SerializationCount == 0 && probe.ProducerCount == 0 && client.PendingCallCount == 0,
             "no-route failures precede payload and producer work and release pending ownership");
@@ -101,7 +101,7 @@ public sealed class SharpLinkClientContractRoutingTests
         var ordinary = (ClientInvocationTestManifest.InvocationProxy)
             client.CreateProxy<ClientInvocationTestManifest.IInvocationContract>();
         Ensure(await CaptureFailureAsync(InvokeOneWayAsync(ordinary.Channel).AsTask()) is SharpLinkException
-            { DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget }, "ordinary routing still requires a compatible manifest");
+        { DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget }, "ordinary routing still requires a compatible manifest");
 
         var receipt = Receipt(server, epoch);
         var constrained = (ClientInvocationTestManifest.InvocationProxy)
@@ -120,7 +120,7 @@ public sealed class SharpLinkClientContractRoutingTests
             var wrongTarget = (ClientInvocationTestManifest.InvocationProxy)
                 client.CreateProxy<ClientInvocationTestManifest.IInvocationContract>(new RpcProxyOptions { Receipt = invalid });
             Ensure(await CaptureFailureAsync(InvokeOneWayAsync(wrongTarget.Channel).AsTask()) is SharpLinkException
-                { DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
+            { DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
                 "receipt versions are incomparable across server instances and epochs");
         }
     }

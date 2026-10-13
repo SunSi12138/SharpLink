@@ -8,8 +8,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import signal
 import subprocess
-import sys
 import time
 
 from summarize import summarize
@@ -74,12 +74,19 @@ def execute(command, root, directory, environment, timeout=300, expected_failure
     save(directory / "command.json", record)
     print(f"RUN {directory.name}: {' '.join(record['argv'])}", flush=True)
     with (directory / "process.log").open("w", encoding="utf-8") as output:
+        process = subprocess.Popen(record["argv"], cwd=root, env=environment,
+                                   stdout=output, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
         try:
-            process = subprocess.run(record["argv"], cwd=root, env=environment,
-                                     stdout=output, stderr=subprocess.STDOUT,
-                                     timeout=timeout, check=False)
-            code = process.returncode
+            code = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            # BDN launches child processes. Stop this command's entire process group
+            # before the next arm so a timed-out benchmark cannot contaminate it.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=5)
             code = 124
             output.write(f"\nEvidence command exceeded {timeout} seconds.\n")
     record.update(exitCode=code, completedUnixSeconds=time.time())

@@ -37,7 +37,7 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
             "remote incompatibility cannot reject or replace a valid local proxy");
         var failure = await CaptureExceptionAsync(InvokeOneWay((OrdersProxy)proxy).AsTask());
         Ensure(failure is SharpLinkException
-            { Code: SharpLinkErrorCode.Unavailable, DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
+        { Code: SharpLinkErrorCode.Unavailable, DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
             "the ordinary call must report current routing unavailability before sending payload");
     }
 
@@ -102,7 +102,7 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
             "manifest publication changes the picker, never the local proxy or its codec");
         var failure = await CaptureExceptionAsync(InvokeOneWay((OrdersProxy)heldProxy).AsTask());
         Ensure(failure is SharpLinkException
-            { Code: SharpLinkErrorCode.Unavailable, DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
+        { Code: SharpLinkErrorCode.Unavailable, DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
             "the held proxy must consult the current route on its next invocation");
     }
 

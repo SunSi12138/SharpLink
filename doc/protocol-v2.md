@@ -2,7 +2,7 @@
 
 Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-当前 protocol minor 为 4，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 4 是 `TimeBudget` wire 语义的破坏性边界；低于 4 的 peer 在握手阶段以 `Unimplemented` 拒绝，不会把旧 absolute-deadline 字段按新 duration 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+当前 protocol minor 为 5，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 5 增加请求契约身份、注册回执、握手中的服务端注册时间线身份和两向客户端流准入帧；低于 5 的 peer 在握手阶段以 `Unimplemented` 拒绝。`TimeBudget` 保留非负 duration 语义，不按旧 absolute-deadline 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
 
 ## 固定帧头
 
@@ -23,9 +23,10 @@ Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容�
 | 类型 | Request ID | 载荷 |
 |---|---:|---|
 | `HandshakeRequest` | 0 | minor、supported/required capabilities、本端 frame/window 限制、有界压缩算法列表、认证载荷 |
-| `HandshakeResponse` | 0 | 协商后的 minor、capabilities、frame/window 限制和唯一压缩 token；失败时为二进制错误 |
+| `HandshakeResponse` | 0 | 协商后的 minor、capabilities、frame/window 限制、server instance / registry epoch 和唯一压缩 token；失败时为二进制错误 |
 | `Ping` / `Pong` | 0 | 发送端 monotonic timestamp (`int64`) |
-| `Request` | 非 0 | `contractId:uint64 + methodId:uint64`，随后是可选 TimeBudget、metadata 和业务 payload |
+| `Request` | 非 0 | 下述 36 字节 identity prefix、可选 56 字节 receipt，随后是可选 TimeBudget、metadata 和业务 payload |
+| `RequestAccepted` | 非 0 | 空载荷、无 flags；两向 ClientStreaming / DuplexStreaming 准入后允许启动 producer |
 | `Response` | 非 0 | 成功时直接为返回 payload；`Error` 时为二进制错误 |
 | `Cancel` | 非 0 | 未协商 `CancellationReason` 时为空；协商后固定一个有效 reason byte |
 | `StreamData` | 非 0 | `streamId:uint16 + item payload` |
@@ -64,9 +65,9 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 5: contract manifest
 - bit 6: session refresh
 
-当前 wire generation 使用 `minor 4`（`MinimumCompatibleMinorVersion == MinorVersion == 4`），只相对已发布的 1.1.1/minor 3 升级一次。开发期使用过的中间编号不构成发布兼容性边界。minor 只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
+当前 wire generation 使用 `minor 5`（`MinimumCompatibleMinorVersion == MinorVersion == 5`），以 [release version manifest](../eng/release-versions.json) 为发布边界来源。minor 只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
 
-minor 4 的 `HandshakeRequest` 在三个固定限制字段后编码：
+`HandshakeRequest` 保留既有压缩 profiles 和认证载荷编码：
 
 ```text
 profileCount:uint8
@@ -74,11 +75,36 @@ repeat profileCount { profileLength:uint8 + canonical ASCII profile }
 authenticationLength:varuint32 + authentication bytes
 ```
 
-wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感的可见规范 ASCII，且列表内唯一。`HandshakeResponse` 在固定字段后编码 `selectedProfileLength:uint8 + selectedProfile`。Server 按自身 Provider 注册顺序选择 Client 列表中的第一个匹配项；无交集时清除 compression capability 并发送零长度 profile。协商 capability 与 profile 缺失/多余或选择未被 Client 提供的 profile 都是连接级 `ProtocolViolation`。
+wire profile 最多 16 个；每个 profile 为 1–64 字节、大小写敏感的可见规范 ASCII，且列表内唯一。`HandshakeResponse` 在原有固定字段后先编码 `ServerInstanceId:16 bytes + RegistryEpoch:16 bytes`，再编码 `selectedProfileLength:uint8 + selectedProfile`。GUID 使用 .NET `Guid.TryWriteBytes` / `new Guid(span)` 的一致字节布局。实际 Client 不接受空的 server/epoch 身份，也不允许同一 Session 后续更换该身份。Server 按自身 Provider 注册顺序选择 Client 列表中的第一个匹配项；无交集时清除 compression capability 并发送零长度 profile。协商 capability 与 profile 缺失/多余或选择未被 Client 提供的 profile 都是连接级 `ProtocolViolation`。
 
 `ISharpLinkCompressionProvider.WireProfile` 表示完整的 wire profile，不是结构化参数协商。只影响发送端成本/压缩比而不影响解码的 tuning 可以在两端不同；dictionary identity、必须支持的 window/profile、integrity mode 或其他影响解码兼容性的配置必须编码进唯一 profile，并作为不同 Provider 参与现有优先级协商。对同一 profile 配置不兼容解码参数属于 Provider 配置错误。
 
 对端缺少任一 required capability 时，Server 返回 `Unimplemented` 错误并关闭连接。认证载荷不得超过握手/metadata 上限。
+
+## Request 契约前缀与回执
+
+请求业务部分之前固定包含：
+
+| Offset | 长度 | 字段 |
+| ---: | ---: | --- |
+| 0 | 8 | `ContractId`，非零 |
+| 8 | 8 | `MethodId` |
+| 16 | 8 | `RpcAssemblyHash.High` |
+| 24 | 8 | `RpcAssemblyHash.Low` |
+| 32 | 1 | `RpcMethodKind` |
+| 33 | 2 | `ClientStreamCount` |
+| 35 | 1 | receipt mode：0 无回执，1 Compatible，2 MinimumVersion，3 ExactRegistration |
+
+非零 mode 后追加 56 字节：`ServerInstanceId:16 + RegistryEpoch:16 + Generation:uint64 + RegistrationId:16`。
+Receipt 复用固定前缀的 contract/hash，不重复编码。Hash 不可为空；GUID 不可为空，generation 可以为零。
+模式、长度与 invocation shape 必须有效。此后才解析 TimeBudget、metadata 和业务 payload；压缩不覆盖 identity/receipt。
+
+Server 在业务解码、Service 激活和 Interceptor 之前，对当前注册校验 contract/hash/receipt 并取得同一注册的 call lease。
+Manifest 只提供客户端路由候选，不替代最终校验。合法旧身份得到结构化的 `Unimplemented`、`FailedPrecondition` 或 `Unavailable` 拒绝；
+与已匹配 descriptor 不一致的 shape 属于协议违规。具体错误 detail 与三种版本要求见 [RPC wire identity](rpc-wire-identity.md)。
+
+ClientStreaming / DuplexStreaming 的 producer 等待 `RequestAccepted`；Server 取得资源准入、固定注册并预留接收流之后发送该帧。
+建立被拒绝、取消、超时或 Stop 时不启动 producer。ACK 不表示业务已成功执行。OneWay 不发送或等待该 ACK，其本地完成仍仅表示排队成功。
 
 ## 压缩载荷
 
@@ -102,7 +128,7 @@ Core 不内置具体压缩算法，也不为算法增加私有 framing/checksum�
 
 ## 服务端主动接入控制
 
-Admission control 不增加 wire capability，也不改变客户端发送格式。服务端在未创建 Service、Scope、Codec 状态或执行 Interceptor 前，按 `Global → Contract → Method → Partition` 累计取得全部 permit。无等待策略、队列数量已满、队列保留字节已满、速率或并发限制拒绝时，普通调用返回 `ResourceExhausted`；Server Draining 时返回 `Unavailable`。拒绝当前调用不会关闭连接，过载解除后同一健康连接可继续调用。
+资源 Admission control 不增加独立 wire capability。服务端完成上述契约校验、在未创建 Service、Scope、业务 Codec 状态或执行 Interceptor 前，按 `Global → Contract → Method → Partition` 累计取得全部 permit。无等待策略、队列数量已满、队列保留字节已满、速率或并发限制拒绝时，普通调用返回 `ResourceExhausted`；Server Draining 时返回 `Unavailable`。拒绝当前调用不会关闭连接，过载解除后同一健康连接可继续调用。
 
 等待中的 Request 保留完整 wire payload。客户端流与双向流使用 Generator 输出的 `ClientStreamCount` 预留 stream ID，并按到达顺序有界保留 `StreamData/StreamComplete`；压缩帧按实际 wire bytes 进入队列字节预算，但在保留前验证 `originalItemLength`，取得 permit 后才解压并交给 Generated Codec。队列溢出、取消、deadline、断连或 Draining 会终止整次调用并一次归还所有 owner 与 flow-control credit。
 

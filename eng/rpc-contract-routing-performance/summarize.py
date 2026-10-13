@@ -101,6 +101,9 @@ def summarize(root):
             require(result["passed"] and result["schemaVersion"] == 1, f"{case}: RPC did not pass")
             require(result["commit"] == provenance["commits"][arm], "Mixed source identities")
             require(result["hostName"] == provenance["hostName"], "RPC measurements used different hosts")
+            require(result["processorCount"] == 2 and result["performanceProfile"] == "Balanced" and
+                    result["connections"] == result["concurrency"] == 1,
+                    "RPC process or connection configuration differs from the declared workload")
             identities.add((result["runtime"], result["operatingSystem"], result["architecture"],
                             result["processorCount"], result["serverGc"], result["performanceProfile"],
                             result["connections"], result["concurrency"]))
@@ -109,6 +112,10 @@ def summarize(root):
                     "Measured workload configuration differs")
             require(result["completedOperations"] == count and result["receiverCompletedOperations"] == count,
                     "Missing receiver-completed operations")
+            require(0 <= result["receiverObservedAtSendCompletion"] <= count and
+                    result["stopwatchFrequency"] > 0 and
+                    result["streamItemsPerOperation"] == (32 if result["scenario"] in ("clientstream", "serverstream", "duplex") else 0),
+                    "Invalid receiver observation, clock or stream item count")
             require(len(result["latencyTicks"]) == count and all(value >= 0 for value in result["latencyTicks"]),
                     "Invalid per-operation latency record")
             boundary = "sender-queued" if result["scenario"] == "oneway-sender" else "receiver-completed"
@@ -118,6 +125,12 @@ def summarize(root):
                     "Invalid elapsed or receiver-drain time")
             require(math.isclose(result["throughputPerSecond"], count / result["elapsedSeconds"], rel_tol=1e-9),
                     "Throughput does not match measured operations and elapsed time")
+            require(math.isclose(result["receiverCompletedThroughputPerSecond"],
+                                 count / result["receiverCompletedElapsedSeconds"], rel_tol=1e-9) and
+                    math.isclose(result["drainSecondsAfterSendCompletion"],
+                                 result["receiverCompletedElapsedSeconds"] - result["elapsedSeconds"],
+                                 rel_tol=1e-9, abs_tol=1e-9),
+                    "Receiver throughput or drain time is not reproducible")
             ordered = sorted(result["latencyTicks"])
             for metric, percentile in (("p50Microseconds", .50), ("p99Microseconds", .99), ("p999Microseconds", .999)):
                 expected = ordered[math.ceil(count * percentile) - 1] * 1_000_000 / result["stopwatchFrequency"]

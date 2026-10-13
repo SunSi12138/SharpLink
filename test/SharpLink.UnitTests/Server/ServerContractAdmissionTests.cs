@@ -29,10 +29,10 @@ public sealed class ServerContractAdmissionTests
                 out _, out var lease, out var error), "incompatible request must fail admission");
         Ensure(!lease.IsAcquired, "rejected admission must not own a module lease");
         Ensure(error is
-            {
-                Code: SharpLinkErrorCode.FailedPrecondition,
-                DetailCode: SharpLinkErrorDetails.FailedPrecondition.ContractMismatch
-            },
+        {
+            Code: SharpLinkErrorCode.FailedPrecondition,
+            DetailCode: SharpLinkErrorDetails.FailedPrecondition.ContractMismatch
+        },
             "wire mismatch must have a stable structured failure");
         Ensure(stub.DescriptorReads == 0 && stub.Invocations == 0,
             "incompatible code must remain untouched for every invocation shape");
@@ -122,10 +122,10 @@ public sealed class ServerContractAdmissionTests
             Ensure(!ServerContractAdmission.TryAcquire(registry, in identity, ProtocolV2FrameFlags.None,
                     out _, out var rejectedLease, out var rejection), "new exact calls must reject the replaced registration");
             Ensure(!rejectedLease.IsAcquired && rejection is
-                {
-                    Code: SharpLinkErrorCode.FailedPrecondition,
-                    DetailCode: SharpLinkErrorDetails.FailedPrecondition.ReceiptMismatch
-                },
+            {
+                Code: SharpLinkErrorCode.FailedPrecondition,
+                DetailCode: SharpLinkErrorDetails.FailedPrecondition.ReceiptMismatch
+            },
                 "stale exact registration must reject before lease acquisition");
         }
         finally
@@ -155,20 +155,20 @@ public sealed class ServerContractAdmissionTests
         Ensure(!ServerContractAdmission.TryAcquire(registry, in identity, ProtocolV2FrameFlags.None,
                 out _, out _, out var retiring), "draining registry must fail admission");
         Ensure(retiring is
-            {
-                Code: SharpLinkErrorCode.Unavailable,
-                DetailCode: SharpLinkErrorDetails.Unavailable.RegistrationRetired
-            },
+        {
+            Code: SharpLinkErrorCode.Unavailable,
+            DetailCode: SharpLinkErrorDetails.Unavailable.RegistrationRetired
+        },
             "lease failure must have a structured retirement error");
         lock (registry.Gate)
             registry.ServicesStorage = FrozenDictionary<long, ServiceRegistration>.Empty;
         Ensure(!ServerContractAdmission.TryAcquire(registry, in identity, ProtocolV2FrameFlags.None,
                 out _, out _, out var missing), "removed registry must fail admission");
         Ensure(missing is
-            {
-                Code: SharpLinkErrorCode.Unimplemented,
-                DetailCode: SharpLinkErrorDetails.Unimplemented.ContractNotRegistered
-            },
+        {
+            Code: SharpLinkErrorCode.Unimplemented,
+            DetailCode: SharpLinkErrorDetails.Unimplemented.ContractNotRegistered
+        },
             "unregistered contract has a distinct stable failure");
         Ensure(module.RemainingCalls == 0, "neither rejection may retain the retired module");
     }
@@ -183,10 +183,10 @@ public sealed class ServerContractAdmissionTests
         Ensure(!ServerContractAdmission.TryAcquire(registry, in unknown, ProtocolV2FrameFlags.None,
                 out _, out _, out var missing), "unknown method cannot activate a service");
         Ensure(missing is
-            {
-                Code: SharpLinkErrorCode.Unimplemented,
-                DetailCode: SharpLinkErrorDetails.Unimplemented.MethodNotImplemented
-            },
+        {
+            Code: SharpLinkErrorCode.Unimplemented,
+            DetailCode: SharpLinkErrorDetails.Unimplemented.MethodNotImplemented
+        },
             "unknown method needs a stable detail code");
         var forgedShape = unknown with { MethodId = MethodId, Kind = RpcMethodKind.OneWay };
         try
