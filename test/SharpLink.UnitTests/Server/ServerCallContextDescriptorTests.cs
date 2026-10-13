@@ -231,8 +231,9 @@ public partial class SharpLinkServerInvocationTests
         const string probe = "SHARPLINK_DISABLED_TELEMETRY_PROBE";
         if (Environment.GetEnvironmentVariable(probe) == "1")
             return false;
-        // Process-wide observers from other fixtures can outlive their test's scheduling slot.
-        // A fresh filtered process validates the real disabled branch without changing telemetry.
+        // TUnit's default HTML reporter collects external activities even in a filtered process.
+        // Disable that reporter only in this child; retain the explicit no-observer assertion
+        // and exercise the real production branch without changing SharpLink telemetry.
         var start = new ProcessStartInfo
         {
             FileName = Environment.ProcessPath!,
@@ -245,6 +246,7 @@ public partial class SharpLinkServerInvocationTests
         start.ArgumentList.Add("--treenode-filter");
         start.ArgumentList.Add("/*/*/SharpLinkServerInvocationTests/DisabledServerTelemetryShouldNotResolveAnUnusedDescriptor");
         start.Environment[probe] = "1";
+        start.Environment["TUNIT_DISABLE_HTML_REPORTER"] = "true";
         using var child = Process.Start(start) ?? throw new InvalidOperationException("Cannot start telemetry probe.");
         var stdout = child.StandardOutput.ReadToEndAsync();
         var stderr = child.StandardError.ReadToEndAsync();
