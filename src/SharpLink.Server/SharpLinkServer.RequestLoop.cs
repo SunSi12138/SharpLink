@@ -447,7 +447,7 @@ internal sealed partial class SharpLinkServer
 
             var admissionProgram = CaptureAdmissionProgram(requestId);
             var dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
-                    ? DispatchOneWayRpc(
+                    ? DispatchOneWayRpcCore(
                         connection,
                         requestId,
                         flags,
@@ -455,8 +455,10 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         serverLoopToken,
                         admissionProgram,
-                        serviceInfo)
-                    : DispatchRpcAsync(
+                        serviceInfo,
+                        in identity,
+                        identityValidated: true)
+                    : DispatchRpcCoreAsync(
                         connection,
                         requestId,
                         flags,
@@ -464,7 +466,9 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         serverLoopToken,
                         admissionProgram,
-                        serviceInfo);
+                        serviceInfo,
+                        in identity,
+                        identityValidated: true);
 
             payload = default;
             if (!dispatchTask.IsCompletedSuccessfully)

@@ -256,6 +256,7 @@ internal sealed partial class SharpLinkClient
         if (index != snapshot.Length)
             Array.Resize(ref snapshot, index);
         Volatile.Write(ref _readyConnections, snapshot);
+        _beforeContractRoutePublicationTestHook?.Invoke();
         _contractRoutes.PublishTopology(snapshot, [snapshot]);
         PublishReadinessFacts(new ClientReadinessFacts(
             ActiveEndpoints: 1,

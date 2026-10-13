@@ -20,9 +20,6 @@ internal sealed partial class SharpLinkClient
         binding ??= ResolveLocalBinding(method);
         if (method.ContractId != binding.ContractId)
             throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition, "The method does not belong to this proxy contract.");
-        var identity = new ProtocolV2RequestIdentity(method.ContractId, method.MethodId,
-            binding.RpcAssemblyHash, method.Kind, checked((ushort)method.ClientStreamCount),
-            binding.Receipt, binding.Requirement);
         var hasMetadata = metadata is { Count: > 0 };
         var metadataLength = 0;
         if (deadline.HasValue)
@@ -54,7 +51,11 @@ internal sealed partial class SharpLinkClient
                        flags,
                        unchecked((ulong)requestId)))
             {
-                ProtocolV2RequestIdentityCodec.Write(writer, identity);
+                if (binding.HasReceipt)
+                    WriteReceiptRequestIdentity(writer, in method, binding);
+                else
+                    ProtocolV2RequestIdentityCodec.WriteOrdinary(writer, method.ContractId, method.MethodId,
+                        binding.RpcAssemblyHash, method.Kind, checked((ushort)method.ClientStreamCount));
                 if (deadline.HasValue)
                 {
                     var span = writer.GetSpan(sizeof(long));
@@ -153,5 +154,17 @@ internal sealed partial class SharpLinkClient
             if (ownsWriter)
                 _runtimeContext.Buffers.Return(writer);
         }
+    }
+
+    // Keep the optional receipt's large value local to the explicit receipt path. The ordinary
+    // sender needs neither a receipt allocation nor a receipt-sized temporary in its stack frame.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void WriteReceiptRequestIdentity(
+        IBufferWriter<byte> writer, in RpcMethodDescriptor method, ClientContractBinding binding)
+    {
+        var identity = new ProtocolV2RequestIdentity(method.ContractId, method.MethodId,
+            binding.RpcAssemblyHash, method.Kind, checked((ushort)method.ClientStreamCount),
+            binding.Receipt, binding.Requirement);
+        ProtocolV2RequestIdentityCodec.Write(writer, in identity);
     }
 }

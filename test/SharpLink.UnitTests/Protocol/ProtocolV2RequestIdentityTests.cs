@@ -12,8 +12,11 @@ public sealed class ProtocolV2RequestIdentityTests
     {
         var identity = new ProtocolV2RequestIdentity(-13, 27, Hash, RpcMethodKind.Unary, 0);
         using var writer = new PooledByteBufferWriter();
-        ProtocolV2RequestIdentityCodec.Write(writer, identity);
+        ProtocolV2RequestIdentityCodec.WriteOrdinary(writer, -13, 27, Hash, RpcMethodKind.Unary, 0);
         Ensure(writer.WrittenCount == 36, "the common route has one bounded 36-byte identity prefix");
+        Ensure(writer.WrittenMemory.Span.SequenceEqual(Convert.FromHexString(
+                "F3FFFFFFFFFFFFFF1B000000000000000807060504030201181716151413121100000000")),
+            "ordinary encoding retains the exact little-endian wire layout and no receipt mode");
         writer.Write(new byte[] { 0xA5, 0x5A });
         var payload = new ReadOnlySequence<byte>(writer.WrittenMemory);
         var reader = new SequenceReader<byte>(payload);
@@ -72,6 +75,8 @@ public sealed class ProtocolV2RequestIdentityTests
     {
         foreach (var identity in new[]
         {
+            new ProtocolV2RequestIdentity(0, 2, Hash, RpcMethodKind.Unary, 0),
+            new ProtocolV2RequestIdentity(1, 2, default, RpcMethodKind.Unary, 0),
             new ProtocolV2RequestIdentity(1, 2, Hash, RpcMethodKind.Unary, 1),
             new ProtocolV2RequestIdentity(1, 2, Hash, RpcMethodKind.ClientStreaming, 0),
             new ProtocolV2RequestIdentity(1, 2, Hash, (RpcMethodKind)255, 0),
@@ -79,16 +84,25 @@ public sealed class ProtocolV2RequestIdentityTests
                 Requirement: RpcRegistrationRequirement.MinimumVersion)
         })
         {
-            using var writer = new PooledByteBufferWriter();
-            try
-            {
-                ProtocolV2RequestIdentityCodec.Write(writer, identity);
-                throw new InvalidOperationException("Invalid request identity was accepted.");
-            }
-            catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
-            {
-                Ensure(writer.WrittenCount == 0, "invalid identity must not publish a partial request");
-            }
+            ExpectInvalidWrite(writer => ProtocolV2RequestIdentityCodec.Write(writer, identity));
+            if (identity.Requirement == RpcRegistrationRequirement.Compatible)
+                ExpectInvalidWrite(writer => ProtocolV2RequestIdentityCodec.WriteOrdinary(writer,
+                    identity.ContractId, identity.MethodId, identity.RpcAssemblyHash,
+                    identity.Kind, identity.ClientStreamCount));
+        }
+    }
+
+    private static void ExpectInvalidWrite(Action<IBufferWriter<byte>> write)
+    {
+        using var writer = new PooledByteBufferWriter();
+        try
+        {
+            write(writer);
+            throw new InvalidOperationException("Invalid request identity was accepted.");
+        }
+        catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            Ensure(writer.WrittenCount == 0, "invalid identity must not publish a partial request");
         }
     }
 

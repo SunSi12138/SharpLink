@@ -24,7 +24,7 @@ BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 CORE_FILTER = "/*/*/HostingBuilderRegistrationTests/Repeated*"
 HEALTH_FILTER = "/*/*/HostingBuilderRegistrationTests/PreRegistered*"
 ALL_FILTER = "/*/*/HostingBuilderRegistrationTests/*"
-FULL_COUNT = 2168  # 2123 dev cases, including #843, + 45 contract-routing and stream-admission cases.
+FULL_COUNT = 2170  # 2123 dev cases + 47 contract-routing, publication and stream-admission cases.
 
 
 def digest(path):

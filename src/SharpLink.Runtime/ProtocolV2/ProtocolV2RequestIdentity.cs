@@ -44,13 +44,9 @@ internal static class ProtocolV2RequestIdentityCodec
         Validate(identity);
         var length = ProtocolV2Constants.RequestPrefixBytes + (identity.Receipt.HasValue ? ReceiptBytes : 0);
         var span = writer.GetSpan(length);
-        BinaryPrimitives.WriteInt64LittleEndian(span, identity.ContractId);
-        BinaryPrimitives.WriteInt64LittleEndian(span[8..], identity.MethodId);
-        BinaryPrimitives.WriteUInt64LittleEndian(span[16..], identity.RpcAssemblyHash.High);
-        BinaryPrimitives.WriteUInt64LittleEndian(span[24..], identity.RpcAssemblyHash.Low);
-        span[32] = (byte)identity.Kind;
-        BinaryPrimitives.WriteUInt16LittleEndian(span[33..], identity.ClientStreamCount);
-        span[ModeOffset] = identity.Receipt.HasValue ? checked((byte)((byte)identity.Requirement + 1)) : (byte)0;
+        WritePrefix(span, identity.ContractId, identity.MethodId, identity.RpcAssemblyHash,
+            identity.Kind, identity.ClientStreamCount,
+            identity.Receipt.HasValue ? checked((byte)((byte)identity.Requirement + 1)) : (byte)0);
         if (identity.Receipt is { } receipt)
         {
             var extension = span[ProtocolV2Constants.RequestPrefixBytes..];
@@ -60,6 +56,30 @@ internal static class ProtocolV2RequestIdentityCodec
             receipt.RegistrationId.TryWriteBytes(extension[40..]);
         }
         writer.Advance(length);
+    }
+
+    // Ordinary proxies have no receipt. Keep their send path scalar so it does not construct
+    // or copy the much larger optional receipt value for every request.
+    internal static void WriteOrdinary(IBufferWriter<byte> writer, long contractId, long methodId,
+        RpcHash128 hash, RpcMethodKind kind, ushort clientStreamCount)
+    {
+        ValidateShape(contractId, hash, kind, clientStreamCount);
+        var span = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
+        WritePrefix(span, contractId, methodId, hash, kind, clientStreamCount, 0);
+        writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void WritePrefix(Span<byte> span, long contractId, long methodId,
+        RpcHash128 hash, RpcMethodKind kind, ushort clientStreamCount, byte mode)
+    {
+        BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
+        BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
+        BinaryPrimitives.WriteUInt64LittleEndian(span[16..], hash.High);
+        BinaryPrimitives.WriteUInt64LittleEndian(span[24..], hash.Low);
+        span[32] = (byte)kind;
+        BinaryPrimitives.WriteUInt16LittleEndian(span[33..], clientStreamCount);
+        span[ModeOffset] = mode;
     }
 
     internal static ProtocolV2RequestIdentity Read(ref SequenceReader<byte> reader)
@@ -96,15 +116,9 @@ internal static class ProtocolV2RequestIdentityCodec
 
     private static void Validate(in ProtocolV2RequestIdentity identity)
     {
-        if (identity.ContractId == 0 || identity.RpcAssemblyHash.IsEmpty)
-            throw ProtocolV2FrameParser.Violation("Request contract identity is empty.");
-        if (identity.Kind > RpcMethodKind.DuplexStreaming ||
-            identity.Requirement > RpcRegistrationRequirement.ExactRegistration)
+        ValidateShape(identity.ContractId, identity.RpcAssemblyHash, identity.Kind, identity.ClientStreamCount);
+        if (identity.Requirement > RpcRegistrationRequirement.ExactRegistration)
             throw ProtocolV2FrameParser.Violation("Request invocation shape or registration requirement is invalid.");
-        var streaming = identity.Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
-        if (streaming && identity.ClientStreamCount == 0 ||
-            identity.Kind is RpcMethodKind.Unary or RpcMethodKind.ServerStreaming && identity.ClientStreamCount != 0)
-            throw ProtocolV2FrameParser.Violation("Request invocation shape and client stream count disagree.");
         if (identity.Receipt is { } receipt)
         {
             if (receipt.ServerInstanceId == Guid.Empty || receipt.RegistryEpoch == Guid.Empty ||
@@ -114,6 +128,18 @@ internal static class ProtocolV2RequestIdentityCodec
         }
         else if (identity.Requirement != RpcRegistrationRequirement.Compatible)
             throw ProtocolV2FrameParser.Violation("A version requirement needs a registration receipt.");
+    }
+
+    private static void ValidateShape(long contractId, RpcHash128 hash, RpcMethodKind kind, ushort clientStreamCount)
+    {
+        if (contractId == 0 || hash.IsEmpty)
+            throw ProtocolV2FrameParser.Violation("Request contract identity is empty.");
+        if (kind > RpcMethodKind.DuplexStreaming)
+            throw ProtocolV2FrameParser.Violation("Request invocation shape or registration requirement is invalid.");
+        var streaming = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
+        if (streaming && clientStreamCount == 0 ||
+            kind is RpcMethodKind.Unary or RpcMethodKind.ServerStreaming && clientStreamCount != 0)
+            throw ProtocolV2FrameParser.Violation("Request invocation shape and client stream count disagree.");
     }
 
     internal static Guid ReadGuid(ref SequenceReader<byte> reader)

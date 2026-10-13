@@ -15,6 +15,26 @@ internal sealed partial class SharpLinkServer
         bool admissionGranted = false,
         int admittedClientStreamCount = 0,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
+        => DispatchOneWayRpcCore(
+            connection, requestId, flags, payload, requestCancellationMap, serverLoopToken,
+            admissionProgram, serviceInfo, identity: default, identityValidated: false,
+            admittedCallState, admissionGranted, admittedClientStreamCount, retainedAdmissionPayload);
+
+    private ValueTask DispatchOneWayRpcCore(
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        AdmissionProgram? admissionProgram,
+        ServiceRegistration serviceInfo,
+        in ProtocolV2RequestIdentity identity,
+        bool identityValidated,
+        ServerCallCancellationState? admittedCallState = null,
+        bool admissionGranted = false,
+        int admittedClientStreamCount = 0,
+        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
     {
         var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
         try
@@ -22,8 +42,11 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
+            var request = identityValidated
+                ? ServerRequestEnvelopeReader.ReadAfterIdentity(
+                    session, payload, in identity, flags, _protocolOptions.MaxMetadataBytes,
+                    _runtimeContext.TimeProvider, admittedCallState?.Deadline ?? default)
+                : ReadRequestEnvelope(session, payload, flags, admittedCallState?.Deadline ?? default);
             // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
             // client streams still needs a receive route so the peer can finish sending and recover
             // its receive credit even though no user invocation will run. If the method shape cannot

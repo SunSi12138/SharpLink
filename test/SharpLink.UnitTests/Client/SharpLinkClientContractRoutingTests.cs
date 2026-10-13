@@ -74,7 +74,7 @@ public sealed class SharpLinkClientContractRoutingTests
             options.MaxConnections = 2;
             options.MaxConnectionsPerEndpoint = 1;
         }).UseLoadBalancing(SharpLinkLoadBalancingStrategy.RoundRobin));
-        await client.ConnectAsync();
+        await client.WaitForReadinessAsync(2).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
         var proxy = (ClientInvocationTestManifest.InvocationProxy)
             client.CreateProxy<ClientInvocationTestManifest.IInvocationContract>();
         for (var index = 0; index < 4; index++)
@@ -136,7 +136,8 @@ public sealed class SharpLinkClientContractRoutingTests
         var binding = new ClientContractBinding(1, ClientInvocationTestManifest.Hash);
         routes.PublishManifest(source.Connection.Session, new ProtocolV2ContractManifest(0, ClientInvocationTestManifest.ContractsOnWire));
         routes.PublishTopology(topology, [[source.Connection]]);
-        Ensure(routes.TryGetRoute(binding, topology, out var route), "the source has a published compatible route");
+        Ensure(routes.TryGetRoute(binding, out var route) && ReferenceEquals(route.Topology, topology),
+            "the source has a published compatible route with its matching topology");
 
         Ensure(replacement.Connection.TryReserveSessionRefreshCommit(), "replacement is locally Ready");
         try
@@ -149,10 +150,11 @@ public sealed class SharpLinkClientContractRoutingTests
             "a stale route for A must fail instead of reserving the unselected replacement B");
         var nextTopology = new object();
         routes.PublishTopology(nextTopology, [[replacement.Connection]]);
-        Ensure(!routes.TryGetRoute(binding, nextTopology, out _), "replacement without observed compatibility is not eligible");
+        Ensure(!routes.TryGetRoute(binding, out _), "replacement without observed compatibility is not eligible");
         routes.PublishManifest(replacement.Connection.Session,
             new ProtocolV2ContractManifest(0, ClientInvocationTestManifest.ContractsOnWire));
-        Ensure(routes.TryGetRoute(binding, nextTopology, out var next), "the control-plane event publishes replacement eligibility");
+        Ensure(routes.TryGetRoute(binding, out var next) && ReferenceEquals(next.Topology, nextTopology),
+            "the control-plane event publishes replacement eligibility with its matching topology");
         var selected = next.SelectConnection(0);
         Ensure(ReferenceEquals(selected, replacement.Connection), "selection and reservation name the same physical session");
         selected!.ReleaseCallAdmissionReservation();
@@ -162,8 +164,9 @@ public sealed class SharpLinkClientContractRoutingTests
     public async Task ReceiptIndexesMustRemainWithinTheirClientTargetScope()
     {
         await using var client = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
+        await using var otherClient = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
         await using var first = new ConnectionFixture(client, "tenant-a");
-        await using var second = new ConnectionFixture(client, "tenant-b");
+        await using var second = new ConnectionFixture(otherClient, "tenant-b");
         var server = Guid.NewGuid();
         var epoch = Guid.NewGuid();
         first.Connection.Session.SetRemoteRegistryIdentity(server, epoch);
@@ -174,12 +177,20 @@ public sealed class SharpLinkClientContractRoutingTests
         var firstTopology = new object();
         var secondTopology = new object();
         firstRoutes.PublishTopology(firstTopology, [[first.Connection]]);
-        secondRoutes.PublishTopology(secondTopology, [[second.Connection]]);
-        Ensure(firstRoutes.TryGetRoute(binding, firstTopology, out var route), "the verified receipt route exists in the first scope");
+        secondRoutes.PublishTopology(secondTopology, []);
+        Ensure(firstRoutes.TryGetRoute(binding, out var route) && ReferenceEquals(route.Topology, firstTopology),
+            "the verified receipt route exists in the first scope");
         var selected = route.SelectConnection(0);
         Ensure(ReferenceEquals(selected, first.Connection), "equal identity cannot select another client's tenant or cluster scope");
         selected!.ReleaseCallAdmissionReservation();
-        Ensure(!firstRoutes.TryGetRoute(binding, secondTopology, out _), "a route snapshot is bound to its own target topology");
+        Ensure(!secondRoutes.TryGetRoute(binding, out _),
+            "a second target scope cannot borrow the first scope's matching server identity");
+        secondRoutes.PublishTopology(secondTopology, [[second.Connection]]);
+        Ensure(secondRoutes.TryGetRoute(binding, out var secondRoute) && ReferenceEquals(secondRoute.Topology, secondTopology),
+            "the second scope becomes routable only after its own verified connection is published");
+        var secondSelected = secondRoute.SelectConnection(0);
+        Ensure(ReferenceEquals(secondSelected, second.Connection), "the second scope can reserve only its own physical session");
+        secondSelected!.ReleaseCallAdmissionReservation();
     }
 
     private static ContractRegistrationReceipt Receipt(Guid server, Guid epoch)

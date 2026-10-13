@@ -265,11 +265,10 @@ internal sealed partial class SharpLinkClient
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            var topology = Volatile.Read(ref _readyConnections);
-            if (Volatile.Read(ref _stopStarted) != 0 || topology.Length == 0)
+            if (Volatile.Read(ref _stopStarted) != 0)
                 break;
-            if (!_contractRoutes.TryGetRoute(binding, topology, out var route))
-                continue;
+            if (!_contractRoutes.TryGetRoute(binding, out var route))
+                break;
             if (route.SelectConnection(0) is { } connection)
             {
                 if (connection.ActiveCallCount != 0)

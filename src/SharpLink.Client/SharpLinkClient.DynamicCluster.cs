@@ -92,12 +92,12 @@ internal sealed partial class SharpLinkClient
             AttemptOutcomeState? attemptOutcome,
             ClientContractBinding? binding = null)
         {
-            var snapshot = _current.SelectionSnapshot;
+            ClientContractRoute? route = null;
+            if (binding is not null && !_client._contractRoutes.TryGetRoute(binding, out route))
+                throw CreateNoRoutableTargetException();
+            var snapshot = route is null ? _current.SelectionSnapshot : (DynamicEndpointSelectionSnapshot)route.Topology;
             var selectionPolicy = _current.CaptureSelectionPolicy();
             var endpoints = snapshot.Endpoints;
-            ClientContractRoute? route = null;
-            if (binding is not null && !_client._contractRoutes.TryGetRoute(binding, snapshot, out route))
-                throw CreateNoRoutableTargetException();
             if (endpoints.Length == 0)
             {
                 SharpLinkTelemetry.RecordSelectionFailure("no_ready_endpoint");
@@ -864,6 +864,7 @@ internal sealed partial class SharpLinkClient
             _connections.PublishReadyConnections(_current.Current);
             var readiness = _current.PublishReadySnapshot(force);
             var routeTopology = _current.SelectionSnapshot;
+            _client._beforeContractRoutePublicationTestHook?.Invoke();
             _client._contractRoutes.PublishTopology(routeTopology,
                 routeTopology.Endpoints.Select(static endpoint => endpoint.ReadyConnections).ToArray());
             if (readiness.MembershipChanged)

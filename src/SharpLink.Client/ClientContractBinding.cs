@@ -9,6 +9,7 @@ internal sealed class ClientContractBinding(
 {
     internal long ContractId { get; } = contractId;
     internal RpcHash128 RpcAssemblyHash { get; } = rpcAssemblyHash;
+    internal bool HasReceipt { get; } = receipt.HasValue;
     internal ContractRegistrationReceipt? Receipt { get; } = receipt;
     internal RpcRegistrationRequirement Requirement { get; } = requirement;
 

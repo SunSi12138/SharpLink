@@ -50,7 +50,39 @@ internal static class ServerRequestEnvelopeReader
         ArgumentNullException.ThrowIfNull(timeProvider);
         var reader = new SequenceReader<byte>(payload);
         var identity = ProtocolV2RequestIdentityCodec.Read(ref reader);
+        return ReadRemainder(session, ref reader, in identity, flags, maxMetadataBytes,
+            timeProvider, resolvedDeadline);
+    }
 
+    /// <summary>Continues the validated identity parse over the same still-owned encoded payload.</summary>
+    internal static ServerRequestEnvelope ReadAfterIdentity(
+        RpcSession session,
+        ReadOnlySequence<byte> payload,
+        in ProtocolV2RequestIdentity identity,
+        ProtocolV2FrameFlags flags,
+        int maxMetadataBytes,
+        TimeProvider timeProvider,
+        RpcDeadline resolvedDeadline = default)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        // Only the synchronous admission entry supplies a prevalidated identity. Queue resumes
+        // and decoded payloads use Read/ReadDecoded against their own owners and validation.
+        var prefixLength = ProtocolV2Constants.RequestPrefixBytes +
+            (identity.Receipt.HasValue ? ProtocolV2RequestIdentityCodec.ReceiptBytes : 0);
+        var reader = new SequenceReader<byte>(payload.Slice(prefixLength));
+        return ReadRemainder(session, ref reader, in identity, flags, maxMetadataBytes,
+            timeProvider, resolvedDeadline);
+    }
+
+    private static ServerRequestEnvelope ReadRemainder(
+        RpcSession session,
+        ref SequenceReader<byte> reader,
+        in ProtocolV2RequestIdentity identity,
+        ProtocolV2FrameFlags flags,
+        int maxMetadataBytes,
+        TimeProvider timeProvider,
+        RpcDeadline resolvedDeadline)
+    {
         var deadline = resolvedDeadline;
         if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {

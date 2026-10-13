@@ -47,17 +47,21 @@ internal sealed class ClientContractRouteTable
         }
     }
 
+    // A call captures its selector topology together with its contract candidates. Reading the
+    // independently published readiness snapshot first can observe a new topology with old routes.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal bool TryGetRoute(ClientContractBinding binding, object topology, out ClientContractRoute route)
+    internal bool TryGetRoute(ClientContractBinding binding, out ClientContractRoute route)
+        => TryGetRoute(Volatile.Read(ref _publication), binding, out route);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool TryGetRoute(RoutePublication publication, ClientContractBinding binding,
+        out ClientContractRoute route)
     {
-        var publication = Volatile.Read(ref _publication);
-        if (!ReferenceEquals(publication.Topology, topology))
+        if (binding.HasReceipt)
         {
-            route = null!;
-            return false;
-        }
-        if (binding.Receipt is { } receipt)
+            var receipt = binding.Receipt.GetValueOrDefault();
             return publication.Servers.TryGetValue(new ServerKey(receipt.ServerInstanceId, receipt.RegistryEpoch), out route!);
+        }
         return publication.Contracts.TryGetValue(new ContractKey(binding.ContractId, binding.RpcAssemblyHash), out route!);
     }
 

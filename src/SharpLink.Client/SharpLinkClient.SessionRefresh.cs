@@ -70,6 +70,12 @@ internal sealed partial class SharpLinkClient
         set => WriteClientTestHook(9, value);
     }
 
+    internal Action? _beforeContractRoutePublicationTestHook
+    {
+        get => ReadClientTestHook<Action>(10);
+        set => WriteClientTestHook(10, value);
+    }
+
     private T? ReadClientTestHook<T>(int index) where T : Delegate
     {
         var slots = Volatile.Read(ref _clientTestHookSlots);
@@ -83,7 +89,7 @@ internal sealed partial class SharpLinkClient
         {
             if (callback is null)
                 return;
-            var allocated = new Delegate?[10];
+            var allocated = new Delegate?[11];
             slots = Interlocked.CompareExchange(ref _clientTestHookSlots, allocated, null) ?? allocated;
         }
         Volatile.Write(ref slots[index], callback);

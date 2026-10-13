@@ -78,7 +78,7 @@ public sealed class ServerRequestEnvelopeReaderTests
             firstProvider);
         var laterProvider = new FixedTimeProvider(UtcNow.AddSeconds(4), 9_000_000);
 
-        var reparsed = ServerRequestEnvelopeReader.Read(
+        var reparsed = ReadBothPaths(
             session,
             new ReadOnlySequence<byte>(payload),
             ProtocolV2FrameFlags.HasTimeBudget,
@@ -131,6 +131,37 @@ public sealed class ServerRequestEnvelopeReaderTests
             flags, MaxMetadataBytes, clock);
         Ensure(segmented.Identity == identity && segmented.Metadata is { Count: 1 },
             "fragmented receipt prefix parses before metadata without business decoding");
+
+        ProtocolV2RequestIdentity[] identities =
+        [
+            identity with { Receipt = null, Requirement = RpcRegistrationRequirement.Compatible },
+            identity with { Requirement = RpcRegistrationRequirement.Compatible },
+            identity with { Requirement = RpcRegistrationRequirement.MinimumVersion },
+            identity
+        ];
+        foreach (var candidate in identities)
+        {
+            foreach (var optionalFlags in new[]
+                     {
+                         ProtocolV2FrameFlags.None,
+                         ProtocolV2FrameFlags.HasTimeBudget,
+                         ProtocolV2FrameFlags.HasMetadata,
+                         ProtocolV2FrameFlags.HasTimeBudget | ProtocolV2FrameFlags.HasMetadata
+                     })
+            {
+                var payload = CreatePayload(
+                    (optionalFlags & ProtocolV2FrameFlags.HasTimeBudget) != 0 ? TimeSpan.TicksPerSecond : null,
+                    (optionalFlags & ProtocolV2FrameFlags.HasMetadata) != 0 ? original.Metadata : null,
+                    [4, 5, 6], candidate);
+                foreach (var segmentBytes in new[] { 1, 7, 35, 36, 37, 91, 92, 93, payload.Length })
+                {
+                    var request = ReadBothPaths(session, CreateSegmented(payload, segmentBytes),
+                        optionalFlags, MaxMetadataBytes, clock);
+                    Ensure(request.Identity == candidate,
+                        "prevalidated remainder must preserve every receipt mode across prefix boundaries");
+                }
+            }
+        }
     }
 
     [Test]
@@ -251,16 +282,19 @@ public sealed class ServerRequestEnvelopeReaderTests
         var payload = CreatePayload(timeBudgetTicks: null, metadata: null, arguments: [1, 2, 3, 4]);
         var sequence = new ReadOnlySequence<byte>(payload);
         var timeProvider = new FixedTimeProvider(UtcNow, timestamp: 1);
-        _ = ReadBatch(session, sequence, timeProvider, 100_000);
-        _ = GC.GetAllocatedBytesForCurrentThread();
+        foreach (var prevalidated in new[] { false, true })
+        {
+            _ = ReadBatch(session, sequence, timeProvider, 100_000, prevalidated);
+            _ = GC.GetAllocatedBytesForCurrentThread();
 
-        const int iterations = 20_000;
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        var checksum = ReadBatch(session, sequence, timeProvider, iterations);
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        GC.KeepAlive(checksum);
-        Ensure(allocated == 0,
-            $"steady-state envelope parsing allocated {allocated} bytes over {iterations} calls");
+            const int iterations = 20_000;
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var checksum = ReadBatch(session, sequence, timeProvider, iterations, prevalidated);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            GC.KeepAlive(checksum);
+            Ensure(allocated == 0,
+                $"steady-state envelope parsing (prevalidated={prevalidated}) allocated {allocated} bytes over {iterations} calls");
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -268,13 +302,19 @@ public sealed class ServerRequestEnvelopeReaderTests
         RpcSession session,
         ReadOnlySequence<byte> sequence,
         TimeProvider timeProvider,
-        int iterations)
+        int iterations,
+        bool prevalidated)
     {
+        var reader = new SequenceReader<byte>(sequence);
+        var identity = ProtocolV2RequestIdentityCodec.Read(ref reader);
         long checksum = 0;
         for (var index = 0; index < iterations; index++)
         {
-            var envelope = ServerRequestEnvelopeReader.Read(
-                session, sequence, ProtocolV2FrameFlags.None, 1, timeProvider);
+            var envelope = prevalidated
+                ? ServerRequestEnvelopeReader.ReadAfterIdentity(
+                    session, sequence, in identity, ProtocolV2FrameFlags.None, 1, timeProvider)
+                : ServerRequestEnvelopeReader.Read(
+                    session, sequence, ProtocolV2FrameFlags.None, 1, timeProvider);
             checksum += envelope.InterfaceHash + envelope.Arguments.Length;
         }
         return checksum;
@@ -296,10 +336,14 @@ public sealed class ServerRequestEnvelopeReaderTests
     private static byte[] CreatePayload(
         long? timeBudgetTicks,
         SharpLinkMetadata? metadata,
-        byte[] arguments)
+        byte[] arguments,
+        ProtocolV2RequestIdentity identity = default)
     {
         var writer = new ArrayBufferWriter<byte>();
-        ServerRequestTestWire.WriteIdentity(writer, InterfaceHash, MethodHash);
+        if (identity.ContractId == 0)
+            ServerRequestTestWire.WriteIdentity(writer, InterfaceHash, MethodHash);
+        else
+            ProtocolV2RequestIdentityCodec.Write(writer, in identity);
         if (timeBudgetTicks is { } budget)
         {
             var budgetBytes = writer.GetSpan(sizeof(long));
@@ -332,12 +376,56 @@ public sealed class ServerRequestEnvelopeReaderTests
         int maxMetadataBytes,
         DateTimeOffset utcNow,
         long monotonicNow)
-        => ServerRequestEnvelopeReader.Read(
+        => ReadBothPaths(
             session,
             payload,
             flags,
             maxMetadataBytes,
             new FixedTimeProvider(utcNow, monotonicNow));
+
+    private static ServerRequestEnvelope ReadBothPaths(
+        RpcSession session,
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags,
+        int maxMetadataBytes,
+        TimeProvider timeProvider,
+        RpcDeadline resolvedDeadline = default)
+    {
+        var reader = new SequenceReader<byte>(payload);
+        var identity = ProtocolV2RequestIdentityCodec.Read(ref reader);
+        ServerRequestEnvelope original;
+        try
+        {
+            original = ServerRequestEnvelopeReader.Read(
+                session, payload, flags, maxMetadataBytes, timeProvider, resolvedDeadline);
+        }
+        catch (SharpLinkException expected)
+        {
+            var actualError = CaptureSharpLinkException(() => ServerRequestEnvelopeReader.ReadAfterIdentity(
+                session, payload, in identity, flags, maxMetadataBytes, timeProvider, resolvedDeadline));
+            Ensure(actualError.Code == expected.Code && actualError.DetailCode == expected.DetailCode &&
+                   actualError.Message == expected.Message,
+                "prevalidated remainder must preserve protocol validation failures");
+            throw;
+        }
+
+        var actual = ServerRequestEnvelopeReader.ReadAfterIdentity(
+            session, payload, in identity, flags, maxMetadataBytes, timeProvider, resolvedDeadline);
+        Ensure(actual.Identity == original.Identity &&
+               actual.RpcDeadline.HasValue == original.RpcDeadline.HasValue &&
+               actual.RpcDeadline.Timestamp == original.RpcDeadline.Timestamp,
+            "prevalidated remainder must preserve identity and the original deadline");
+        Ensure(actual.Arguments.ToArray().AsSpan().SequenceEqual(original.Arguments.ToArray()),
+            "prevalidated remainder must expose exactly the same business bytes");
+        Ensure((actual.Metadata?.Count ?? -1) == (original.Metadata?.Count ?? -1),
+            "prevalidated remainder must preserve metadata presence and count");
+        for (var index = 0; index < (original.Metadata?.Count ?? 0); index++)
+        {
+            Ensure(actual.Metadata![index].Equals(original.Metadata![index]),
+                "prevalidated remainder must preserve metadata keys and values");
+        }
+        return actual;
+    }
 
     private static RpcSession CreateSession(ProtocolV2Capabilities capabilities)
     {

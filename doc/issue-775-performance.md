@@ -1,6 +1,6 @@
 # Issue #775 contract routing performance evidence
 
-Status: the historical #802 regression has been independently reproduced from retained raw evidence. The first complete new comparison still shows approximately 29–30% greater OneWay sender cost and slower receiver-completed throughput. Attribution and performance acceptance remain open. Successful compilation or successful benchmark execution alone is not a performance acceptance decision.
+Status: the historical #802 regression has been independently reproduced from retained raw evidence. Three complete new comparisons still show approximately 24–30% greater OneWay sender cost and slower receiver-completed throughput. CPU samples and emitted assembly identify concrete serialization and copying work for follow-up; they do not establish the full regression's cause. Attribution and performance acceptance remain open. Successful compilation or successful benchmark execution alone is not a performance acceptance decision.
 
 This document separates sender queue completion, receiver business execution, request latency, and allocation. It records the investigation requested by [issue #775](https://github.com/SunSi12138/SharpLink/issues/775) and the reproducible evidence for the new implementation in [PR #861](https://github.com/SunSi12138/SharpLink/pull/861).
 
@@ -150,6 +150,66 @@ The job correctly failed its allocation checks. All **563,840 allocation operati
 This is preserved as failed evidence, not reclassified as a passing canonical run. On the same source SHA, the independent [PR Fast canonical allocation job 115076374538](https://github.com/SunSi12138/SharpLink/actions/runs/38329693623/job/115076374538) passed all four original cases: c1 1,350.986, c8 577.922, OneWay 800.408 and idle-wake 616.444 B/op, with all original spread limits satisfied. Its 512-byte negative control failed at 1,883.992 B/op against the unchanged 1,450 B/op ceiling. Different execution environments preclude attributing the discrepancy solely to CPU affinity; subsequent matched allocation runs restore the exact canonical entry point and inherited environment without changing any budget or timing workload.
 
 An independent CPU diagnostic workflow, `rpc-contract-routing-cpu.yml`, freezes the observed `dd0881ae` head and the same `3332559` base. It captures four ABBA EventPipe profile slots and separate JIT assembly processes, with the same diagnostic invocation settings as the historical profiles. The source and driver SHA are recorded separately. Client prefix construction/copies, binding/channel dispatch, server admission and enqueue contention are investigated as candidate costs. All diagnostic timings are excluded from the unprofiled acceptance ratios. No allocation-inducing receipt representation change is justified by the timing comparison alone.
+
+### Canonical allocation configuration and repeat signal: `2948fd62`
+
+[Run 38330877073](https://github.com/SunSi12138/SharpLink/actions/runs/38330877073), job `115080400198`, compared the same frozen base with head `2948fd6259066a49c5b5a5f178d2d7de5c7ec303`. GitHub marks the job cancelled after a subsequent push; its retained artifact had already completed all eight slots, the negative control and its summary. Artifact `11782528653` has verified ZIP SHA-256 `63aead98a626fd580c647bba7136c1659524849e54bca899349147e98a542f7a`. Independent parsing verifies all **1,261,568 focused RPC**, **2,949,120 BDN** and **563,840 allocation** operations, all process exits and the explicit negative-control failure. This is complete retained measurement evidence; it is not a successful GitHub check on the final PR head.
+
+The allocation commands now use the original entry point and inherited environment, reporting four processors, while the timing workloads remain fixed to two processors. All 32 allocation cases across eight slots passed their original median and spread ceilings. The injected control correctly failed at 1,871.370 B/op against 1,450 B/op.
+
+| Canonical allocation case | Median of base slot medians, B/op | Median of head slot medians, B/op | Delta B/op |
+|---|---:|---:|---:|
+| Unary c1 | 1,324.850 | 1,330.447 | +5.597 |
+| Unary c8 | 549.475 | 567.734 | +18.260 |
+| OneWay c1 | 800.240 | 800.246 | +0.006 |
+| Idle-wake | 616.156 | 616.538 | +0.382 |
+
+The unchanged timing workload independently reproduced the sender regression: `PayloadSize=16` was 1,767.572 to 2,260.985 ns/queued call (**1.27915×**), and `PayloadSize=256` was 1,774.096 to 2,260.847 (**1.27437×**). Every head slot again exceeded every base slot for each label. Final receiver-completed batch throughput was `0.75534×` for TCP and `0.81375×` for SharedMemory. These repeated signals remain open for attribution; restoring canonical allocation execution does not resolve the timing regression. Several short-stream tail ratios vary substantially between runs, so the complete per-slot samples remain necessary for review.
+
+### CPU and emitted assembly for the observed `dd0881ae` pair
+
+[CPU attribution run 38331679091](https://github.com/SunSi12138/SharpLink/actions/runs/38331679091), job `115082575796`, completed successfully. Driver `2b57dc076d2a7ff94371089847cf7173f3b7a5e3` checked out the unchanged observed head `dd0881ae3ec34bce4e8793cc051360dedf0c5a05` and base `3332559cf4db455e0249448cf16ad43f4fc36564`. Artifact `11783081932` has verified ZIP SHA-256 `97f49f7a58f8cbe6746a494b0e22224f2dcc8ccd5bf99d718d4a73f72d882911`.
+
+The four ABBA EventPipe processes each use one launch, six warmups, fifteen actual iterations and 4,096 invocations for both inherited OneWay labels. Eight original `.nettrace` files and their speedscope exports are retained. Separate unprofiled diagnostic processes retain JIT assembly for each arm. Their timings are excluded from the unprofiled three-launch acceptance comparison above. `profile_summary.py` independently reproduces the category weights from the raw exports.
+
+| Category and explicit sample scope | Base share across slots and labels | Head share across slots and labels |
+|---|---:|---:|
+| Send-queue `Monitor.Enter_Slowpath`, actual-tagged synchronous sender | 52.54–58.66% | 45.69–62.31% |
+| Route/call-control subtree, actual-tagged synchronous sender | 1.14–10.98% | 0.43–14.25% |
+| Identity write/validation subtree, actual-tagged synchronous sender | 0% | 0–0.99% |
+| Identity read subtree, whole-capture server-frame stacks | 0% | 3.71–7.38% |
+| Contract admission subtree, whole-capture server-frame stacks | 0% | 0.42–2.79% |
+
+The sender queue remains a large sampled subtree in both arms, but its relative shares overlap. Route/call-control shares vary substantially between slots. These observations do not isolate either category as the cause of the approximately 27–30% timing signal. In particular, the generated proxy already holds a local binding; this workload does not perform `ResolveLocalBinding` or scan the remote Manifest on each call. A low or zero directly named helper share also does not imply zero cost: inlining, caller attribution and unresolved frames affect sampling.
+
+The server scope includes warmup and dispatch-drain samples that carry server frames. It is not aligned to the sender's actual-iteration activity tags and does not include every server-related worker stack. Its percentages therefore identify work to inspect, not server CPU per measured request, and cannot be added to sender percentages. Inclusive categories can overlap. Sample weights are CPU projections, not lock-wait durations or causal estimates.
+
+The retained `disassembly/base/process.log` and `disassembly/head/process.log` provide more direct evidence of representation cost. All matching listings in these diagnostic processes are **Tier0**, with `ClientContractRoute.SelectConnection` marked instrumented Tier0; they are not Tier1 assembly. For the concrete generated publication request, the following emitted stack reservations are observable:
+
+| Emitted method | Base stack reservation | Head stack reservation | Observed head work |
+|---|---:|---:|---|
+| `SharpLinkClient.SendRpcCall` | 528 bytes | 816 bytes | Constructs a full identity, including a nullable receipt, before writing an ordinary request |
+| `ProtocolV2RequestIdentityCodec.Write` | Not present | 672 bytes | Calls identity validation and contains ordinary and receipt serialization paths |
+| `ProtocolV2RequestIdentityCodec.Read` | Not present | 608 bytes | Copies the 88-byte nullable receipt into the identity constructor and returns a 136-byte identity through `CORINFO_HELP_MEMCPY`, including ordinary mode |
+| `ServerRequestEnvelopeReader.Read` | 560 bytes | 1,712 bytes | Calls the identity reader, copies the 136-byte identity between locals and into the envelope |
+
+For the no-deadline, no-metadata envelope path, the reader contains two unconditional 136-byte `CORINFO_HELP_MEMCPY` calls after the codec returns and a 136-byte `rep movsb` into the envelope constructor arguments. Its additional copies behind optional deadline/metadata branches are not counted as ordinary-path work. The codec's own 136-byte return copy is separate. The retained source also parses request identity before admission and again when decoding the admitted envelope, and validates/looks up the admitted method again during dispatch. These are concrete candidates for passing already validated values forward or specializing ordinary serialization without allocating a receipt object. Stack reservations and instruction listings demonstrate emitted work; they do not measure its end-to-end cost or prove that removing it resolves the observed throughput loss. Every candidate still requires the same unprofiled matched comparison and unchanged allocation policy.
+
+### Subsequent canonical stability failure: `2b57dc07`
+
+The [PR Fast allocation job 115082590251](https://github.com/SunSi12138/SharpLink/actions/runs/38331683873/job/115082590251) for PR head `2b57dc076d2a7ff94371089847cf7173f3b7a5e3` failed the original c1 stability limit in the canonical environment. Its c1 median was **1,339.478 B/op**, below 1,450 B/op, but its range was **1,326.400–1,378.998 B/op**, producing **52.598 B/op spread against the unchanged 50 B/op ceiling**. The c8 case passed at 566.512 B/op with 22.070 B/op spread; OneWay passed at 800.288 with 0.298 spread; idle-wake passed at 616.448 with 0.792 spread. The separate fast test job succeeded. The allocation action skipped its negative-control step after the gate failure.
+
+This remains a failed canonical allocation check. It is separate from the preceding complete `2948fd62` comparison's 32 passing cases and completed negative control. Neither that earlier success nor the small size of this spread overrun converts this result to a pass; the original policy is retained.
+
+### Complete third comparison: `2b57dc07` on AMD
+
+The separate [matched-performance job 115082947047](https://github.com/SunSi12138/SharpLink/actions/runs/38331678983/job/115082947047) for the same `2b57dc07` head completed successfully. Artifact `11782819682` has verified ZIP SHA-256 `b5ad6ee1e56280e384115ddeb09a0073b775bfb3486c939460a4edb0f486de60`. Independent parsing again verifies all eight slots, **1,261,568 focused RPC operations**, **2,949,120 BDN sender calls**, **563,840 allocation operations**, and all original allocation policies. All 32 allocation cases passed; the injected negative control failed correctly at **1,889.950 B/op against 1,450 B/op**. This successful matched allocation result is retained alongside the independent PR Fast stability failure above.
+
+This job ran on an AMD EPYC 7763 host with four available logical CPUs, while the earlier two comparisons used Intel Xeon Platinum 8573C hosts. Both arms within this job retain the same fixed two-CPU timing configuration. Absolute timing values across these jobs cannot measure the effect of the intervening source changes. Within this job, `PayloadSize=16` costs **2,704.965 to 3,399.178 ns/queued call (1.25664×)**, and `PayloadSize=256` costs **2,723.612 to 3,364.194 ns/queued call (1.23520×)**. Every head slot again exceeds every base slot for each label. The repeat signal is present on this different host family.
+
+Final receiver-completed OneWay batch throughput is **182,727.8 to 142,803.9 op/s on TCP (0.7815×)** and **166,424.6 to 133,804.2 op/s on SharedMemory (0.8040×)**. Short client-stream and duplex workloads also remain slower: throughput ratios are 0.7383 and 0.7661 on TCP, and 0.6619 and 0.6488 on SharedMemory. SharedMemory client-stream P99 is 421.960 to 1,109.441 microseconds, and duplex P99 is 1,016.341 to 1,826.042 microseconds. All original per-slot P50/P99/P99.9 samples remain in the artifact, including the highly variable extreme tails. Successful execution and allocation gates do not accept these timing regressions.
+
+The next source candidate specializes ordinary identity writing, isolates receipt-only work, publishes client routes atomically, and reuses already parsed identity on immediate admitted dispatch. These changes are motivated by the emitted work and a separately reproduced publication race. Their performance effect is not yet measured. The CPU workflow now defaults to the exact workflow SHA, with an optional exact SHA override, so the next explicitly triggered capture can verify the candidate's emitted work against the same frozen base. Profiled timings remain diagnostic only.
 
 ### Current evidence and review decision
 

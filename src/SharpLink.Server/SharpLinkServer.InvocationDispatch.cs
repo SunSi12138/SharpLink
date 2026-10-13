@@ -14,6 +14,25 @@ internal sealed partial class SharpLinkServer
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
+        => DispatchRpcCoreAsync(
+            connection, requestId, flags, payload, requestCancellationMap, serverLoopToken,
+            admissionProgram, serviceInfo, identity: default, identityValidated: false,
+            admittedCallState, admissionGranted, retainedAdmissionPayload);
+
+    private ValueTask DispatchRpcCoreAsync(
+        ServerConnectionState connection,
+        long requestId,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload,
+        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
+        CancellationToken serverLoopToken,
+        AdmissionProgram? admissionProgram,
+        ServiceRegistration serviceInfo,
+        in ProtocolV2RequestIdentity identity,
+        bool identityValidated,
+        ServerCallCancellationState? admittedCallState = null,
+        bool admissionGranted = false,
+        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
     {
         var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
         try
@@ -21,8 +40,11 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
+            var request = identityValidated
+                ? ServerRequestEnvelopeReader.ReadAfterIdentity(
+                    session, payload, in identity, flags, _protocolOptions.MaxMetadataBytes,
+                    _runtimeContext.TimeProvider, admittedCallState?.Deadline ?? default)
+                : ReadRequestEnvelope(session, payload, flags, admittedCallState?.Deadline ?? default);
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;

@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       candidate_sha:
-        description: 'Exact observed production SHA to profile against the frozen baseline'
+        description: 'Exact production SHA to profile; leave empty for the workflow SHA'
         required: false
-        default: 'dd0881ae3ec34bce4e8793cc051360dedf0c5a05'
+        default: ''
 
 permissions:
   contents: read
@@ -27,7 +27,7 @@ jobs:
     timeout-minutes: 15
     env:
       PROFILE_BASE: '3332559cf4db455e0249448cf16ad43f4fc36564'
-      PROFILE_HEAD: ${{ inputs.candidate_sha || 'dd0881ae3ec34bce4e8793cc051360dedf0c5a05' }}
+      PROFILE_HEAD: ${{ inputs.candidate_sha || github.sha }}
     steps:
       - name: Checkout diagnostic driver at the workflow SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,7 +39,7 @@ jobs:
         with:
           ref: ${{ env.PROFILE_BASE }}
           path: base
-      - name: Checkout observed production head
+      - name: Checkout exact candidate production head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.PROFILE_HEAD }}
