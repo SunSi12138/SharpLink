@@ -1,6 +1,6 @@
 # Issue #775 contract routing performance evidence
 
-Status: the historical #802 regression has been independently reproduced from retained raw evidence. The new implementation's matched comparison is pending completion and review. Successful compilation or successful benchmark execution alone is not a performance acceptance decision.
+Status: the historical #802 regression has been independently reproduced from retained raw evidence. The first complete new comparison still shows approximately 29–30% greater OneWay sender cost and slower receiver-completed throughput. Attribution and performance acceptance remain open. Successful compilation or successful benchmark execution alone is not a performance acceptance decision.
 
 This document separates sender queue completion, receiver business execution, request latency, and allocation. It records the investigation requested by [issue #775](https://github.com/SunSi12138/SharpLink/issues/775) and the reproducible evidence for the new implementation in [PR #861](https://github.com/SunSi12138/SharpLink/pull/861).
 
@@ -113,9 +113,47 @@ The checked-in policy is `eng/perf/allocation-budgets.json`. Every slot runs its
 
 The final negative control injects 512 bytes per operation into `rpc-add-sharedmemory-c1`. It must fail specifically because its median exceeds the existing allocation ceiling. The summary validates completed-operation counts, sample counts, normalization, identical policy across all slots, and the negative-control failure reason. No timing, tail or allocation budget is weakened to make the new admission path pass.
 
+The allocation command uses the existing `eng/run-allocation-gate.sh` entry point and the inherited canonical CI environment. The fixed two-CPU and tiering overrides apply to timing and CPU diagnostic workloads. They do not apply to this allocation gate. Provenance records both configurations. The first attempt accidentally applied the timing overrides to the allocation commands as well; that failed evidence is retained and described below.
+
+### First complete new comparison: `dd0881ae`
+
+[Run 38329690391](https://github.com/SunSi12138/SharpLink/actions/runs/38329690391), job `115076766935`, compared base `3332559cf4db455e0249448cf16ad43f4fc36564` with head `dd0881ae3ec34bce4e8793cc051360dedf0c5a05`. Artifact `11782461349`, `issue775-performance-dd0881ae3ec34bce4e8793cc051360dedf0c5a05-1`, has verified ZIP SHA-256 `e60fc416a7750087498d1e4fae2720907fce54ca36f4e5d9968b4d28808562d9`.
+
+The host was an Intel Xeon Platinum 8573C with four available logical CPUs. Timing used CPUs `0,1` and two reported .NET processors, .NET 10.0.12 and SDK 10.0.112. All eight timing slots, all 96 focused RPC processes, **1,261,568 receiver-verified focused RPC operations**, and **2,949,120 BDN sender-queued calls** completed. The downloaded raw ticks, counts and metadata independently reproduce the report.
+
+| BDN inherited label | Base ns/queued call | Head ns/queued call | Head/base |
+|---|---:|---:|---:|
+| `PayloadSize=16` | 1,749.676 | 2,276.784 | **1.30126** |
+| `PayloadSize=256` | 1,744.124 | 2,249.340 | **1.28967** |
+
+Every head slot's BDN median exceeds every base slot's median for both labels. The approximately 29–30% signal is therefore retained as a regression requiring investigation. Its ratio is numerically below the historical #802 ratio, but the old and new comparisons use different base/head revisions and separate runs; this is not a quantified attribution of the improvement to a particular design change.
+
+| Focused scenario | Base op/s | Head op/s | Throughput head/base | P99 head/base | P99.9 head/base |
+|---|---:|---:|---:|---:|---:|
+| TCP Unary | 17,399.2 | 15,940.1 | 0.9161 | 1.0909 | 0.8529 |
+| TCP OneWay sender | 338,181.1 | 279,445.8 | 0.8263 | 1.0781 | 1.1728 |
+| TCP OneWay receiver | 5,382.4 | 5,544.9 | 1.0302 | 1.0012 | 0.9581 |
+| TCP client streaming | 3,288.2 | 3,049.4 | 0.9274 | 0.6031 | 0.5635 |
+| TCP server streaming | 5,843.5 | 5,640.8 | 0.9653 | 0.9404 | 1.0114 |
+| TCP duplex | 2,578.0 | 2,027.1 | 0.7863 | 1.4479 | 1.0529 |
+| SharedMemory Unary | 14,052.8 | 13,066.8 | 0.9298 | 1.0397 | 1.2953 |
+| SharedMemory OneWay sender | 279,863.1 | 263,531.5 | 0.9416 | 1.0304 | 0.9857 |
+| SharedMemory OneWay receiver | 3,596.0 | 2,873.8 | 0.7992 | 1.0052 | 1.0199 |
+| SharedMemory client streaming | 3,697.5 | 2,872.9 | 0.7770 | 1.1380 | 0.5928 |
+| SharedMemory server streaming | 5,780.7 | 5,643.4 | 0.9762 | 1.0145 | 1.1700 |
+| SharedMemory duplex | 2,430.1 | 1,959.5 | 0.8063 | 1.5555 | 1.2270 |
+
+The final receiver barriers also show slower completion of the queued OneWay batches: TCP goes from 223,645.9 to 172,418.4 completed operations/s (`0.77094×`), and SharedMemory from 207,266.9 to 152,928.6 (`0.73783×`). The TCP per-request receiver-barrier scenario's near-flat result does not erase these batch throughput regressions: it applies a different pacing boundary. Duplex P99 and the short-stream throughput changes remain visible; stream acceptance ordering is a candidate contributor, not yet a measured isolated cause.
+
+The job correctly failed its allocation checks. All **563,840 allocation operations** completed, but the timing configuration's two-CPU override had also been applied to these checks. The original `rpc-add-sharedmemory-c1` spread ceiling failed in every base and head slot, with spreads from 51.402 to 166.708 B/op; some medians also exceeded 1,450 B/op. The c8 spread ceiling failed in three slots. OneWay and idle-wake passed their unchanged limits in all slots. Across arm medians, OneWay allocation was 800.036 to 800.078 B/completed operation.
+
+This is preserved as failed evidence, not reclassified as a passing canonical run. On the same source SHA, the independent [PR Fast canonical allocation job 115076374538](https://github.com/SunSi12138/SharpLink/actions/runs/38329693623/job/115076374538) passed all four original cases: c1 1,350.986, c8 577.922, OneWay 800.408 and idle-wake 616.444 B/op, with all original spread limits satisfied. Its 512-byte negative control failed at 1,883.992 B/op against the unchanged 1,450 B/op ceiling. Different execution environments preclude attributing the discrepancy solely to CPU affinity; subsequent matched allocation runs restore the exact canonical entry point and inherited environment without changing any budget or timing workload.
+
+An independent CPU diagnostic workflow, `rpc-contract-routing-cpu.yml`, freezes the observed `dd0881ae` head and the same `3332559` base. It captures four ABBA EventPipe profile slots and separate JIT assembly processes, with the same diagnostic invocation settings as the historical profiles. The source and driver SHA are recorded separately. Client prefix construction/copies, binding/channel dispatch, server admission and enqueue contention are investigated as candidate costs. All diagnostic timings are excluded from the unprofiled acceptance ratios. No allocation-inducing receipt representation change is justified by the timing comparison alone.
+
 ### Current evidence and review decision
 
-The first comparison attempt was scheduled by [run 38329394037](https://github.com/SunSi12138/SharpLink/actions/runs/38329394037) for head `72c30a8b5399a43eb2ea6c6ce7aeb0f096ef26a4`. Its compile gate found two test-fixture constructor migrations, so the comparison job was skipped and produced no timing evidence. Results are **pending**. The final reviewed source SHA and its completed artifact must replace this provisional status before making a performance acceptance claim.
+The earlier [run 38329394037](https://github.com/SunSi12138/SharpLink/actions/runs/38329394037) for head `72c30a8b5399a43eb2ea6c6ce7aeb0f096ef26a4` stopped at two test-fixture constructor migrations and produced no timing evidence. The first complete comparison above identifies remaining regressions. The final reviewed source SHA, completed artifact and explicit disposition of those regressions are still required before making a performance acceptance claim.
 
 The workflow uploads `issue775-performance-<sha>-<attempt>` with raw BenchmarkDotNet JSON, per-operation ticks, separate sender/receiver counts, allocation samples, build logs and provenance. `summary.json` retains base/head samples and ratios for throughput, receiver-completed throughput, tails, CPU, diagnostic allocation and drain time. `summary.md` presents the main comparisons. To independently validate a downloaded artifact:
 

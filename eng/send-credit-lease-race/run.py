@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/StreamFlowControllerLeaseRaceTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/StreamFlowControllerLeaseRaceTests/*"
 FOCUSED_COUNT = 8
-FULL_COUNT = 2174  # 2166 current-suite cases + the same 8 overlaid lease-race cases.
+FULL_COUNT = 2176  # 2168 current-suite cases + the same 8 overlaid lease-race cases.
 
 
 def digest(path):

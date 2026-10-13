@@ -1,0 +1,65 @@
+name: RPC Contract Routing CPU Attribution
+
+on:
+  push:
+    branches: ['feat/775-rpc-contract-routing']
+    paths:
+      - '.github/workflows/rpc-contract-routing-cpu.yml'
+      - 'eng/rpc-contract-routing-performance/profile.py'
+      - 'eng/rpc-contract-routing-performance/profile_summary.py'
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: 'Exact observed production SHA to profile against the frozen baseline'
+        required: false
+        default: 'dd0881ae3ec34bce4e8793cc051360dedf0c5a05'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rpc-contract-routing-cpu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu-and-disassembly:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PROFILE_BASE: '3332559cf4db455e0249448cf16ad43f4fc36564'
+      PROFILE_HEAD: ${{ inputs.candidate_sha || 'dd0881ae3ec34bce4e8793cc051360dedf0c5a05' }}
+    steps:
+      - name: Checkout diagnostic driver at the workflow SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: driver
+      - name: Checkout frozen production base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.PROFILE_BASE }}
+          path: base
+      - name: Checkout observed production head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.PROFILE_HEAD }}
+          path: head
+      - uses: ./driver/.github/actions/setup-dotnet
+      - name: Capture matched CPU samples and independent JIT assembly
+        shell: bash
+        run: |
+          python3 driver/eng/rpc-contract-routing-performance/profile.py \
+            --base-root "$GITHUB_WORKSPACE/base" \
+            --head-root "$GITHUB_WORKSPACE/head" \
+            --expected-base "$PROFILE_BASE" \
+            --expected-head "$PROFILE_HEAD" \
+            --driver-sha '${{ github.sha }}' \
+            --output "$GITHUB_WORKSPACE/artifacts/issue775-cpu"
+      - name: Retain all traces, assembly and failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue775-cpu-${{ env.PROFILE_HEAD }}-${{ github.run_attempt }}
+          path: artifacts/issue775-cpu
+          if-no-files-found: error
+          retention-days: 30

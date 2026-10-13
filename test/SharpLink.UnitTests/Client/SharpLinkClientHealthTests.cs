@@ -53,22 +53,41 @@ public class SharpLinkClientHealthTests
         try
         {
             await client.StartAsync();
-            await transport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-            transport.ReleaseFailure();
-            await loggerFactory.SupervisorFailureLogged.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await LongRunningTestWorker.Run(() =>
+            {
+                Task? failureOwner = null;
+                try
+                {
+                    // Both peers own dedicated threads: the logger deliberately blocks its caller,
+                    // so neither failure propagation nor signal observation may depend on the pool.
+                    WaitForTestPhase(transport.ConnectStarted.Task);
+                    failureOwner = LongRunningTestWorker.Run(transport.ReleaseFailure);
+                    WaitForTestPhase(loggerFactory.SupervisorFailureLogged.Task);
+                    Ensure(!loggerFactory.SupervisorUsedThreadPool,
+                        "the blocking supervisor test callback must not occupy the shared ThreadPool");
 
-            Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
-                "connection failure must not fault the local runtime lifecycle");
-            Ensure(client.State == SharpLinkConnectionState.Faulted,
-                "test must observe the legacy connection Faulted window before supervisor normalization");
-            Ensure(client.Readiness == SharpLinkReadinessState.NotReady,
-                "connection failure must publish NotReady independently of local lifecycle");
+                    Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
+                        "connection failure must not fault the local runtime lifecycle");
+                    Ensure(client.State == SharpLinkConnectionState.Faulted,
+                        "test must observe the legacy connection Faulted window before supervisor normalization");
+                    Ensure(client.Readiness == SharpLinkReadinessState.NotReady,
+                        "connection failure must publish NotReady independently of local lifecycle");
 
-            var result = await client.CheckHealthAsync();
+                    var probe = client.CheckHealthAsync().AsTask();
+                    WaitForTestPhase(probe);
+                    var result = probe.GetAwaiter().GetResult();
 
-            Ensure(result.Outcome == SharpLinkHealthProbeOutcome.NotReady,
-                "Running + connection Faulted + zero Ready connections must be a structured NotReady result");
-            Ensure(result.Status is null, "NotReady must not invent a remote status");
+                    Ensure(result.Outcome == SharpLinkHealthProbeOutcome.NotReady,
+                        "Running + connection Faulted + zero Ready connections must be a structured NotReady result");
+                    Ensure(result.Status is null, "NotReady must not invent a remote status");
+                }
+                finally
+                {
+                    loggerFactory.Release();
+                    if (failureOwner is not null)
+                        LongRunningTestWorker.Join(failureOwner, TimeSpan.FromSeconds(5));
+                }
+            });
         }
         finally
         {
@@ -202,10 +221,19 @@ public class SharpLinkClientHealthTests
             throw new Exception(message);
     }
 
+    private static void WaitForTestPhase(Task signal)
+    {
+        // Task.Wait uses an inline completion signal even when a TCS requests asynchronous
+        // continuations; WaitAsync would add a proxy continuation on the shared ThreadPool.
+        if (!signal.Wait(TimeSpan.FromSeconds(2)))
+            throw new TimeoutException("The health test coordination phase did not complete.");
+    }
+
     private sealed class GatedFailingTransportFactory : IClientTransportFactory
     {
-        private readonly TaskCompletionSource _release =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Completed only by the dedicated failure owner, allowing the ConfigureAwait(false)
+        // failure chain to reach the blocking supervisor logger on that same owner.
+        private readonly TaskCompletionSource _release = new();
 
         internal TaskCompletionSource ConnectStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -228,6 +256,7 @@ public class SharpLinkClientHealthTests
         private readonly BlockingSupervisorLogger _logger = new();
 
         internal TaskCompletionSource SupervisorFailureLogged => _logger.SupervisorFailureLogged;
+        internal bool SupervisorUsedThreadPool => _logger.SupervisorUsedThreadPool;
 
         public ILogger CreateLogger(string categoryName) => _logger;
 
@@ -246,6 +275,7 @@ public class SharpLinkClientHealthTests
 
         internal TaskCompletionSource SupervisorFailureLogged { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool SupervisorUsedThreadPool { get; private set; }
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -262,6 +292,7 @@ public class SharpLinkClientHealthTests
             if (!message.Contains("RunInitialConnectivitySupervisorAsync", StringComparison.Ordinal))
                 return;
 
+            SupervisorUsedThreadPool = Thread.CurrentThread.IsThreadPoolThread;
             SupervisorFailureLogged.TrySetResult();
             _release.Wait(TimeSpan.FromSeconds(5));
         }
