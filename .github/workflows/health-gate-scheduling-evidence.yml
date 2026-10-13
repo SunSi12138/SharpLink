@@ -1,0 +1,117 @@
+name: PR843 Health Fixture Scheduling Evidence
+
+on:
+  push:
+    branches: ['validation/pr843-health-fixture-scheduling']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scheduling-control:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      CANDIDATE_SHA: 6d672ad3a55302af6c57f76d2158b246f69eeff3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6d672ad3a55302af6c57f76d2158b246f69eeff3
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify one asynchronous-release negative control and one unchanged candidate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, shutil, subprocess, time, traceback
+          root = pathlib.Path.cwd()
+          out = root / 'artifacts/pr843-health-scheduling'
+          out.mkdir(parents=True, exist_ok=False)
+          fixture = pathlib.Path('test/SharpLink.UnitTests/Client/SharpLinkClientHealthTests.cs')
+          original = fixture.read_bytes()
+          anchor = b'private readonly TaskCompletionSource _release = new();'
+          replacement = b'private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);'
+          assert original.count(anchor) == 1, 'private release gate anchor changed'
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == os.environ['CANDIDATE_SHA']
+          assert not subprocess.check_output(['git', 'status', '--porcelain']), 'candidate checkout must start pristine'
+          project = 'test/SharpLink.UnitTests/SharpLink.UnitTests.csproj'
+          binary = pathlib.Path('test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll')
+          reports = binary.parent / 'TestResults'
+          target = '/*/*/SharpLinkClientHealthTests/RunningLifecycleWithConnectionFaultShouldReturnNotReady'
+          marker = 'the blocking supervisor test callback must not occupy the shared ThreadPool'
+          rows, checks = [], []
+          provenance = {
+              'candidateSha': os.environ['CANDIDATE_SHA'],
+              'validationWorkflowSha': os.environ['GITHUB_SHA'],
+              'candidateTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+              'candidateFixtureSha256': hashlib.sha256(original).hexdigest(),
+              'controlChange': 'restore only private release TCS RunContinuationsAsynchronously',
+              'originalTimeoutRun': 38328197398,
+              'scope': 'prove fixture ThreadPool dependency change; not a scheduler trace of the original timeout',
+              'plannedTestRuns': {'async-control': 1, 'dedicated-candidate': 1},
+              'productionChanged': False,
+              'assertionsAndTimeoutsIdenticalBetweenArms': True,
+          }
+          (out / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
+          (out / 'production-tree.txt').write_bytes(subprocess.check_output(['git', 'ls-tree', '-r', 'HEAD', '--', 'src']))
+          def run(command, name, timeout):
+              row = {'name': name, 'command': command, 'start': time.time(), 'exitCode': None}
+              rows.append(row)
+              try:
+                  with (out / (name + '.log')).open('w') as log:
+                      row['exitCode'] = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=timeout).returncode
+                  return row['exitCode']
+              finally:
+                  row['end'] = time.time()
+                  (out / 'exits.json').write_text(json.dumps(rows, indent=2) + '\n')
+          result = {'status': 'incomplete'}
+          try:
+              assert run(['dotnet', '--info'], 'dotnet-info', 30) == 0
+              for arm in ('async-control', 'dedicated-candidate'):
+                  data = original.replace(anchor, replacement, 1) if arm == 'async-control' else original
+                  fixture.write_bytes(data)
+                  (out / (arm + '-HealthTests.cs')).write_bytes(data)
+                  (out / (arm + '-fixture.patch')).write_bytes(subprocess.check_output(['git', 'diff', '--binary', 'HEAD', '--', str(fixture)]))
+                  assert not subprocess.check_output(['git', 'diff', 'HEAD', '--', 'src']), 'production source changed'
+                  assert run(['dotnet', 'build', project, '-c', 'Release', '--no-incremental', '-v', 'minimal'], arm + '-build', 600) == 0
+                  binary_hash = hashlib.sha256(binary.read_bytes()).hexdigest()
+                  if reports.exists():
+                      shutil.rmtree(reports)  # Previous arm's reports have already been retained.
+                  code = run(['dotnet', 'test', '--project', project, '-c', 'Release', '--no-build', '--treenode-filter', target], arm + '-test', 30)
+                  assert hashlib.sha256(binary.read_bytes()).hexdigest() == binary_hash, 'test binary changed during execution'
+                  if reports.exists():
+                      shutil.copytree(reports, out / (arm + '-TestResults'))
+                  text = re.sub(r'\x1b\[[0-9;]*m', '', (out / (arm + '-test.log')).read_text())
+                  counts = {}
+                  for key in ('total', 'failed', 'succeeded', 'skipped'):
+                      values = re.findall(r'\b' + key + r':\s*(\d+)\b', text)
+                      counts[key] = int(values[-1]) if values else (0 if key == 'failed' else None)
+                  negative = arm == 'async-control'
+                  expected = {'total': 1, 'failed': int(negative), 'succeeded': int(not negative), 'skipped': 0}
+                  assert counts == expected, (arm, counts, expected)
+                  assert code == (2 if negative else 0), (arm, code)
+                  if negative:
+                      assert marker in text and 'TimeoutException' not in text, 'negative control must fail for pool ownership, not timeout or another error'
+                  if checks:
+                      assert binary_hash != checks[0]['testBinarySha256'], 'changed TCS configuration did not change the built test assembly'
+                  checks.append({'arm': arm, 'counts': counts, 'exitCode': code, 'fixtureSha256': hashlib.sha256(data).hexdigest(), 'testBinarySha256': binary_hash, 'binaryUnchangedDuringTest': True})
+                  (out / 'checks.json').write_text(json.dumps(checks, indent=2) + '\n')
+              result = {'status': 'expected-pool-ownership-red-and-dedicated-green-passed', 'candidateSha': os.environ['CANDIDATE_SHA'], 'noRetries': True}
+          except Exception as error:
+              result = {'status': 'failed', 'error': repr(error), 'completedChecks': len(checks), 'noRetries': True}
+              (out / 'collector-error.log').write_text(traceback.format_exc())
+              raise
+          finally:
+              fixture.write_bytes(original)
+              (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+          PY
+      - name: Preserve both sources and every attempt
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr843-health-scheduling-6d672ad3-attempt${{ github.run_attempt }}
+          path: artifacts/pr843-health-scheduling
+          if-no-files-found: error
+          retention-days: 30
