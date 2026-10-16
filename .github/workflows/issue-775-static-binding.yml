@@ -3,51 +3,24 @@ on:
   push:
     branches: [prototype/775-static-session-binding]
   workflow_dispatch:
+    inputs:
+      performance:
+        description: Run the complete same-host ABBA and BAAB experiment
+        type: boolean
+        default: true
 permissions:
   contents: read
 defaults:
   run:
     shell: bash
 jobs:
-  materialize:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      sha: ${{ steps.source.outputs.sha }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-      - id: source
-        name: Import verified connector-authored source on the isolated branch
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = refs/heads/prototype/775-static-session-binding
-          if test -d eng/issue775/import; then
-            python3 - <<'PY'
-          import base64, gzip, hashlib, pathlib, subprocess
-          chunks = sorted(pathlib.Path('eng/issue775/import').glob('*.b64'))
-          patch = gzip.decompress(base64.b64decode(''.join(p.read_text() for p in chunks), validate=True))
-          assert hashlib.sha256(patch).hexdigest() == '420ec8bda0bdc43f88dfb9c6d7373925ac747f855b765966c766cb8a84aae882'
-          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
-          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
-          PY
-            git rm -r eng/issue775/import
-            git diff --cached --check
-            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'test: add fixed-source same-host ABBA and BAAB evidence (#775)'
-            git push origin HEAD:refs/heads/prototype/775-static-session-binding
-          fi
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   validate:
-    needs: materialize
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.materialize.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
@@ -68,12 +41,11 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: issue775-safety-${{ needs.materialize.outputs.sha }}
+          name: issue775-safety-${{ github.sha }}
           path: artifacts/
           retention-days: 30
           if-no-files-found: error
   default-regression:
-    needs: materialize
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -82,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.materialize.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
@@ -98,23 +70,36 @@ jobs:
         if: always()
         run: |
           dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+      - name: Export formatter proposal without repository write access
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+          SharpLinkStaticBindingPrototype=true dotnet format whitespace test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore --verbosity minimal
+          git diff --binary > artifacts/formatter.patch
+      - name: Unchanged maintainability policy
+        if: always()
+        run: |
           python3 eng/test-verify-maintainability.py
           bash eng/check-maintainability.sh
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: issue775-default-tests-${{ needs.materialize.outputs.sha }}
-          path: test/**/TestResults/
+          name: issue775-default-tests-${{ github.sha }}
+          path: |
+            test/**/TestResults/
+            artifacts/
           retention-days: 30
           if-no-files-found: warn
   same-host-evidence:
-    needs: [materialize, validate]
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && inputs.performance
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.materialize.outputs.sha }}
+          ref: ${{ github.sha }}
           path: head
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -126,7 +111,7 @@ jobs:
         with:
           global-json-file: head/global.json
       - name: Same-host ABBA and BAAB with unchanged allocation gates
-        run: python3 head/eng/issue775/run.py --base-root base --head-root head --expected-head '${{ needs.materialize.outputs.sha }}' --output evidence
+        run: python3 head/eng/issue775/run.py --base-root base --head-root head --expected-head '${{ github.sha }}' --output evidence
       - name: Publish measured summary
         if: always()
         run: |
@@ -135,7 +120,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: issue775-abba-baab-${{ needs.materialize.outputs.sha }}
+          name: issue775-abba-baab-${{ github.sha }}
           path: evidence/
           retention-days: 30
           if-no-files-found: error
