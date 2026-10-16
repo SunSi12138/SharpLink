@@ -1,0 +1,69 @@
+name: Issue 775 one-time source hygiene
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+    paths: [.github/workflows/issue-775-source-hygiene.yml]
+permissions:
+  contents: write
+jobs:
+  verify-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: global.json
+      - name: Apply the audited source-only patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/prototype/775-static-session-binding
+          python3 - <<'PY'
+          import base64, gzip, hashlib, subprocess
+          data = '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'
+          patch = gzip.decompress(base64.b64decode(data, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '4b452c3d7c1290ebaddbd25b074df7499d34135d8ea44763d67a469d58497513'
+          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
+          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+          PY
+      - name: Apply SDK whitespace formatting and verify unchanged debt policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore Sharplink.slnx
+          dotnet format whitespace Sharplink.slnx --no-restore --include src/SharpLink.Client/SharpLinkClient.Invokers.cs test/SharpLink.Benchmarks/StaticBindingEvidence.cs src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs src/SharpLink.Server/SharpLinkServer.QueuedAdmission.cs --verbosity minimal
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          python3 eng/check-project-reference-boundaries.py
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+      - name: Compile and exercise the prototype after source-only hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -p:SharpLinkStaticBindingPrototype=true
+          timeout 120 dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --static-binding-smoke | tee artifacts/hygiene-smoke.log
+      - name: Commit only the reviewed source files after validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add src/SharpLink.Client/SharpLinkClient.Invokers.cs test/SharpLink.Benchmarks/StaticBindingEvidence.cs src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs src/SharpLink.Server/SharpLinkServer.QueuedAdmission.cs
+          git diff --cached --check
+          git diff --cached --binary > artifacts/hygiene.patch
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'refactor: separate queued admission and satisfy existing formatting policy (#775)'
+          git push origin HEAD:refs/heads/prototype/775-static-session-binding
+          git rev-parse HEAD > artifacts/hygiene-sha.txt
+      - name: Retain source and formatter proposal
+        if: always()
+        run: |
+          mkdir -p artifacts
+          git archive HEAD | gzip > artifacts/hygiene-source.tar.gz
+          git diff HEAD --binary > artifacts/uncommitted.patch
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-source-hygiene
+          path: artifacts/
+          retention-days: 30
