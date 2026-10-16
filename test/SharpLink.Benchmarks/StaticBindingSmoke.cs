@@ -155,7 +155,7 @@ internal static class StaticBindingSmoke
 
     private static void WireChecks()
     {
-        Check(ProtocolV2.Magic == 0xB7 && StaticBindingWire.RequestBytes == 24 && StaticBindingWire.AckBytes == 40,
+        Check(ProtocolV2Constants.Magic == 0xB7 && StaticBindingWire.RequestBytes == 24 && StaticBindingWire.AckBytes == 40,
             "Independent experimental wire grammar");
         var bytes = new byte[24];
         BinaryPrimitives.WriteInt64LittleEndian(bytes, 123);
