@@ -603,6 +603,9 @@ internal sealed class ClientConnection :
 
     public ValueTask DisposeAsync()
     {
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        StaticBindings.Close();
+#endif
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return Session.DisposeAsync();
 

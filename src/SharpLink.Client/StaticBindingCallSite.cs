@@ -162,6 +162,9 @@ internal sealed partial class SharpLinkClient
         throw StaticBindingWire.Error(StaticBindingFailure.NoBoundRoute);
     }
 
+    internal StaticBindingCallSite StaticBindingTestSite<T>() where T : IService
+        => GetStaticBindingSite(Volatile.Read(ref _proxies)[typeof(T)]);
+
     internal (int Routes, long Binds, int Pending) StaticBindingDiagnostics<T>() where T : IService
     {
         if (!Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration)) return default;

@@ -68,6 +68,16 @@ internal sealed class StaticBindingClientState(RpcSession session)
         else operation.Completion.TrySetException(failure);
     }
 
+    internal void Close()
+    {
+        lock (_gate)
+        {
+            _completed.Clear();
+            foreach (var operation in _operations.Values)
+                operation.Ack.TrySetException(StaticBindingWire.Error(StaticBindingFailure.Unavailable));
+        }
+    }
+
     internal void Receive(ulong id, StaticBindingAck ack)
     {
         lock (_gate)

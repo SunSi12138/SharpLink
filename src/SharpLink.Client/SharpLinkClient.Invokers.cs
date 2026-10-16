@@ -4,31 +4,19 @@ internal sealed partial class SharpLinkClient
 {
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
     public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        SharpLinkMetadata? metadata,
+        RpcMethodDescriptor method, in TRequest request, IRpcCodec<TRequest> requestCodec,
+        IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
         => InvokeStaticUnaryAsync(null, method, request, requestCodec, responseCodec, metadata, cancellationToken);
 
     internal ValueTask<TResponse> InvokeStaticUnaryAsync<TRequest, TResponse>(
         StaticBindingCallSite? bindingSite,
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken = default)
 #else
     public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken = default)
 #endif
+        RpcMethodDescriptor method, in TRequest request, IRpcCodec<TRequest> requestCodec,
+        IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         ArgumentNullException.ThrowIfNull(responseCodec);
@@ -60,9 +48,7 @@ internal sealed partial class SharpLinkClient
 
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
     public ValueTask InvokeOneWayAsync<TRequest, TStreams>(
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
+        RpcMethodDescriptor method, in TRequest request, IRpcCodec<TRequest> requestCodec,
         in TStreams streams,
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
@@ -71,15 +57,9 @@ internal sealed partial class SharpLinkClient
 
     internal ValueTask InvokeStaticOneWayAsync<TRequest, TStreams>(
         StaticBindingCallSite? bindingSite,
-        RpcMethodDescriptor method,
-        in TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        in TStreams streams,
-        SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken = default)
-        where TStreams : struct, IRpcClientStreamWriter
 #else
     public ValueTask InvokeOneWayAsync<TRequest, TStreams>(
+#endif
         RpcMethodDescriptor method,
         in TRequest request,
         IRpcCodec<TRequest> requestCodec,
@@ -87,7 +67,6 @@ internal sealed partial class SharpLinkClient
         SharpLinkMetadata? metadata,
         CancellationToken cancellationToken = default)
         where TStreams : struct, IRpcClientStreamWriter
-#endif
     {
         ArgumentNullException.ThrowIfNull(requestCodec);
         cancellationToken.ThrowIfCancellationRequested();

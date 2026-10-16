@@ -89,6 +89,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
             expectedReadyConnections,
             shutdown.Token).ConfigureAwait(false);
 
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        await ((SharpLinkClient)builtClient).PrepareStaticBindingAsync<IBenchmarkRpc>(shutdown.Token);
+#endif
         var rpc = builtClient.Get<IBenchmarkRpc>();
         return new BenchmarkEnvironment(
             rpc, localService, shutdown, serverTask, server, builtClient);
@@ -136,6 +139,9 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         try
         {
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            await ((SharpLinkClient)client).PrepareStaticBindingAsync<IBenchmarkRpc>(shutdown.Token);
+#endif
             return new BenchmarkEnvironment(
                 client.Get<IBenchmarkRpc>(), localService, shutdown, serverTask, server, client, serverReadProbe);
         }
