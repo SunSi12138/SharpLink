@@ -163,7 +163,11 @@ internal sealed partial class SharpLinkClient
     }
 
     internal StaticBindingCallSite StaticBindingTestSite<T>() where T : IService
-        => GetStaticBindingSite(Volatile.Read(ref _proxies)[typeof(T)]);
+    {
+        if (!Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
+            throw new InvalidOperationException("Local generated contract is not registered.");
+        return GetStaticBindingSite(registration);
+    }
 
     internal (int Routes, long Binds, int Pending) StaticBindingDiagnostics<T>() where T : IService
     {
