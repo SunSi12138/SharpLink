@@ -14,7 +14,7 @@ jobs:
     outputs:
       sha: ${{ steps.source.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
       - id: source
@@ -28,29 +28,29 @@ jobs:
           import base64, gzip, hashlib, pathlib, subprocess
           chunks = sorted(pathlib.Path('eng/issue775/import').glob('*.b64'))
           patch = gzip.decompress(base64.b64decode(''.join(p.read_text() for p in chunks), validate=True))
-          assert hashlib.sha256(patch).hexdigest() == '52f9f16ddf251e30bcf8bb1258e9a563c3933de135f7f4a60fa926b353720c76'
+          assert hashlib.sha256(patch).hexdigest() == 'ff3cf04871a811ba8ff4f3583a9cb6af078288f81de17fbbaa1cf14757c3dbe4'
           subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
           subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
           PY
             git rm -r eng/issue775/import
             git diff --cached --check
-            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat: isolate static Session binding Unary and OneWay prototype (#775)'
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'test: exercise static binding over real TCP and SharedMemory (#775)'
             git push origin HEAD:refs/heads/prototype/775-static-session-binding
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-  compile:
+  validate:
     needs: materialize
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.materialize.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           global-json-file: global.json
-      - name: Record identity and guard architecture
+      - name: Record exact inputs
         run: |
           mkdir -p artifacts
           git rev-parse HEAD | tee artifacts/candidate-sha.txt
@@ -58,17 +58,23 @@ jobs:
           python3 eng/check-project-reference-boundaries.py
       - name: Compile experimental dialect
         run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -p:SharpLinkStaticBindingPrototype=true -bl:artifacts/prototype.binlog
+      - name: Real TCP and SharedMemory safety checks
+        run: timeout 120 dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --static-binding-smoke | tee artifacts/smoke.log
+      - name: Exercise end-to-end evidence harness
+        run: |
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --static-binding-evidence tcp unary 1 1 1000 10000 artifacts/tcp-unary.json
+          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --static-binding-evidence sharedmemory oneway 8 4 1000 10000 artifacts/sharedmemory-oneway.json
       - name: Compile unchanged default dialect
         run: |
           dotnet clean test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release
           dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -bl:artifacts/default.binlog
-      - name: Retain exact tested source
+      - name: Retain exact source and build artifacts
         if: always()
         run: git archive HEAD | gzip > artifacts/source.tar.gz
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: issue775-compile-${{ needs.materialize.outputs.sha }}
+          name: issue775-validation-${{ needs.materialize.outputs.sha }}
           path: artifacts/
           retention-days: 30
           if-no-files-found: error
