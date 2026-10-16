@@ -114,6 +114,10 @@ public static class ProtocolV2FrameParser
 
     private static ProtocolV2FrameType ParseType(byte value) => value switch
     {
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        (byte)StaticBindingWire.Bind => StaticBindingWire.Bind,
+        (byte)StaticBindingWire.Ack => StaticBindingWire.Ack,
+#endif
         (byte)ProtocolV2FrameType.HandshakeRequest => ProtocolV2FrameType.HandshakeRequest,
         (byte)ProtocolV2FrameType.HandshakeResponse => ProtocolV2FrameType.HandshakeResponse,
         (byte)ProtocolV2FrameType.Ping => ProtocolV2FrameType.Ping,
@@ -183,6 +187,9 @@ public static class ProtocolV2FrameParser
             ProtocolV2FrameType.GoAway => ProtocolV2FrameFlags.Error | ProtocolV2FrameFlags.Truncated,
             ProtocolV2FrameType.HealthCheck => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.HealthResponse => ProtocolV2FrameFlags.None,
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            StaticBindingWire.Bind or StaticBindingWire.Ack => ProtocolV2FrameFlags.None,
+#endif
             ProtocolV2FrameType.ContractManifest => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameFlags.None,
             ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameFlags.None,
@@ -295,6 +302,14 @@ public static class ProtocolV2FrameParser
                     throw Violation($"Unknown health status {status}.");
                 }
                 break;
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            case StaticBindingWire.Bind:
+                _ = StaticBindingWire.ReadRequest(payload);
+                break;
+            case StaticBindingWire.Ack:
+                _ = StaticBindingWire.ReadAck(payload);
+                break;
+#endif
             case ProtocolV2FrameType.ContractManifest:
                 ProtocolV2ContractManifestCodec.ValidatePayloadShape(payload, limits);
                 break;

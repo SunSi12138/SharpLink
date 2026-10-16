@@ -23,7 +23,11 @@ internal sealed partial class SharpLinkServer
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
             var request = ReadRequestEnvelope(
                 session, payload, flags, admittedCallState?.Deadline ?? default);
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            if (ResolveStaticRequest(connection, flags, ref request, out var serviceInfo) != StaticBindingFailure.None)
+#else
             if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+#endif
             {
                 if (admittedCallState is not null)
                 {
@@ -34,6 +38,9 @@ internal sealed partial class SharpLinkServer
                 return TerminateUnresolvableOneWayRequest(session, requestId);
             }
 
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            var descriptor = request.BoundMethod!.Descriptor;
+#else
             // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
             // client streams still needs a receive route so the peer can finish sending and recover
             // its receive credit even though no user invocation will run. If the method shape cannot
@@ -50,6 +57,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return TerminateUnresolvableOneWayRequest(session, requestId);
             }
+#endif
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 DrainRejectedOneWayStreams(
@@ -332,7 +340,12 @@ internal sealed partial class SharpLinkServer
 
             var supportsCooperativeCancellation =
                 (isCancellable || serviceInfo.Module is not null) &&
+
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                request.BoundMethod!.SupportsCancellation;
+#else
                 serviceInfo.Stub.SupportsCancellation(request.MethodHash);
+#endif
             var callState = admittedCallState ?? CreateTrackedCallState(
                 connection,
                 requestId,
@@ -355,7 +368,11 @@ internal sealed partial class SharpLinkServer
 
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
-                request.RpcDeadline, request.Metadata, invokeToken);
+                request.RpcDeadline, request.Metadata, invokeToken
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                , request.BoundMethod!.Descriptor
+#endif
+                );
             try
             {
                 // #299 deliberately excludes OneWay from generic pre-invocation reservation. Install
@@ -378,7 +395,11 @@ internal sealed partial class SharpLinkServer
                     request.Arguments,
                     output: null,
                     invokeToken,
-                    callContext);
+                    callContext
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                    , request.BoundMethod!.Descriptor
+#endif
+                    );
                 if (invokeTask.IsCompletedSuccessfully)
                 {
                     if (callContext is SharpLinkServerInvocationContext

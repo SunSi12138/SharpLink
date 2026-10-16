@@ -61,7 +61,11 @@ internal static class RpcSessionProtocolRules
                 frameType is ProtocolV2FrameType.HandshakeRequest or
                     ProtocolV2FrameType.HandshakeResponse,
             RpcSessionProtocolPhase.Ready =>
-                frameType is ProtocolV2FrameType.Ping or
+                frameType is
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                    StaticBindingWire.Bind or StaticBindingWire.Ack or
+#endif
+                    ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or
                     ProtocolV2FrameType.Request or
                     ProtocolV2FrameType.Response or

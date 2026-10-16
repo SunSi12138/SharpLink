@@ -175,14 +175,22 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         long requestId,
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        , RpcMethodDescriptor? resolvedMethod = null
+#endif
+        )
     {
         var session = connection.Session;
         var interceptors = Volatile.Read(ref _serverInterceptorGeneration);
         if (interceptors.Count == 0)
             return connection.GetCallContextSnapshot(deadline, metadata);
 
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        var method = resolvedMethod ?? GetMethodDescriptor(stub, methodId);
+#else
         var method = GetMethodDescriptor(stub, methodId);
+#endif
         if (method.Kind != RpcMethodKind.OneWay)
         {
             ReservePreInvocationRequestStreams(

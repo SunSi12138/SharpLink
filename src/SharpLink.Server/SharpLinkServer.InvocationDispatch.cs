@@ -41,16 +41,25 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            var bindingFailure = ResolveStaticRequest(connection, flags, ref request, out var serviceInfo);
+            if (bindingFailure != StaticBindingFailure.None)
+#else
             if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+#endif
             {
                 ValueTask responseSend;
                 try
                 {
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                        StaticBindingWire.Error(bindingFailure),
+#else
                         new SharpLinkException(
                             SharpLinkErrorCode.Unimplemented,
                             $"Service {request.InterfaceHash} is not implemented."),
+#endif
                         connection.ConnectionToken);
                 }
                 finally
@@ -91,7 +100,11 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                var descriptor = request.BoundMethod!.Descriptor;
+#else
                 var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
+#endif
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {
