@@ -2,32 +2,73 @@ name: Issue 775 static binding prototype
 on:
   push:
     branches: [prototype/775-static-session-binding]
-    paths:
-      - .github/workflows/issue-775-static-binding.yml
-      - eng/issue775/**
-      - src/**
-      - test/**
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  source:
+  materialize:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - id: source
+        name: Import verified connector-authored source on the isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/prototype/775-static-session-binding
+          if test -d eng/issue775/import; then
+            python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib, subprocess
+          chunks = sorted(pathlib.Path('eng/issue775/import').glob('*.b64'))
+          patch = gzip.decompress(base64.b64decode(''.join(p.read_text() for p in chunks), validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '52f9f16ddf251e30bcf8bb1258e9a563c3933de135f7f4a60fa926b353720c76'
+          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
+          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+          PY
+            git rm -r eng/issue775/import
+            git diff --cached --check
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat: isolate static Session binding Unary and OneWay prototype (#775)'
+            git push origin HEAD:refs/heads/prototype/775-static-session-binding
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  compile:
+    needs: materialize
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.materialize.outputs.sha }}
           persist-credentials: false
-      - name: Capture exact source and historical benchmark reference
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: global.json
+      - name: Record identity and guard architecture
         run: |
           mkdir -p artifacts
-          git archive HEAD | gzip > artifacts/source.tar.gz
-          git archive 98a89922db9c9df189c4ca759f7e3d89b5298747 | gzip > artifacts/identity-reference.tar.gz
-          git rev-parse HEAD > artifacts/source-sha.txt
+          git rev-parse HEAD | tee artifacts/candidate-sha.txt
+          dotnet --info | tee artifacts/dotnet-info.txt
+          python3 eng/check-project-reference-boundaries.py
+      - name: Compile experimental dialect
+        run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -p:SharpLinkStaticBindingPrototype=true -bl:artifacts/prototype.binlog
+      - name: Compile unchanged default dialect
+        run: |
+          dotnet clean test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release
+          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -bl:artifacts/default.binlog
+      - name: Retain exact tested source
+        if: always()
+        run: git archive HEAD | gzip > artifacts/source.tar.gz
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: issue775-source
+          name: issue775-compile-${{ needs.materialize.outputs.sha }}
           path: artifacts/
-          retention-days: 7
+          retention-days: 30
           if-no-files-found: error
