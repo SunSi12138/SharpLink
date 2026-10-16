@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   materialize:
     runs-on: ubuntu-latest
@@ -19,7 +22,6 @@ jobs:
           fetch-depth: 0
       - id: source
         name: Import verified connector-authored source on the isolated branch
-        shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/prototype/775-static-session-binding
@@ -28,20 +30,20 @@ jobs:
           import base64, gzip, hashlib, pathlib, subprocess
           chunks = sorted(pathlib.Path('eng/issue775/import').glob('*.b64'))
           patch = gzip.decompress(base64.b64decode(''.join(p.read_text() for p in chunks), validate=True))
-          assert hashlib.sha256(patch).hexdigest() == 'ff3cf04871a811ba8ff4f3583a9cb6af078288f81de17fbbaa1cf14757c3dbe4'
+          assert hashlib.sha256(patch).hexdigest() == '420ec8bda0bdc43f88dfb9c6d7373925ac747f855b765966c766cb8a84aae882'
           subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
           subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
           PY
             git rm -r eng/issue775/import
             git diff --cached --check
-            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'test: exercise static binding over real TCP and SharedMemory (#775)'
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'test: add fixed-source same-host ABBA and BAAB evidence (#775)'
             git push origin HEAD:refs/heads/prototype/775-static-session-binding
           fi
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   validate:
     needs: materialize
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -50,7 +52,7 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
           global-json-file: global.json
-      - name: Record exact inputs
+      - name: Record exact inputs and architecture
         run: |
           mkdir -p artifacts
           git rev-parse HEAD | tee artifacts/candidate-sha.txt
@@ -60,21 +62,80 @@ jobs:
         run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -p:SharpLinkStaticBindingPrototype=true -bl:artifacts/prototype.binlog
       - name: Real TCP and SharedMemory safety checks
         run: timeout 120 dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --static-binding-smoke | tee artifacts/smoke.log
-      - name: Exercise end-to-end evidence harness
-        run: |
-          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --static-binding-evidence tcp unary 1 1 1000 10000 artifacts/tcp-unary.json
-          dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --static-binding-evidence sharedmemory oneway 8 4 1000 10000 artifacts/sharedmemory-oneway.json
-      - name: Compile unchanged default dialect
-        run: |
-          dotnet clean test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release
-          dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -bl:artifacts/default.binlog
-      - name: Retain exact source and build artifacts
+      - name: Retain exact source
         if: always()
         run: git archive HEAD | gzip > artifacts/source.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: issue775-validation-${{ needs.materialize.outputs.sha }}
+          name: issue775-safety-${{ needs.materialize.outputs.sha }}
           path: artifacts/
+          retention-days: 30
+          if-no-files-found: error
+  default-regression:
+    needs: materialize
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.materialize.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: global.json
+      - run: dotnet restore Sharplink.slnx
+      - name: Default Release solution build
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Unit and generator regression
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+      - name: Source formatting and unchanged maintainability policy
+        if: always()
+        run: |
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-default-tests-${{ needs.materialize.outputs.sha }}
+          path: test/**/TestResults/
+          retention-days: 30
+          if-no-files-found: warn
+  same-host-evidence:
+    needs: [materialize, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.materialize.outputs.sha }}
+          path: head
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 1a54993d3550911f5979a7b4d3f9f5f63ee86a64
+          path: base
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: head/global.json
+      - name: Same-host ABBA and BAAB with unchanged allocation gates
+        run: python3 head/eng/issue775/run.py --base-root base --head-root head --expected-head '${{ needs.materialize.outputs.sha }}' --output evidence
+      - name: Publish measured summary
+        if: always()
+        run: |
+          if test -f evidence/summary.md; then cat evidence/summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if test -f evidence/execution-failures.json; then cat evidence/execution-failures.json; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-abba-baab-${{ needs.materialize.outputs.sha }}
+          path: evidence/
           retention-days: 30
           if-no-files-found: error
