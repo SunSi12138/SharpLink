@@ -41,12 +41,24 @@ internal static class StaticBindingEvidence
 #endif
         var report = new
         {
-            Schema = 1, Passed = true, Dialect = dialect, Transport = transport, Shape = shape,
-            Concurrency = concurrency, Pool = pool, Warmup = warmup, Operations = operations,
-            Runtime = Environment.Version.ToString(), ProcessorCount = Environment.ProcessorCount,
-            StopwatchFrequency = Stopwatch.Frequency, RoutePrefixBytes = 16,
-            fixture.BindMilliseconds, fixture.FirstCallMicroseconds,
-            BoundRoutes = diagnostics.Routes, BindCount = diagnostics.Binds, PendingBinds = diagnostics.Pending,
+            Schema = 1,
+            Passed = true,
+            Dialect = dialect,
+            Transport = transport,
+            Shape = shape,
+            Concurrency = concurrency,
+            Pool = pool,
+            Warmup = warmup,
+            Operations = operations,
+            Runtime = Environment.Version.ToString(),
+            ProcessorCount = Environment.ProcessorCount,
+            StopwatchFrequency = Stopwatch.Frequency,
+            RoutePrefixBytes = 16,
+            fixture.BindMilliseconds,
+            fixture.FirstCallMicroseconds,
+            BoundRoutes = diagnostics.Routes,
+            BindCount = diagnostics.Binds,
+            PendingBinds = diagnostics.Pending,
             Measurement = measured
         };
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[6]))!);

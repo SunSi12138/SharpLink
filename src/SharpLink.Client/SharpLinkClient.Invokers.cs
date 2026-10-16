@@ -662,10 +662,10 @@ internal sealed partial class SharpLinkClient
             {
                 var emission = SendRpcCall(
                     connection.Session,
-    #if SHARPLINK_STATIC_BINDING_PROTOTYPE
-                routingId,
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                    routingId,
 #else
-                method.ContractId,
+                    method.ContractId,
 #endif
                     method.MethodId,
                     requestId,
