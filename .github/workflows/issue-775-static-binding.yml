@@ -1,0 +1,33 @@
+name: Issue 775 static binding prototype
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+    paths:
+      - .github/workflows/issue-775-static-binding.yml
+      - eng/issue775/**
+      - src/**
+      - test/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Capture exact source and historical benchmark reference
+        run: |
+          mkdir -p artifacts
+          git archive HEAD | gzip > artifacts/source.tar.gz
+          git archive 98a89922db9c9df189c4ca759f7e3d89b5298747 | gzip > artifacts/identity-reference.tar.gz
+          git rev-parse HEAD > artifacts/source-sha.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue775-source
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: error
