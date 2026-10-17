@@ -120,14 +120,5 @@ internal readonly record struct ServerRequestEnvelope(
 {
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
     internal StaticBindingMethod? BoundMethod { get; init; }
-
-    // Construct the resolved value without first cloning the entire unbound envelope.
-    // This does not validate a method; the caller must retain the Session binding checks.
-    internal ServerRequestEnvelope(in ServerRequestEnvelope original, StaticBindingMethod boundMethod)
-        : this(original.InterfaceHash, original.MethodHash, original.Arguments,
-            original.RpcDeadline, original.Metadata)
-    {
-        BoundMethod = boundMethod;
-    }
 #endif
 }

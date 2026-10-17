@@ -1,42 +1,76 @@
-# #775：只读请求封装构造的单点实验
+# #775：只读请求封装构造实验的负结果
 
-假设：服务端在静态绑定成功后用显式构造替代 `request with { BoundMethod = method }`，
-可能让实际 Tier1 派发去掉 96 字节封装的临时往返复制。尚未证明机器码改善或性能收益。
+## 阶段决定（2026-10-17）
 
-仅修改 `SharpLinkServer.StaticBinding.cs` 与 `ServerRequestEnvelopeReader.cs` 的实验编译路径。
-原来的只读 record struct、字段布局、init-only BoundMethod 与五参数构造均保留；
-增加的只读引用内部构造只在 Bind 的 token/MethodId/形态校验成功后使用。
-没有 Unsafe 写只读内存、可变公共结构、generated ABI 变化、协议或容量/生命周期豁免。
-失败路径及 UnsupportedShape 异常顺序不变。解码阶段的原有 with 表达式不在本次修改范围。
-
-新增 smoke 对照验证显式构造与原 with 的值等价、metadata/方法对象身份、单调 deadline 完整字段、
-分段参数序列位置和 owner 别名，以及 ReadDecoded 的普通/metadata 复用/分段回退。
-原有 token、未知方法、形态、Session 局部性与预业务拒绝检查继续保留。
-
-`issue-775-envelope.yml` 是只读、显式 `[issue775-envelope]` 触发的代码生成工作流。
-旧绑定固定 `d2cb248b5e4b573d448092f7f152c2f2dd281e30`，候选固定触发提交完整 SHA；
-相同 SDK、2CPU、tiering/PGO、真实 TCP/SharedMemory 的 Unary/OneWay，另进程采集 JIT。
-不混入正式计时；Tier1 header 仅表明覆盖，不自动证明复制消除。
-原始/交错 listing、命令/环境/二进制 hash 和失败全部保留。
-
-先检查实际 DispatchRpcAsync / DispatchOneWayRpc Tier1，再决定是否值得正式复验。
-机制不成立则保留负证据，不跑计时挑数。机制成立也须按原始 A 基线完成 ABBA/BAAB，
-并与旧静态 B 在同机作配对对照；原 workload、分配预算和 +512 B/op 负对照不变。
-不以代码字节数、独立 helper 的 Tier0 或诊断进程耗时替代性能验收。
+两种显式构造都未达到“消除实际稳态派发的请求封装临时复制”机制门槛。
+已恢复 `src/` 到实验前 `111ebd728cb9106f973bd83673a2418c93be5202` 的内容，
+不保留未验证优化，不运行新的正式计时来碰结果。历史提交、全部失败与原始反汇编保留。
+本结论仅否定这两种构造改写，不否定绑定设计，也不声称找到了 OneWay 回退的完整根因。
 PR 保持 Draft；不合并、不关闭 #775、不扩展 Replace/Receipt/Streaming。
 
-## 首轮负证据与诊断修正
+## 假设与边界
 
-首候选 `d9b79269` 的代码生成运行 `39008328341` 保留为失败：Unary 的实际 Tier1
-不再内联 ResolveStaticRequest，96 字节 bulk write barrier 仍在 callee 中。调用方变短
-不是消除复制的证据，不因此运行性能测试。默认与实验功能检查已执行，另行报告结果。
+假设：将成功校验后的 `request with { BoundMethod = method }` 改为显式只读构造，
+可能消除 96 字节封装的临时往返复制。两候选均保留 readonly record struct、init-only 字段、
+完整 token/MethodId/形态校验及其失败顺序，没有 Unsafe、公开可变结构、generated ABI、
+P2C/admission、压缩策略、队列限额、原始 benchmark 或分配预算变更。
 
-第二种写法将逐字段参数读取移入只读引用构造，缩小 ResolveStaticRequest 的 IL，
-继续保持同一字段重建假设；不强制内联、不禁用 tiering/PGO、不改可变性或协议。
-测试直接对照该新构造与原 with，避免只验证未使用的构造入口。
+旧静态源码固定 `d2cb248b5e4b573d448092f7f152c2f2dd281e30`，新旧均开启绑定。
+每轮在同一 VM、同 SDK、两个可用 CPU、ProcessorCount=2、原 tiering/PGO 下采集。
+这是独立 JIT 诊断，不是吞吐/CPU/等价验收；不可把不同 VM 的绝对时间混池。
 
-首轮 OneWay 100,000 次诊断只观察到 Tier0，覆盖门禁正确失败；
-后续仅将 JIT 诊断的 OneWay 执行量固定到 1,000,000，两个协议相同的静态臂均使用。
-不改正式计时的 10,000 预热 / 100,000 测量，不重跑任何计时样本。
-首轮 artifact `12091941131`，ZIP SHA256
+## 第一候选：逐字段六参数构造
+
+提交：`d9b79269a9a8d6a8b7726645617c72d21b8eaf12`。
+代码生成运行：https://github.com/SunSi12138/SharpLink/actions/runs/39008328341
+回归运行：https://github.com/SunSi12138/SharpLink/actions/runs/39008328292
+
+实际 TCP/SharedMemory Unary Tier1 不再内联 ResolveStaticRequest，callee 中仍有
+96 字节 CORINFO_HELP_BULK_WRITEBARRIER。调用方变短不等于消除了工作。
+OneWay 100,000 次诊断仅采到 Tier0/Instrumented Tier0，四个新旧传输组合都未满足覆盖门槛。
+代码生成 workflow 保持 failure；默认/实验构建、安全检查、单元/生成器、格式和维护性步骤通过。
+
+artifact `12091941131`，ZIP SHA256：
 `cc4e7ca35d1c9a54d2b470587f9ad846d96476e0ba6e1bed0f2cca45527a96d8`。
+
+## 第二候选：只读引用构造
+
+提交：`429697f525be40e167cf4a9ec6aa8165bcb93576`。
+代码生成运行：https://github.com/SunSi12138/SharpLink/actions/runs/39008772251
+回归运行：https://github.com/SunSi12138/SharpLink/actions/runs/39008772209
+
+将逐字段读取移入 `new ServerRequestEnvelope(in request, method)`，没有强制内联。
+SharedMemory Unary 实际 Tier1 恢复内联，但仍先搬运 Arguments/Deadline，
+再通过 64+32 字节复制写回封装并补写字段；不是原先假设的单字段写入。
+旧调用方 IG37/38 的整结构往返改成更多字段暂存及 IG42 的整结构写回，不能称为复制消除。
+独立 helper 的 bulk barrier 仍存在，但已内联的调用路径不能据此声称每次执行该 helper。
+该轮两个 TCP Unary 未采到实际 Tier1，不用其他版本替代缺失证据。
+
+为补 OneWay Tier1，第二轮只将诊断调用量提高到 1,000,000；
+结果新旧 TCP/SharedMemory 四个组合均触发原有 8 MiB send_queue_capacity，全部保留为失败。
+这不是新候选特有的性能回退，未提高队列限额，未把未完成工作当作性能样本。
+当前两轮资料不足以比较 OneWay 的优化后代码；不声称 OneWay 机制已通过。
+后续诊断应使用预先固定的有界批次和明确完成边界，而不是无界加长发送循环。
+
+artifact `12091897858`，ZIP SHA256：
+`efb3ca120a5f24bf454b0d0c9dddeab6d89a72a5a95bcb1500503148cb8c1f2a`。
+代码生成 workflow 保持 failure；默认/实验构建、安全检查、单元/生成器、格式和维护性步骤通过。
+
+## 测试保留与复现
+
+两候选各完成 2,363 项 smoke 断言：原有 283 项 + 每种传输 1,040 项封装检查。
+其中构造专用的差分测试已随被撤回构造保留在历史提交及 source.tar.gz 中，不再留无效调用。
+当前保留 ReadDecoded 的 80 项/传输（160 项）回归：路由字段、精确方法身份、完整 deadline、
+metadata、分段回退与 decoded owner 别名。它们直接测试辅助解析器，
+**不是端到端压缩 RPC、所有取消竞态或生产协议完整性证明**。
+原有 283 项检查保留；当前预期 smoke 共 443 项，实际执行状态以当前提交的 Actions 为准。
+
+`issue-775-envelope.yml` 改为只读的手动归档复现入口，只能选择上述两份历史候选，
+并执行对应候选内的原始脚本和诊断量。不会对已回退的当前 HEAD 自动启动无意义采样。
+失败不被 continue-on-error 隐藏。原始/交错 listing、命令、环境、DLL hash 和 source 都保留。
+
+后续可检验的不同假设是：不要跨 ResolveStaticRequest 的 ref 参数修改整个封装，
+只返回已验证的 registration/method 标量，再由调用方持有的只读值承接。
+这尚未实施，也尚未证明能消除复制；必须验证实际调用方 Tier1，以及失败/解码/准入的事实传递，
+不能通过跳过任何预业务检查获取成绩。只有机制成立才运行原始 A 基线的 ABBA/BAAB
+及旧静态候选的配对对照，仍须保留原分配门禁与 +512 B/op 负对照。

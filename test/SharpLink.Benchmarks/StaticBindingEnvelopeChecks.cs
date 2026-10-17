@@ -22,31 +22,6 @@ internal static class StaticBindingEnvelopeChecks
             checks++;
         }
         var method = new StaticBindingMethod(descriptor, false);
-        var previousMethod = new StaticBindingMethod(descriptor, true);
-        var metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("tenant", "envelope"));
-        foreach (var deadline in new[] { default(RpcDeadline), RpcDeadline.FromTimestamp(long.MaxValue),
-            RpcDeadline.Create(TimeSpan.FromTicks(73), long.MaxValue - 1, 10000000) })
-            foreach (var headers in new SharpLinkMetadata?[] { null, metadata })
-                foreach (var previous in new StaticBindingMethod?[] { null, previousMethod })
-                    foreach (var id in new[] { 0L, long.MinValue, long.MaxValue, 0x100000001L })
-                        foreach (var split in new[] { -1, 0, 3, 8 })
-                        {
-                            var bytes = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7 };
-                            var arguments = Sequence(bytes, split);
-                            var original = new ServerRequestEnvelope(id, descriptor.MethodId, arguments, deadline, headers)
-                            { BoundMethod = previous };
-                            var expected = original with { BoundMethod = method };
-                            var actual = new ServerRequestEnvelope(in original, method);
-                            Check(actual.Equals(expected), "Resolved constructor must equal the original with expression");
-                            Check(ReferenceEquals(actual.BoundMethod, method) && ReferenceEquals(original.BoundMethod, previous),
-                                "Exact method identity and immutable original");
-                            Check(ReferenceEquals(actual.Metadata, headers) && actual.RpcDeadline.Equals(deadline),
-                                "Metadata identity and all monotonic deadline fields survive reconstruction");
-                            Check(actual.Arguments.Start.Equals(arguments.Start) && actual.Arguments.End.Equals(arguments.End),
-                                "Argument sequence positions and owner are retained, not copied");
-                            bytes[7] = 99;
-                            Check(actual.Arguments.ToArray()[7] == 99, "Argument slice still aliases its original owner");
-                        }
         foreach (var timed in new[] { false, true })
             foreach (var hasMetadata in new[] { false, true })
                 foreach (var split in new[] { -1, 0, 8, 16 })
@@ -58,7 +33,7 @@ internal static class StaticBindingEnvelopeChecks
                     var decodedBytes = Build(timed, hasMetadata, 12);
                     var decoded = new ReadOnlySequence<byte>(decodedBytes);
                     var original = ServerRequestEnvelopeReader.Read(session, encoded, flags, 65536, TimeProvider.System);
-                    original = new ServerRequestEnvelope(in original, method);
+                    original = original with { BoundMethod = method };
                     var result = ServerRequestEnvelopeReader.ReadDecoded(session, decoded, encoded, in original,
                         flags, 65536, TimeProvider.System);
                     var expected = ServerRequestEnvelopeReader.Read(session, decoded, flags, 65536,
@@ -74,7 +49,7 @@ internal static class StaticBindingEnvelopeChecks
                     decodedBytes[^1] = 77;
                     Check(result.Arguments.ToArray()[^1] == 77, "Decode aliases decoded owner, not encoded owner");
                 }
-        Console.WriteLine($"STATIC_BINDING_ENVELOPE_PASS checks={checks}");
+        Console.WriteLine($"STATIC_BINDING_ENVELOPE_READER_PASS checks={checks}");
         return checks;
     }
 
