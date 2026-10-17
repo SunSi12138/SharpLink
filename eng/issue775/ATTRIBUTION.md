@@ -49,7 +49,7 @@ EventPipe SampleProfiler 是线程栈/壁钟时间采样，不是精确 on-CPU �
 运行时事件保留在原始 nettrace；Speedscope 不是其无损替代。
 
 另启无 EventPipe 的进程输出 JIT 反汇编，保留真实 tiering/PGO，不禁用内联来制造热点。
-限定 Client/Server 中 Invoke/GetReady/Resolve/MoveNext；保留可见 Tier0/Tier1 版本。
+后续使用 Release 支持的 Client/Server/StaticBindingTable 类名模式；保留可见 Tier0/Tier1 版本。
 仅出现 Tier0 或某函数被内联而没有独立 listing 时，不得当作完整优化代码证据。
 优先审阅调用控制结构复制、连接选择/admission、服务端绑定/方法查找三类候选开销。
 未采集到的硬件 CPU 栈、调度切换和内联决策不声称已经确认。
@@ -80,3 +80,24 @@ python3 eng/issue775/attribution_report.py /path/to/new-output
 
 没有批准的等价边界，当前结果只能指导下一次单点实验。任何生产优化仍需固定源码、
 完整安全/回归测试、原基线 ABBA/BAAB、既有分配门禁与负对照，不能用诊断成绩放行。
+
+## 诊断修正记录（2026-10-17）
+
+首个 profiles 作业（运行 `39003512579`，驱动 `207893c7`）在 A/B/C 的百万次连续
+OneWay 诊断循环中均触发原有 8 MiB 发送队列限制。该失败保留在 artifact `12090540764`；
+不是 B 独有的回退，不提升队列容量、不删除失败、不把未完成的发送当作性能样本。
+六个 Unary trace/JIT 已生成，可只读分析；原定 timing 作业不受此诊断失败影响，不重跑。
+
+修正 Probe 为最多 4096 次原表达式一批，批间调用已有 `Rpc_Add` 并验证返回 30，
+让原有发送泵推进；无固定 sleep。增加 batch-start/stop 标记，全部三臂使用同一修正。
+此边界有额外 Unary，不能当成纯 OneWay 耗时、BDN 成绩或接收端业务完成/Receipt 证明。
+总调用数仍为预热 10,000、诊断 1,000,000，JSON 显式记录 BatchSize=4096。
+
+同时修正 JIT 过滤：`DOTNET_JitDisasmAssemblies` 只适用于 Debug/Checked runtime，
+首轮在 Release 上产生了更宽的 listing；不能声称首轮仅含 Client/Server。
+后续使用 Release 支持的类名限定 `*SharpLinkClient*:* *SharpLinkServer*:* *StaticBindingTable*:*`，
+移除 assembly 过滤变量。首轮原始 listing 保留，可离线按签名过滤，不伪装为已修正输出。
+
+仅触发 `[issue775-profiles]`（或手动 profiles_only=true）独立补采，不重新执行 timing。
+所有新旧诊断 artifact 保留，修复驱动 SHA 与被测源码 SHA 分开记录。
+参考：https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/jit/viewing-jit-dumps.md

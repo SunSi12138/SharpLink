@@ -213,7 +213,7 @@ def profiles_run(context):
             try:
                 data = json.loads(report_path.read_text())
                 if case is None:
-                    if data["Completed"] != 1000000 or data["Magic"] != int(env["SHARPLINK_EXPECTED_MAGIC"]):
+                    if data["Completed"] != 1000000 or data.get("BatchSize") != 4096 or data["Magic"] != int(env["SHARPLINK_EXPECTED_MAGIC"]):
                         raise ValueError("Probe count/dialect mismatch")
                 else:
                     validate_rpc(data, arm, case_name(case), 300000)
@@ -232,8 +232,7 @@ def profiles_run(context):
             # JIT output is a different process again, without EventPipe collection.
             jit = out / "jit" / arm / name
             jit.mkdir(parents=True, exist_ok=True)
-            env_jit = env | {"DOTNET_JitDisasm": "*Invoke* *GetReady* *Resolve* MoveNext",
-                             "DOTNET_JitDisasmAssemblies": "SharpLink.Client SharpLink.Server",
+            env_jit = env | {"DOTNET_JitDisasm": "*SharpLinkClient*:* *SharpLinkServer*:* *StaticBindingTable*:*",
                              "DOTNET_JitStdOutFile": str(jit / "disassembly.txt")}
             argv = (["dotnet", PROBE_DLL, str(jit / "workload.json")] if case is None
                     else rpc_argv(case, jit / "workload.json", 100000))
@@ -245,8 +244,8 @@ def profiles_run(context):
     save(out / "execution-failures.json", failures)
     save(out / "diagnostic-notes.json", {"stage2Authorized": False, "providers": PROVIDERS,
         "interpretation": "Thread-stack wall-time sampling, NOT on-CPU attribution. Raw runtime events retained in nettrace.",
-        "scope": "RPC traces include startup, Prepare, warmup, measurement and JSON. Sender probe marks phases, calls original public benchmark method directly, not BDN timing.",
-        "jit": "Default tiering/PGO retained. Separate diagnostic processes; all available tiers retained.",
+        "scope": "RPC traces include startup, Prepare, warmup, measurement and JSON. Sender probe marks phases and 4096-call batches separated by existing validated Rpc_Add; not BDN timing or OneWay receipt.",
+        "jit": "Default tiering/PGO retained. Release-supported class-qualified method filter; no Debug/Checked-only assembly filter. Separate diagnostic processes; all available tiers retained.",
         "failureCount": len(failures)})
     if failures:
         raise RuntimeError("; ".join(failures))

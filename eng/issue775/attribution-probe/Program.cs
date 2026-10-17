@@ -31,7 +31,8 @@ internal static class Program
                 Completed = 1000000,
                 Magic = (int)ProtocolV2Constants.Magic,
                 Seconds = seconds,
-                Boundary = "Sender completion only; diagnostic direct call, NOT a BDN score.",
+                BatchSize = 4096,
+                Boundary = "Sender diagnostic batches with a validated existing Rpc_Add between batches; NOT a BDN score or OneWay receipt.",
                 Expression = "Unmodified UnaryBenchmarks.Rpc_OnewayPublish; PayloadSize is only its existing setup label."
             }));
         }
@@ -44,8 +45,19 @@ internal static class Program
 
     private static async Task ExerciseAsync(UnaryBenchmarks benchmark, int count)
     {
-        for (var i = 0; i < count; i++)
-            await benchmark.Rpc_OnewayPublish();
+        const int batchSize = 4096;
+        for (var offset = 0; offset < count; offset += batchSize)
+        {
+            Phases.Log.Phase("batch-start");
+            var end = Math.Min(count, offset + batchSize);
+            for (var i = offset; i < end; i++)
+                await benchmark.Rpc_OnewayPublish();
+            Phases.Log.Phase("batch-stop");
+            // An explicit diagnostic boundary, not a receipt or a change to OneWay.
+            // Keep the original queue limit and allow its existing send pump to run.
+            if (await benchmark.Rpc_Add() != 30)
+                throw new InvalidOperationException("Diagnostic batch boundary failed.");
+        }
     }
 }
 

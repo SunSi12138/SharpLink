@@ -3,6 +3,11 @@ on:
   push:
     branches: [prototype/775-static-session-binding]
   workflow_dispatch:
+    inputs:
+      profiles_only:
+        description: Run only the separate diagnostic job; never repeat timing to select samples
+        type: boolean
+        default: false
 permissions:
   contents: read
 defaults:
@@ -12,11 +17,12 @@ jobs:
   attribution:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[issue775-attribution]')
+      contains(github.event.head_commit.message, '[issue775-attribution]') ||
+      contains(github.event.head_commit.message, '[issue775-profiles]')
     strategy:
       fail-fast: false
       matrix:
-        mode: [timing, profiles]
+        mode: ${{ fromJSON((inputs.profiles_only || contains(github.event.head_commit.message, '[issue775-profiles]')) && '["profiles"]' || '["timing","profiles"]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
