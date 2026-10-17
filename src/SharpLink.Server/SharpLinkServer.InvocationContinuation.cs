@@ -98,7 +98,12 @@ internal sealed partial class SharpLinkServer
 
         var supportsCooperativeCancellation =
             (isCancellable || serviceInfo.Module is not null) &&
-            serviceInfo.Stub.SupportsCancellation(request.MethodHash);
+
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                request.BoundMethod!.SupportsCancellation;
+#else
+                serviceInfo.Stub.SupportsCancellation(request.MethodHash);
+#endif
         callState ??= CreateTrackedCallState(
             connection,
             requestId,
@@ -123,13 +128,21 @@ internal sealed partial class SharpLinkServer
         {
             var callContext = CreateCallContext(
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
-                request.RpcDeadline, request.Metadata, invokeToken);
+                request.RpcDeadline, request.Metadata, invokeToken
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                , request.BoundMethod!.Descriptor
+#endif
+                );
             try
             {
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
                 var invokeTask = InvokeServiceAsync(
                     serviceInfo, connection, session, request.MethodHash, requestId,
-                    request.Arguments, output: null, invokeToken, callContext);
+                    request.Arguments, output: null, invokeToken, callContext
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                    , request.BoundMethod!.Descriptor
+#endif
+                    );
                 if (!invokeTask.IsCompletedSuccessfully)
                 {
                     callState = EnsureTrackedCallState(
@@ -238,13 +251,21 @@ internal sealed partial class SharpLinkServer
             ProtocolV2FrameType.Response, ProtocolV2FrameFlags.None, unchecked((ulong)requestId));
         var responseCallContext = CreateCallContext(
             connection, serviceInfo.Stub, request.MethodHash, requestId,
-            request.RpcDeadline, request.Metadata, invokeToken);
+            request.RpcDeadline, request.Metadata, invokeToken
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                , request.BoundMethod!.Descriptor
+#endif
+                );
         try
         {
             using var callContextScope = SharpLinkCallContext.Push(responseCallContext);
             var invokeTask = InvokeServiceAsync(
                 serviceInfo, connection, session, request.MethodHash, requestId,
-                request.Arguments, writer, invokeToken, responseCallContext);
+                request.Arguments, writer, invokeToken, responseCallContext
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                    , request.BoundMethod!.Descriptor
+#endif
+                    );
             if (!invokeTask.IsCompletedSuccessfully)
             {
                 callState = EnsureTrackedCallState(

@@ -77,6 +77,10 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     private readonly Lock? _singletonGate;
     private readonly bool _hasModule;
     private int _disposed;
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+    private static long s_nextStaticBindingRegistrationId;
+    internal long StaticBindingRegistrationId { get; } = Interlocked.Increment(ref s_nextStaticBindingRegistrationId);
+#endif
 
     private ServiceRegistration(
         Type contractType,

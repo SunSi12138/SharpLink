@@ -8,6 +8,18 @@ public static class Program
 {
     public static async Task Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--static-binding-evidence")
+        {
+            await StaticBindingEvidence.RunAsync(args[1..]);
+            return;
+        }
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        if (args.Length > 0 && args[0] == "--static-binding-smoke")
+        {
+            await StaticBindingSmoke.RunAsync();
+            return;
+        }
+#endif
         if (args.Length > 0 && string.Equals(
             args[0], "--zstd-evidence", StringComparison.Ordinal))
         {

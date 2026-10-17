@@ -44,6 +44,9 @@ internal sealed class ClientConnection :
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         Session = session ?? throw new ArgumentNullException(nameof(session));
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        StaticBindings = new StaticBindingClientState(session);
+#endif
         _cancellation = cancellation ?? throw new ArgumentNullException(nameof(cancellation));
         ArgumentNullException.ThrowIfNull(runtimeContext);
         _timeProvider = runtimeContext.TimeProvider;
@@ -59,6 +62,9 @@ internal sealed class ClientConnection :
     }
 
     public RpcSession Session { get; }
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+    internal StaticBindingClientState StaticBindings { get; }
+#endif
     public PendingRequestTable PendingCalls { get; }
     public string? EndpointId { get; }
     public long EndpointGeneration { get; }
@@ -597,6 +603,9 @@ internal sealed class ClientConnection :
 
     public ValueTask DisposeAsync()
     {
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        StaticBindings.Close();
+#endif
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return Session.DisposeAsync();
 

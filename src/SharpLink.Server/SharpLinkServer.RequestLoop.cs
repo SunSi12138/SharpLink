@@ -106,6 +106,10 @@ internal sealed partial class SharpLinkServer
                             header.Type,
                             allowRequestWhileDraining: true);
 
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                        if (header.Type is ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete)
+                            throw StaticBindingWire.Malformed("Streaming is outside the static binding prototype.");
+#endif
                         var isStreamProgress = header.Type is
                             ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete;
                         var streamRequestId = isStreamProgress
@@ -251,6 +255,11 @@ internal sealed partial class SharpLinkServer
                         {
                             switch (header.Type)
                             {
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                                case StaticBindingWire.Bind:
+                                    await BindStaticContractAsync(connection, header.RequestId, payload).ConfigureAwait(false);
+                                    break;
+#endif
                                 case ProtocolV2FrameType.Ping:
                                     DebugLogClientHeartbeatReceived(_logger);
                                     await session.SendPongWithBackpressureAsync(

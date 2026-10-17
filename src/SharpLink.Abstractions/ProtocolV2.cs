@@ -4,7 +4,11 @@ namespace SharpLink.Abstractions;
 public static class ProtocolV2Constants
 {
     /// <summary>Protocol v2 frame magic.</summary>
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+    public const byte Magic = 0xB7; // Private experiment, NOT an allocated production protocol version.
+#else
     public const byte Magic = 0x89;
+#endif
 
     /// <summary>Fixed frame header size in bytes.</summary>
     public const int HeaderBytes = 15;

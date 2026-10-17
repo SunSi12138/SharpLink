@@ -35,6 +35,9 @@ internal sealed partial class SharpLinkClient
             var index = 0;
             foreach (var pair in _remoteContractManifests)
                 snapshot[index++] = new RemoteContractManifestBinding(pair.Key, pair.Value);
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            InvalidateStaticBindingRoutes(session);
+#endif
             Volatile.Write(ref _remoteContractManifestSnapshot, snapshot);
         }
         PulseRemoteContractWaiters();
@@ -43,8 +46,12 @@ internal sealed partial class SharpLinkClient
         // for a session validates every proxy that already escaped to user code before that
         // connection is published as callable. Later manifest refreshes intentionally do not
         // rebind or invalidate held proxy references; later Get<T>() calls validate the refresh.
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        _ = isInitial;
+#else
         if (isInitial)
             ValidateAcquiredContractAssemblies();
+#endif
     }
 
     private void PruneDisconnectedRemoteContractManifestsLocked()

@@ -61,6 +61,9 @@ internal sealed class ServerConnectionState
     }
 
     internal RpcSession Session { get; }
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+    internal StaticBindingTable StaticBindings { get; } = new();
+#endif
 
     internal IRpcGeneratedServerBridge GeneratedBridge { get; }
 
@@ -330,6 +333,9 @@ internal sealed class ServerConnectionState
         if (Interlocked.Exchange(ref _closeStarted, 1) != 0)
             return new ValueTask(_sessionCompleted.Task);
 
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        StaticBindings.Close();
+#endif
         return new ValueTask(CloseCoreAsync());
     }
 
