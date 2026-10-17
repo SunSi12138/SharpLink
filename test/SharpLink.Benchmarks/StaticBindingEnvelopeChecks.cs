@@ -36,8 +36,7 @@ internal static class StaticBindingEnvelopeChecks
                             var original = new ServerRequestEnvelope(id, descriptor.MethodId, arguments, deadline, headers)
                             { BoundMethod = previous };
                             var expected = original with { BoundMethod = method };
-                            var actual = new ServerRequestEnvelope(original.InterfaceHash, original.MethodHash,
-                                original.Arguments, original.RpcDeadline, original.Metadata, method);
+                            var actual = new ServerRequestEnvelope(in original, method);
                             Check(actual.Equals(expected), "Resolved constructor must equal the original with expression");
                             Check(ReferenceEquals(actual.BoundMethod, method) && ReferenceEquals(original.BoundMethod, previous),
                                 "Exact method identity and immutable original");
@@ -59,8 +58,7 @@ internal static class StaticBindingEnvelopeChecks
                     var decodedBytes = Build(timed, hasMetadata, 12);
                     var decoded = new ReadOnlySequence<byte>(decodedBytes);
                     var original = ServerRequestEnvelopeReader.Read(session, encoded, flags, 65536, TimeProvider.System);
-                    original = new ServerRequestEnvelope(original.InterfaceHash, original.MethodHash,
-                        original.Arguments, original.RpcDeadline, original.Metadata, method);
+                    original = new ServerRequestEnvelope(in original, method);
                     var result = ServerRequestEnvelopeReader.ReadDecoded(session, decoded, encoded, in original,
                         flags, 65536, TimeProvider.System);
                     var expected = ServerRequestEnvelopeReader.Read(session, decoded, flags, 65536,

@@ -123,10 +123,9 @@ internal readonly record struct ServerRequestEnvelope(
 
     // Construct the resolved value without first cloning the entire unbound envelope.
     // This does not validate a method; the caller must retain the Session binding checks.
-    internal ServerRequestEnvelope(long interfaceHash, long methodHash,
-        ReadOnlySequence<byte> arguments, RpcDeadline rpcDeadline, SharpLinkMetadata? metadata,
-        StaticBindingMethod boundMethod)
-        : this(interfaceHash, methodHash, arguments, rpcDeadline, metadata)
+    internal ServerRequestEnvelope(in ServerRequestEnvelope original, StaticBindingMethod boundMethod)
+        : this(original.InterfaceHash, original.MethodHash, original.Arguments,
+            original.RpcDeadline, original.Metadata)
     {
         BoundMethod = boundMethod;
     }

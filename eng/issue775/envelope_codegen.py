@@ -77,13 +77,14 @@ def main():
                                  "DOTNET_JitStdOutFile": str(directory / "disassembly.txt")}
             save(directory / "diagnostic-environment.json", {k: v for k, v in jit_env.items()
                  if k.startswith("DOTNET_") or k.startswith("SHARPLINK_") or k == "SharpLinkStaticBindingPrototype"})
+            count = 1000000 if shape == "oneway" else 100000
             command = affinity + ["dotnet", BENCHMARK, "--static-binding-evidence", *map(str, case),
-                                  "10000", "100000", str(directory / "result.json")]
+                                  "10000", str(count), str(directory / "result.json")]
             if not execute(command, root, directory, jit_env, 120):
                 failures.append(f"{arm}/{name}: execution failed")
                 continue
             try:
-                validate_rpc(json.loads((directory / "result.json").read_text()), "B", name)
+                validate_rpc(json.loads((directory / "result.json").read_text()), "B", name, count)
                 text = (directory / "disassembly.txt").read_text()
                 method = "DispatchRpcAsync" if shape == "unary" else "DispatchOneWayRpc"
                 # Retain raw output including incomplete/interleaved listings. A Tier1 header
