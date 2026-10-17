@@ -85,6 +85,7 @@ internal static class StaticBindingSmoke
             while (fixture.Receiver.Completed != 1024) await Task.Delay(1, timeout.Token);
             Check(fixture.Receiver.Seen.All(x => x == 1), "Every OneWay reached business code exactly once in this test");
             TableChecks(contract, stub, method);
+            s_checks += StaticBindingEnvelopeChecks.Run(targets[0].Connection.Session, method);
             await client.StopAsync();
             try { await fixture.Rpc.AddAsync(1, 2); throw new InvalidOperationException("Stopped proxy executed"); }
             catch (SharpLinkException) { s_checks++; }

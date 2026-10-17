@@ -1,0 +1,49 @@
+name: Issue 775 immutable envelope experiment
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  codegen:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[issue775-envelope]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: d2cb248b5e4b573d448092f7f152c2f2dd281e30
+          path: old
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: candidate/global.json
+      - name: Collect unchanged runtime Tier1 for old and candidate
+        run: |
+          python3 candidate/eng/issue775/envelope_codegen.py --old old --candidate candidate \
+            --expected-candidate '${{ github.sha }}' --output envelope-codegen
+      - name: Retain exact candidate source
+        if: always()
+        run: |
+          mkdir -p envelope-codegen
+          git -C candidate archive HEAD | gzip > envelope-codegen/source.tar.gz
+          if test -f envelope-codegen/execution-failures.json; then cat envelope-codegen/execution-failures.json; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-envelope-codegen-${{ github.sha }}
+          path: envelope-codegen/
+          retention-days: 30
+          if-no-files-found: error

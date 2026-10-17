@@ -43,7 +43,11 @@ internal sealed partial class SharpLinkServer
             request.MethodHash, flags, out registration, out var method);
         if (failure == StaticBindingFailure.UnsupportedShape)
             throw StaticBindingWire.Malformed("Static binding prototype rejects conflicting/streaming call shapes.");
-        if (failure == StaticBindingFailure.None) request = request with { BoundMethod = method };
+        if (failure == StaticBindingFailure.None)
+        {
+            request = new ServerRequestEnvelope(request.InterfaceHash, request.MethodHash,
+                request.Arguments, request.RpcDeadline, request.Metadata, method);
+        }
         return failure;
     }
 }
