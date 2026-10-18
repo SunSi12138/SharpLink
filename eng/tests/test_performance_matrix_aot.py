@@ -51,7 +51,12 @@ else:
 '''
 UNAME = """#!/usr/bin/env python3
 import os, sys
-print("x86_64" if "-m" in sys.argv else ("MINGW64_NT-10.0" if os.environ.get("MATRIX_WIN") == "1" else "Linux"))
+if "-m" in sys.argv:
+    print(os.environ.get("MATRIX_ARCH", "x86_64"))
+elif os.environ.get("MATRIX_WIN") == "1":
+    print("MINGW64_NT-10.0")
+else:
+    print(os.environ.get("MATRIX_OS", "Linux"))
 """
 
 
@@ -81,7 +86,10 @@ class AotMatrixInvocations(unittest.TestCase):
 
     def run_matrix(self, marker, **env):
         self.marker.write_text(marker)
-        return subprocess.run(["bash", str(SCRIPT)], env=dict(self.env, **env),
+        # The macOS CI job sets /bin/bash explicitly to exercise Apple's
+        # system Bash 3.2, not an optional Homebrew Bash 4+ binary.
+        shell = self.env.get("SHARPLINK_MATRIX_SHELL", "bash")
+        return subprocess.run([shell, str(SCRIPT)], env=dict(self.env, **env),
             capture_output=True, text=True)
 
     def events(self):
@@ -111,6 +119,33 @@ class AotMatrixInvocations(unittest.TestCase):
         result = self.run_matrix("B", MATRIX_FAIL_PUBLISH="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(e["kind"] == "aot" for e in self.events()[old_count:]))
+
+    def test_macos_jit_only_works_without_bash_four_features(self):
+        result = self.run_matrix(
+            "MacJit", SHARPLINK_MATRIX_RUNTIMES="jit",
+            MATRIX_OS="Darwin", MATRIX_ARCH="arm64")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.events()
+        self.assertEqual(sum(e["kind"] == "build" for e in calls), 2)
+        self.assertEqual(sum(e["kind"] == "jit" for e in calls), 4)
+        self.assertEqual(sum(e["kind"] == "publish" for e in calls), 0)
+
+    def test_macos_aot_republishes_each_project_once_per_invocation(self):
+        first = self.run_matrix(
+            "MacA", SHARPLINK_MATRIX_RUNTIMES="aot",
+            MATRIX_OS="Darwin", MATRIX_ARCH="arm64")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(sum(e["kind"] == "publish" for e in self.events()), 2)
+        before = len(self.events())
+        second = self.run_matrix(
+            "MacB", SHARPLINK_MATRIX_RUNTIMES="aot",
+            MATRIX_OS="Darwin", MATRIX_ARCH="arm64")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        fresh = self.events()[before:]
+        self.assertEqual(sum(e["kind"] == "publish" for e in fresh), 2)
+        aot = [e for e in fresh if e["kind"] == "aot"]
+        self.assertEqual(len(aot), 4)
+        self.assertTrue(all(e["marker"] == "MacB" for e in aot))
 
     def test_windows_exe_suffix_is_respected(self):
         result = self.run_matrix("W", MATRIX_WIN="1")

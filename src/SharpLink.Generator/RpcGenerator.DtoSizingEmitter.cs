@@ -13,17 +13,31 @@ public partial class RpcGenerator
 
         sb.AppendLine("    private void ReleaseCapturedChildren(__SizedSnapshot snapshot)");
         sb.AppendLine("    {");
+        sb.AppendLine("        global::System.Runtime.ExceptionServices.ExceptionDispatchInfo? __firstCleanupError = null;");
         for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
         {
             var member = model.Members[memberIndex];
             if (member.Kind != GeneratedMemberKind.Complex)
                 continue;
             var index = complexIndexes[member.Name];
+            // Relinquish each child slot before invoking user/adapter cleanup.
+            // One bad release must not skip later children or return ownership twice.
+            sb.AppendLine($"        var __childSnapshot_{index} = snapshot.__nestedSnapshot_{index};");
+            sb.AppendLine($"        snapshot.__nestedSnapshot_{index} = null;");
             sb.AppendLine($"        var __sized_{index} = __sizedCodec_{index};");
-            sb.AppendLine(
-                $"        if (__sized_{index} is not null && snapshot.__nestedSnapshot_{index} is not null)");
-            sb.AppendLine($"            __sized_{index}.ReleaseSnapshot(snapshot.__nestedSnapshot_{index});");
+            sb.AppendLine($"        if (__sized_{index} is not null && __childSnapshot_{index} is not null)");
+            sb.AppendLine("        {");
+            sb.AppendLine("            try");
+            sb.AppendLine("            {");
+            sb.AppendLine($"                __sized_{index}.ReleaseSnapshot(__childSnapshot_{index});");
+            sb.AppendLine("            }");
+            sb.AppendLine("            catch (Exception __exception)");
+            sb.AppendLine("            {");
+            sb.AppendLine("                __firstCleanupError ??= global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(__exception);");
+            sb.AppendLine("            }");
+            sb.AppendLine("        }");
         }
+        sb.AppendLine("        __firstCleanupError?.Throw();");
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -42,6 +56,9 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine("        var __snapshot = RentSnapshot();");
+        sb.AppendLine("        var __snapshotCleanupStarted = false;");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
         var baseSize = model.IsReferenceType ? 2 : 1;
         foreach (var member in model.Members)
         {
@@ -81,8 +98,8 @@ public partial class RpcGenerator
                         sb.AppendLine("        {");
                         sb.AppendLine("            size = 0;");
                         sb.AppendLine("            snapshot = null;");
-                        sb.AppendLine("            ReleaseCapturedChildren(__snapshot);");
-                        sb.AppendLine("            ReturnSnapshot(__snapshot);");
+                        sb.AppendLine("            __snapshotCleanupStarted = true;");
+                        sb.AppendLine("            ReleaseSnapshot(__snapshot);");
                         sb.AppendLine("            return false;");
                         sb.AppendLine("        }");
                         break;
@@ -126,6 +143,16 @@ public partial class RpcGenerator
         sb.AppendLine("        }");
         sb.AppendLine("        snapshot = __snapshot;");
         sb.AppendLine("        return true;");
+        sb.AppendLine("        }");
+        sb.AppendLine("        catch");
+        sb.AppendLine("        {");
+        sb.AppendLine("            if (!__snapshotCleanupStarted)");
+        sb.AppendLine("            {");
+        sb.AppendLine("                try { ReleaseSnapshot(__snapshot); }");
+        sb.AppendLine("                catch { /* The capture exception takes precedence. */ }");
+        sb.AppendLine("            }");
+        sb.AppendLine("            throw;");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -337,8 +364,14 @@ public partial class RpcGenerator
         sb.AppendLine("    {");
         sb.AppendLine("        if (snapshot is not __SizedSnapshot __snapshot)");
         sb.AppendLine("            return;");
-        sb.AppendLine("        ReleaseCapturedChildren(__snapshot);");
-        sb.AppendLine("        ReturnSnapshot(__snapshot);");
+        sb.AppendLine("        try");
+        sb.AppendLine("        {");
+        sb.AppendLine("            ReleaseCapturedChildren(__snapshot);");
+        sb.AppendLine("        }");
+        sb.AppendLine("        finally");
+        sb.AppendLine("        {");
+        sb.AppendLine("            ReturnSnapshot(__snapshot);");
+        sb.AppendLine("        }");
         sb.AppendLine("    }");
     }
 

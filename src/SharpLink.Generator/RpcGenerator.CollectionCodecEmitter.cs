@@ -206,12 +206,13 @@ public partial class RpcGenerator
 
     private static string GetArrayCreationType(string elementType, string lengthExpression)
     {
-        if (elementType.EndsWith("[]", StringComparison.Ordinal))
-        {
-            var firstRank = elementType.IndexOf("[]", StringComparison.Ordinal);
-            return elementType.Substring(0, firstRank) + "[" + lengthExpression + "]" +
-                   elementType.Substring(firstRank);
-        }
-        return elementType + "[" + lengthExpression + "]";
+        // Only the trailing array ranks belong to the element type itself.
+        // Ranks inside generic type arguments must not receive the allocation length.
+        var suffixStart = elementType.Length;
+        while (suffixStart >= 2 &&
+               elementType.Substring(suffixStart - 2, 2) == "[]")
+            suffixStart -= 2;
+        return elementType.Substring(0, suffixStart) + "[" + lengthExpression + "]" +
+               elementType.Substring(suffixStart);
     }
 }

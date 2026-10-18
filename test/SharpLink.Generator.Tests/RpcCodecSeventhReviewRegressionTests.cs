@@ -138,7 +138,8 @@ public interface IDtoStringContract : SharpLink.Sdk.IService
 
         var generated = string.Join("\n", RunGeneratorAndGetSources(source));
         Ensure(
-            generated.Contains("GetByteCount(string value) => checked(value.Length * sizeof(char))", StringComparison.Ordinal),
+            generated.Contains("var byteCount = checked(value.Length * sizeof(char));", StringComparison.Ordinal) &&
+            generated.Contains("byteCount > RpcGeneratedCodecWire.MaximumStringPayloadBytes", StringComparison.Ordinal),
             "generated DTO string fields must size UTF-16 code units rather than UTF-8 bytes");
         Ensure(
             generated.Contains("WriteInt32LittleEndian(length, byteCount)", StringComparison.Ordinal),

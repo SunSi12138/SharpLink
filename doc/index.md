@@ -1,6 +1,6 @@
 # SharpLink 文档
 
-本文档集以当前 `2.0.0` 源码为准，不再按旧开发小版本保存用户文档。公开 API 的精确参数、返回值和异常语义同时通过 NuGet 包内 XML 文档提供。
+本文档集以当前 `dev` 的 `3.0.0` 源码为准，不再按旧开发小版本保存用户文档。公开 API 的精确参数、返回值和异常语义同时通过 NuGet 包内 XML 文档提供。
 
 ## 学习路径
 
@@ -19,7 +19,7 @@
 13. [多集群与动态模块](dynamic-modules-and-multicluster.md)：编译期路由、动态注册/替换/注销和 ALC 所有权。
 14. [限制与调优](limits-and-tuning.md)：默认值、硬上限和性能 Profile。
 15. [故障排查](troubleshooting.md)：常见配置、协议、资源和生命周期错误。
-16. [迁移到 2.0](migration.md)：Generated ABI（API 4）、包依赖变化和完整重建要求。
+16. [迁移到 3.0](unsafe-blit-3.0-migration.md)：Generated API 5、精确 ABI identity、Codec 策略与重新生成要求。历史 1.1.1→2.0/API 4 的迁移保留在 [2.0 迁移文档](migration.md)。
 
 深入资料：[架构总览](architecture.md)（[Generator](architecture-generator.md) / [Runtime](architecture-runtime.md) / [Client](architecture-client.md) / [Server](architecture-server.md)）、[生产项目引用边界](project-reference-boundaries.md)、[测试项目引用边界](test-project-reference-boundaries.md)、[构建计划与 Builder 单次使用](runtime-phase-11-build-plan.md)、[Protocol v2](protocol-v2.md)、[Desired Session Configuration 与 Rolling Refresh](session-refresh.md)、[UnsafeBlit 兼容性](codec-compatibility.md)、[UnsafeBlit padding 安全评估](unsafe-blit-padding-security.md)、[负载工具](loadtest.md)、[性能基线](performance.md)、[Issue #430 Zstd 可行性与性能证据](issue-430-zstd-evidence.md)、[发布流程](releasing.md)。
 
