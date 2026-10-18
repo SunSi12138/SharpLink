@@ -51,7 +51,7 @@ for package_id in "${PACKAGES[@]}"; do
   unzip -Z1 "$nupkg" | grep -Fx "lib/net10.0/$package_id.xml" >/dev/null
   unzip -Z1 "$nupkg" | grep -Fx "sharplink-icon.png" >/dev/null
   unzip -Z1 "$snupkg" | grep -Fx "lib/net10.0/$package_id.pdb" >/dev/null
-  unzip -p "$nupkg" "$package_id.nuspec" | grep -F "commit=\"$EXPECTED_COMMIT\"" >/dev/null
+  python3 "$ROOT/eng/verify-package-identities.py" "$nupkg" "$snupkg" "$package_id" "$EXPECTED_VERSION" "$EXPECTED_COMMIT"
 done
 
 unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
