@@ -390,6 +390,8 @@ public partial class RpcGenerator
                     sb.AppendLine($"                var pending = {callLine};");
                     sb.AppendLine("                if (!pending.IsCompletedSuccessfully)");
                     sb.AppendLine("                    return pending;");
+                    // A completed IValueTaskSource-backed ValueTask still owns a GetResult call.
+                    sb.AppendLine("                pending.GetAwaiter().GetResult();");
                 }
                 else
                 {
