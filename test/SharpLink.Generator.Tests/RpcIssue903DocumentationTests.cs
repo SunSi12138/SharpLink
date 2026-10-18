@@ -41,6 +41,7 @@ public static class DocumentedMetadataExample
         var compilation = CSharpCompilation.Create(
             "SharpLinkMetadataDocumentationCompilation",
             [
+                CSharpSyntaxTree.ParseText("global using System;"),
                 CSharpSyntaxTree.ParseText(metadataSource),
                 CSharpSyntaxTree.ParseText(wrapper)
             ],
