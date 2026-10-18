@@ -401,9 +401,12 @@ public partial class RpcGenerator
         for (var index = 0; index < streams.Length; index++)
         {
             var stream = streams[index];
-            // Always qualify assignments: a stream named "_x" can otherwise
-            // capture the field allocated for another stream named "x".
-            sb.AppendLine($"        this.{streamFields[index]} = {EscapeIdentifier(stream.Name)};");
+            // Qualify fields only if a constructor parameter shadows them;
+            // preserve the pre-existing generated code in collision-free cases.
+            var streamFieldReference = reservedParameterNames.Contains(streamFields[index])
+                ? "this." + streamFields[index]
+                : streamFields[index];
+            sb.AppendLine($"        {streamFieldReference} = {EscapeIdentifier(stream.Name)};");
             sb.AppendLine($"        this.{codecFields[index]} = {codecParameterNames[index]};");
         }
         sb.AppendLine("    }");
