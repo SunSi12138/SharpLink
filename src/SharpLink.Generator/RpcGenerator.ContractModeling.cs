@@ -28,8 +28,13 @@ public partial class RpcGenerator
             {
                 var returnType = GetTypeName(m.ReturnType);
                 var displayReturnType = m.ReturnType.ToDisplayString(FullyQualifiedNullableFormat);
-                var isGenericTask = m.ReturnType is INamedTypeSymbol { IsGenericType: true } &&
-                                    m.ReturnType.ToDisplayString().StartsWith("System.Threading.Tasks");
+                // Use the Roslyn symbol, not rendered nullable text ("Task?"), to classify
+                // task objects. Nullability of Task<T?>'s payload is handled separately.
+                var namedReturn = m.ReturnType as INamedTypeSymbol;
+                var taskDefinition = namedReturn?.OriginalDefinition;
+                var isTaskLike = taskDefinition?.ContainingNamespace.ToDisplayString() == "System.Threading.Tasks" &&
+                                 taskDefinition.Name is "Task" or "ValueTask";
+                var isGenericTask = isTaskLike && taskDefinition!.Arity == 1;
                 var genericArg = isGenericTask
                     ? GetTypeName(((INamedTypeSymbol)m.ReturnType).TypeArguments[0])
                     : null;
@@ -37,7 +42,7 @@ public partial class RpcGenerator
                     ? ((INamedTypeSymbol)m.ReturnType).TypeArguments[0].ToDisplayString(FullyQualifiedNullableFormat)
                     : null;
 
-                var isNonGenericTaskLike = m.ReturnType.ToDisplayString() is "System.Threading.Tasks.Task" or "System.Threading.Tasks.ValueTask";
+                var isNonGenericTaskLike = isTaskLike && taskDefinition!.Arity == 0;
                 var isOneWay = m.GetAttributes().Any(IsOnewayAttribute);
                 var isIdempotent = m.GetAttributes().Any(IsIdempotentAttribute);
                 var timeoutTicks = GetTimeoutTicksOrNull(m, out var hasTimeoutAttribute);
