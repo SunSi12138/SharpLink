@@ -126,7 +126,8 @@ internal readonly record struct StaticRouteConflictModel(
 internal readonly record struct ReferencedManifestBootstrapModel(
     string AssemblyIdentity,
     string ManifestTypeName,
-    bool HasRegisterMethod);
+    bool HasRegisterMethod,
+    string? ExternAlias);
 
 internal sealed record RpcUnionModel(
     string TypeName,
