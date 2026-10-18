@@ -122,6 +122,15 @@ public partial class RpcGenerator
                 sb.AppendLine(GetFixedWriteExpression(member.TypeName, value, indent.Length));
                 break;
             case GeneratedMemberKind.NullableFixed:
+                // Non-cached member getters can change between reads. Preserve the
+                // first value for this field's presence and payload, without hoisting
+                // getters for unrelated fields.
+                if (cachedMemberIndex < 0)
+                {
+                    var local = "__nullableValue_" + member.FieldId.ToString(InvariantCulture);
+                    sb.AppendLine($"{indent}var {local} = {value};");
+                    value = local;
+                }
                 sb.AppendLine($"{indent}if (!{value}.HasValue)");
                 sb.AppendLine($"{childIndent}RpcGeneratedCodecWire.WriteFieldKey(writer, {fieldId}, RpcGeneratedWireType.Null);");
                 sb.AppendLine($"{indent}else");
