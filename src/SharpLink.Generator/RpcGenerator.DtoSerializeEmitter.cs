@@ -37,10 +37,13 @@ public partial class RpcGenerator
             sb.AppendLine("                    __exactWriter.Advance(0);");
             sb.AppendLine("                    SerializeSized(in value, writer, __exactSize, __sizedSnapshot);");
             sb.AppendLine("                }");
-            sb.AppendLine("                finally");
+            sb.AppendLine("                catch");
             sb.AppendLine("                {");
-            sb.AppendLine("                    ReleaseSnapshot(__sizedSnapshot);");
+            sb.AppendLine("                    try { ReleaseSnapshot(__sizedSnapshot); }");
+            sb.AppendLine("                    catch { /* Preserve the original writer/serializer exception. */ }");
+            sb.AppendLine("                    throw;");
             sb.AppendLine("                }");
+            sb.AppendLine("                ReleaseSnapshot(__sizedSnapshot);");
             sb.AppendLine("                return;");
             sb.AppendLine("            }");
             sb.AppendLine("        }");
