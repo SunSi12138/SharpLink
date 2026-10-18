@@ -40,8 +40,7 @@ public interface IStreamFieldCollision : IService
         IAsyncEnumerable<int> __codec_x_);
 }
 """;
-        var realAbstractions = MetadataReference.CreateFromFile(
-            typeof(SharpLink.Sdk.IService).Assembly.Location);
+        var realAbstractions = RealAbstractionsCompilationReference.Create();
         var input = GeneratorTestHarness.CreateCompilation(
             "Issue864StreamFieldCollisionCompilation", source, [realAbstractions]);
         var inputErrors = input.GetDiagnostics()
