@@ -80,7 +80,7 @@ public partial class RpcGenerator
         RpcInterfaceModel model,
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
-        sb.AppendLine("    private readonly IRpcChannel _channel;");
+        sb.AppendLine($"    private readonly IRpcChannel {GetProxyMemberFieldName(model, "_channel")};");
 
         foreach (var method in model.Methods)
             AppendProxyFields(sb, model, method, concreteCodecTypes);
@@ -89,19 +89,19 @@ public partial class RpcGenerator
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(channel);");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(__codecs);");
-        sb.AppendLine("        _channel = channel;");
+        sb.AppendLine($"        this.{GetProxyMemberFieldName(model, "_channel")} = channel;");
         foreach (var method in model.Methods)
         {
             var suffix = GetMethodSuffix(method);
             var payloadParameters = GetPayloadParameters(method);
             if (payloadParameters.Length != 0)
-                sb.AppendLine($"        __requestCodec_{suffix} = new {GetHelperTypeReference(model, GetRequestCodecType(model, method))}(__codecs);");
+                sb.AppendLine($"        this.{GetProxyMemberFieldName(model, $"__requestCodec_{suffix}")} = new {GetHelperTypeReference(model, GetRequestCodecType(model, method))}(__codecs);");
             if (!method.IsOneWay)
-                sb.AppendLine($"        __responseCodec_{suffix} = {GetCodecResolveExpression("__codecs", GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)};");
+                sb.AppendLine($"        this.{GetProxyMemberFieldName(model, $"__responseCodec_{suffix}")} = {GetCodecResolveExpression("__codecs", GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)};");
             var streamParameters = GetStreamParameters(method);
             for (var index = 0; index < streamParameters.Length; index++)
             {
-                sb.AppendLine($"        __streamCodec_{suffix}_{index} = {GetCodecResolveExpression("__codecs", streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)};");
+                sb.AppendLine($"        this.{GetProxyMemberFieldName(model, $"__streamCodec_{suffix}_{index}")} = {GetCodecResolveExpression("__codecs", streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)};");
             }
         }
         sb.AppendLine("    }");
@@ -125,15 +125,15 @@ public partial class RpcGenerator
             ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
             : "null";
         sb.AppendLine(
-            $"    private static readonly RpcMethodDescriptor __method_{suffix} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
+            $"    private static readonly RpcMethodDescriptor {GetProxyMemberFieldName(model, $"__method_{suffix}")} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
 
         if (GetPayloadParameters(method).Length != 0)
-            sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))} __requestCodec_{suffix};");
+            sb.AppendLine($"    private readonly {GetHelperTypeReference(model, GetRequestCodecType(model, method))} {GetProxyMemberFieldName(model, $"__requestCodec_{suffix}")};");
         if (!method.IsOneWay)
-            sb.AppendLine($"    private readonly {GetCodecStorageType(GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)} __responseCodec_{suffix};");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(GetResponseType(method), GetResponseCodecLookupType(method), concreteCodecTypes)} {GetProxyMemberFieldName(model, $"__responseCodec_{suffix}")};");
         var streamParameters = GetStreamParameters(method);
         for (var index = 0; index < streamParameters.Length; index++)
-            sb.AppendLine($"    private readonly {GetCodecStorageType(streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)} __streamCodec_{suffix}_{index};");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(streamParameters[index].DisplayStreamItemType!, streamParameters[index].StreamItemType!, concreteCodecTypes)} {GetProxyMemberFieldName(model, $"__streamCodec_{suffix}_{index}")};");
     }
 
     private static void AppendProxyMethod(StringBuilder sb, RpcInterfaceModel model, RpcMethodModel method)
@@ -143,14 +143,14 @@ public partial class RpcGenerator
         var payloadParameters = GetPayloadParameters(method);
         var streamParameters = GetStreamParameters(method);
         var requestType = payloadParameters.Length == 0 ? "RpcEmptyRequest" : GetHelperTypeReference(model, GetRequestType(model, method));
-        var requestCodec = payloadParameters.Length == 0 ? "RpcEmptyRequestCodec.Instance" : $"__requestCodec_{suffix}";
+        var requestCodec = payloadParameters.Length == 0 ? "global::SharpLink.Abstractions.RpcEmptyRequestCodec.Instance" : $"this.{GetProxyMemberFieldName(model, $"__requestCodec_{suffix}")}";
         var requestValue = payloadParameters.Length == 0
             ? "default(RpcEmptyRequest)"
             : $"new {requestType}({string.Join(", ", payloadParameters.Select(static parameter => EscapeIdentifier(parameter.Name)))})";
         var streamsType = streamParameters.Length == 0 ? "RpcNoClientStreams" : GetHelperTypeReference(model, GetStreamsType(model, method));
         var streamsValue = streamParameters.Length == 0
             ? "default(RpcNoClientStreams)"
-            : $"new {streamsType}({string.Join(", ", streamParameters.Select((parameter, index) => $"{EscapeIdentifier(parameter.Name)}, __streamCodec_{suffix}_{index}"))})";
+            : $"new {streamsType}({string.Join(", ", streamParameters.Select((parameter, index) => $"{EscapeIdentifier(parameter.Name)}, this.{GetProxyMemberFieldName(model, $"__streamCodec_{suffix}_{index}")}"))})";
         var cancellationParameter = method.Parameters.FirstOrDefault(static parameter => parameter.IsCancellationToken);
         var cancellationToken = cancellationParameter is null ? "default" : EscapeIdentifier(cancellationParameter.Name);
         var requestLocal = GetUniqueGeneratedLocalName(method, "__request");
@@ -166,27 +166,37 @@ public partial class RpcGenerator
         if (method.IsStreamReturn)
         {
             invocation = streamParameters.Length == 0
-                ? $"_channel.InvokeServerStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})"
-                : $"_channel.InvokeDuplexStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
+                ? $"this.{GetProxyMemberFieldName(model, "_channel")}.InvokeServerStreamingAsync(this.{GetProxyMemberFieldName(model, $"__method_{suffix}")}, in {requestLocal}, {requestCodec}, this.{GetProxyMemberFieldName(model, $"__responseCodec_{suffix}")}, default, {cancellationToken})"
+                : $"this.{GetProxyMemberFieldName(model, "_channel")}.InvokeDuplexStreamingAsync(this.{GetProxyMemberFieldName(model, $"__method_{suffix}")}, in {requestLocal}, {requestCodec}, this.{GetProxyMemberFieldName(model, $"__responseCodec_{suffix}")}, in {streamsLocal}, default, {cancellationToken})";
             sb.AppendLine($"        return {invocation};");
         }
         else if (method.IsOneWay)
         {
-            invocation = $"_channel.InvokeOneWayAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, in {streamsLocal}, default, {cancellationToken})";
+            invocation = $"this.{GetProxyMemberFieldName(model, "_channel")}.InvokeOneWayAsync(this.{GetProxyMemberFieldName(model, $"__method_{suffix}")}, in {requestLocal}, {requestCodec}, in {streamsLocal}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: false);
         }
         else if (streamParameters.Length != 0)
         {
-            invocation = $"_channel.InvokeClientStreamingAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, in {streamsLocal}, default, {cancellationToken})";
+            invocation = $"this.{GetProxyMemberFieldName(model, "_channel")}.InvokeClientStreamingAsync(this.{GetProxyMemberFieldName(model, $"__method_{suffix}")}, in {requestLocal}, {requestCodec}, this.{GetProxyMemberFieldName(model, $"__responseCodec_{suffix}")}, in {streamsLocal}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
         else
         {
-            invocation = $"_channel.InvokeUnaryAsync(__method_{suffix}, in {requestLocal}, {requestCodec}, __responseCodec_{suffix}, default, {cancellationToken})";
+            invocation = $"this.{GetProxyMemberFieldName(model, "_channel")}.InvokeUnaryAsync(this.{GetProxyMemberFieldName(model, $"__method_{suffix}")}, in {requestLocal}, {requestCodec}, this.{GetProxyMemberFieldName(model, $"__responseCodec_{suffix}")}, default, {cancellationToken})";
             AppendTaskLikeReturn(sb, method, invocation, hasResult: !method.IsVoid);
         }
 
         sb.AppendLine("    }");
+    }
+
+    private static string GetProxyMemberFieldName(RpcInterfaceModel model, string preferred)
+    {
+        // Proxy members share one type scope with the user's RPC method names.
+        // Parameter scope collisions are resolved separately by qualifying field uses.
+        var candidate = preferred;
+        while (model.Methods.Any(method => string.Equals(method.Name, candidate, StringComparison.Ordinal)))
+            candidate += "_";
+        return candidate;
     }
 
     private static string GetUniqueGeneratedLocalName(RpcMethodModel method, string preferred)
@@ -355,12 +365,25 @@ public partial class RpcGenerator
             sb.AppendLine($"    private readonly {stream.DisplayType} _{stream.Name};");
             sb.AppendLine($"    private readonly {GetCodecStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} __codec_{stream.Name};");
         }
-        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select(stream => $"{stream.DisplayType} {EscapeIdentifier(stream.Name)}, {GetCodecStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} __codec_{stream.Name}"))})");
-        sb.AppendLine("    {");
-        foreach (var stream in streams)
+        // Keep generated codec constructor arguments disjoint from every user-supplied
+        // stream parameter, including names such as __codec_x or __codec_x_.
+        var reservedParameterNames = new HashSet<string>(streams.Select(static stream => stream.Name), StringComparer.Ordinal);
+        var codecParameterNames = new string[streams.Length];
+        for (var index = 0; index < streams.Length; index++)
         {
-            sb.AppendLine($"        _{stream.Name} = {EscapeIdentifier(stream.Name)};");
-            sb.AppendLine($"        this.__codec_{stream.Name} = __codec_{stream.Name};");
+            var candidate = "__codec_" + streams[index].Name;
+            while (!reservedParameterNames.Add(candidate))
+                candidate += "_";
+            codecParameterNames[index] = candidate;
+        }
+
+        sb.AppendLine($"    internal {streamsType}({string.Join(", ", streams.Select((stream, index) => $"{stream.DisplayType} {EscapeIdentifier(stream.Name)}, {GetCodecStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} {codecParameterNames[index]}"))})");
+        sb.AppendLine("    {");
+        for (var index = 0; index < streams.Length; index++)
+        {
+            var stream = streams[index];
+            sb.AppendLine($"        this._{stream.Name} = {EscapeIdentifier(stream.Name)};");
+            sb.AppendLine($"        this.__codec_{stream.Name} = {codecParameterNames[index]};");
         }
         sb.AppendLine("    }");
 
