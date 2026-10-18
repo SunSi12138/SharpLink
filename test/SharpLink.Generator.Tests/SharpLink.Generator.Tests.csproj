@@ -5,7 +5,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj" />
-    <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
