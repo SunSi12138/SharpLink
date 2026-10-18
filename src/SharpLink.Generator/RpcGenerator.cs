@@ -5,7 +5,7 @@ namespace SharpLink.Generator;
 /// compile-time contract diagnostics.
 /// </summary>
 [Generator]
-public partial class RpcGenerator : IIncrementalGenerator
+public sealed partial class RpcGenerator : IIncrementalGenerator
 {
     private static readonly CultureInfo InvariantCulture = CultureInfo.InvariantCulture;
     private static readonly SymbolDisplayFormat FullyQualifiedNullableFormat =
