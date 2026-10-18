@@ -40,8 +40,7 @@ internal sealed partial class SharpLinkServer
             }
 
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
-            request = request with { BoundMethod = boundMethod };
-            var descriptor = request.BoundMethod!.Descriptor;
+            var descriptor = boundMethod.Descriptor;
 #else
             // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
             // client streams still needs a receive route so the peer can finish sending and recover
@@ -235,9 +234,6 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
                             session, payload, flags, request.RpcDeadline);
-#if SHARPLINK_STATIC_BINDING_PROTOTYPE
-                        request = request with { BoundMethod = boundMethod };
-#endif
                     }
                     else
                     {
@@ -347,7 +343,7 @@ internal sealed partial class SharpLinkServer
                 (isCancellable || serviceInfo.Module is not null) &&
 
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
-                request.BoundMethod!.SupportsCancellation;
+                boundMethod.SupportsCancellation;
 #else
                 serviceInfo.Stub.SupportsCancellation(request.MethodHash);
 #endif
@@ -375,7 +371,7 @@ internal sealed partial class SharpLinkServer
                 connection, serviceInfo.Stub, request.MethodHash, requestId,
                 request.RpcDeadline, request.Metadata, invokeToken
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
-                , request.BoundMethod!.Descriptor
+                , boundMethod.Descriptor
 #endif
                 );
             try
@@ -402,7 +398,7 @@ internal sealed partial class SharpLinkServer
                     invokeToken,
                     callContext
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
-                    , request.BoundMethod!.Descriptor
+                    , boundMethod.Descriptor
 #endif
                     );
                 if (invokeTask.IsCompletedSuccessfully)

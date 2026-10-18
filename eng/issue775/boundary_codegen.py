@@ -21,8 +21,8 @@ def verify_source(old, candidate):
     changed = set(git(candidate, "diff", "--name-only", OLD, "HEAD", "--", "src").splitlines())
     if changed != PRODUCTION:
         raise ValueError(f"Unexpected production scope: {changed}")
-    # Exact source equivalence under the proposed ref-to-scalars transformation.
-    # No changes to registration gates, resources, deadlines, decompression or error branches.
+    # Exact allowed transformation, including reattaching Unary method facts after decode.
+    # Registration gates, resources, deadlines and error branches otherwise stay unchanged.
     for relative in PRODUCTION:
         text = (old / relative).read_text()
         if relative.endswith("StaticBinding.cs"):
@@ -39,8 +39,9 @@ def verify_source(old, candidate):
                     "#if SHARPLINK_STATIC_BINDING_PROTOTYPE\n            request = request with { BoundMethod = boundMethod };\n#endif\n            if (!serviceInfo.AcceptsCalls)", 1)
             else:
                 text = text.replace("            var descriptor = request.BoundMethod!.Descriptor;",
-                    "            request = request with { BoundMethod = boundMethod };\n            var descriptor = request.BoundMethod!.Descriptor;", 1)
-        if not relative.endswith("StaticBinding.cs"):
+                    "            var descriptor = boundMethod.Descriptor;", 1)
+                text = text.replace("request.BoundMethod!", "boundMethod")
+        if relative.endswith("InvocationDispatch.cs"):
             anchor = "                        request = ReadRequestEnvelope(\n                            session, payload, flags, request.RpcDeadline);"
             text = text.replace(anchor, anchor + "\n#if SHARPLINK_STATIC_BINDING_PROTOTYPE\n                        request = request with { BoundMethod = boundMethod };\n#endif")
         if text != (candidate / relative).read_text():
