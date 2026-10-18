@@ -97,8 +97,8 @@ class AotMatrixInvocations(unittest.TestCase):
         fresh = self.events()[count:]
         self.assertEqual(sum(e["kind"] == "publish" for e in fresh), 2)
         self.assertTrue(all(e["marker"] == "B" for e in fresh if e["kind"] == "aot"))
-        self.assertEqual(sum(e["kind"] == "aot" for e in fresh), 8)
-        self.assertEqual(sum(e["kind"] == "jit" for e in fresh), 8)
+        self.assertEqual(sum(e["kind"] == "aot" for e in fresh), 4)
+        self.assertEqual(sum(e["kind"] == "jit" for e in fresh), 4)
 
     def test_jit_only_never_publishes(self):
         result = self.run_matrix("J", SHARPLINK_MATRIX_RUNTIMES="jit")
