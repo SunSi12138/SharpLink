@@ -76,7 +76,7 @@ namespace SharpLink.Server
         public static void EnableAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
         public static void UpdateAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
     }
-    public class SharpLinkServerBuilder : SharpLink.Server.ISharpLinkServerBuilder
+    public sealed class SharpLinkServerBuilder : SharpLink.Server.ISharpLinkServerBuilder
     {
         public SharpLinkServerBuilder() { }
         public SharpLink.Abstractions.IServerTransportListener? Transport { get; }

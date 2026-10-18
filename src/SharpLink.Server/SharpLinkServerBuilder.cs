@@ -1,7 +1,7 @@
 namespace SharpLink.Server;
 
 /// <summary>Configures transports, services, security, limits, and runtime behavior for a SharpLink server.</summary>
-public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
+public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
 

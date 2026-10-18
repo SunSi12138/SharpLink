@@ -1,7 +1,7 @@
 namespace SharpLink.Client;
 
 /// <summary>Configures and creates an independently owned SharpLink RPC client.</summary>
-public partial class SharpClientBuilder
+public sealed partial class SharpClientBuilder
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
     private static readonly TimeSpan RecommendedRequestTimeout = TimeSpan.FromSeconds(30);

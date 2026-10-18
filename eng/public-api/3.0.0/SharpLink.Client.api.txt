@@ -8,7 +8,7 @@ namespace SharpLink.Client
         public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkEndpointSnapshot> ResolveAsync(System.Threading.CancellationToken cancellationToken) { }
         public System.Collections.Generic.IAsyncEnumerable<SharpLink.Abstractions.SharpLinkEndpointSnapshot> WatchAsync([System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken) { }
     }
-    public class SharpClientBuilder
+    public sealed class SharpClientBuilder
     {
         public SharpClientBuilder() { }
         public SharpLink.Client.SharpClientBuilder AddInterceptor(SharpLink.Abstractions.ISharpLinkClientInterceptor interceptor) { }
