@@ -12,6 +12,7 @@ using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Compression.Zstd;
 using SharpLink.Runtime;
+using SharpLink.Sdk;
 using SharpLink.Server;
 
 namespace SharpLink.Benchmarks;
