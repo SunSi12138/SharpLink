@@ -1,7 +1,27 @@
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
 namespace SharpLink.Server;
 
-internal sealed record StaticBindingMethod(RpcMethodDescriptor Descriptor, bool SupportsCancellation);
+internal sealed record StaticBindingMethod
+{
+    internal const ProtocolV2FrameFlags ShapeMask = ProtocolV2FrameFlags.OneWay | ProtocolV2FrameFlags.HasReturn;
+
+    // Getter-only members prevent a record clone from changing the descriptor without
+    // recomputing the shape. These are method facts, never an authorization decision.
+    internal RpcMethodDescriptor Descriptor { get; }
+    internal bool SupportsCancellation { get; }
+    internal int RequiredRequestFlags { get; }
+
+    internal StaticBindingMethod(RpcMethodDescriptor descriptor, bool supportsCancellation)
+    {
+        Descriptor = descriptor;
+        SupportsCancellation = supportsCancellation;
+        RequiredRequestFlags = descriptor.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay) ||
+            descriptor.HasClientStreams || descriptor.ClientStreamCount != 0
+            ? -1 // No masked byte can match an unsupported/streaming method.
+            : (int)((descriptor.Kind == RpcMethodKind.OneWay ? ProtocolV2FrameFlags.OneWay : 0) |
+                (descriptor.HasResponsePayload ? ProtocolV2FrameFlags.HasReturn : 0));
+    }
+}
 
 // Stage 1 deliberately never recycles a slot before the physical Session is destroyed.
 // Layout: incarnation=1 in high 32 bits, one-based slot in low 32 bits. No wrap/reuse.
@@ -59,11 +79,9 @@ internal sealed class StaticBindingTable
             return StaticBindingFailure.UnknownBinding;
         if (!entry.Methods.TryGetValue(methodId, out method!))
             return StaticBindingFailure.UnknownMethod;
-        var descriptor = method.Descriptor;
-        if (descriptor.Kind is not (RpcMethodKind.Unary or RpcMethodKind.OneWay) ||
-            descriptor.HasClientStreams || descriptor.ClientStreamCount != 0 ||
-            ((flags & ProtocolV2FrameFlags.OneWay) != 0) != (descriptor.Kind == RpcMethodKind.OneWay) ||
-            ((flags & ProtocolV2FrameFlags.HasReturn) != 0) != descriptor.HasResponsePayload)
+        // Recheck each request's shape against Bind-time immutable method facts.
+        // Other flags remain subject to the existing frame/decode/invocation pipeline.
+        if ((int)(flags & StaticBindingMethod.ShapeMask) != method.RequiredRequestFlags)
             return StaticBindingFailure.UnsupportedShape;
         registration = entry.Registration;
         return StaticBindingFailure.None;
