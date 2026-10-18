@@ -107,7 +107,6 @@ namespace SharpLink.Server
         public SharpLink.Server.SharpLinkServerBuilder UseHeartbeatCheckInterval(System.TimeSpan checkInterval) { }
         public SharpLink.Server.SharpLinkServerBuilder UseHeartbeatTimeout(System.TimeSpan timeout) { }
         public SharpLink.Server.SharpLinkServerBuilder UseLoggerFactory(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
-        public void UseLoggerFactoryIfUnset(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
         public SharpLink.Server.SharpLinkServerBuilder UseProtocol(System.Action<SharpLink.Runtime.SharpLinkProtocolOptions> configure) { }
         public SharpLink.Server.SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLink.Abstractions.SharpLinkCompressionSendPolicy policy) { }
         public SharpLink.Server.SharpLinkServerBuilder UseRpcSessionFlush(int flushSizeThreshold, System.TimeSpan maxLatency) { }
