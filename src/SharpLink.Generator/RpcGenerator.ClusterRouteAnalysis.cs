@@ -27,6 +27,18 @@ public partial class RpcGenerator
                 diagnostics.Add(new ClusterRouteDiagnostic(InvalidClusterKeyRule, location, [cluster]));
                 continue;
             }
+            // Attributes in the same syntax tree can name file-local markers,
+            // but the generated route manifest is emitted into another file.
+            // Imported internal/private markers likewise cannot be named here.
+            if (!IsAccessibleFromGeneratedCode(marker) ||
+                !compilation.IsSymbolAccessibleWithin(marker, compilation.Assembly))
+            {
+                diagnostics.Add(new ClusterRouteDiagnostic(
+                    InvalidClusterRouteAttributeRule,
+                    location,
+                    []));
+                continue;
+            }
             if (!HasGeneratedManifest(marker.ContainingAssembly, compilation.Assembly))
             {
                 diagnostics.Add(new ClusterRouteDiagnostic(
