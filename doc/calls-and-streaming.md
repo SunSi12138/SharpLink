@@ -40,10 +40,10 @@ OneWay 成功表示请求已进入本地发送/服务端接收流程，不包含
 
 完整调用形态见 `demo/Streaming`、`demo/Oneway`、`demo/Cancel` 和 `demo/Timeout`。
 
-## 2.0 扩展边界
+## 3.0 扩展边界
 
-业务只通过生成的契约 proxy 调用 Unary、OneWay 和三类 Streaming。Generated API 4
+业务只通过生成的契约 proxy 调用 Unary、OneWay 和三类 Streaming。Generated API 5
 用 `IRpcChannel`/client-stream sink 与 `IRpcGeneratedServerBridge` 连接调用生命周期；
 bridge 不公开 Session、dispatcher 或 flow-control mutator。所有框架后台发送/排空仍由 owner
 监督并在停止时等待；应用提前停止枚举必须释放 enumerator。调用时间只传播剩余 TimeBudget
-（Protocol v2 minor 4），不读取跨机器绝对 deadline。旧接口迁移见 [migration](migration.md)。
+（Protocol v2 minor 4），不读取跨机器绝对 deadline。3.0 Codec/API 变化见 [3.0 migration](unsafe-blit-3.0-migration.md)；历史 1.1.1→2.0 迁移见 [migration](migration.md)。
