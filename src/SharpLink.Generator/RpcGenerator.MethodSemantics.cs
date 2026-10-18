@@ -117,6 +117,32 @@ public partial class RpcGenerator
             groups[groupIndex] = group with { Reported = true };
             yield return group.Representative;
         }
+
+        // Agreeing wire signatures are not enough: independent declarations in
+        // sibling parents are still an ambiguous C# invocation on the combined
+        // service interface. Do not silently choose one parent's implementation.
+        foreach (var group in groups)
+        {
+            if (group.Reported || group.HasDirectDeclaration)
+                continue;
+
+            var declarations = methods
+                .Where(method => HasSameContractSignature(group.Representative, method))
+                .ToArray();
+            var visible = declarations.Where(candidate =>
+                !declarations.Any(other =>
+                    !SymbolEqualityComparer.Default.Equals(other.ContainingType, candidate.ContainingType) &&
+                    other.ContainingType.AllInterfaces.Any(inherited =>
+                        SymbolEqualityComparer.Default.Equals(inherited, candidate.ContainingType))))
+                // Compare the constructed members, not OriginalDefinition:
+                // IBase<int>.Read and IBase<string>.Read are distinct C# members,
+                // even when their source declaration is IBase<T>.Read.
+                .Distinct(SymbolEqualityComparer.Default)
+                .Take(2)
+                .Count();
+            if (visible > 1)
+                yield return group.Representative;
+        }
     }
 
     private static bool HasCompatibleInheritedRpcSemantics(

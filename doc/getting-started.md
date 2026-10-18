@@ -4,13 +4,13 @@ SharpLink 是面向 .NET 10 的 Source Generator RPC 框架。契约、代理、
 
 ## 引用
 
-契约项目通常只需引用 `SharpLink.Sdk`；Client、Server 或 Hosting 应用再引用对应应用包。SDK 2.0 只传递引入 Abstractions，不再传递引入 Runtime。仓库内 Demo 使用项目引用以便开发验证，发布使用 NuGet 包。
+契约项目通常只需引用 `SharpLink.Sdk`；Client、Server 或 Hosting 应用再引用对应应用包。SDK 3.0 只传递引入 Abstractions，不再传递引入 Runtime。仓库内 Demo 使用项目引用以便开发验证，发布使用 NuGet 包。
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="SharpLink.Sdk" Version="2.0.0" />
-  <PackageReference Include="SharpLink.Client" Version="2.0.0" />
-  <PackageReference Include="SharpLink.Server" Version="2.0.0" />
+  <PackageReference Include="SharpLink.Sdk" Version="3.0.0" />
+  <PackageReference Include="SharpLink.Client" Version="3.0.0" />
+  <PackageReference Include="SharpLink.Server" Version="3.0.0" />
 </ItemGroup>
 ```
 
@@ -70,7 +70,7 @@ Client 和 Server 都是异步可释放对象。Server 使用 `StartAsync / Wait
 
 ## 分离部署
 
-推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集只需引用 `SharpLink.Sdk`；SDK 会传递引入生成 Proxy、Stub、Codec 与 Manifest 所需的 Abstractions，并自动携带 Source Generator。API 4 生成程序集不引用 Runtime。Client 和 Server 项目再分别引用契约程序集及自身所需的 `SharpLink.Client` 或 `SharpLink.Server` 包，这些应用包负责引入 Runtime。完整结构见：
+推荐把契约放在独立程序集，由 Client 和 Server 共同引用。契约程序集只需引用 `SharpLink.Sdk`；SDK 会传递引入生成 Proxy、Stub、Codec 与 Manifest 所需的 Abstractions，并自动携带 Source Generator。API 5 生成程序集不引用 Runtime。Client 和 Server 项目再分别引用契约程序集及自身所需的 `SharpLink.Client` 或 `SharpLink.Server` 包，这些应用包负责引入 Runtime。完整结构见：
 
 - `demo/SeparatedContracts`
 - `demo/SeparatedServer`

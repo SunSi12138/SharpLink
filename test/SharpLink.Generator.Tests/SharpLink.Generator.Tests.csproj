@@ -5,6 +5,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SharpLink.Generator\SharpLink.Generator.csproj" />
+    <ProjectReference Include="..\..\src\SharpLink.Abstractions\SharpLink.Abstractions.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
@@ -15,6 +16,8 @@
 
   <ItemGroup>
     <None Update="Fixtures/**/*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../doc/calls-and-streaming.md" Link="doc-calls-and-streaming.md" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../src/SharpLink.Abstractions/Sdk/SharpLinkMetadata.cs" Link="SharpLinkMetadata.source.cs" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

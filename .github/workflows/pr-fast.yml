@@ -39,6 +39,9 @@ jobs:
       - name: Verify Formatting
         run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
 
+      - name: Performance matrix shell regression tests
+        run: python3 -m unittest discover -s eng/tests -p 'test_performance_matrix_*.py' -v
+
       - name: Generated ABI evidence shell regression tests
         run: python3 -m unittest discover -s eng/tests -p 'test_generated_abi_evidence_batch.py' -v
 
@@ -106,3 +109,22 @@ jobs:
           path: artifacts/perf/allocation-gate
           if-no-files-found: error
           retention-days: 30
+
+  bash32-macos:
+    name: macOS system Bash 3.2 matrix regression
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Confirm system Bash 3.2 compatibility
+        run: |
+          /bin/bash --version
+          /bin/bash -c '[[ ${BASH_VERSINFO[0]} -eq 3 && ${BASH_VERSINFO[1]} -eq 2 ]]'
+          /bin/bash -n eng/run-performance-matrix.sh
+
+      - name: Exercise actual performance shell with no-load dotnet shim
+        env:
+          SHARPLINK_MATRIX_SHELL: /bin/bash
+        run: python3 -m unittest discover -s eng/tests -p 'test_performance_matrix_*.py' -v

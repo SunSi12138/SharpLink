@@ -171,8 +171,16 @@ public partial class RpcGenerator
             if (compilation.GetAssemblyOrModuleSymbol(reference) is not IAssemblySymbol assembly)
                 continue;
 
-            if (ReferencesSharpLinkSdk(assembly))
+            // SDK is a facade in 3.0: contracts/services compiled against its
+            // type forwarders carry an AssemblyRef to Abstractions, not SDK.
+            // Limit this extra path to assemblies advertising an actual generated
+            // manifest; do not scan every unrelated Abstractions consumer.
+            if (ReferencesSharpLinkSdk(assembly) ||
+                (ReferencesSharpLinkAbstractions(assembly) &&
+                 HasGeneratedManifest(assembly, compilation.Assembly)))
+            {
                 assemblyNames.Add(assembly.Identity.Name);
+            }
         }
 
         return assemblyNames;
@@ -206,6 +214,11 @@ public partial class RpcGenerator
 
         return assemblyNames;
     }
+
+    private static bool ReferencesSharpLinkAbstractions(IAssemblySymbol assembly)
+        => assembly.Modules.Any(static module =>
+            module.ReferencedAssemblySymbols.Any(static referenced =>
+                string.Equals(referenced.Name, "SharpLink.Abstractions", StringComparison.Ordinal)));
 
     private static bool ReferencesSharpLinkSdk(IAssemblySymbol assembly)
     {
