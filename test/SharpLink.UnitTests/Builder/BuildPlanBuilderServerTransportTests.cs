@@ -15,6 +15,16 @@ public sealed partial class BuildPlanBuilderTests
     [Test]
     public async Task ServerBuilderShouldStayConsumedAfterSuccessAndFailure()
     {
+        // Issue #805: public Fluent builders are not third-party subclassing SPIs.
+        // A sealed CLR type also forbids compilation of derived classes (CS0509).
+        if (!typeof(SharpClientBuilder).IsPublic || !typeof(SharpClientBuilder).IsSealed ||
+            !typeof(SharpLinkServerBuilder).IsPublic || !typeof(SharpLinkServerBuilder).IsSealed ||
+            !typeof(ISharpLinkServerBuilder).IsAssignableFrom(typeof(SharpLinkServerBuilder)))
+        {
+            throw new Exception(
+                "Public Client/Server builders must remain configurable without allowing inheritance.");
+        }
+
         var successfulTransport = new TrackingServerListener();
         var successfulBuilder = CreateServerBuilder().UseTransport(successfulTransport);
         await using var server = successfulBuilder.Build();
