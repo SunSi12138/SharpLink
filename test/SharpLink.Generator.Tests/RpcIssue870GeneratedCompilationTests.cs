@@ -90,8 +90,7 @@ public interface ICombined : IService, IBase<int>, IBase<string> { }
 
         static void Check(string source, bool expectedConflict)
         {
-            var assemblyReference = MetadataReference.CreateFromFile(
-                typeof(SharpLink.Sdk.IService).Assembly.Location);
+            var assemblyReference = RealAbstractionsCompilationReference.Create();
             var input = GeneratorTestHarness.CreateCompilation(
                 "Issue870ConstructedGenericCompilation", source, [assemblyReference]);
             var inputErrors = input.GetDiagnostics()
