@@ -6,10 +6,18 @@ public partial class RpcGenerator
     {
         sb.AppendLine("internal static class __SharpLinkGeneratedUtf16");
         sb.AppendLine("{");
-        sb.AppendLine("    internal static int GetByteCount(string value) => checked(value.Length * sizeof(char));");
+        sb.AppendLine("    internal static int GetByteCount(string value)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        var byteCount = checked(value.Length * sizeof(char));");
+        sb.AppendLine("        if (byteCount > RpcGeneratedCodecWire.MaximumStringPayloadBytes)");
+        sb.AppendLine("            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, \"Generated string payload exceeds the protocol maximum.\");");
+        sb.AppendLine("        return byteCount;");
+        sb.AppendLine("    }");
         sb.AppendLine();
         sb.AppendLine("    internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)");
         sb.AppendLine("    {");
+        sb.AppendLine("        if (byteCount < 0 || (byteCount & 1) != 0 || byteCount > RpcGeneratedCodecWire.MaximumStringPayloadBytes)");
+        sb.AppendLine("            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, \"Generated string payload exceeds the protocol maximum.\");");
         sb.AppendLine("        var length = writer.GetSpan(sizeof(int));");
         sb.AppendLine("        global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(length, byteCount);");
         sb.AppendLine("        writer.Advance(sizeof(int));");
