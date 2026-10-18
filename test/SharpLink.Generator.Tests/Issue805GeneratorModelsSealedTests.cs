@@ -8,17 +8,22 @@ public partial class RpcAnalyzerTests
     [Test]
     public Task Issue805GeneratorDataModelsShouldBeSealedButKeepValueSemantics()
     {
-        foreach (var type in new[]
+        // The generator analysis records are intentionally invisible to external
+        // assemblies, including this test. Inspect their emitted metadata instead
+        // of widening InternalsVisibleTo solely to let the test compile.
+        foreach (var name in new[]
         {
-            typeof(RpcServiceModel),
-            typeof(RpcConstructorParameterModel),
-            typeof(RpcInterfaceModel),
-            typeof(RpcMethodModel),
-            typeof(RpcParameterModel)
+            "RpcServiceModel",
+            "RpcConstructorParameterModel",
+            "RpcInterfaceModel",
+            "RpcMethodModel",
+            "RpcParameterModel"
         })
         {
-            Ensure(!type.IsPublic && type.IsSealed,
-                $"Generator data model {type.Name} must remain internal and non-inheritable.");
+            var type = typeof(RpcGenerator).Assembly.GetType(
+                "SharpLink.Generator." + name, throwOnError: true);
+            Ensure(type is { IsNotPublic: true, IsSealed: true },
+                $"Generator data model {name} must remain internal and non-inheritable.");
         }
 
         var source = BuildSource("""
