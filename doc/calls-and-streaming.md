@@ -14,7 +14,7 @@ Metadata 是 RPC envelope state，不是业务合同参数。需要由调用方�
 
 ```csharp
 var tenantProxy = client.GetWithMetadata<IMyService>(
-    new SharpLinkMetadata(new("tenant", "tenant-a")));
+    new SharpLinkMetadata(new System.Collections.Generic.KeyValuePair<string, string>("tenant", "tenant-a")));
 await tenantProxy.GetAsync(id, cancellationToken);
 ```
 
