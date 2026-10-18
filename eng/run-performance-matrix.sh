@@ -92,6 +92,10 @@ case "$(uname -s)-$(uname -m)" in
   MINGW*-x86_64|MSYS*-x86_64|CYGWIN*-x86_64) RID=win-x64 ;;
 esac
 
+# Cache only within this script invocation. Output directory existence alone
+# cannot attest source/toolchain identity across matrix runs.
+declare -A AOT_PUBLISHED_IN_THIS_INVOCATION=()
+
 run_project() {
   local runtime="$1"
   local project="$2"
@@ -112,8 +116,15 @@ run_project() {
   if [[ "$RID" == win-* ]]; then
     executable="$executable.exe"
   fi
-  if [[ ! -x "$executable" ]]; then
+  if [[ -z "${AOT_PUBLISHED_IN_THIS_INVOCATION[$name]+ready}" ]]; then
+    # Never fall back to an executable belonging to a previous checkout/build.
+    rm -f "$executable"
     dotnet publish "$project" -c Release -r "$RID" /p:PublishAot=true -o "$publish" -v minimal
+    if [[ ! -x "$executable" ]]; then
+      echo "NativeAOT publish did not produce an executable: $executable" >&2
+      exit 1
+    fi
+    AOT_PUBLISHED_IN_THIS_INVOCATION["$name"]=1
   fi
   "$executable" "$@"
 }
