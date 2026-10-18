@@ -3,10 +3,9 @@ using SharpLink.Client;
 
 namespace SharpLink.UnitTests.Client;
 
-public sealed class Issue805SupportJsonContextSealingTests
+internal static class Issue805SupportJsonContextSealingTests
 {
-    [Test]
-    public void GeneratedSnapshotJsonContextsShouldRemainInternalSealedAndOperational()
+    internal static void Verify()
     {
         foreach (var context in new[]
         {
