@@ -374,15 +374,18 @@ public partial class RpcGenerator
     {
         var streamsType = GetStreamsType(model, method);
         var streams = GetStreamParameters(method);
+        var (streamFields, codecFields) = AllocateStreamHelperFields(streams);
         sb.AppendLine($"internal readonly struct {streamsType} : IRpcClientStreamWriter");
         sb.AppendLine("{");
-        foreach (var stream in streams)
+        for (var index = 0; index < streams.Length; index++)
         {
-            sb.AppendLine($"    private readonly {stream.DisplayType} _{stream.Name};");
-            sb.AppendLine($"    private readonly {GetCodecStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} __codec_{stream.Name};");
+            var stream = streams[index];
+            sb.AppendLine($"    private readonly {stream.DisplayType} {streamFields[index]};");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(stream.DisplayStreamItemType!, stream.StreamItemType!, concreteCodecTypes)} {codecFields[index]};");
         }
-        // Keep generated codec constructor arguments disjoint from every user-supplied
-        // stream parameter, including names such as __codec_x or __codec_x_.
+
+        // User-provided stream parameter names and generated codec arguments share
+        // a constructor scope, independent of the helper's field namespace.
         var reservedParameterNames = new HashSet<string>(streams.Select(static stream => stream.Name), StringComparer.Ordinal);
         var codecParameterNames = new string[streams.Length];
         for (var index = 0; index < streams.Length; index++)
@@ -398,20 +401,17 @@ public partial class RpcGenerator
         for (var index = 0; index < streams.Length; index++)
         {
             var stream = streams[index];
-            var streamFieldName = "_" + stream.Name;
-            var streamFieldReference = reservedParameterNames.Contains(streamFieldName)
-                ? "this." + streamFieldName
-                : streamFieldName;
-            sb.AppendLine($"        {streamFieldReference} = {EscapeIdentifier(stream.Name)};");
-            sb.AppendLine($"        this.__codec_{stream.Name} = {codecParameterNames[index]};");
+            // Always qualify assignments: a stream named "_x" can otherwise
+            // capture the field allocated for another stream named "x".
+            sb.AppendLine($"        this.{streamFields[index]} = {EscapeIdentifier(stream.Name)};");
+            sb.AppendLine($"        this.{codecFields[index]} = {codecParameterNames[index]};");
         }
         sb.AppendLine("    }");
 
         if (streams.Length == 1)
         {
-            var stream = streams[0];
             sb.AppendLine("    public ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)");
-            sb.AppendLine($"        => new(sink.SendClientStreamAsync(requestId, (ushort)1, _{stream.Name}, __codec_{stream.Name}, cancellationToken));");
+            sb.AppendLine($"        => new(sink.SendClientStreamAsync(requestId, (ushort)1, {streamFields[0]}, {codecFields[0]}, cancellationToken));");
         }
         else
         {
@@ -419,13 +419,35 @@ public partial class RpcGenerator
             sb.AppendLine("    {");
             for (var index = 0; index < streams.Length; index++)
             {
-                var stream = streams[index];
-                sb.AppendLine($"        var pending_{index} = sink.SendClientStreamAsync(requestId, (ushort){index + 1}, _{stream.Name}, __codec_{stream.Name}, cancellationToken);");
+                sb.AppendLine($"        var pending_{index} = sink.SendClientStreamAsync(requestId, (ushort){index + 1}, {streamFields[index]}, {codecFields[index]}, cancellationToken);");
             }
             sb.AppendLine($"        await Task.WhenAll({string.Join(", ", Enumerable.Range(0, streams.Length).Select(static index => $"pending_{index}"))}).ConfigureAwait(false);");
             sb.AppendLine("    }");
         }
         sb.AppendLine("}");
+    }
+
+    private static (string[] Streams, string[] Codecs) AllocateStreamHelperFields(RpcParameterModel[] streams)
+    {
+        // Both field families live in the same struct scope. Allocate all stream
+        // names first, then codec names, so the normal collision-free shape and
+        // wire order remain unchanged while names like x/_codec_x cannot collide.
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        var streamFields = new string[streams.Length];
+        var codecFields = new string[streams.Length];
+        for (var index = 0; index < streams.Length; index++)
+            streamFields[index] = Allocate("_" + streams[index].Name);
+        for (var index = 0; index < streams.Length; index++)
+            codecFields[index] = Allocate("__codec_" + streams[index].Name);
+        return (streamFields, codecFields);
+
+        string Allocate(string preferred)
+        {
+            var candidate = preferred;
+            while (!used.Add(candidate))
+                candidate += "_";
+            return candidate;
+        }
     }
 
     private static RpcParameterModel[] GetPayloadParameters(RpcMethodModel method)
