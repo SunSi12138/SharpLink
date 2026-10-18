@@ -27,6 +27,14 @@ def fixture(arm="A", concurrency=1, pool=1):
 
 
 class SenderReaderTests(unittest.TestCase):
+    def test_jit_only_has_no_timing_slots(self):
+        import client_send
+        self.assertEqual(client_send.measurement_slots(True), ())
+
+    def test_timing_plan_is_unchanged(self):
+        import client_send
+        self.assertEqual(client_send.measurement_slots(False), tuple(enumerate(r.ORDER, 1)))
+
     def test_valid_arms_and_loads(self):
         for arm in "AB":
             for c,p in ((1,1),(8,4)):

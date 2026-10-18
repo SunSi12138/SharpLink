@@ -1,0 +1,60 @@
+name: Issue 775 generated client callsite (JIT only)
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  diagnose:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[issue775-client-callsite]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: driver
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 1a54993d3550911f5979a7b4d3f9f5f63ee86a64
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 2d98242c66f43347dd1b7413a47fadc86cc88bda
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: driver/global.json
+      - name: Validate diagnostic reader and architecture boundaries
+        run: |
+          python3 -m unittest discover -s driver/eng/issue775 -p test_client_send.py -v
+          python3 -m unittest discover -s driver/eng/issue775 -p test_attribution.py -v
+          cd driver && python3 eng/check-project-reference-boundaries.py
+      - name: "JIT only: skip all timing slots; include generated caller"
+        run: |
+          python3 driver/eng/issue775/client_send.py --base baseline --candidate candidate \
+            --driver driver --output sender-evidence --jit-only
+      - name: Preserve exact driver and all results
+        if: always()
+        run: |
+          mkdir -p sender-evidence
+          git -C driver rev-parse HEAD > sender-evidence/driver-sha.txt
+          git -C driver archive HEAD | gzip > sender-evidence/driver-source.tar.gz
+          if test -f sender-evidence/summary.md; then cat sender-evidence/summary.md | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if test -f sender-evidence/execution-failures.json; then cat sender-evidence/execution-failures.json; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-client-callsite-${{ github.sha }}
+          path: sender-evidence/
+          retention-days: 30
+          if-no-files-found: error

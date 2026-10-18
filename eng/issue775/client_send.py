@@ -42,10 +42,15 @@ def overlay(root, driver, arm, out):
     return {rel: digest(root/rel) for rel in changes}
 
 
+def measurement_slots(jit_only):
+    return () if jit_only else tuple(enumerate(ORDER, 1))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("base", "candidate", "driver", "output"):
         parser.add_argument("--"+name, type=Path, required=True)
+    parser.add_argument("--jit-only", action="store_true", help="Skip every timing slot; collect separate caller coverage only")
     args = parser.parse_args()
     roots = {"A": args.base.resolve(), "B": args.candidate.resolve()}
     driver, out = args.driver.resolve(), args.output.resolve()
@@ -62,7 +67,8 @@ def main():
         common[rel] = digest(roots["B"]/rel)
     manifest = {"commits": COMMITS, "driverSha": git(driver, "rev-parse", "HEAD"),
                 "order": ORDER, "commonSha256": common, "overlay": {}, "assemblies": {},
-                "diagnosticOnly": True, "stage2Authorized": False, "noPerformanceAcceptance": True}
+                "diagnosticOnly": True, "stage2Authorized": False, "noPerformanceAcceptance": True,
+                "jitOnly": args.jit_only, "measurementSlots": list(measurement_slots(args.jit_only))}
     cpus = sorted(os.sched_getaffinity(0))[:2]
     if len(cpus) != 2:
         raise ValueError("Two CPUs required")
@@ -101,19 +107,20 @@ def main():
         except Exception as error:
             failures.append(str(directory.relative_to(out))+": "+str(error))
         save(out/"execution-failures.json", failures)
-    for i, arm in enumerate(ORDER, 1):
+    for i, arm in measurement_slots(args.jit_only):
         for case in CASES:
             run_case(arm, case, out/"slots"/f"{i:02d}-{arm}"/case, envs[arm])
     save(out/"execution-failures.json", failures)
-    try:
-        report(out)
-    except Exception as error:
-        failures.append("report: "+str(error))
+    if not args.jit_only:
+        try:
+            report(out)
+        except Exception as error:
+            failures.append("report: "+str(error))
     # Separate processes with the SAME bounded workload, never included in timing summary.
     for arm in COMMITS:
         for case in CASES:
             directory = out/"jit"/arm/case
-            jit = envs[arm] | {"DOTNET_JitDisasm": "*SharpLinkClient*:* *ClientConnection*:* *StaticBindingRpcChannel*:*",
+            jit = envs[arm] | {"DOTNET_JitDisasm": "*SharpLinkClient*:* *ClientConnection*:* *StaticBindingRpcChannel*:* PublishEventAsync",
                               "DOTNET_JitStdOutFile": str(directory/"disassembly.txt")}
             save(directory/"jit-environment.json", {k: v for k, v in jit.items() if k.startswith("DOTNET_")})
             run_case(arm, case, directory, jit)

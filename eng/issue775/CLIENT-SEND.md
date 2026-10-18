@@ -59,3 +59,13 @@ python3 eng/issue775/client_send_report.py /path/new-output
 工具语义：Linux man-pages `clock_gettime(3)` 的process/thread CPU clocks；
 https://man7.org/linux/man-pages/man3/clock_gettime.3.html
 .NET Release JIT输出仍依照既有类名过滤，不使用Debug/Checked-only汇编过滤。
+
+## 调用点补采（不重复计时）
+
+首轮运行39130275319、驱动eb3a36df成功完成全部32个诊断计时和8个JIT进程。
+该轮class过滤没有覆盖生成代理的PublishEventAsync，不能从独立桥接方法存在
+推断它在真实调用链中未内联。补采新增PublishEventAsync方法过滤，C#探针和工作量不变，
+A/B仍固定原SHA。client_send.py的--jit-only明确跳过全部计时slot和summary计算，
+只做8个独立JIT进程；单独只读workflow由[issue775-client-callsite]触发。
+新增测试检查jit-only没有计时计划、默认ABBABAAB计划未变。
+补采原始耗时不进入首轮汇总，不使用新机器数据覆盖首轮结果，不自动证明性能收益。
