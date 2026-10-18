@@ -331,7 +331,9 @@ public interface ICompatibleControlNamesContract : SharpLink.Sdk.IService, IFirs
 {
 }
 """);
-        EnsureDoesNotHaveRule(controlParameterNames, "SHARPLINK057");
+        // Identical framework control semantics do not resolve C# member lookup:
+        // the two independent parent declarations remain ambiguous on the child.
+        EnsureRuleCount(controlParameterNames, "SHARPLINK057", 1);
         return Task.CompletedTask;
     }
 
