@@ -71,6 +71,15 @@ public partial class RpcGenerator
     {
         foreach (var parameter in constructor.Parameters)
         {
+            // A direct dynamic parameter cannot appear inside typeof(dynamic) in the
+            // generated DI dependency descriptor. Do not synthesize runtime binder
+            // semantics in the NativeAOT-friendly service activator.
+            if (parameter.Type.TypeKind == TypeKind.Dynamic)
+            {
+                invalidDetail =
+                    $"constructor dependency '{parameter.Name}' is dynamic; use an explicit service type such as object";
+                return false;
+            }
             if (parameter.RefKind is RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter)
             {
                 invalidDetail =
