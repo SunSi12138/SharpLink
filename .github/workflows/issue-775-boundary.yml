@@ -1,0 +1,51 @@
+name: Issue 775 scalar resolution boundary
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  codegen:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[issue775-boundary]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: a473f5d3a50d3b23874f8b1bb72f46e65ff939d1
+          path: old
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: candidate/global.json
+      - name: Validate diagnostic completion reader
+        run: python3 -m unittest discover -s candidate/eng/issue775 -p test_boundary.py -v
+      - name: Same-host old/candidate actual Tier1
+        run: |
+          python3 candidate/eng/issue775/boundary_codegen.py --old old --candidate candidate \
+            --expected-candidate '${{ github.sha }}' --output boundary-codegen
+      - name: Retain exact source and failures
+        if: always()
+        run: |
+          mkdir -p boundary-codegen
+          git -C candidate archive HEAD | gzip > boundary-codegen/source.tar.gz
+          if test -f boundary-codegen/execution-failures.json; then cat boundary-codegen/execution-failures.json; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-boundary-codegen-${{ github.sha }}
+          path: boundary-codegen/
+          retention-days: 30
+          if-no-files-found: error

@@ -42,7 +42,8 @@ internal sealed partial class SharpLinkServer
                 return responseSend;
             }
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
-            var bindingFailure = ResolveStaticRequest(connection, flags, ref request, out var serviceInfo);
+            var bindingFailure = ResolveStaticRequest(connection, flags, unchecked((ulong)request.InterfaceHash),
+                request.MethodHash, out var serviceInfo, out var boundMethod);
             if (bindingFailure != StaticBindingFailure.None)
 #else
             if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
@@ -69,6 +70,9 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            request = request with { BoundMethod = boundMethod };
+#endif
             if (!serviceInfo.AcceptsCalls)
             {
                 ValueTask responseSend;
@@ -285,6 +289,9 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
                             session, payload, flags, request.RpcDeadline);
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                        request = request with { BoundMethod = boundMethod };
+#endif
                     }
                     else
                     {

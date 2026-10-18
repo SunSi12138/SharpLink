@@ -24,7 +24,8 @@ internal sealed partial class SharpLinkServer
             var request = ReadRequestEnvelope(
                 session, payload, flags, admittedCallState?.Deadline ?? default);
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
-            if (ResolveStaticRequest(connection, flags, ref request, out var serviceInfo) != StaticBindingFailure.None)
+            if (ResolveStaticRequest(connection, flags, unchecked((ulong)request.InterfaceHash),
+                request.MethodHash, out var serviceInfo, out var boundMethod) != StaticBindingFailure.None)
 #else
             if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
 #endif
@@ -39,6 +40,7 @@ internal sealed partial class SharpLinkServer
             }
 
 #if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            request = request with { BoundMethod = boundMethod };
             var descriptor = request.BoundMethod!.Descriptor;
 #else
             // Resolve the method shape before pre-invocation rejection. A rejected OneWay call with
@@ -233,6 +235,9 @@ internal sealed partial class SharpLinkServer
                         decodePermit!.CompleteDecode();
                         request = ReadRequestEnvelope(
                             session, payload, flags, request.RpcDeadline);
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+                        request = request with { BoundMethod = boundMethod };
+#endif
                     }
                     else
                     {

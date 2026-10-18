@@ -37,13 +37,12 @@ internal sealed partial class SharpLinkServer
     }
 
     private static StaticBindingFailure ResolveStaticRequest(ServerConnectionState connection,
-        ProtocolV2FrameFlags flags, ref ServerRequestEnvelope request, out ServiceRegistration registration)
+        ProtocolV2FrameFlags flags, ulong bindingId, long methodId,
+        out ServiceRegistration registration, out StaticBindingMethod method)
     {
-        var failure = connection.StaticBindings.Resolve(unchecked((ulong)request.InterfaceHash),
-            request.MethodHash, flags, out registration, out var method);
+        var failure = connection.StaticBindings.Resolve(bindingId, methodId, flags, out registration, out method);
         if (failure == StaticBindingFailure.UnsupportedShape)
             throw StaticBindingWire.Malformed("Static binding prototype rejects conflicting/streaming call shapes.");
-        if (failure == StaticBindingFailure.None) request = request with { BoundMethod = method };
         return failure;
     }
 }
