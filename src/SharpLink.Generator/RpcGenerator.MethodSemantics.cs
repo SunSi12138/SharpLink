@@ -134,7 +134,9 @@ public partial class RpcGenerator
                     !SymbolEqualityComparer.Default.Equals(other.ContainingType, candidate.ContainingType) &&
                     other.ContainingType.AllInterfaces.Any(inherited =>
                         SymbolEqualityComparer.Default.Equals(inherited, candidate.ContainingType))))
-                .Select(method => method.OriginalDefinition)
+                // Compare the constructed members, not OriginalDefinition:
+                // IBase<int>.Read and IBase<string>.Read are distinct C# members,
+                // even when their source declaration is IBase<T>.Read.
                 .Distinct(SymbolEqualityComparer.Default)
                 .Take(2)
                 .Count();
