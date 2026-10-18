@@ -212,8 +212,16 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            // Decode only replaces the byte owner. Keep the method validated on this
+            // Session and registration before the request entered the decode queue.
+            var boundMethod = request.BoundMethod;
+#endif
             request = ReadRequestEnvelope(
                 session, result.Payload, flags, request.RpcDeadline);
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+            request = request with { BoundMethod = boundMethod };
+#endif
         }
         catch (ServerDecodeExecutorClosedException)
         {
