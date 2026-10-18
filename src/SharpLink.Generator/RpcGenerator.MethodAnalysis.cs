@@ -17,7 +17,7 @@ public partial class RpcGenerator
             list.Add(new InvalidRpcMethodModel(
                 InvalidRpcMethodKind.InheritedSignatureConflict,
                 method.Name,
-                "inherited declarations with the same CLR signature must agree on return type, call shape, execution policy, and request schema",
+                "inherited declarations with the same CLR signature must agree on semantics and resolve to a single C# member; if multiple parents declare it independently, redeclare the method explicitly on the derived contract",
                 method.Locations.FirstOrDefault() ?? symbol.Locations.FirstOrDefault()));
         }
         foreach (var method in GetContractMethods(symbol))
