@@ -11,10 +11,18 @@ namespace SharpLink.Generated;
 
 internal static class __SharpLinkGeneratedUtf16
 {
-    internal static int GetByteCount(string value) => checked(value.Length * sizeof(char));
+    internal static int GetByteCount(string value)
+    {
+        var byteCount = checked(value.Length * sizeof(char));
+        if (byteCount > RpcGeneratedCodecWire.MaximumStringPayloadBytes)
+            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Generated string payload exceeds the protocol maximum.");
+        return byteCount;
+    }
 
     internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)
     {
+        if (byteCount < 0 || (byteCount & 1) != 0 || byteCount > RpcGeneratedCodecWire.MaximumStringPayloadBytes)
+            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Generated string payload exceeds the protocol maximum.");
         var length = writer.GetSpan(sizeof(int));
         global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(length, byteCount);
         writer.Advance(sizeof(int));
