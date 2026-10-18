@@ -78,10 +78,13 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
                     __exactWriter.Advance(0);
                     SerializeSized(in value, writer, __exactSize, __sizedSnapshot);
                 }
-                finally
+                catch
                 {
-                    ReleaseSnapshot(__sizedSnapshot);
+                    try { ReleaseSnapshot(__sizedSnapshot); }
+                    catch { /* Preserve the original writer/serializer exception. */ }
+                    throw;
                 }
+                ReleaseSnapshot(__sizedSnapshot);
                 return;
             }
         }
@@ -138,9 +141,22 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
 
     private void ReleaseCapturedChildren(__SizedSnapshot snapshot)
     {
+        global::System.Runtime.ExceptionServices.ExceptionDispatchInfo? __firstCleanupError = null;
+        var __childSnapshot_0 = snapshot.__nestedSnapshot_0;
+        snapshot.__nestedSnapshot_0 = null;
         var __sized_0 = __sizedCodec_0;
-        if (__sized_0 is not null && snapshot.__nestedSnapshot_0 is not null)
-            __sized_0.ReleaseSnapshot(snapshot.__nestedSnapshot_0);
+        if (__sized_0 is not null && __childSnapshot_0 is not null)
+        {
+            try
+            {
+                __sized_0.ReleaseSnapshot(__childSnapshot_0);
+            }
+            catch (Exception __exception)
+            {
+                __firstCleanupError ??= global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(__exception);
+            }
+        }
+        __firstCleanupError?.Throw();
     }
 
     public bool TryGetEncodedSize(in global::FixturePayload value, out int size)
@@ -174,6 +190,9 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
             return true;
         }
         var __snapshot = RentSnapshot();
+        var __snapshotCleanupStarted = false;
+        try
+        {
         size = 10;
         __snapshot.__string_0 = value.Name;
         __snapshot.__stringByteCount_0 = __snapshot.__string_0 is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_0);
@@ -186,8 +205,8 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         {
             size = 0;
             snapshot = null;
-            ReleaseCapturedChildren(__snapshot);
-            ReturnSnapshot(__snapshot);
+            __snapshotCleanupStarted = true;
+            ReleaseSnapshot(__snapshot);
             return false;
         }
         checked
@@ -197,6 +216,16 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         }
         snapshot = __snapshot;
         return true;
+        }
+        catch
+        {
+            if (!__snapshotCleanupStarted)
+            {
+                try { ReleaseSnapshot(__snapshot); }
+                catch { /* The capture exception takes precedence. */ }
+            }
+            throw;
+        }
     }
 
     public void SerializeSized(in global::FixturePayload value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
@@ -235,8 +264,14 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
     {
         if (snapshot is not __SizedSnapshot __snapshot)
             return;
-        ReleaseCapturedChildren(__snapshot);
-        ReturnSnapshot(__snapshot);
+        try
+        {
+            ReleaseCapturedChildren(__snapshot);
+        }
+        finally
+        {
+            ReturnSnapshot(__snapshot);
+        }
     }
 
     public global::FixturePayload? Deserialize(in ReadOnlySequence<byte> buffer)
