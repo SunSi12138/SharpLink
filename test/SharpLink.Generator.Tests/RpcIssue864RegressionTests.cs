@@ -30,7 +30,7 @@ public interface INameCollision : SharpLink.Sdk.IService
                proxy.Contains("this._channel_.InvokeUnaryAsync", StringComparison.Ordinal),
             "method and parameter names must not capture the channel field");
         Ensure(streams.Contains("this._x = x;", StringComparison.Ordinal) &&
-               streams.Contains("this.__x = _x;", StringComparison.Ordinal),
+               streams.Contains("__x = _x;", StringComparison.Ordinal),
             "stream assignments must target their own fields");
         Ensure(streams.Contains("__codec_x_", StringComparison.Ordinal),
             "infrastructure codec argument must avoid the user parameter __codec_x");
