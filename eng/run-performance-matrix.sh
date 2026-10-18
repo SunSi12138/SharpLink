@@ -122,6 +122,11 @@ case "$(uname -s)-$(uname -m)" in
   MINGW*-x86_64|MSYS*-x86_64|CYGWIN*-x86_64) RID=win-x64 ;;
 esac
 
+# This invocation publishes each AOT project once. Scalars are deliberate:
+# the system /bin/bash on macOS is Bash 3.2 (no associative arrays).
+AOT_LOADTEST_PUBLISHED=0
+AOT_STREAMLOADTEST_PUBLISHED=0
+
 run_project() {
   local runtime="$1"
   local project="$2"
@@ -142,8 +147,28 @@ run_project() {
   if [[ "$RID" == win-* ]]; then
     executable="$executable.exe"
   fi
-  if [[ ! -x "$executable" ]]; then
+  local already_published
+  case "$name" in
+    SharpLink.LoadTest) already_published="$AOT_LOADTEST_PUBLISHED" ;;
+    SharpLink.StreamLoadTest) already_published="$AOT_STREAMLOADTEST_PUBLISHED" ;;
+    *)
+      echo "Unexpected NativeAOT performance project: $project" >&2
+      exit 2
+      ;;
+  esac
+  if [[ "$already_published" == "0" ]]; then
+    # A stale executable cannot attest to the current source/build inputs.
+    # Remove it first, then fail closed if this publish fails or omits output.
+    rm -f "$executable"
     dotnet publish "$project" -c Release -r "$RID" /p:PublishAot=true -o "$publish" -v minimal
+    if [[ ! -x "$executable" ]]; then
+      echo "NativeAOT publish did not produce an executable: $executable" >&2
+      exit 1
+    fi
+    case "$name" in
+      SharpLink.LoadTest) AOT_LOADTEST_PUBLISHED=1 ;;
+      SharpLink.StreamLoadTest) AOT_STREAMLOADTEST_PUBLISHED=1 ;;
+    esac
   fi
   "$executable" "$@"
 }
