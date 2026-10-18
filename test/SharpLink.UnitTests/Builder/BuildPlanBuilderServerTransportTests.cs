@@ -40,6 +40,22 @@ public sealed partial class BuildPlanBuilderTests
     [Test]
     public async Task TcpDefaultsShouldBindLoopbackAndAllowSecureBuild()
     {
+        // #805/B1: Server legacy string-IP overloads are not part of 3.0.
+        // The typed IPAddress API remains public; Client hostname overloads
+        // are deliberately untouched because hostnames can be DNS names.
+        var methods = typeof(SharpLink.Server.TransportExtensions).GetMethods(
+            BindingFlags.Public | BindingFlags.Static);
+        Ensure(!methods.Any(method =>
+                method.Name == "UseTcp" &&
+                method.GetParameters().Any(parameter => parameter.Name == "ip" &&
+                    parameter.ParameterType == typeof(string))),
+            "Server extension must not expose legacy string-IP binding overloads");
+        var typed = CreateServerBuilder().UseTcp(0, IPAddress.Loopback);
+        var typedBound = typed.Transport!.LocalEndPoint as IPEndPoint;
+        Ensure(typedBound is not null && typedBound.Address.Equals(IPAddress.Loopback),
+            "typed IPv4 loopback overload must remain available");
+        await using (var server = typed.Build())
+            Ensure(server is not null, "typed TCP build must work");
         var builder = CreateServerBuilder().UseTcp(0);
 
         var bound = builder.Transport!.LocalEndPoint as IPEndPoint;
