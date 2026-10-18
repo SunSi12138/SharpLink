@@ -7,10 +7,16 @@ using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Builder;
 
-public sealed class Issue805HostLoggerBoundaryTests
+internal static class Issue805HostLoggerBoundaryChecks
 {
-    [Test]
-    public void HostFallbackMustNotBePartOfThePublicBuilderApi()
+    internal static async Task VerifyAsync()
+    {
+        HostFallbackMustNotBePartOfThePublicBuilderApi();
+        SingleClientAndServerPreserveExplicitLoggerInBothConfigurationOrders();
+        await MultiClusterBuildShouldHonorChildCoordinatorHostPrecedence();
+    }
+
+    private static void HostFallbackMustNotBePartOfThePublicBuilderApi()
     {
         foreach (var builder in new[]
         {
@@ -27,8 +33,7 @@ public sealed class Issue805HostLoggerBoundaryTests
         }
     }
 
-    [Test]
-    public void SingleClientAndServerPreserveExplicitLoggerInBothConfigurationOrders()
+    private static void SingleClientAndServerPreserveExplicitLoggerInBothConfigurationOrders()
     {
         using var host = new MarkerLoggerFactory();
         using var user = new MarkerLoggerFactory();
@@ -52,8 +57,7 @@ public sealed class Issue805HostLoggerBoundaryTests
         EnsureLogger(serverAfter, user);
     }
 
-    [Test]
-    public async Task MultiClusterBuildShouldHonorChildCoordinatorHostPrecedence()
+    private static async Task MultiClusterBuildShouldHonorChildCoordinatorHostPrecedence()
     {
         using var host = new MarkerLoggerFactory();
         using var coordinator = new MarkerLoggerFactory();
