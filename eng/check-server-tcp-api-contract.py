@@ -76,6 +76,71 @@ def verify_static_contract() -> None:
     )
 
 
+
+def verify_no_legacy_server_calls_in_checkout() -> None:
+    """Exhaustively scan checked-in C# sources, including files absent from code-search indexing.
+
+    This lexical check complements the actual positive/negative compiler probes.
+    """
+    import re
+
+    matcher = re.compile(r"\\.UseTcp\\s*\\(")
+    for source_file in ROOT.rglob("*.cs"):
+        if set(source_file.parts) & {"bin", "obj", ".git"}:
+            continue
+        source = source_file.read_text(encoding="utf-8-sig")
+        for call in matcher.finditer(source):
+            depth = 1
+            braces = brackets = 0
+            quoted = ""
+            argument_start = call.end()
+            arguments = []
+            at = call.end()
+            while at < len(source):
+                ch = source[at]
+                previous = source[at - 1] if at else ""
+                if quoted:
+                    if ch == quoted and previous != "\\\\":
+                        quoted = ""
+                    at += 1
+                    continue
+                if ch in ("'", '"'):
+                    quoted = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        arguments.append(source[argument_start:at].strip())
+                        break
+                elif ch == "{":
+                    braces += 1
+                elif ch == "}":
+                    braces -= 1
+                elif ch == "[":
+                    brackets += 1
+                elif ch == "]":
+                    brackets -= 1
+                elif ch == "," and depth == 1 and braces == 0 and brackets == 0:
+                    arguments.append(source[argument_start:at].strip())
+                    argument_start = at + 1
+                at += 1
+            for index in (1, 2):
+                if index >= len(arguments):
+                    continue
+                value = arguments[index]
+                if (
+                    (value.startswith('"') and value.endswith('"'))
+                    or value.endswith(".ToString()")
+                    or (value.startswith("ip:") and '"' in value)
+                ):
+                    lineno = source.count("\\n", 0, call.start()) + 1
+                    raise AssertionError(
+                        f"Legacy string TCP binding argument at {source_file.relative_to(ROOT)}:"
+                        f"{lineno}: {value}. Use IPAddress or IPAddress.Parse explicitly."
+                    )
+
+
 def compile_project(code: str, path: Path) -> subprocess.CompletedProcess[str]:
     (path / "Probe.cs").write_text(PREFIX + code + SUFFIX, encoding="utf-8")
     return run("dotnet", "build", str(path / "Consumer.csproj"),
@@ -84,6 +149,7 @@ def compile_project(code: str, path: Path) -> subprocess.CompletedProcess[str]:
 
 def main() -> None:
     verify_static_contract()
+    verify_no_legacy_server_calls_in_checkout()
     with tempfile.TemporaryDirectory(prefix="sharplink-external-tcp-") as location:
         folder = Path(location)
         (folder / "Consumer.csproj").write_text(

@@ -132,7 +132,7 @@ public class HostedServiceProviderIntegrationTests
     }
 
     private static void ConfigureServer(SharpLinkServerBuilder builder, SharpLinkServiceLifetime lifetime)
-        => builder.UseTcp(0, IPAddress.Loopback.ToString())
+        => builder.UseTcp(0, IPAddress.Loopback)
             .DisableAutomaticServiceRegistration()
             .ReplaceService<IHostedProviderContract>(
                 static provider => new HostedProviderService(provider.GetRequiredService<ProviderDependency>()), lifetime);
