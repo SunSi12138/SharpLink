@@ -1,0 +1,399 @@
+diff --git a/src/SharpLink.Client/SharpLinkClient.CallOptions.cs b/src/SharpLink.Client/SharpLinkClient.CallOptions.cs
+index adbbc1e..a5b6472 100644
+--- a/src/SharpLink.Client/SharpLinkClient.CallOptions.cs
++++ b/src/SharpLink.Client/SharpLinkClient.CallOptions.cs
+@@ -212,8 +212,5 @@ internal sealed partial class SharpLinkClient
+         TimeProvider? TimeProvider = null,
+         ClientRetryGeneration? RetryGeneration = null)
+     {
+-#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+-        internal StaticBindingCallSite? BindingSite { get; init; }
+-#endif
+     }
+ }
+diff --git a/src/SharpLink.Client/SharpLinkClient.Interceptors.cs b/src/SharpLink.Client/SharpLinkClient.Interceptors.cs
+index c5da9db..0d10266 100644
+--- a/src/SharpLink.Client/SharpLinkClient.Interceptors.cs
++++ b/src/SharpLink.Client/SharpLinkClient.Interceptors.cs
+@@ -3,6 +3,9 @@ namespace SharpLink.Client;
+ internal sealed partial class SharpLinkClient
+ {
+     private ValueTask<TResponse> InvokeUnaryInterceptedAsync<TRequest, TResponse>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -11,9 +14,15 @@ internal sealed partial class SharpLinkClient
+         ResolvedCallControl control,
+         CancellationToken cancellationToken)
+         => new UnaryInterceptorState<TRequest, TResponse>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++            bindingSite,
++#endif
+             this, method, request, requestCodec, responseCodec, interceptors, control, cancellationToken).InvokeTypedAsync();
+ 
+     private ValueTask InvokeOneWayInterceptedAsync<TRequest, TStreams>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -23,6 +32,9 @@ internal sealed partial class SharpLinkClient
+         CancellationToken cancellationToken)
+         where TStreams : struct, IRpcClientStreamWriter
+         => new OneWayInterceptorState<TRequest, TStreams>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++            bindingSite,
++#endif
+             this, method, request, requestCodec, streams, interceptors, control, cancellationToken).InvokeVoidAsync();
+ 
+     private ValueTask<TResponse> InvokeClientStreamingInterceptedAsync<TRequest, TResponse, TStreams>(
+@@ -305,12 +317,18 @@ internal sealed partial class SharpLinkClient
+ 
+     private sealed class UnaryInterceptorState<TRequest, TResponse> : ClientInterceptorState
+     {
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        private readonly StaticBindingCallSite? _bindingSite;
++#endif
+         private readonly RpcMethodDescriptor _method;
+         private readonly TRequest _request;
+         private readonly IRpcCodec<TRequest> _requestCodec;
+         private readonly IRpcCodec<TResponse> _responseCodec;
+ 
+         public UnaryInterceptorState(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++            StaticBindingCallSite? bindingSite,
++#endif
+             SharpLinkClient client,
+             RpcMethodDescriptor method,
+             TRequest request,
+@@ -321,6 +339,9 @@ internal sealed partial class SharpLinkClient
+             CancellationToken cancellationToken)
+             : base(client, method, request, interceptors, control, cancellationToken)
+         {
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++            _bindingSite = bindingSite;
++#endif
+             _method = method;
+             _request = request;
+             _requestCodec = requestCodec;
+@@ -344,6 +365,9 @@ internal sealed partial class SharpLinkClient
+             {
+                 var control = GetTerminalControl(context);
+                 var response = await Client.InvokeUnaryWithOptionalRetryAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    _bindingSite,
++#endif
+                     _method, _request, _requestCodec, _responseCodec, control, context.CancellationToken).ConfigureAwait(false);
+                 MarkTerminalSucceeded(context);
+                 return new SharpLinkClientInvocationResult(response);
+@@ -363,12 +387,18 @@ internal sealed partial class SharpLinkClient
+     private sealed class OneWayInterceptorState<TRequest, TStreams> : ClientInterceptorState
+         where TStreams : struct, IRpcClientStreamWriter
+     {
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        private readonly StaticBindingCallSite? _bindingSite;
++#endif
+         private readonly RpcMethodDescriptor _method;
+         private readonly TRequest _request;
+         private readonly IRpcCodec<TRequest> _requestCodec;
+         private readonly TStreams _streams;
+ 
+         public OneWayInterceptorState(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++            StaticBindingCallSite? bindingSite,
++#endif
+             SharpLinkClient client,
+             RpcMethodDescriptor method,
+             TRequest request,
+@@ -379,6 +409,9 @@ internal sealed partial class SharpLinkClient
+             CancellationToken cancellationToken)
+             : base(client, method, request, interceptors, control, cancellationToken)
+         {
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++            _bindingSite = bindingSite;
++#endif
+             _method = method;
+             _request = request;
+             _requestCodec = requestCodec;
+@@ -401,6 +434,9 @@ internal sealed partial class SharpLinkClient
+             {
+                 var control = GetTerminalControl(context);
+                 await Client.InvokeOneWayCoreAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    _bindingSite,
++#endif
+                     _method,
+                     _request, _requestCodec, _streams, control, context.CancellationToken).ConfigureAwait(false);
+                 MarkTerminalSucceeded(context);
+diff --git a/src/SharpLink.Client/SharpLinkClient.Invokers.cs b/src/SharpLink.Client/SharpLinkClient.Invokers.cs
+index 6e1c85e..f9a8567 100644
+--- a/src/SharpLink.Client/SharpLinkClient.Invokers.cs
++++ b/src/SharpLink.Client/SharpLinkClient.Invokers.cs
+@@ -24,19 +24,28 @@ internal sealed partial class SharpLinkClient
+         var interceptors = CaptureInterceptorGenerationForInvocation();
+         var control = ResolveCallControlForInvocation(
+             method, metadata, includeClientDefault: true, interceptors);
+-#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+-        control = control with { BindingSite = bindingSite };
+-#endif
+         Interlocked.Increment(ref _activeLogicalInvocations);
+         try
+         {
+             ValueTask<TResponse> invocation;
+             if (SharpLinkTelemetry.ClientCallsEnabled)
+-                invocation = InvokeUnaryWithTelemetryAsync(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
++                invocation = InvokeUnaryWithTelemetryAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
++                    method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
+             else if (interceptors.Count != 0)
+-                invocation = InvokeUnaryInterceptedAsync(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
++                invocation = InvokeUnaryInterceptedAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
++                    method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
+             else
+-                invocation = InvokeUnaryWithOptionalRetryAsync(method, request, requestCodec, responseCodec, control, cancellationToken);
++                invocation = InvokeUnaryWithOptionalRetryAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
++                    method, request, requestCodec, responseCodec, control, cancellationToken);
+             return CompleteLogicalInvocation(invocation);
+         }
+         catch
+@@ -73,19 +82,28 @@ internal sealed partial class SharpLinkClient
+         var interceptors = CaptureInterceptorGenerationForInvocation();
+         var control = ResolveCallControlForInvocation(
+             method, metadata, includeClientDefault: false, interceptors);
+-#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+-        control = control with { BindingSite = bindingSite };
+-#endif
+         Interlocked.Increment(ref _activeLogicalInvocations);
+         try
+         {
+             ValueTask invocation;
+             if (SharpLinkTelemetry.ClientCallsEnabled)
+-                invocation = InvokeOneWayWithTelemetryAsync(method, request, requestCodec, streams, interceptors, control, cancellationToken);
++                invocation = InvokeOneWayWithTelemetryAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
++                    method, request, requestCodec, streams, interceptors, control, cancellationToken);
+             else if (interceptors.Count != 0)
+-                invocation = InvokeOneWayInterceptedAsync(method, request, requestCodec, streams, interceptors, control, cancellationToken);
++                invocation = InvokeOneWayInterceptedAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
++                    method, request, requestCodec, streams, interceptors, control, cancellationToken);
+             else
+-                invocation = InvokeOneWayCoreAsync(method, request, requestCodec, streams, control, cancellationToken);
++                invocation = InvokeOneWayCoreAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
++                    method, request, requestCodec, streams, control, cancellationToken);
+             return CompleteLogicalInvocation(invocation);
+         }
+         catch
+@@ -388,6 +406,9 @@ internal sealed partial class SharpLinkClient
+     }
+ 
+     private ValueTask<TResponse> InvokeUnaryCoreAsync<TRequest, TResponse>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -409,7 +430,7 @@ internal sealed partial class SharpLinkClient
+             // checkpoint below is the first place a fresh sample carries new information. A sample
+             // here would only repeat the stage-local validation the call control already did.
+ #if SHARPLINK_STATIC_BINDING_PROTOTYPE
+-            var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
++            var target = GetReadyStaticTarget(bindingSite, method, outcome);
+             connection = target.Connection;
+             routingId = unchecked((long)target.Token);
+ #else
+@@ -554,6 +575,9 @@ internal sealed partial class SharpLinkClient
+     }
+ 
+     private ValueTask InvokeOneWayCoreAsync<TRequest, TStreams>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -563,9 +587,16 @@ internal sealed partial class SharpLinkClient
+         where TStreams : struct, IRpcClientStreamWriter
+         => method.HasClientStreams
+             ? InvokeOneWayStreamingCoreAsync(method, request, requestCodec, streams, control, cancellationToken)
+-            : InvokeOneWayPlainCoreAsync(method, request, requestCodec, control, cancellationToken);
++            : InvokeOneWayPlainCoreAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                bindingSite,
++#endif
++                method, request, requestCodec, control, cancellationToken);
+ 
+     private async ValueTask InvokeOneWayPlainCoreAsync<TRequest>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -585,7 +616,7 @@ internal sealed partial class SharpLinkClient
+         {
+             EnsureLogicalCallProgress(control);
+ #if SHARPLINK_STATIC_BINDING_PROTOTYPE
+-            var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
++            var target = GetReadyStaticTarget(bindingSite, method, outcome);
+             connection = target.Connection;
+             routingId = unchecked((long)target.Token);
+ #else
+diff --git a/src/SharpLink.Client/SharpLinkClient.Retry.cs b/src/SharpLink.Client/SharpLinkClient.Retry.cs
+index f77396a..33a382d 100644
+--- a/src/SharpLink.Client/SharpLinkClient.Retry.cs
++++ b/src/SharpLink.Client/SharpLinkClient.Retry.cs
+@@ -3,6 +3,9 @@ namespace SharpLink.Client;
+ internal sealed partial class SharpLinkClient
+ {
+     private ValueTask<TResponse> InvokeUnaryWithOptionalRetryAsync<TRequest, TResponse>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -15,6 +18,9 @@ internal sealed partial class SharpLinkClient
+         if (!method.IsIdempotent)
+         {
+             return InvokeUnaryCoreAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                bindingSite,
++#endif
+                 method,
+                 request, requestCodec, responseCodec, control, cancellationToken);
+         }
+@@ -23,15 +29,24 @@ internal sealed partial class SharpLinkClient
+         if (!generation.Enabled)
+         {
+             return InvokeUnaryCoreAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                bindingSite,
++#endif
+                 method,
+                 request, requestCodec, responseCodec, control, cancellationToken);
+         }
+ 
+         return InvokeUnaryWithRetryAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++            bindingSite,
++#endif
+             method, request, requestCodec, responseCodec, control, generation, cancellationToken);
+     }
+ 
+     private async ValueTask<TResponse> InvokeUnaryWithRetryAsync<TRequest, TResponse>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -65,6 +80,9 @@ internal sealed partial class SharpLinkClient
+             try
+             {
+                 var response = await InvokeUnaryRetryAttemptAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
+                     method,
+                     method.ContractId, method.MethodId, method.HasResponsePayload,
+                     request, requestCodec, responseCodec, control, selection, outcome, cancellationToken).ConfigureAwait(false);
+@@ -222,6 +240,9 @@ internal sealed partial class SharpLinkClient
+     }
+ 
+     private ValueTask<TResponse> InvokeUnaryRetryAttemptAsync<TRequest, TResponse>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         long contractId,
+         long methodId,
+@@ -239,7 +260,7 @@ internal sealed partial class SharpLinkClient
+         {
+             EnsureLogicalCallProgress(control);
+ #if SHARPLINK_STATIC_BINDING_PROTOTYPE
+-            var target = GetReadyStaticTarget(control.BindingSite, method, outcome);
++            var target = GetReadyStaticTarget(bindingSite, method, outcome);
+             connection = target.Connection;
+             contractId = unchecked((long)target.Token);
+ #else
+diff --git a/src/SharpLink.Client/SharpLinkClient.Telemetry.cs b/src/SharpLink.Client/SharpLinkClient.Telemetry.cs
+index 0d6d302..938088c 100644
+--- a/src/SharpLink.Client/SharpLinkClient.Telemetry.cs
++++ b/src/SharpLink.Client/SharpLinkClient.Telemetry.cs
+@@ -3,6 +3,9 @@ namespace SharpLink.Client;
+ internal sealed partial class SharpLinkClient
+ {
+     private ValueTask<TResponse> InvokeUnaryWithTelemetryAsync<TRequest, TResponse>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -20,11 +23,17 @@ internal sealed partial class SharpLinkClient
+             if (interceptors.Count != 0)
+             {
+                 invocation = InvokeUnaryInterceptedAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
+                     method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
+             }
+             else
+             {
+                 invocation = InvokeUnaryWithOptionalRetryAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
+                     method, request, requestCodec, responseCodec, control, cancellationToken);
+             }
+             return ObserveCallAsync(invocation, scope);
+@@ -37,6 +46,9 @@ internal sealed partial class SharpLinkClient
+     }
+ 
+     private ValueTask InvokeOneWayWithTelemetryAsync<TRequest, TStreams>(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++        StaticBindingCallSite? bindingSite,
++#endif
+         RpcMethodDescriptor method,
+         TRequest request,
+         IRpcCodec<TRequest> requestCodec,
+@@ -55,11 +67,17 @@ internal sealed partial class SharpLinkClient
+             if (interceptors.Count != 0)
+             {
+                 invocation = InvokeOneWayInterceptedAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
+                     method, request, requestCodec, streams, interceptors, control, cancellationToken);
+             }
+             else
+             {
+                 invocation = InvokeOneWayCoreAsync(
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++                    bindingSite,
++#endif
+                     method,
+                     request, requestCodec, streams, control, cancellationToken);
+             }

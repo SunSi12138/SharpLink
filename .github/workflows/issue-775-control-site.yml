@@ -1,0 +1,71 @@
+name: Issue 775 detached binding-site experiment
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+    paths:
+      - eng/issue775/control-site.patch
+      - eng/issue775/control_site.py
+      - eng/issue775/ControlSiteChecks.cs
+      - eng/issue775/test_control_site.py
+      - .github/workflows/issue-775-control-site.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  experiment:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [default, codegen]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: driver
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 454f51e913684853c1caa2221bc92c94e6ad1789
+          path: old
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 454f51e913684853c1caa2221bc92c94e6ad1789
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: driver/global.json
+      - name: Verify diagnostic readers before applying the frozen patch
+        run: |
+          python3 -m unittest discover -s driver/eng/issue775 -p test_control_site.py -v
+          python3 -m unittest discover -s driver/eng/issue775 -p test_client_send.py -v
+          python3 -m unittest discover -s driver/eng/issue775 -p test_attribution.py -v
+      - name: Validate the patch-addressed candidate without repository write access
+        run: |
+          args=()
+          if [[ '${{ matrix.mode }}' == 'default' ]]; then args+=(--default-only); fi
+          python3 driver/eng/issue775/control_site.py --old old --candidate candidate \
+            --driver driver --output control-site "${args[@]}"
+      - name: Retain exact driver and failed outputs
+        if: always()
+        run: |
+          mkdir -p control-site
+          git -C driver rev-parse HEAD > control-site/driver-sha.txt
+          git -C driver archive HEAD | gzip > control-site/driver-source.tar.gz
+          if test -f control-site/candidate-identity.json; then cat control-site/candidate-identity.json | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if test -f control-site/execution-failures.json; then cat control-site/execution-failures.json; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-control-site-${{ matrix.mode }}-${{ github.sha }}
+          path: |
+            control-site/
+            candidate/test/**/TestResults/
+          retention-days: 30
+          if-no-files-found: error
