@@ -3,7 +3,7 @@ namespace SharpLink.Server;
 public partial class SharpLinkServerBuilder
 {
     /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
-    public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
+    internal void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         Configure(() =>
         {

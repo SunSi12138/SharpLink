@@ -21,6 +21,7 @@ public sealed class SharpLinkMultiClusterTimeoutPolicyTests
         Ensure(ReadHasRequestTimeout(child), "coordinator policy selected after AddCluster must reach the child");
         Ensure(ReadRequestTimeout(child) == TimeSpan.FromSeconds(30),
             "the inherited coordinator policy should use the recommended timeout");
+        await SharpLink.UnitTests.Builder.Issue805HostLoggerBoundaryChecks.VerifyAsync();
     }
 
     [Test]
