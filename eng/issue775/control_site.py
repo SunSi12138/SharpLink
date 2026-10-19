@@ -53,6 +53,10 @@ def apply_candidate(root, driver, out):
     for path, original in before.items():
         if default_source(original) != default_source((root/path).read_text()):
             raise ValueError("Default-build source changed: " + path)
+    from control_site_layout import apply_layout
+    layout = apply_layout(root, driver)
+    if set(git(root, "diff", "--cached", "--name-only").splitlines()) != FILES | {layout["newFile"]}:
+        raise ValueError("Unexpected change after method extraction")
     subprocess.run(["git", "diff", "--cached", "--check"], cwd=root, check=True)
     # Local deterministic commit identifies every production byte. It is never pushed by CI.
     env = os.environ | {"GIT_AUTHOR_NAME": "Issue775 experiment", "GIT_AUTHOR_EMAIL": "issue775@example.invalid",
@@ -61,9 +65,12 @@ def apply_candidate(root, driver, out):
     subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-m", "experiment: explicit static binding site input"], cwd=root, env=env, check=True)
     identity = {"base": BASE, "patchSha256": PATCH_SHA, "localCandidateSha": git(root, "rev-parse", "HEAD"),
                 "productionTree": git(root, "rev-parse", "HEAD^{tree}"), "publishedProductionCommit": False,
-                "defaultSourceEquivalentIgnoringWhitespace": True, "changedFiles": sorted(FILES)}
+                "defaultSourceEquivalentIgnoringWhitespace": True, "changedFiles": sorted(FILES | {layout["newFile"]}), "layout": layout}
     save(out/"candidate-identity.json", identity)
-    (out/"production.patch").write_bytes(patch.read_bytes())
+    (out/"binding-site.patch").write_bytes(patch.read_bytes())
+    (out/"production.patch").write_text(git(root, "diff", BASE, "HEAD", "--", "src") + "\n")
+    identity["combinedPatchSha256"] = digest(out/"production.patch")
+    save(out/"candidate-identity.json", identity)
     with (out/"candidate-source.tar").open("wb") as target:
         subprocess.run(["git", "archive", "HEAD"], cwd=root, stdout=target, check=True)
     return identity
