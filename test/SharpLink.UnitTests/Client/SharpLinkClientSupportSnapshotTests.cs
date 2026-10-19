@@ -44,6 +44,7 @@ public sealed class SharpLinkClientSupportSnapshotTests
         Ensure(!json.Contains(authoritySecret, StringComparison.Ordinal), "authority redacted");
         Ensure(!json.Contains(metadataSecret, StringComparison.Ordinal), "metadata redacted");
         Ensure(json.Contains("endpoint-0001", StringComparison.Ordinal), "safe endpoint id exported");
+        Issue805SupportJsonContextSealingTests.Verify();
     }
 
     [Test]
