@@ -398,7 +398,7 @@ public partial class IntegrationBehaviorTests
                 serverBuilder.UseSharedMemory(sharedMemoryName);
             else
             {
-                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+                serverBuilder.UseTcp(0, IPAddress.Loopback);
                 port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             }
             var server = serverBuilder.Build();

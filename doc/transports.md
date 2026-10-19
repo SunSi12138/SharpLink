@@ -26,8 +26,13 @@ serverBuilder
 
 `UseTcp(port)` 现在默认绑定 `IPAddress.Loopback`。`ListenOnAnyAddress()`、`ListenOn(IPAddress)` 和
 `UseTls(...)` 彼此独立；非 loopback 且无 TLS 的 TCP 配置会在 `Build()` 时被拒绝，直到调用
-`AllowUnencrypted()` 与 `AllowUnauthenticated()` 分别显式 opt-in。旧的字符串式 `UseTcp(port, ip)` 重载保留兼容，
-但新代码应优先使用 typed `IPAddress` 重载或 `ListenOn(address)`。
+`AllowUnencrypted()` 与 `AllowUnauthenticated()` 分别显式 opt-in。3.0 移除了 Server 两个旧的字符串地址重载：`UseTcp(port, stringIp, backlog)` 与
+`UseTcp(port, tlsOptions, stringIp, backlog, tlsHandshakeTimeout)`。需显式解析字符串，
+改用 `UseTcp(port, IPAddress.Parse(ip), backlog)` 或
+`UseTcp(port, tlsOptions, IPAddress.Parse(ip), backlog, tlsHandshakeTimeout)`；
+也可使用 `UseTcp(port).ListenOn(IPAddress.Parse(ip))`。建议持有 `IPAddress`
+时直接传值，避免无意义的 `ToString()` / `Parse()` 往返。Client 端
+`UseTcp(string ip, int port)` 及其 TLS 重载**保持不变**（当前要求 IP 字符串）。
 
 TLS 在 SharpLink 握手前完成，拥有独立的 TLS handshake timeout。Client 默认保留系统证书验证；不要在生产中用总是返回 true 的回调。多 endpoint TLS factory 会复制认证选项，并优先使用 endpoint `Authority` 作为 SNI/TargetHost。
 

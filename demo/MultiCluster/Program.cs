@@ -45,7 +45,7 @@ finally
 
 static ISharpLinkServer CreateServer(int port)
     => SharpLinkServerBuilder.Create()
-        .UseTcp(port, IPAddress.Loopback.ToString())
+        .UseTcp(port, IPAddress.Loopback)
         .Build();
 
 [RpcService]

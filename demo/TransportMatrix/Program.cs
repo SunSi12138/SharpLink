@@ -19,7 +19,7 @@ static Task RunTcpAsync()
     var port = DemoStream.GetFreePort();
     return RunPairAsync(
         "tcp",
-        SharpLinkServerBuilder.Create().UseTcp(port, IPAddress.Loopback.ToString()),
+        SharpLinkServerBuilder.Create().UseTcp(port, IPAddress.Loopback),
         SharpClientBuilder.Create().UseTcp(IPAddress.Loopback.ToString(), port));
 }
 

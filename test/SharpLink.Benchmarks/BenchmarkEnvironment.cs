@@ -54,7 +54,7 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var localService = new BenchmarkRpcService();
 
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         if (configureServerRuntime is not null)
             serverBuilder.UseRuntime(configureServerRuntime);
         configureServer?.Invoke(serverBuilder);

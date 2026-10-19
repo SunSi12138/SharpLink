@@ -365,7 +365,7 @@ public sealed class DynamicCompressionPolicyIntegrationTests
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(5))
                 .UseRuntime(options => options.Compression.Providers.Add(provider))
                 .UseResponseCompressionPolicy(EnabledPolicy)
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             return Task.FromResult(new CompressionServerScope(builder.Build(), provider, port));
         }

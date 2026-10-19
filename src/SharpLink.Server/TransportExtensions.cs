@@ -46,18 +46,6 @@ public static class TransportExtensions
             return builder.UseTransport(new SocketServerTransportListener(endPoint, backlog));
         }
 
-        /// <summary>Legacy TCP overload that binds to a parsed IP address without TLS.</summary>
-        /// <remarks>Prefer the typed IPAddress overload or <c>UseTcp(port).ListenOn(address)</c>.</remarks>
-        public SharpLinkServerBuilder UseTcp(int port, string ip, int backlog = 512)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(ip);
-            ValidateTcpPort(port);
-            ValidateBacklog(backlog);
-
-            var endPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-            return builder.UseTransport(new SocketServerTransportListener(endPoint, backlog));
-        }
-
         /// <summary>Uses loopback TCP with TLS completed before the SharpLink protocol handshake.</summary>
         public SharpLinkServerBuilder UseTcp(
             int port,
@@ -91,28 +79,6 @@ public static class TransportExtensions
             ValidateBacklog(backlog);
 
             var endPoint = new IPEndPoint(address, port);
-            return builder.UseTransport(new SocketServerTransportListener(
-                endPoint,
-                backlog,
-                tlsOptions: tlsOptions,
-                tlsHandshakeTimeout: tlsHandshakeTimeout));
-        }
-
-        /// <summary>Legacy TCP-with-TLS overload that binds to a parsed IP address.</summary>
-        /// <remarks>Prefer the typed IPAddress TLS overload.</remarks>
-        public SharpLinkServerBuilder UseTcp(
-            int port,
-            SslServerAuthenticationOptions tlsOptions,
-            string ip,
-            int backlog = 512,
-            TimeSpan? tlsHandshakeTimeout = null)
-        {
-            ArgumentNullException.ThrowIfNull(tlsOptions);
-            ArgumentException.ThrowIfNullOrWhiteSpace(ip);
-            ValidateTcpPort(port);
-            ValidateBacklog(backlog);
-
-            var endPoint = new IPEndPoint(IPAddress.Parse(ip), port);
             return builder.UseTransport(new SocketServerTransportListener(
                 endPoint,
                 backlog,

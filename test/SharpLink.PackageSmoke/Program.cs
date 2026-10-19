@@ -110,7 +110,7 @@ public static class Program
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
 
         var localEndPoint = serverBuilder.Transport!.LocalEndPoint as IPEndPoint;
         if (!useSharedMemory && localEndPoint is null)
@@ -224,10 +224,10 @@ public static class Program
     {
         var firstBuilder = SharpLinkServerBuilder.Create()
             .UseAdmissionControl(options => options.Global.UseConcurrency(64))
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var secondBuilder = SharpLinkServerBuilder.Create()
             .UseAdmissionControl(options => options.Global.UseConcurrency(64))
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
         var secondPort = ((IPEndPoint)secondBuilder.Transport!.LocalEndPoint!).Port;
         var firstServer = firstBuilder.Build();

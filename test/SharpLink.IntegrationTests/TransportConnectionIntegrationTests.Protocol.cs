@@ -7,7 +7,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var serverCts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             ;
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
@@ -95,7 +95,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var serverCts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
@@ -382,7 +382,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var serverCts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseProtocol(static options => options.HandshakeTimeout = TimeSpan.FromMilliseconds(120));
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -463,7 +463,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var serverCts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             ;
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();

@@ -66,7 +66,7 @@ public static class Program
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
 
         var port = useSharedMemory
             ? 0

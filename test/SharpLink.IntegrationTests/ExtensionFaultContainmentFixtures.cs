@@ -38,7 +38,7 @@ internal sealed class ExtensionFaultHarness : IAsyncDisposable
         var cancellation = new CancellationTokenSource();
         ServiceProvider? provider = null;
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
 
         if (options.ServiceFactory is null)

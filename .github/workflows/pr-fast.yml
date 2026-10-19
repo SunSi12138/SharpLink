@@ -85,6 +85,20 @@ jobs:
             echo "- Compare the completed Actions job timestamps for an exact like-for-like full-duration comparison"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  external-server-tcp-api:
+    name: Server TCP external consumer compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Compile positive and negative API consumer probes
+        run: python3 eng/check-server-tcp-api-contract.py
+
   allocation-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 12
