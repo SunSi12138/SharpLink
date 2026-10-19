@@ -401,7 +401,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 services.AddSingleton(TimeProvider.System);
             var serviceProvider = services.BuildServiceProvider();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseServiceProvider(serviceProvider);
             if (control is not null)

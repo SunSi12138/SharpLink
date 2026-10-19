@@ -944,7 +944,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         public static Task<TcpServerScope> StartAsync(string endpointId)
         {
             var builder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback)
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
             builder.ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService { EndpointId = endpointId });

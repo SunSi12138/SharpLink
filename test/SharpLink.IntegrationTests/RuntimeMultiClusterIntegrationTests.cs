@@ -210,7 +210,7 @@ public sealed class RuntimeMultiClusterIntegrationTests
         internal static Task<ServerScope> StartAsync(string endpointId)
         {
             var builder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback)
                 .ReplaceService<IConnectionBehaviorService>(
                     new ConnectionBehaviorService { EndpointId = endpointId });
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;

@@ -165,10 +165,8 @@ namespace SharpLink.Server
             public SharpLink.Server.SharpLinkServerBuilder UseNamedPipe(string name, System.Action<SharpLink.Runtime.NamedPipeTransportOptions>? configure = null) { }
             public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, int backlog = 512) { }
             public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.IPAddress address, int backlog = 512) { }
-            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, string ip, int backlog = 512) { }
             public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
             public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, System.Net.IPAddress address, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
-            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, string ip, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
             public SharpLink.Server.SharpLinkServerBuilder UseUds(string socketPath, int backlog = 512) { }
             public SharpLink.Server.SharpLinkServerBuilder UseAnonymousPipe() { }
             public SharpLink.Server.SharpLinkServerBuilder UseSharedMemory(string name, System.Action<SharpLink.Runtime.SharedMemoryTransportOptions>? configure = null) { }

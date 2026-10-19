@@ -249,7 +249,7 @@ public class PreAdmissionStreamBudgetIntegrationTests
                     options.MaxQueuedBytes = 64 * 1024;
                     options.MaxQueueDelay = TimeSpan.FromSeconds(10);
                 })
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = RunServerAsync(server, serverCancellation.Token);

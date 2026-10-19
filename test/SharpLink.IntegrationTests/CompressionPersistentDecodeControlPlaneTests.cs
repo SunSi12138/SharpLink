@@ -389,7 +389,7 @@ public class CompressionPersistentDecodeControlPlaneTests
                     options.FlowControl.MaxDecodedBytesInFlightPerServer = 128L * 1024 * 1024;
                     options.Compression.Providers.Add(serverProvider);
                 })
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>

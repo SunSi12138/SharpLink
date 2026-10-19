@@ -161,7 +161,7 @@ public class CompressionDecodeDeadlineAdmissionIndependenceTests
                     options.Global.UseConcurrency(8));
             }
 
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>

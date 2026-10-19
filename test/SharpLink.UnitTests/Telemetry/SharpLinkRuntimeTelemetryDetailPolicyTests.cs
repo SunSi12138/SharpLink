@@ -117,7 +117,7 @@ public sealed class SharpLinkRuntimeTelemetryDetailPolicyTests
     public async Task ServerTelemetryDetailShouldRemoveOnlyRequestIdentityInBasicMode()
     {
         var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .Build();
         var runtime = (ISharpLinkServer)server;
         var method = new RpcMethodDescriptor(

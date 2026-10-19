@@ -27,7 +27,7 @@ public static class Program
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
         var runTask = server.RunUntilStoppedAsync(timeout.Token).AsTask();

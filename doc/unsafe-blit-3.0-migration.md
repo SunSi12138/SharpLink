@@ -14,7 +14,9 @@ Generated API 5 requires the exact identity `sharplink-3.0-api5-owner-bound-unsa
 
 Code such as `context.Codecs.GetCodec<MyUnmanagedStruct>()` no longer automatically falls back to reflection for arbitrary unmanaged types. There is no standalone runtime Codec registration or fallback resolver in 3.0.
 
-When a consumer needs serialization independently of generated RPC, instantiate an application-owned `IRpcCodec<MyUnmanagedStruct>` directly and invoke its `Serialize` / `Deserialize` methods. Do not construct an entire runtime context solely to locate a Codec.
+SharpLink 3.0 intentionally retains public `SharpLinkRuntimeContextBuilder` / `SharpLinkRuntimeContext` for standalone use of **generated** serialization. Build an isolated context, retrieve `context.Codecs.GetCodec<MyGeneratedPayload>()` when the matching generated manifest is admitted, and serialize/deserialize or compare golden bytes and cross-release decoder behavior without starting a Client/Server. The caller must dispose the context. The owner-local registration and ABI identity checks still apply; an unregistered unmanaged type must fail closed.
+
+If an application already owns an explicit `IRpcCodec<T>` unrelated to the generated manifest, it may use that codec directly without building a context. This does **not** restore the removed standalone `AddCodec` / `UseCodecResolver` methods and does not imply cross-version compatibility without verification.
 
 For RPC contracts, annotate the payload with `[RpcCodec]` or use the compile-time Codec/Adapter route, and regenerate with the matching 3.0 SDK. Prefer field-wise codecs when padding or cross-runtime representation is a concern. Low-level internal session/stream consumers use admitted owner-generated Codec factories.
 

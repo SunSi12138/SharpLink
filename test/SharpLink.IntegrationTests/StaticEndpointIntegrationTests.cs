@@ -698,7 +698,7 @@ public sealed partial class StaticEndpointIntegrationTests
         {
             var listenAddress = address ?? IPAddress.Loopback;
             var builder = SharpLinkServerBuilder.Create()
-                .UseTcp(port, listenAddress.ToString())
+                .UseTcp(port, listenAddress)
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(30));
             var service = new ConnectionBehaviorService
