@@ -420,29 +420,105 @@ public class SharpLinkClientTimeBudgetTests
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         await DrainSentFramesAsync(transport);
+
         using var stall = new ManualResetEventSlim(initialState: false);
-        transport.Connection.RunOnNextOutputBufferRequest(() => stall.Wait(TimeSpan.FromSeconds(30)));
+        var emissionEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var frames = new List<TestSentFrame>();
+        var invocationAccepted = false;
+        var stallReleased = false;
+        var sendQueueFlushed = false;
+        var markerObserved = false;
 
-        var invocation = channel.InvokeOneWayAsync(
-            method,
-            in request,
-            RpcEmptyRequestCodec.Instance,
-            in streams,
-            metadata: null,
-            cancellationToken: default).AsTask();
+        // A unique, valid Pong is a FIFO observer barrier: once parsed, every preceding
+        // Request or Cancel in the send queue must already have been observed. A 200 ms
+        // quiet period cannot establish either publication or absence under loaded CI.
+        const long observationMarker = 0x326f6e6577617931L;
+        transport.Connection.RunOnNextOutputBufferRequest(() =>
+        {
+            emissionEntered.TrySetResult();
+            Ensure(stall.Wait(TimeSpan.FromSeconds(30)),
+                "the test must release the actual output-buffer emission");
+        });
 
-        // An untimed OneWay owns no lifetime, so it returns as soon as its frame is admitted rather
-        // than waiting for the transport write. What matters here is that letting the client default
-        // elapse neither fails the call nor produces the cancel a live deadline would publish.
-        await invocation.WaitAsync(TimeSpan.FromSeconds(5));
-        timeProvider.Advance(TimeSpan.FromSeconds(30));
+        try
+        {
+            var invocation = channel.InvokeOneWayAsync(
+                method,
+                in request,
+                RpcEmptyRequestCodec.Instance,
+                in streams,
+                metadata: null,
+                cancellationToken: default).AsTask();
 
-        stall.Set();
-        var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.Exists(static frame => frame.Header.Type == ProtocolV2FrameType.Request),
-            "an untimed OneWay must still publish its Request");
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
-            "the client default must not turn an untimed OneWay into a deadline that cancels");
+            // Admission is not emission: the untimed OneWay must complete while its
+            // queued Request is actually blocked at the transport output boundary.
+            await emissionEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(!stall.IsSet, "the Request emission must still be stalled");
+            await invocation.WaitAsync(TimeSpan.FromSeconds(5));
+            invocationAccepted = true;
+
+            // No local OneWay deadline may be derived from the 30 s client fallback.
+            timeProvider.Advance(TimeSpan.FromSeconds(30));
+
+            stall.Set();
+            stallReleased = true;
+
+            // The marker follows the released Request and any Cancel emitted by a
+            // mistaken deadline. Flush forces buffered frames to the pipe, and the
+            // marker's observation proves the test transport parsed all preceding frames.
+            await connection.Session.SendPongWithBackpressureAsync(observationMarker)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            await connection.Session.FlushSendQueueAsync()
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            sendQueueFlushed = true;
+
+            for (var attempt = 0; attempt < 32; attempt++)
+            {
+                var next = await transport.Connection.TryReadNextSentFrameAsync(
+                    TimeSpan.FromSeconds(5));
+                if (next is not { } frame)
+                    break;
+                frames.Add(frame);
+                if (frame.Header.Type == ProtocolV2FrameType.Pong &&
+                    frame.Payload.Length == sizeof(long) &&
+                    BinaryPrimitives.ReadInt64LittleEndian(frame.Payload) == observationMarker)
+                {
+                    markerObserved = true;
+                    break;
+                }
+            }
+
+            Ensure(markerObserved,
+                "the FIFO marker must be observed after the transport flush");
+            var requests = frames.FindAll(static frame =>
+                frame.Header.Type == ProtocolV2FrameType.Request);
+            Ensure(requests.Count == 1 && requests[0].Header.RequestId != 0,
+                "an untimed OneWay must publish exactly one Request");
+            Ensure(!HasTimeBudget(requests[0]),
+                "an untimed OneWay Request must not inherit the client fallback TimeBudget");
+            Ensure(frames.TrueForAll(static frame =>
+                    frame.Header.Type is not ProtocolV2FrameType.Cancel),
+                "the client default must not turn an untimed OneWay into a deadline that cancels");
+        }
+        catch (Exception failure)
+        {
+            var observed = new List<string>(frames.Count);
+            foreach (var frame in frames)
+                observed.Add($"{frame.Header.Type}#{frame.Header.RequestId}");
+            throw new Exception(
+                "untimed OneWay emission observation failed: " +
+                $"emissionEntered={emissionEntered.Task.IsCompletedSuccessfully}, " +
+                $"invocationAccepted={invocationAccepted}, stallReleased={stallReleased}, " +
+                $"sendQueueFlushed={sendQueueFlushed}, markerObserved={markerObserved}, " +
+                $"frames=[{string.Join(", ", observed)}]",
+                failure);
+        }
+        finally
+        {
+            // Even failed phase/barrier assertions cannot leave the send-pump blocked
+            // until the callback's 30-second diagnostic ceiling expires.
+            stall.Set();
+        }
     }
 
     private static bool HasTimeBudget(TestSentFrame sent)
