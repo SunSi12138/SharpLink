@@ -483,9 +483,9 @@ public class SharpLinkClientTimeBudgetTests
                 "the client default must not turn an untimed OneWay into a deadline that cancels");
 
             // Negative control for the observer itself. Inject a synthetic Cancel on
-            // the same normal queue, then a progress-queue Pong (which may overtake
-            // Cancel), and finally a second normal-queue HealthCheck delimiter.
-            // A Pong-only delimiter could stop too early and miss this Cancel.
+            // the normal queue, add a progress-queue Pong as an interleaving adversary,
+            // then a second normal-queue HealthCheck delimiter. Pong may be observed
+            // before OR after HealthCheck: only Cancel/HealthCheck are FIFO ordered.
             const long controlMarker = observationMarker + 1;
             connection.Session.SendCancelAsync(
                 unchecked((long)requests[0].Header.RequestId),
@@ -498,9 +498,6 @@ public class SharpLinkClientTimeBudgetTests
 
             var controlFrames = new List<TestSentFrame>();
             await ReadThroughHealthCheckMarkerAsync(transport, controlMarker, controlFrames);
-            Ensure(controlFrames.Exists(static frame =>
-                    frame.Header.Type == ProtocolV2FrameType.Pong),
-                "negative control must include a higher-priority progress frame");
             Ensure(controlFrames.Exists(frame =>
                     frame.Header.Type == ProtocolV2FrameType.Cancel &&
                     frame.Header.RequestId == requests[0].Header.RequestId),
