@@ -84,7 +84,7 @@ def verify_no_legacy_server_calls_in_checkout() -> None:
     """
     import re
 
-    matcher = re.compile(r"\\.UseTcp\\s*\\(")
+    matcher = re.compile(r"\.UseTcp\s*\(")
     for source_file in ROOT.rglob("*.cs"):
         if set(source_file.parts) & {"bin", "obj", ".git"}:
             continue
@@ -100,7 +100,7 @@ def verify_no_legacy_server_calls_in_checkout() -> None:
                 ch = source[at]
                 previous = source[at - 1] if at else ""
                 if quoted:
-                    if ch == quoted and previous != "\\\\":
+                    if ch == quoted and previous != "\\":
                         quoted = ""
                     at += 1
                     continue
@@ -134,7 +134,7 @@ def verify_no_legacy_server_calls_in_checkout() -> None:
                     or value.endswith(".ToString()")
                     or (value.startswith("ip:") and '"' in value)
                 ):
-                    lineno = source.count("\\n", 0, call.start()) + 1
+                    lineno = source.count("\n", 0, call.start()) + 1
                     raise AssertionError(
                         f"Legacy string TCP binding argument at {source_file.relative_to(ROOT)}:"
                         f"{lineno}: {value}. Use IPAddress or IPAddress.Parse explicitly."
