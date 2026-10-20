@@ -1,0 +1,33 @@
+name: Issue 775 final published archive verification
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-archive:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[issue775-archive-links]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify published ZIP identities and complete issue data links only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 eng/issue775/final_archive_verify.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-final-verified-index-${{ github.sha }}
+          path: final-archive-verified/
+          retention-days: 90
+          if-no-files-found: error
