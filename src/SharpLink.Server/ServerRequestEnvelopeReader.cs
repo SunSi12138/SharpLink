@@ -36,7 +36,11 @@ internal static class ServerRequestEnvelopeReader
                 }
             }
         }
-        return Read(session, decodedPayload, flags, maxMetadataBytes, timeProvider, original.RpcDeadline);
+        var decoded = Read(session, decodedPayload, flags, maxMetadataBytes, timeProvider, original.RpcDeadline);
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+        decoded = decoded with { BoundMethod = original.BoundMethod };
+#endif
+        return decoded;
     }
 
     internal static ServerRequestEnvelope Read(
@@ -112,4 +116,9 @@ internal readonly record struct ServerRequestEnvelope(
     long MethodHash,
     ReadOnlySequence<byte> Arguments,
     RpcDeadline RpcDeadline,
-    SharpLinkMetadata? Metadata);
+    SharpLinkMetadata? Metadata)
+{
+#if SHARPLINK_STATIC_BINDING_PROTOTYPE
+    internal StaticBindingMethod? BoundMethod { get; init; }
+#endif
+}

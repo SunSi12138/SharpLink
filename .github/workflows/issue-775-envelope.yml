@@ -1,0 +1,53 @@
+name: Issue 775 immutable envelope experiment (archived)
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Reproduce an archived negative code-generation experiment, not current HEAD
+        type: choice
+        required: true
+        default: '429697f525be40e167cf4a9ec6aa8165bcb93576'
+        options:
+          - 'd9b79269a9a8d6a8b7726645617c72d21b8eaf12'
+          - '429697f525be40e167cf4a9ec6aa8165bcb93576'
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  codegen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.candidate }}
+          fetch-depth: 0
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: d2cb248b5e4b573d448092f7f152c2f2dd281e30
+          path: old
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: candidate/global.json
+      - name: Reproduce exact archived script and sources without changing the branch
+        run: |
+          python3 candidate/eng/issue775/envelope_codegen.py --old old --candidate candidate \
+            --expected-candidate '${{ inputs.candidate }}' --output envelope-codegen
+      - name: Retain exact candidate source and failures
+        if: always()
+        run: |
+          mkdir -p envelope-codegen
+          git -C candidate archive HEAD | gzip > envelope-codegen/source.tar.gz
+          if test -f envelope-codegen/execution-failures.json; then cat envelope-codegen/execution-failures.json; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-envelope-codegen-${{ inputs.candidate }}-${{ github.run_id }}
+          path: envelope-codegen/
+          retention-days: 30
+          if-no-files-found: error

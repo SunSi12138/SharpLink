@@ -1,0 +1,130 @@
+name: Issue 775 static binding prototype
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+  workflow_dispatch:
+    inputs:
+      performance:
+        description: Run the complete same-host ABBA and BAAB experiment
+        type: boolean
+        default: true
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: global.json
+      - name: Record exact inputs and architecture
+        run: |
+          mkdir -p artifacts
+          git rev-parse HEAD | tee artifacts/candidate-sha.txt
+          dotnet --info | tee artifacts/dotnet-info.txt
+          python3 eng/check-project-reference-boundaries.py
+      - name: Compile experimental dialect
+        run: dotnet build test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj -c Release -p:SharpLinkStaticBindingPrototype=true -bl:artifacts/prototype.binlog
+      - name: Real TCP and SharedMemory safety checks
+        run: timeout 120 dotnet test/SharpLink.Benchmarks/bin/Release/net10.0/SharpLink.Benchmarks.dll --static-binding-smoke | tee artifacts/smoke.log
+      - name: Retain exact source
+        if: always()
+        run: git archive HEAD | gzip > artifacts/source.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-safety-${{ github.sha }}
+          path: artifacts/
+          retention-days: 30
+          if-no-files-found: error
+  default-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: global.json
+      - run: dotnet restore Sharplink.slnx
+      - name: Default Release solution build
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: Unit and generator regression
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+      - name: Source formatting and unchanged maintainability policy
+        if: always()
+        run: |
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+      - name: Export formatter proposal without repository write access
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          dotnet format whitespace Sharplink.slnx --no-restore --verbosity minimal
+          SharpLinkStaticBindingPrototype=true dotnet format whitespace test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj --no-restore --verbosity minimal
+          git diff --binary > artifacts/formatter.patch
+      - name: Unchanged maintainability policy
+        if: always()
+        run: |
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-default-tests-${{ github.sha }}
+          path: |
+            test/**/TestResults/
+            artifacts/
+          retention-days: 30
+          if-no-files-found: warn
+  same-host-evidence:
+    needs: [validate, default-regression]
+    # The marker enables an explicit connector-authored run on this isolated branch.
+    # Ordinary pushes only validate; measurement never writes source or updates budgets.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.performance) ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[issue775-evidence]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: head
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 1a54993d3550911f5979a7b4d3f9f5f63ee86a64
+          path: base
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: head/global.json
+      - name: Same-host ABBA and BAAB with unchanged allocation gates
+        run: python3 head/eng/issue775/run.py --base-root base --head-root head --expected-head '${{ github.sha }}' --output evidence
+      - name: Publish measured summary
+        if: always()
+        run: |
+          if test -f evidence/summary.md; then cat evidence/summary.md | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if test -f evidence/execution-failures.json; then cat evidence/execution-failures.json; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-abba-baab-${{ github.sha }}
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: error

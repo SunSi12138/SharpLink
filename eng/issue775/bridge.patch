@@ -1,0 +1,60 @@
+--- a/src/SharpLink.Client/StaticBindingRpcChannel.cs
++++ b/src/SharpLink.Client/StaticBindingRpcChannel.cs
+@@ -14,9 +14,13 @@
+         in TRequest request, IRpcCodec<TRequest> requestCodec, in TStreams streams,
+         SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
+         where TStreams : struct, IRpcClientStreamWriter
+-        => method.HasClientStreams || method.ClientStreamCount != 0
+-            ? ValueTask.FromException(Unsupported())
+-            : client.InvokeStaticOneWayAsync(site, method, request, requestCodec, streams, metadata, cancellationToken);
++    {
++        if (method.HasClientStreams || method.ClientStreamCount != 0)
++            return ValueTask.FromException(Unsupported());
++        if (typeof(TStreams) == typeof(RpcNoClientStreams))
++            return client.InvokeStaticPlainOneWayAsync(site, method, request, requestCodec, metadata, cancellationToken);
++        return client.InvokeStaticOneWayAsync(site, method, request, requestCodec, streams, metadata, cancellationToken);
++    }
+ 
+     public ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
+         in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+--- /dev/null
++++ b/src/SharpLink.Client/SharpLinkClient.StaticPlainOneWay.cs
+@@ -0,0 +1,38 @@
++#if SHARPLINK_STATIC_BINDING_PROTOTYPE
++namespace SharpLink.Client;
++
++internal sealed partial class SharpLinkClient
++{
++    // Exact RpcNoClientStreams specialization. The channel rejects stream shapes first.
++    // Keep this entry equivalent to InvokeStaticOneWayAsync with that empty writer.
++    internal ValueTask InvokeStaticPlainOneWayAsync<TRequest>(
++        StaticBindingCallSite? bindingSite, RpcMethodDescriptor method,
++        in TRequest request, IRpcCodec<TRequest> requestCodec,
++        SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
++    {
++        ArgumentNullException.ThrowIfNull(requestCodec);
++        cancellationToken.ThrowIfCancellationRequested();
++        var interceptors = CaptureInterceptorGenerationForInvocation();
++        var control = ResolveCallControlForInvocation(
++            method, metadata, includeClientDefault: false, interceptors);
++        control = control with { BindingSite = bindingSite };
++        Interlocked.Increment(ref _activeLogicalInvocations);
++        try
++        {
++            ValueTask invocation;
++            if (SharpLinkTelemetry.ClientCallsEnabled)
++                invocation = InvokeOneWayWithTelemetryAsync(method, request, requestCodec, default(RpcNoClientStreams), interceptors, control, cancellationToken);
++            else if (interceptors.Count != 0)
++                invocation = InvokeOneWayInterceptedAsync(method, request, requestCodec, default(RpcNoClientStreams), interceptors, control, cancellationToken);
++            else
++                invocation = InvokeOneWayCoreAsync(method, request, requestCodec, default(RpcNoClientStreams), control, cancellationToken);
++            return CompleteLogicalInvocation(invocation);
++        }
++        catch
++        {
++            Interlocked.Decrement(ref _activeLogicalInvocations);
++            throw;
++        }
++    }
++}
++#endif

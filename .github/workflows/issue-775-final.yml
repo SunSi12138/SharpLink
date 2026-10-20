@@ -1,0 +1,84 @@
+name: Issue 775 final build diagnosis and complete evidence archive
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  build-diagnosis:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[issue775-final]')
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: '10.0.113'
+      - name: Self-test final reader and record fixed build plan
+        run: python3 eng/issue775/final_round.py self-test
+      - name: Clean builds and actual DLL metadata, not performance measurements
+        run: |
+          python3 eng/issue775/final_round.py build --driver "$GITHUB_WORKSPACE" \
+            --host '${{ matrix.host }}' --output "$GITHUB_WORKSPACE/final-build-${{ matrix.host }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-final-build-${{ matrix.host }}-${{ github.sha }}
+          path: final-build-${{ matrix.host }}/
+          retention-days: 90
+          if-no-files-found: error
+  archive-all-research:
+    needs: build-diagnosis
+    if: >-
+      always() && (github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[issue775-final]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Only this evidence-archive job may publish explicitly labelled research assets
+    # and append the requested issue index. It cannot modify production source.
+    permissions:
+      contents: write
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Archive every visible study artifact, failures and issue/PR history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 eng/issue775/final_round.py archive --driver "$GITHUB_WORKSPACE" \
+            --output "$GITHUB_WORKSPACE/final-archive"
+      - name: Record actual archive outcome
+        if: always()
+        run: |
+          if test -f final-archive/published.json; then cat final-archive/published.json | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if test -f final-archive/archive-progress.json; then python3 -c 'import json; x=json.load(open("final-archive/archive-progress.json")); print("Archived entries:",len(x["artifacts"])); print("Failures:",x["failures"])'; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-final-archive-index-${{ github.sha }}
+          path: |
+            final-archive/index/
+            final-archive/issue775-all-research-index.zip
+            final-archive/published.json
+            final-archive/archive-progress.json
+          retention-days: 90
+          if-no-files-found: error

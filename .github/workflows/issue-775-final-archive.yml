@@ -1,0 +1,48 @@
+name: Issue 775 final archive recovery only
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  archive:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[issue775-archive-final]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify archive script syntax and reusable reader
+        run: |
+          python3 -m py_compile eng/issue775/final_archive.py
+          python3 eng/issue775/final_round.py self-test
+      - name: Recover per-run raw artifacts and update issue without re-running experiments
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 eng/issue775/final_archive.py --output final-archive
+      - name: Print actual archive outcome
+        if: always()
+        run: |
+          if test -f final-archive/published.json; then cat final-archive/published.json; fi
+          if test -f final-archive/progress.json; then python3 -c 'import json; x=json.load(open("final-archive/progress.json")); print("Archived entries:",len(x["artifacts"])); print("Failures:",x["failures"])'; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-final-complete-index-${{ github.sha }}
+          path: |
+            final-archive/index/
+            final-archive/issue775-all-research-index.zip
+            final-archive/published.json
+            final-archive/progress.json
+          retention-days: 90
+          if-no-files-found: error

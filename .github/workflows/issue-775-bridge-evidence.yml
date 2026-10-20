@@ -1,0 +1,68 @@
+name: Issue 775 fixed no-stream bridge evidence
+on:
+  push:
+    branches: [prototype/775-static-session-binding]
+    paths:
+      - eng/issue775/bridge_perf.py
+      - .github/workflows/issue-775-bridge-evidence.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  evidence:
+    strategy:
+      fail-fast: false
+      matrix:
+        comparison: [original-dev, old-static]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: driver
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 5487a21f020e16c2b036b439b8d7efd896267422
+          path: experiment
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 6cfb09e7dd6b68695f92d28f726340bc8eb39e1d
+          path: candidate
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.comparison == 'original-dev' && '1a54993d3550911f5979a7b4d3f9f5f63ee86a64' || '6cfb09e7dd6b68695f92d28f726340bc8eb39e1d' }}
+          path: comparator
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          global-json-file: candidate/global.json
+      - name: Check frozen semantic readers
+        run: |
+          python3 -m unittest discover -s experiment/eng/issue775 -p test_bridge.py -v
+          python3 -m unittest discover -s experiment/eng/issue775 -p test_attribution.py -v
+      - name: Fixed source paired experiment with original workload and allocation policy
+        run: |
+          python3 driver/eng/issue775/bridge_perf.py --candidate candidate --comparator comparator \
+            --experiment experiment --comparison '${{ matrix.comparison }}' --output evidence
+      - name: Preserve all identities and failed or unfavorable results
+        if: always()
+        run: |
+          mkdir -p evidence
+          git -C driver rev-parse HEAD > evidence/performance-driver-sha.txt
+          git -C driver archive HEAD | gzip > evidence/performance-driver-source.tar.gz
+          if test -f evidence/measurements/summary.md; then cat evidence/measurements/summary.md | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          if test -f evidence/measurements/execution-failures.json; then cat evidence/measurements/execution-failures.json; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: issue775-bridge-${{ matrix.comparison }}-${{ github.sha }}
+          path: evidence/
+          retention-days: 30
+          if-no-files-found: error
