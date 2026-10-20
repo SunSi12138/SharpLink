@@ -387,8 +387,16 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
+        SharpLinkDynamicModuleLease registrationLease = default;
         try
         {
+            var identity = ReadRequestIdentity(payload);
+            if (identity.ClientStreamCount > _protocolOptions.MaxConcurrentStreamsPerConnection)
+            {
+                throw new SharpLinkProtocolViolationException(
+                    ProtocolViolationReason.MalformedFrame,
+                    "Request client-stream count exceeds the connection's bounded stream capacity.");
+            }
             if (!TryAcceptRequest(connection, requestId))
             {
                 if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
@@ -398,7 +406,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-                        ResolveRawRequestClientStreamCount(payload));
+                        identity.ClientStreamCount);
                     return;
                 }
 
@@ -414,51 +422,53 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            var admissionProgram = CaptureAdmissionProgram(requestId);
-            ValueTask dispatchTask;
-            try
+            if (!ServerContractAdmission.TryAcquire(
+                    _serviceModuleRegistry, in identity, flags,
+                    out var serviceInfo, out registrationLease, out var rejection))
             {
-                dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
-                    ? DispatchOneWayRpc(
-                        connection,
-                        requestId,
-                        flags,
-                        payload,
-                        requestCancellationMap,
-                        serverLoopToken,
-                        admissionProgram)
-                    : DispatchRpcAsync(
-                        connection,
-                        requestId,
-                        flags,
-                        payload,
-                        requestCancellationMap,
-                        serverLoopToken,
-                        admissionProgram);
-            }
-            catch (SharpLinkException exception) when (
-                exception.Code == SharpLinkErrorCode.ProtocolViolation)
-            {
-                SharpLinkTelemetry.RecordProtocolFailure("server");
-                var reason = SharpLinkProtocolViolationException.Classify(exception);
-                if (reason == ProtocolViolationReason.InternalState)
+                if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
                 {
-                    LogServerBackgroundLoopUnhandledException(
-                        _logger,
-                        nameof(ProcessRequestLoop),
-                        exception);
-                }
-                else
-                {
-                    LogProtocolViolationRateLimited(reason);
+                    // OneWay publishes producers without an acknowledgement. Its wire shape
+                    // permits draining without probing an incompatible generated stub. Two-way
+                    // producers are still waiting for RequestAccepted and own no receive routes.
+                    DrainRejectedOneWayStreams(connection.Session, requestId, identity.ClientStreamCount);
+                    Interlocked.Increment(ref _rejectedOneWayCalls);
+                    LogOnewayRpcDispatchFailed(_logger, rejection!);
+                    return;
                 }
 
+                var rejectionSend = connection.Session.SendRpcErrorWithBackpressureAsync(
+                    requestId, rejection!, connection.ConnectionToken);
                 payload = default;
-                var closeTask = connection.CloseAsync();
-                if (!closeTask.IsCompletedSuccessfully)
-                    await closeTask.ConfigureAwait(false);
+                if (!rejectionSend.IsCompletedSuccessfully)
+                    await rejectionSend.ConfigureAwait(false);
                 return;
             }
+
+            var admissionProgram = CaptureAdmissionProgram(requestId);
+            var dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
+                    ? DispatchOneWayRpcCore(
+                        connection,
+                        requestId,
+                        flags,
+                        payload,
+                        requestCancellationMap,
+                        serverLoopToken,
+                        admissionProgram,
+                        serviceInfo,
+                        in identity,
+                        identityValidated: true)
+                    : DispatchRpcCoreAsync(
+                        connection,
+                        requestId,
+                        flags,
+                        payload,
+                        requestCancellationMap,
+                        serverLoopToken,
+                        admissionProgram,
+                        serviceInfo,
+                        in identity,
+                        identityValidated: true);
 
             payload = default;
             if (!dispatchTask.IsCompletedSuccessfully)
@@ -468,12 +478,30 @@ internal sealed partial class SharpLinkServer
         {
         }
         catch (SharpLinkException exception) when (
+            exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            SharpLinkTelemetry.RecordProtocolFailure("server");
+            var reason = SharpLinkProtocolViolationException.Classify(exception);
+            if (reason == ProtocolViolationReason.InternalState)
+                LogServerBackgroundLoopUnhandledException(_logger, nameof(ProcessRequestLoop), exception);
+            else
+                LogProtocolViolationRateLimited(reason);
+            payload = default;
+            var closeTask = connection.CloseAsync();
+            if (!closeTask.IsCompletedSuccessfully)
+                await closeTask.ConfigureAwait(false);
+        }
+        catch (SharpLinkException exception) when (
             exception.Code == SharpLinkErrorCode.ConnectionClosed)
         {
         }
         catch (Exception ex)
         {
             LogRpcDispatchUnhandledException(_logger, ex);
+        }
+        finally
+        {
+            registrationLease.Dispose();
         }
     }
 

@@ -1,0 +1,267 @@
+name: RPC Contract Routing Evidence
+
+on:
+  push:
+    branches: ['feat/775-rpc-contract-routing']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rpc-contract-routing-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+  TUNIT_MAX_PARALLEL_TESTS: '8'
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Record exact source and toolchain
+        run: |
+          mkdir -p artifacts/validation/issue775/compile
+          git rev-parse HEAD > artifacts/validation/issue775/compile/commit.txt
+          dotnet --info > artifacts/validation/issue775/compile/dotnet-info.txt
+      - name: Restore and compile all projects
+        run: |
+          dotnet restore Sharplink.slnx 2>&1 | tee artifacts/validation/issue775/compile/restore.log
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal 2>&1 | tee artifacts/validation/issue775/compile/build.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: issue775-compile-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/validation/issue775/compile
+          if-no-files-found: error
+          retention-days: 14
+
+  public-api:
+    needs: compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Build shipping packages
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+          dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+      - name: Generate an API candidate for review without editing the reviewed baseline
+        run: |
+          dotnet build eng/SharpLink.PublicApi/SharpLink.PublicApi.csproj -c Release -v minimal
+          python3 eng/verify-public-api.py artifacts/nuget --baseline artifacts/public-api/candidate --output artifacts/public-api/current --update
+      - name: Compare actual packaged APIs with the reviewed baseline
+        run: python3 eng/verify-public-api.py artifacts/nuget
+      - name: Retain generated API inventory even when review is still required
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: issue775-public-api-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/public-api/current
+            artifacts/public-api/candidate
+            artifacts/nuget/*.nupkg
+          if-no-files-found: error
+          retention-days: 14
+
+  regression:
+    needs: compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Install runtime architecture guard prerequisite
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+      - name: Restore and record provenance
+        run: |
+          mkdir -p artifacts/validation/issue775/regression
+          git rev-parse HEAD > artifacts/validation/issue775/regression/commit.txt
+          dotnet --info > artifacts/validation/issue775/regression/dotnet-info.txt
+          dotnet restore Sharplink.slnx
+      - name: Existing source and formatting guards
+        id: guards
+        continue-on-error: true
+        run: |
+          python3 eng/check-project-reference-boundaries.py
+          python3 eng/test-verify-maintainability.py
+          bash eng/check-maintainability.sh
+          bash eng/verify-runtime-architecture.sh
+          python3 eng/verify-release-versions.py
+          dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+      - name: Release build and generated dependency guard
+        id: build
+        continue-on-error: true
+        run: |
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+          bash eng/verify-generated-assembly-dependencies.sh
+      - name: Complete unit suite
+        id: unit
+        continue-on-error: true
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/unit.log
+      - name: Complete generator suite
+        id: generator
+        continue-on-error: true
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/generator.log
+      - name: Complete load-test unit suite
+        id: load
+        continue-on-error: true
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/load-test-unit.log
+      - name: Complete stream-load-test unit suite
+        id: streamload
+        continue-on-error: true
+        run: dotnet test --project test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj -c Release --no-build 2>&1 | tee artifacts/validation/issue775/regression/stream-load-test-unit.log
+      - name: Complete real transport integration suite
+        id: integration
+        continue-on-error: true
+        run: >-
+          dotnet run -c Release --no-build --project test/SharpLink.IntegrationTests --
+          --maximum-parallel-tests 1 --timeout 120s
+          2>&1 | tee artifacts/validation/issue775/regression/integration.log
+      - name: Canonical Debug admission rollback
+        id: debug
+        continue-on-error: true
+        run: |
+          dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Debug --no-build --treenode-filter "/*/*/ServerCallAdmissionTests/LifecycleChangeAfterCapacityAcquisitionShouldRollbackBothScopes" 2>&1 | tee artifacts/validation/issue775/regression/debug-admission.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: issue775-regression-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/validation/issue775/regression
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Fail if any required regression step failed or was skipped
+        if: always()
+        env:
+          STEP_RESULTS: ${{ toJSON(steps) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          steps = json.loads(os.environ['STEP_RESULTS'])
+          required = ['guards', 'build', 'unit', 'generator', 'load', 'streamload', 'integration', 'debug']
+          failures = [name for name in required if steps.get(name, {}).get('outcome') != 'success']
+          if failures:
+              raise SystemExit('Required regression steps did not pass: ' + ', '.join(failures))
+          PY
+
+  packages-aot-trim:
+    needs: compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/setup-dotnet
+      - name: Restore and build Release
+        run: |
+          dotnet restore Sharplink.slnx
+          dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+      - name: ProjectReference trim smoke
+        env:
+          SHARPLINK_TRIM_RID: linux-x64
+        run: bash eng/run-project-reference-trim-smoke.sh
+      - name: Canonical NativeAOT transport and topology smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: bash eng/run-shared-memory-aot-process-smoke.sh
+      - name: Pack actual shipping assemblies
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+      - uses: ./.github/actions/verify-packages
+      - name: Generated ABI and wire process compatibility guards
+        run: |
+          bash eng/verify-generated-abi-mixing.sh
+          bash eng/verify-protocol-v2-cross-version.sh
+      - uses: ./.github/actions/package-smoke
+      - name: Canonical OneWay and shared-memory load smoke
+        run: |
+          dotnet run -c Release --no-build --project demo/Oneway
+          dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: issue775-aot-trim-package-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            artifacts/aot-shared-memory/**/*.log
+            artifacts/project-reference-trim/**/*.log
+            artifacts/generated-abi-mixing/*.log
+            artifacts/protocol-v2-cross-version/*.log
+            artifacts/nuget/*.nupkg
+          if-no-files-found: warn
+          retention-days: 14
+
+  matched-performance:
+    needs: compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: head
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 3332559cf4db455e0249448cf16ad43f4fc36564
+          path: base
+      - uses: ./head/.github/actions/setup-dotnet
+      - name: Same-host ABBA and BAAB, with unchanged allocation budgets
+        run: >-
+          python3 head/eng/rpc-contract-routing-performance/run.py
+          --base-root "$GITHUB_WORKSPACE/base"
+          --head-root "$GITHUB_WORKSPACE/head"
+          --expected-base 3332559cf4db455e0249448cf16ad43f4fc36564
+          --expected-head "$GITHUB_SHA"
+          --output "$GITHUB_WORKSPACE/artifacts/issue775-performance"
+      - name: Retain every timing slot and failure
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: issue775-performance-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/issue775-performance
+          if-no-files-found: error
+          retention-days: 30
+
+  evidence-summary:
+    needs: [compile, public-api, regression, packages-aot-trim, matched-performance]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      RESULTS: ${{ toJSON(needs) }}
+    steps:
+      - name: Require all execution gates and preserve measurement boundaries
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          results = json.loads(os.environ['RESULTS'])
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+              output.write('# RPC contract routing evidence\n\n')
+              for name, result in results.items():
+                  output.write(f"- {name}: {result['result']}\n")
+              output.write('\nPerformance execution success is not a no-regression verdict. Review the retained base/head ratios, per-request tail latency and allocation budgets before marking the change ready. Sender-side queued completion and receiver-completed OneWay evidence have separate fields and tables.\n')
+          if any(item['result'] != 'success' for item in results.values()):
+              raise SystemExit('One or more evidence jobs failed or did not execute.')
+          PY

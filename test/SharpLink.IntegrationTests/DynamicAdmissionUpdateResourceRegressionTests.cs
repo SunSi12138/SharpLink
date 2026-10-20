@@ -108,7 +108,7 @@ public sealed class DynamicAdmissionUpdateResourceRegressionTests
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            queued = harness.ClientB.Get<ICompressionService>()
+            queued = EarlyClientStreamPeer.CreateProxy<ICompressionService>(harness.ClientB)
                 .UploadBytesAsync(TwoStreamItemsThenWaitAsync(producerRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.Server.PreAdmissionStreamBytesForDiagnostics > StreamItemBytes * 2 &&

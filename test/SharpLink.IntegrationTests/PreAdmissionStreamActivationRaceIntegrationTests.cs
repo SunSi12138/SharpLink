@@ -92,7 +92,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            target = harness.ClientB.Get<IPreAdmissionStreamActivationRaceService>()
+            target = EarlyClientStreamPeer.CreateProxy<IPreAdmissionStreamActivationRaceService>(harness.ClientB)
                 .UploadAsync(OneThenOverflowAsync(overflowRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > 0,

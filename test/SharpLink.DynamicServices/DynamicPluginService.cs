@@ -13,6 +13,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     private static TaskCompletionSource _rejectResponseStarted = NewSignal();
     private static TaskCompletionSource _rejectResponseRelease = NewSignal();
     private static TaskCompletionSource _serverStreamDisposed = NewSignal();
+    private static TaskCompletionSource _notificationReceived = NewSignal();
     private static int _created;
     private static int _disposed;
     private static int _notifications;
@@ -37,6 +38,8 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     public static Task ServerStreamDisposed => Volatile.Read(ref _serverStreamDisposed).Task;
 
+    public static Task NotificationReceived => Volatile.Read(ref _notificationReceived).Task;
+
     public static void Reset()
     {
         Volatile.Write(ref _blockStarted, NewSignal());
@@ -46,6 +49,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
         Volatile.Write(ref _rejectResponseStarted, NewSignal());
         Volatile.Write(ref _rejectResponseRelease, NewSignal());
         Volatile.Write(ref _serverStreamDisposed, NewSignal());
+        Volatile.Write(ref _notificationReceived, NewSignal());
         Volatile.Write(ref _created, 0);
         Volatile.Write(ref _disposed, 0);
         Volatile.Write(ref _notifications, 0);
@@ -65,6 +69,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     public ValueTask NotifyAsync(int value, CancellationToken cancellationToken)
     {
         Interlocked.Add(ref _notifications, value);
+        Volatile.Read(ref _notificationReceived).TrySetResult();
         return ValueTask.CompletedTask;
     }
 

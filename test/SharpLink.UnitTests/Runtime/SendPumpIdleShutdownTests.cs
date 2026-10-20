@@ -175,7 +175,7 @@ public class SendPumpIdleShutdownTests
             for (var index = 0; index < producers.Length; index++)
             {
                 var producerIndex = index;
-                producers[index] = LongRunningTestWorker.Run(() =>
+                producers[index] = LongRunningTestWorker.RunAsync(async () =>
                 {
                     ulong requestId = (ulong)(producerIndex + 1) * 10_000;
                     var firstSend = true;
@@ -200,16 +200,18 @@ public class SendPumpIdleShutdownTests
                                 var flush = session.SendPacketAndFlushAsync(frame).AsTask();
                                 try
                                 {
-                                    // The production liveness boundary is the DisposeAsync wait
-                                    // below. Once it returns, the send pump has stopped and has
-                                    // released every capacity/flush waiter. Do not make this
-                                    // dedicated owner depend on the shared ThreadPool scheduling
-                                    // the async caller continuation before test teardown can stop it.
+                                    // DisposeAsync joins the pump and wakes capacity/flush waiters.
+                                    // The stop token lets this dedicated thread leave its blocking
+                                    // wait while the caller's asynchronous cleanup finishes below.
                                     flush.WaitAsync(producersStopped.Token).GetAwaiter().GetResult();
                                 }
                                 catch (OperationCanceledException) when (producersStopped.IsCancellationRequested)
                                 {
-                                    _ = ObserveProducerCompletionAsync(flush);
+                                    // A reserved frame can still belong to the producer's pending
+                                    // EnqueueAsync continuation after the pump has stopped. Keep
+                                    // that cleanup inside the producer task joined by WhenAll,
+                                    // without blocking a thread needed to execute the refund.
+                                    await ObserveProducerCompletionAsync(flush).ConfigureAwait(false);
                                     return;
                                 }
                             }
@@ -324,8 +326,8 @@ public class SendPumpIdleShutdownTests
         }
         catch
         {
-            // The session shutdown path owns the operation outcome; this observer only keeps
-            // a stop-token-won caller race from surfacing an unobserved late terminal fault.
+            // Session shutdown owns the outcome. Awaiting the original operation also joins any
+            // producer-owned reservation refund before the zero-byte assertion and teardown.
         }
     }
 

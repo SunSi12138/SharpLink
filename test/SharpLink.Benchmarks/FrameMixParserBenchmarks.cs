@@ -87,10 +87,10 @@ public class FrameMixParserBenchmarks
             ProtocolV2FrameType.Request,
             flags,
             requestId);
-        var prefix = writer.GetSpan(ProtocolV2Constants.RequestPrefixBytes);
-        BinaryPrimitives.WriteInt64LittleEndian(prefix, 11);
-        BinaryPrimitives.WriteInt64LittleEndian(prefix[sizeof(long)..], 22);
-        writer.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        ProtocolV2RequestIdentityCodec.Write(writer, new ProtocolV2RequestIdentity(
+            11, 22, new RpcHash128(33, 44),
+            (flags & ProtocolV2FrameFlags.OneWay) != 0 ? RpcMethodKind.OneWay : RpcMethodKind.Unary,
+            ClientStreamCount: 0));
         ProtocolV2FrameWriter.EndFrame(writer, token);
     }
 

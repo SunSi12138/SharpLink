@@ -87,9 +87,9 @@ internal static class ClientBuilderTestHelper
     private static SharpLinkClient Materialize(SharpClientBuilder builder)
     {
         // This is the production multi-cluster child path as well: Compile freezes the explicit
-        // empty manifest snapshot used by these isolated runtime tests, then Materialize transfers
+        // explicit local invocation manifest used by these isolated runtime tests, then Materialize transfers
         // ownership through the same transaction as normal Build.
-        var plan = builder.CompileForMultiCluster([]);
+        var plan = builder.CompileForMultiCluster([ClientInvocationTestManifest.Instance]);
         return builder.MaterializeCompiledPlan(plan) as SharpLinkClient ?? throw new InvalidOperationException(
             "The production Client Builder did not return its concrete runtime implementation.");
     }

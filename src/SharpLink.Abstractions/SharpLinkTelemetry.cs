@@ -176,6 +176,9 @@ public static class SharpLinkTelemetry
     internal static bool ClientCallsEnabled =>
         ClientActivitySource.HasListeners() || CallMetricsEnabled;
 
+    internal static bool ServerCallsEnabled =>
+        ServerActivitySource.HasListeners() || CallMetricsEnabled;
+
     internal static void ConnectionOpened(string side)
     {
         RecordDelta(ActiveConnections, 1, side);

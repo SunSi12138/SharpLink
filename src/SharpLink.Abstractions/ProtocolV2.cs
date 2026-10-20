@@ -10,13 +10,13 @@ public static class ProtocolV2Constants
     public const int HeaderBytes = 15;
 
     /// <summary>Fixed request routing prefix size in bytes.</summary>
-    public const int RequestPrefixBytes = 16;
+    public const int RequestPrefixBytes = 36;
 
     /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 4;
+    public const ushort MinorVersion = 5;
 
     /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 4;
+    public const ushort MinimumCompatibleMinorVersion = 5;
 }
 
 /// <summary>Protocol v2 frame types.</summary>
@@ -55,7 +55,9 @@ public enum ProtocolV2FrameType : byte
     /// <summary>Acknowledges the cumulative response compression preference generation applied by the server.</summary>
     ResponseCompressionPreferenceAck = 15,
     /// <summary>Requests blue-green replacement of this healthy physical session.</summary>
-    SessionRefreshRequested = 16
+    SessionRefreshRequested = 16,
+    /// <summary>Allows client-stream production after a two-way request passes server admission.</summary>
+    RequestAccepted = 17
 }
 
 /// <summary>Protocol v2 frame flags.</summary>
@@ -98,7 +100,7 @@ public enum ProtocolV2Capabilities : ulong
     HealthCheck = 1UL << 3,
     /// <summary>Negotiates an explicit one-byte reason on Cancel frames.</summary>
     CancellationReason = 1UL << 4,
-    /// <summary>Publishes deterministic contract-assembly identities for bind-time compatibility checks.</summary>
+    /// <summary>Publishes deterministic contract-assembly identities for control-plane routing.</summary>
     ContractManifest = 1UL << 5,
     /// <summary>Supports server-requested blue-green physical-session replacement.</summary>
     SessionRefresh = 1UL << 6
@@ -157,13 +159,17 @@ public readonly record struct ProtocolV2HandshakeRequest(
 /// <param name="StreamReceiveWindowBytes">The negotiated initial receive window for each stream.</param>
 /// <param name="ConnectionReceiveWindowBytes">The negotiated aggregate receive window for the connection.</param>
 /// <param name="CompressionProfile">The selected compression profile, or <see langword="null"/> when compression is disabled.</param>
+/// <param name="ServerInstanceId">The server identity bound to this physical connection.</param>
+/// <param name="RegistryEpoch">The server registry timeline bound to this physical connection.</param>
 public readonly record struct ProtocolV2HandshakeResponse(
     ushort MinorVersion,
     ProtocolV2Capabilities NegotiatedCapabilities,
     int MaxFramePayloadBytes,
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes,
-    string? CompressionProfile = null);
+    string? CompressionProfile = null,
+    Guid ServerInstanceId = default,
+    Guid RegistryEpoch = default);
 
 /// <summary>Updates the client preference governing future server response-compression decisions.</summary>
 /// <param name="Generation">The monotonic desired-state generation.</param>

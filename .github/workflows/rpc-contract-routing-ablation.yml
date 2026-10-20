@@ -1,0 +1,40 @@
+name: RPC Contract Routing Ablation
+on:
+  push:
+    branches: ['feat/775-rpc-contract-routing']
+    paths:
+      - 'src/**'
+      - 'eng/rpc-contract-routing-performance/ablate.py'
+      - '.github/workflows/rpc-contract-routing-ablation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rpc-contract-routing-ablation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  one-factor-removal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: head
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 2149ca799dca38bcb7f97583572406b0d0b41890
+          path: previous
+      - uses: ./head/.github/actions/setup-dotnet
+      - name: Controlled ABBA BAAB one-factor removals
+        run: >-
+          python3 head/eng/rpc-contract-routing-performance/ablate.py
+          --head "$GITHUB_WORKSPACE/head"
+          --previous "$GITHUB_WORKSPACE/previous"
+          --output "$GITHUB_WORKSPACE/artifacts/issue775-ablation"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: issue775-ablation-${{ github.sha }}-${{ github.run_attempt }}
+          path: artifacts/issue775-ablation
+          if-no-files-found: error
+          retention-days: 30

@@ -131,6 +131,7 @@ public static class ProtocolV2FrameParser
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceUpdate => ProtocolV2FrameType.ResponseCompressionPreferenceUpdate,
         (byte)ProtocolV2FrameType.ResponseCompressionPreferenceAck => ProtocolV2FrameType.ResponseCompressionPreferenceAck,
         (byte)ProtocolV2FrameType.SessionRefreshRequested => ProtocolV2FrameType.SessionRefreshRequested,
+        (byte)ProtocolV2FrameType.RequestAccepted => ProtocolV2FrameType.RequestAccepted,
         _ => throw Violation($"Unknown Protocol v2 frame type {value}.")
     };
 
@@ -225,7 +226,7 @@ public static class ProtocolV2FrameParser
                     ProtocolV2PayloadCodec.ValidateErrorPayload(payload, limits.MaxErrorMessageBytes);
                 else
                 {
-                    if (payload.Length < 23 || payload.Length > 87)
+                    if (payload.Length < 55 || payload.Length > 119)
                         throw Violation("HandshakeResponse payload has an invalid length.");
                 }
                 break;
@@ -236,6 +237,10 @@ public static class ProtocolV2FrameParser
                 break;
             case ProtocolV2FrameType.Request:
                 ValidateRequestPayload(payload, flags, limits.MaxMetadataBytes);
+                break;
+            case ProtocolV2FrameType.RequestAccepted:
+                if (!payload.IsEmpty)
+                    throw Violation("RequestAccepted must have an empty payload.");
                 break;
             case ProtocolV2FrameType.Response:
                 if ((flags & ProtocolV2FrameFlags.Error) != 0)
@@ -315,9 +320,7 @@ public static class ProtocolV2FrameParser
         ProtocolV2FrameFlags flags,
         int maxMetadataBytes)
     {
-        if (payload.Length < ProtocolV2Constants.RequestPrefixBytes)
-            throw Violation("Request payload is shorter than its routing prefix.");
-        var prefixBytes = ProtocolV2Constants.RequestPrefixBytes;
+        var prefixBytes = ProtocolV2RequestIdentityCodec.GetPrefixLength(payload);
         if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
             prefixBytes += sizeof(long);

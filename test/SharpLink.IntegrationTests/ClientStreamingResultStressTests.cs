@@ -145,7 +145,7 @@ public class ClientStreamingResultStressTests
             const int activeItemCount = 16;
             const int activeItemSize = 512;
             const int queuedItemSize = 64;
-            var call = harness.Client.Get<ICompressionService>()
+            var call = EarlyClientStreamPeer.CreateProxy<ICompressionService>(harness.Client)
                 .UploadBytesAsync(GatedPayloads(
                     queuedItemSize,
                     activeItemCount,

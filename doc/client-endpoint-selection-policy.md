@@ -42,10 +42,12 @@ Endpoint selection is a next-physical-attempt policy.
 
 A static or dynamic cluster captures exactly once, at the beginning of `GetReadyConnection` for one physical attempt:
 
-1. the current immutable Ready endpoint snapshot;
+1. the current contract route and its matching immutable endpoint topology from one publication;
 2. the current immutable endpoint-selection policy generation.
 
-All local exclusions/re-selections performed while that physical attempt is finding an admitted Ready connection reuse those two captured values. A policy publication that races the attempt therefore cannot make one attempt call two selectors or combine two strategy generations.
+Ordinary RPC routes contain only manifest-compatible connections. Explicit receipt routes contain only the matching server/epoch within the same target scope; the server still performs final contract admission. Internal connection selection without a contract binding uses the Ready snapshot directly. See [local proxies and contract routing](rpc-wire-identity.md).
+
+All local exclusions/re-selections performed while that physical attempt is finding an admitted Ready connection reuse those captured values. Contract candidates and their topology cannot come from different publications. A policy publication that races the attempt cannot make one attempt call two selectors or combine two strategy generations.
 
 Once an endpoint/connection has been selected, publication never moves that in-flight attempt. A later retry attempt performs a new capture and may observe the newer policy.
 

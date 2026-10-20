@@ -180,19 +180,24 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
     }
 
     [Test]
-    public async Task ACompletedObservationShouldNotPromiseLaterGetSurvivesUnregister()
+    public async Task ACompletedObservationShouldNotPromiseLaterCallsSurviveRemoteUnregister()
     {
         var transport = new TestClientTransportFactory();
         await using var client = CreateBuilder().UseTransport(transport).Build();
         await client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash);
         await PublishAndFenceAsync(transport.Connection, 1, []);
 
-        Exception? failure = null;
-        try { _ = client.Get<IOrdersContract>(); }
-        catch (SharpLinkException exception) { failure = exception; }
+        var proxy = (OrdersProxy)client.Get<IOrdersContract>();
+        Ensure(ReferenceEquals(proxy, client.CreateProxy<IOrdersContract>()),
+            "remote unregister cannot invalidate or replace a locally registered proxy");
+        var method = new RpcMethodDescriptor(OrdersContractId, 1, RpcMethodKind.OneWay,
+            HasResponsePayload: false, HasClientStreams: false, HasMethodTimeout: false, MethodTimeout: null);
+        var failure = await CaptureExceptionAsync(proxy.Channel.InvokeOneWayAsync(method, default(RpcEmptyRequest),
+            RpcEmptyRequestCodec.Instance, default(RpcNoClientStreams), null).AsTask());
 
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
-            "readiness is an observation rather than an identity lease; later Get must still reject unregister");
+        Ensure(failure is SharpLinkException
+        { Code: SharpLinkErrorCode.Unavailable, DetailCode: SharpLinkErrorDetails.Unavailable.NoRoutableTarget },
+            "readiness is an observation; the next invocation must use the current route after unregister");
     }
 
     [Test]

@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
 using System.Buffers;
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
 using System.Collections.Generic;
@@ -323,6 +322,7 @@ public class SharpLinkServerRequestScopeTests
         private readonly Pipe _output = new();
         private readonly ControlledStub _stub;
         private readonly ILogger _logger;
+        private readonly ServiceRegistration _registration;
 
         internal DispatchHarness(ILoggerFactory loggerFactory, ControlledStub stub)
         {
@@ -354,9 +354,11 @@ public class SharpLinkServerRequestScopeTests
 
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
+            _registration = registration;
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;
+            ServerRequestTestWire.Bind(registration, serviceRegistry);
             Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
             {
                 [stub.InterfaceHash] = registration
@@ -383,6 +385,7 @@ public class SharpLinkServerRequestScopeTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
+                _registration,
                 null,
                 false,
                 null
@@ -398,6 +401,7 @@ public class SharpLinkServerRequestScopeTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
+                _registration,
                 null,
                 false,
                 0,
@@ -408,12 +412,7 @@ public class SharpLinkServerRequestScopeTests
             => (Task)AwaitDispatchMethod.Invoke(Server, [dispatchTask, requestId])!;
 
         private ReadOnlySequence<byte> CreateRequestPayload()
-        {
-            var request = new byte[sizeof(long) * 2];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
-            return new ReadOnlySequence<byte>(request);
-        }
+            => new(ServerRequestTestWire.Create(_stub, ControlledStub.MethodHash));
 
         public async ValueTask DisposeAsync()
         {

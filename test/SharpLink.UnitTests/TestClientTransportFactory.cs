@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Channels;
+using SharpLink.UnitTests.Client;
 
 namespace SharpLink.UnitTests;
 
@@ -12,21 +13,28 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
 {
     private static readonly KeyValuePair<long, RpcHash128>[] DefaultContractManifest =
     [
-        new(8_101, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL))
+        new(8_101, new RpcHash128(0x6d756c7469636c75UL, 0x737465722d763031UL)),
+        new(1, ClientInvocationTestManifest.Hash)
     ];
 
     private readonly ProtocolV2Capabilities _negotiatedCapabilities;
     private readonly KeyValuePair<long, RpcHash128>[] _contractManifest;
     private readonly string? _compressionProfile;
+    private readonly Guid _serverInstanceId;
+    private readonly Guid _registryEpoch;
 
     internal TestClientTransportFactory(
         ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
         IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null,
-        string? compressionProfile = null)
+        string? compressionProfile = null,
+        Guid? serverInstanceId = null,
+        Guid? registryEpoch = null)
     {
         _negotiatedCapabilities = negotiatedCapabilities;
         _contractManifest = contractManifest?.ToArray() ?? DefaultContractManifest;
         _compressionProfile = compressionProfile;
+        _serverInstanceId = serverInstanceId ?? ClientInvocationTestManifest.ServerInstanceId;
+        _registryEpoch = registryEpoch ?? ClientInvocationTestManifest.RegistryEpoch;
     }
 
     public TestTransportConnection Connection { get; } = new();
@@ -40,7 +48,9 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
             _negotiatedCapabilities,
             _contractManifest,
             _compressionProfile,
-            cancellationToken);
+            cancellationToken,
+            _serverInstanceId,
+            _registryEpoch);
         return Connection;
     }
 
@@ -64,6 +74,8 @@ internal sealed class TestTransportConnection : ITransportConnection
         _observeOutputTask = ObserveOutputAsync(_disposeCts.Token);
     }
 
+    internal bool AutoAcceptClientStreams { get; set; } = true;
+
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public PipeReader Input => _inbound.Reader;
     public PipeWriter Output => _output;
@@ -77,7 +89,9 @@ internal sealed class TestTransportConnection : ITransportConnection
         ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
         IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null,
         string? compressionProfile = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Guid? serverInstanceId = null,
+        Guid? registryEpoch = null)
     {
         negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest;
         var responsePayload = new PooledByteBufferWriter();
@@ -87,7 +101,9 @@ internal sealed class TestTransportConnection : ITransportConnection
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,
-            compressionProfile));
+            compressionProfile,
+            serverInstanceId ?? ClientInvocationTestManifest.ServerInstanceId,
+            registryEpoch ?? ClientInvocationTestManifest.RegistryEpoch));
         await InjectFrameAsync(
             ProtocolV2FrameType.HandshakeResponse,
             ProtocolV2FrameFlags.None,
@@ -98,7 +114,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         var manifestPayload = new PooledByteBufferWriter();
         ProtocolV2ContractManifestCodec.Write(
             manifestPayload,
-            new ProtocolV2ContractManifest(0, contractManifest ?? []),
+            new ProtocolV2ContractManifest(0, contractManifest ?? ClientInvocationTestManifest.ContractsOnWire),
             ProtocolLimits);
         await InjectFrameAsync(
             ProtocolV2FrameType.ContractManifest,
@@ -232,7 +248,14 @@ internal sealed class TestTransportConnection : ITransportConnection
                     new SharpLinkProtocolOptions(),
                     out var header,
                     out var payload))
+                {
                     _sentPackets.Writer.TryWrite(new TestSentFrame(header, payload.ToArray()));
+                    if (AutoAcceptClientStreams && header.Type == ProtocolV2FrameType.Request && HasBidirectionalClientStreams(payload))
+                    {
+                        await InjectFrameAsync(ProtocolV2FrameType.RequestAccepted, ProtocolV2FrameFlags.None,
+                            header.RequestId, ReadOnlyMemory<byte>.Empty, cancellationToken);
+                    }
+                }
                 if (result.IsCompleted)
                     return;
             }
@@ -241,6 +264,12 @@ internal sealed class TestTransportConnection : ITransportConnection
                 _outbound.Reader.AdvanceTo(buffer.Start, buffer.End);
             }
         }
+    }
+
+    private static bool HasBidirectionalClientStreams(ReadOnlySequence<byte> payload)
+    {
+        var reader = new SequenceReader<byte>(payload);
+        return ProtocolV2RequestIdentityCodec.Read(ref reader).Kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
     }
 
     private static async ValueTask CompleteAsync(PipeWriter writer)

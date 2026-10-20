@@ -557,7 +557,9 @@ public partial class TransportConnectionIntegrationTests
                 ProtocolV2Capabilities.ContractManifest,
                 maxFramePayloadBytes,
                 1024 * 1024,
-                16 * 1024 * 1024));
+                16 * 1024 * 1024,
+                ServerInstanceId: Guid.NewGuid(),
+                RegistryEpoch: Guid.NewGuid()));
             ContractManifestTestHelper.EndHandshakeAndWriteManifest(handshake, handshakeToken, typeof(ITestService));
             await stream.WriteAsync(handshake.WrittenMemory);
             await stream.FlushAsync();

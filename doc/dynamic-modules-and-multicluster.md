@@ -125,7 +125,7 @@ Remove 的 `Succeeded = true` 表示 slot/route 已从 public snapshot 撤销；
 
 ### Proxy 与 endpoint 语义
 
-- Add 后新 `Get<T>()` 选择新 slot；若调用要求立即远端可用，应先显式 `WaitForReadyAsync(cluster)`。
+- Add 后新 `CreateProxy<T>()` / `Get<T>()` 在本地选择新 slot，不要求远端 Ready。若需要观察连接就绪，可显式 `WaitForReadyAsync(cluster)`；该观察不保证随后 RPC 成功，调用仍按当前 Picker 资格执行或 FailFast。
 - Replace 后新 `Get<T>()` 绑定新 child；Replace 前缓存的 Proxy 继续绑定旧 child，并在旧 child开始停止后拒绝新调用。
 - Remove 后新 `Get<T>()` 立即失败；旧 Proxy 最终观察到 child 已停止。
 - 不自动重绑定旧 Proxy，因此 RPC 热路径没有 coordinator 查询或额外的 slot indirection。
@@ -158,9 +158,17 @@ await clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, can
 注销后的缺失合同等待后续注册或取消，不保留代理、Type 或 Assembly。
 
 每条连接独立按 manifest generation 排序，不能比较不同连接的 generation。成功是当前观察，
-不是 lease，随后重连、注销或替换仍可能使同步 `Get` 失败。相同 ID/hash 已可见时立即成功，
+不是 lease，随后重连、注销或替换仍可能使后续 RPC 失败。`CreateProxy<T>()` 与 `Get<T>()` 只验证本地注册，不依赖该屏障。相同 ID/hash 已可见时立即成功，
 包括哈希相同的替换；它不证明业务实现或 Artifact generation 已发布。`Get` 继续保持同步，
 不会偷偷发起网络调用。自定义客户端默认明确抛出 `NotSupportedException`，不会伪装成已支持。
+
+3.0 的成功服务注册或替换结果还通过 `Receipts` 返回标量 `ContractRegistrationReceipt`。
+在应用自己的控制 RPC 中传回这些字段后，数据连接可以用
+`CreateProxy<T>(new RpcProxyOptions { Receipt = receipt, Requirement = RpcRegistrationRequirement.ExactRegistration })`
+直接选择同一 server instance/registry epoch，即使其 Manifest 仍旧。只有契约、没有可调用服务的本地注册
+不产生服务端 receipt。Receipt 不持有 module、Type 或 Assembly；普通调用仍依据当前 Picker 的兼容候选。
+应用的控制 RPC DTO 应按自身序列化规则携带 receipt 的标量字段；Receipt 本身不新增通用业务 Codec。
+三种要求和失败边界见 [RPC wire identity](rpc-wire-identity.md)。
 
 ## AssemblyLoadContext 所有权
 

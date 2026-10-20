@@ -111,6 +111,16 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal bool HasModule => _hasModule;
     internal CancellationToken ModuleCancellation => _hasModule ? Module!.ForcedCancellation : CancellationToken.None;
     internal bool AcceptsCalls => !_hasModule || Module!.State == SharpLinkDynamicModuleState.Running;
+    internal RpcHash128 RpcAssemblyHash { get; set; }
+    internal ContractRegistrationReceipt Receipt { get; private set; }
+
+    internal void PublishReceipt(ContractRegistrationReceipt receipt)
+    {
+        if (Receipt.RegistrationId != Guid.Empty)
+            throw new InvalidOperationException("A service registration receipt is immutable after publication.");
+        RpcAssemblyHash = receipt.RpcAssemblyHash;
+        Receipt = receipt;
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetStaticSingleton(out object service)
@@ -151,7 +161,8 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         IRpcGeneratedServerBridge? generatedBridge,
         long requestId,
         out object service,
-        out SharpLinkDynamicModuleLease moduleLease)
+        out SharpLinkDynamicModuleLease moduleLease,
+        bool moduleLeaseRetained = false)
     {
         if (!_hasModule || Lifetime != SharpLinkServiceLifetime.Singleton)
         {
@@ -162,7 +173,8 @@ internal sealed class ServiceRegistration : IAsyncDisposable
 
         var module = Module!;
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (!module.TryAcquire(isStream, out moduleLease))
+        moduleLease = default;
+        if (!moduleLeaseRetained && !module.TryAcquire(isStream, out moduleLease))
         {
             throw new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,
@@ -219,11 +231,12 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         ServerConnectionState connection,
         bool isStream,
         IRpcGeneratedServerBridge? generatedBridge,
-        long requestId)
+        long requestId,
+        bool moduleLeaseRetained = false)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         SharpLinkDynamicModuleLease moduleLease = default;
-        if (_hasModule && !Module!.TryAcquire(isStream, out moduleLease))
+        if (_hasModule && !moduleLeaseRetained && !Module!.TryAcquire(isStream, out moduleLease))
         {
             return ValueTask.FromException<ServiceLease>(new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,

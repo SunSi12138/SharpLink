@@ -70,6 +70,12 @@ internal sealed partial class SharpLinkClient
         set => WriteClientTestHook(9, value);
     }
 
+    internal Action? _beforeContractRoutePublicationTestHook
+    {
+        get => ReadClientTestHook<Action>(10);
+        set => WriteClientTestHook(10, value);
+    }
+
     private T? ReadClientTestHook<T>(int index) where T : Delegate
     {
         var slots = Volatile.Read(ref _clientTestHookSlots);
@@ -83,7 +89,7 @@ internal sealed partial class SharpLinkClient
         {
             if (callback is null)
                 return;
-            var allocated = new Delegate?[10];
+            var allocated = new Delegate?[11];
             slots = Interlocked.CompareExchange(ref _clientTestHookSlots, allocated, null) ?? allocated;
         }
         Volatile.Write(ref slots[index], callback);
@@ -407,10 +413,9 @@ internal sealed partial class SharpLinkClient
                         {
                             CompleteSessionRefreshDebtLocked(
                                 _sessionRefreshDebt, source, publishedReplacement, processedRequest);
-                            // Deliberately place the deterministic cut hook before immutable snapshot
-                            // publication. A reader retaining the old source-only snapshot must redirect
-                            // through source admission to this already-Ready replacement instead of seeing
-                            // a transient Unavailable gap.
+                            // Keep the deterministic cut before contract-route publication. Calls
+                            // retaining the source-only route fail fast here; the replacement becomes
+                            // eligible only when its own identity is published with the new topology.
                             _afterSessionRefreshEligibilitySwapTestHook?.Invoke();
                             PublishReadySnapshotLocked();
                             published = true;
