@@ -420,30 +420,145 @@ public class SharpLinkClientTimeBudgetTests
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         await DrainSentFramesAsync(transport);
+
         using var stall = new ManualResetEventSlim(initialState: false);
-        transport.Connection.RunOnNextOutputBufferRequest(() => stall.Wait(TimeSpan.FromSeconds(30)));
+        var emissionEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var frames = new List<TestSentFrame>();
+        var invocationAccepted = false;
+        var stallReleased = false;
+        var sendQueueFlushed = false;
+        var markerObserved = false;
 
-        var invocation = channel.InvokeOneWayAsync(
-            method,
-            in request,
-            RpcEmptyRequestCodec.Instance,
-            in streams,
-            metadata: null,
-            cancellationToken: default).AsTask();
+        // HealthCheck is a normal-queue frame, like Request and Cancel. Unlike Pong,
+        // its unique RequestId is a FIFO observation barrier across those frames,
+        // even when the send pump interleaves higher-priority protocol progress.
+        const long observationMarker = 0x326f6e6577617931L;
+        transport.Connection.RunOnNextOutputBufferRequest(() =>
+        {
+            emissionEntered.TrySetResult();
+            Ensure(stall.Wait(TimeSpan.FromSeconds(30)),
+                "the test must release the actual output-buffer emission");
+        });
 
-        // An untimed OneWay owns no lifetime, so it returns as soon as its frame is admitted rather
-        // than waiting for the transport write. What matters here is that letting the client default
-        // elapse neither fails the call nor produces the cancel a live deadline would publish.
-        await invocation.WaitAsync(TimeSpan.FromSeconds(5));
-        timeProvider.Advance(TimeSpan.FromSeconds(30));
+        try
+        {
+            var invocation = channel.InvokeOneWayAsync(
+                method,
+                in request,
+                RpcEmptyRequestCodec.Instance,
+                in streams,
+                metadata: null,
+                cancellationToken: default).AsTask();
 
-        stall.Set();
-        var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.Exists(static frame => frame.Header.Type == ProtocolV2FrameType.Request),
-            "an untimed OneWay must still publish its Request");
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
-            "the client default must not turn an untimed OneWay into a deadline that cancels");
+            // Admission is not emission: the untimed OneWay must complete while its
+            // queued Request is actually blocked at the transport output boundary.
+            await emissionEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(!stall.IsSet, "the Request emission must still be stalled");
+            await invocation.WaitAsync(TimeSpan.FromSeconds(5));
+            invocationAccepted = true;
+
+            // No local OneWay deadline may be derived from the 30 s client fallback.
+            timeProvider.Advance(TimeSpan.FromSeconds(30));
+
+            stall.Set();
+            stallReleased = true;
+
+            // The normal-queue marker follows the Request and any Cancel queued by
+            // an incorrect default deadline. Flush commits output to the pipe;
+            // observing this exact HealthCheck proves normal-queue predecessors
+            // were observed too, even if progress Pong/Ping frames interleave.
+            connection.Session.SendHealthCheck(observationMarker);
+            await connection.Session.FlushSendQueueAsync()
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            sendQueueFlushed = true;
+            await ReadThroughHealthCheckMarkerAsync(transport, observationMarker, frames);
+            markerObserved = true;
+            var requests = frames.FindAll(static frame =>
+                frame.Header.Type == ProtocolV2FrameType.Request);
+            Ensure(requests.Count == 1 && requests[0].Header.RequestId != 0,
+                "an untimed OneWay must publish exactly one Request");
+            Ensure(!HasTimeBudget(requests[0]),
+                "an untimed OneWay Request must not inherit the client fallback TimeBudget");
+            Ensure(HasNoCancel(frames),
+                "the client default must not turn an untimed OneWay into a deadline that cancels");
+
+            // Negative control for the observer itself. Inject a synthetic Cancel on
+            // the normal queue, add a progress-queue Pong as an interleaving adversary,
+            // then a second normal-queue HealthCheck delimiter. Pong may be observed
+            // before OR after HealthCheck: only Cancel/HealthCheck are FIFO ordered.
+            const long controlMarker = observationMarker + 1;
+            connection.Session.SendCancelAsync(
+                unchecked((long)requests[0].Header.RequestId),
+                ProtocolV2CancelReason.Unspecified);
+            await connection.Session.SendPongWithBackpressureAsync(observationMarker)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            connection.Session.SendHealthCheck(controlMarker);
+            await connection.Session.FlushSendQueueAsync()
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+            var controlFrames = new List<TestSentFrame>();
+            await ReadThroughHealthCheckMarkerAsync(transport, controlMarker, controlFrames);
+            Ensure(controlFrames.Exists(frame =>
+                    frame.Header.Type == ProtocolV2FrameType.Cancel &&
+                    frame.Header.RequestId == requests[0].Header.RequestId),
+                "normal-queue observation must detect the injected Cancel before its HealthCheck");
+            Ensure(!HasNoCancel(controlFrames),
+                "the very same no-Cancel assertion must reject a deliberately queued Cancel");
+        }
+        catch (Exception failure)
+        {
+            var observed = new List<string>(frames.Count);
+            foreach (var frame in frames)
+                observed.Add($"{frame.Header.Type}#{frame.Header.RequestId}");
+            throw new Exception(
+                "untimed OneWay emission observation failed: " +
+                $"emissionEntered={emissionEntered.Task.IsCompletedSuccessfully}, " +
+                $"invocationAccepted={invocationAccepted}, stallReleased={stallReleased}, " +
+                $"sendQueueFlushed={sendQueueFlushed}, markerObserved={markerObserved}, " +
+                $"frames=[{string.Join(", ", observed)}]",
+                failure);
+        }
+        finally
+        {
+            // Even failed phase/barrier assertions cannot leave the send-pump blocked
+            // until the callback's 30-second diagnostic ceiling expires.
+            stall.Set();
+        }
     }
+
+    /// <summary>
+    /// Waits until an exact normal-queue delimiter is parsed by the transport
+    /// observer. Progress frames may interleave; only a HealthCheck in the same
+    /// normal queue can close observation of the preceding Request/Cancel set.
+    /// </summary>
+    private static async Task ReadThroughHealthCheckMarkerAsync(
+        TestClientTransportFactory transport,
+        long markerRequestId,
+        List<TestSentFrame> frames)
+    {
+        for (var attempt = 0; attempt < 32; attempt++)
+        {
+            var next = await transport.Connection.TryReadNextSentFrameAsync(
+                TimeSpan.FromSeconds(5));
+            if (next is not { } frame)
+                break;
+            frames.Add(frame);
+            if (frame.Header.Type == ProtocolV2FrameType.HealthCheck &&
+                frame.Header.RequestId == unchecked((ulong)markerRequestId))
+                return;
+        }
+
+        var observed = new List<string>(frames.Count);
+        foreach (var frame in frames)
+            observed.Add($"{frame.Header.Type}#{frame.Header.RequestId}");
+        throw new Exception(
+            $"normal-queue HealthCheck marker {markerRequestId} not observed; " +
+            $"frames=[{string.Join(", ", observed)}]");
+    }
+
+    private static bool HasNoCancel(List<TestSentFrame> frames)
+        => frames.TrueForAll(static frame =>
+            frame.Header.Type is not ProtocolV2FrameType.Cancel);
 
     private static bool HasTimeBudget(TestSentFrame sent)
         => (sent.Header.Flags & ProtocolV2FrameFlags.HasTimeBudget) != 0;
