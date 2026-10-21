@@ -18,6 +18,7 @@ internal sealed partial class SharpLinkClient
         var isInitial = false;
         lock (_remoteContractManifestGate)
         {
+            ValidateImmutableRouteScopeLocked(manifest);
             PruneDisconnectedRemoteContractManifestsLocked();
             if (_remoteContractManifests.TryGetValue(session, out var current))
             {

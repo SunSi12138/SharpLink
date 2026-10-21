@@ -1,0 +1,3 @@
+../../../../tmp/route-maintainability/report.json
+../../../../tmp/route-maintainability/report.md
+Maintainability debt gate passed: 1253 files checked, 17 historical oversized files within baseline allowances.

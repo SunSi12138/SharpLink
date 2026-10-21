@@ -1,0 +1,51 @@
+{
+  "schema": "immutable-route-transport-evidence-v1",
+  "mode": "prepared",
+  "label": "block1-3-candidate",
+  "runtime": ".NET 10.0.2",
+  "buildSdk": "10.0.102",
+  "architecture": "X64",
+  "os": "Debian GNU/Linux 13 (trixie)",
+  "processorCount": 9,
+  "descriptorBytes": 40,
+  "stopwatchFrequency": 1000000000,
+  "gcServer": false,
+  "tieredCompilation": "1",
+  "tieredPgo": "1",
+  "warmup": 10000,
+  "requestTimeoutSeconds": 10,
+  "totalBudgetSeconds": 120,
+  "fixture": "Loopback TCP, empty request, int32 unary response, dynamic singleton, manual descriptor calls, no callbacks",
+  "allocationScope": "Whole-process client\u002Bserver aggregate; not caller-only or exact steady-state framework bytes/op",
+  "serverCompletionObservation": "OneWay service execution counter; excludes proof that all server lease/transport cleanup finished",
+  "generatedPreparedProxy": "not_implemented_or_measured",
+  "measured": {
+    "unary": {
+      "operations": 10000,
+      "elapsedSeconds": 1.50006101,
+      "operationsPerSecond": 6666.395522139463,
+      "latencyMicroseconds": {
+        "p50": 53.378,
+        "p95": 309.069,
+        "p99": 1192.867,
+        "max": 140160.011
+      },
+      "processAllocatedBytes": 3920968,
+      "processAllocatedBytesPerOperation": 392.0968
+    },
+    "oneWay": {
+      "operations": 100000,
+      "senderAcceptanceSeconds": 0.051429256,
+      "senderNanosecondsPerOperation": 514.29256,
+      "senderOperationsPerSecond": 1944418.5620729183,
+      "serviceExecutionObservedSeconds": 0.15012169,
+      "serviceExecutionsPerSecond": 666126.2606356216,
+      "finalExpectedServiceCounter": 110000,
+      "finalObservedServiceCounter": 110000,
+      "processAllocatedBytesAtSenderAcceptance": 6209656,
+      "processAllocatedBytesAtServiceObservation": 19575840,
+      "processAllocatedBytesPerServiceExecution": 195.7584,
+      "observationPollingMilliseconds": 1
+    }
+  }
+}

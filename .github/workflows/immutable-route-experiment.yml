@@ -1,0 +1,47 @@
+name: Immutable Route Experimental Evidence
+
+on:
+  push:
+    branches: ['verify/775-immutable-route-minimal']
+    paths:
+      - 'src/**'
+      - 'test/SharpLink.UnitTests/**'
+      - '.github/workflows/immutable-route-experiment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  correctness-and-layout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Build experimental test binary
+        run: dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release -v minimal
+      - name: Real TCP, registry, and manifest correctness
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            -c Release --no-build --treenode-filter '/*/*/ImmutableRoute*/*'
+      - name: Existing lifetime, readiness and invocation regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for cls in DynamicModuleTests ProtocolV2ContractManifestTests ContractManifestReadyBoundaryTests SharpLinkClientContractManifestTests SharpLinkServerInvocationTests SharpLinkServerRequestScopeTests SharpLinkServerRequestScopeReviewTests; do
+            dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+              -c Release --no-build --treenode-filter "/*/*/${cls}/*"
+          done
+      # Deliberately NOT continue-on-error. This verification branch is not release-ready:
+      # the dual-identity experiment grows the descriptor from 32 to 40 and must stay red
+      # against the unchanged baseline layout contract. No hidden passing threshold.
+      - name: "Preserve baseline descriptor layout gate (expected failure: 32 vs 40)"
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+            -c Release --no-build --treenode-filter '/*/*/RpcMethodDescriptorTests/*'

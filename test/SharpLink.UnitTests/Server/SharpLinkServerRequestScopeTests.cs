@@ -357,10 +357,11 @@ public class SharpLinkServerRequestScopeTests
             var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(Server)!;
-            Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
+            var serviceSnapshot = new Dictionary<long, ServiceRegistration>
             {
                 [stub.InterfaceHash] = registration
-            }.ToFrozenDictionary());
+            }.ToFrozenDictionary();
+            serviceRegistry.PublishServices(serviceSnapshot, serviceRegistry.ImmutableRoutes.Prepare(serviceSnapshot));
             typeof(SharpLinkServer).GetField(
                     "_state", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .SetValue(Server, 2);

@@ -41,7 +41,7 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            if (!Volatile.Read(ref _dispatchServices).TryGetValue(request.InterfaceHash, out var serviceInfo))
             {
                 ValueTask responseSend;
                 try

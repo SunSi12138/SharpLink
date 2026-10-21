@@ -48,6 +48,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     // is owned by the focused collaborator. These are non-owning aliases, not Server fields.
     private ref FrozenDictionary<long, ServiceRegistration> _services
         => ref _serviceModuleRegistry.ServicesStorage;
+    private ref FrozenDictionary<long, ServiceRegistration> _dispatchServices
+        => ref _serviceModuleRegistry.DispatchServicesStorage;
     private Lock _registryGate => _serviceModuleRegistry.Gate;
     private ServerServiceModuleRegistry.DynamicModuleTable _dynamicModules
         => _serviceModuleRegistry.DynamicModules;
@@ -104,6 +106,26 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     public SharpLinkServerLifecycleState LifecycleState => _lifecycle.LifecycleState;
 
     public SharpLinkHealthStatus HealthStatus => _lifecycle.HealthStatus;
+
+    // Internal test-only protocol mode. Every connection on this server uses the selected dispatch
+    // key domain, avoiding a request-time mode branch. Do not enable after any connection can exist.
+    internal bool EnableImmutableRoutesForTesting
+    {
+        get => _serviceModuleRegistry.ImmutableRoutes.Enabled;
+        set
+        {
+            lock (_registryGate)
+            {
+                if (CurrentState != ServerState.Created)
+                    throw new InvalidOperationException("Immutable routing must be selected before starting the server.");
+                var services = Volatile.Read(ref _services);
+                var dispatch = _serviceModuleRegistry.ImmutableRoutes.Prepare(services, value);
+                _serviceModuleRegistry.PublishServices(services, dispatch);
+            }
+        }
+    }
+
+    internal Guid ImmutableRouteScopeForTesting => _serviceModuleRegistry.ImmutableRoutes.Scope;
 
     public ValueTask StartAsync(CancellationToken cancellationToken = default)
         => _lifecycle.StartAsync(cancellationToken);

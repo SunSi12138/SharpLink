@@ -67,7 +67,21 @@ public readonly record struct RpcMethodDescriptor
     }
 
     /// <summary>Gets the stable generated contract identifier.</summary>
-    public long ContractId { get; init; }
+    public long ContractId
+    {
+        get => _contractId;
+        init
+        {
+            _contractId = value;
+            _wireRouteId = value;
+        }
+    }
+    private readonly long _contractId;
+    private readonly long _wireRouteId;
+
+    // Experimental #775 dual-identity candidate. Generated logical metadata stays unchanged;
+    // only cold prepared descriptors replace the wire route. No hot fallback or lookup.
+    internal long WireRouteId { get => _wireRouteId; init => _wireRouteId = value; }
     /// <summary>Gets the stable generated method identifier.</summary>
     public long MethodId { get; init; }
     // Declared ahead of the 4-byte and 1-byte members below. The struct uses sequential layout,
@@ -79,7 +93,8 @@ public readonly record struct RpcMethodDescriptor
     /// <remarks>
     /// Persisted as raw ticks with a presence bit in <c>_flags</c> instead of
     /// <see cref="Nullable{T}"/> of <see cref="TimeSpan"/>. The nullable form occupies 16 bytes
-    /// and padded the descriptor to 40; the 8-byte ticks field keeps it at 32 without changing
+    /// and padded the baseline descriptor to 40; raw ticks reduced that baseline to 32.
+    /// This experimental wire-route field adds eight bytes again, without changing
     /// default, null, zero, or negative timeout semantics.
     /// </remarks>
     public TimeSpan? MethodTimeout
@@ -128,6 +143,28 @@ public readonly record struct RpcMethodDescriptor
     }
 
     private readonly byte _flags;
+
+    /// <inheritdoc />
+    public bool Equals(RpcMethodDescriptor other)
+        => ContractId == other.ContractId && MethodId == other.MethodId &&
+           _methodTimeoutTicks == other._methodTimeoutTicks && ClientStreamCount == other.ClientStreamCount &&
+           Kind == other.Kind && _flags == other._flags;
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+    {
+        // Preserve logical descriptor identity for existing policy/cache consumers. The internal
+        // experimental transport route is deliberately not part of public record equality.
+        unchecked
+        {
+            var hash = ContractId.GetHashCode();
+            hash = hash * -1521134295 + MethodId.GetHashCode();
+            hash = hash * -1521134295 + _methodTimeoutTicks.GetHashCode();
+            hash = hash * -1521134295 + ClientStreamCount.GetHashCode();
+            hash = hash * -1521134295 + Kind.GetHashCode();
+            return hash * -1521134295 + _flags.GetHashCode();
+        }
+    }
 
     private static byte SetFlag(byte flags, byte flag, bool value)
         => value ? (byte)(flags | flag) : (byte)(flags & ~flag);

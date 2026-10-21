@@ -66,7 +66,7 @@ internal sealed partial class SharpLinkClient
             {
                 var response = await InvokeUnaryRetryAttemptAsync(
                     method,
-                    method.ContractId, method.MethodId, method.HasResponsePayload,
+                    method.WireRouteId, method.MethodId, method.HasResponsePayload,
                     request, requestCodec, responseCodec, control, selection, outcome, cancellationToken).ConfigureAwait(false);
                 EnsureLogicalCallProgress(control);
                 attemptScope.Complete();

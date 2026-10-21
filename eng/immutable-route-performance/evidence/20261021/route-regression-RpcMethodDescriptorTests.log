@@ -1,0 +1,17 @@
+failed FlagsMustRemainPackedAndBothDeconstructionShapesMustRemainCompatible (54ms)
+  TUnit.Engine.Exceptions.TestFailedException: [Test Failure] AssertionException: Expected to be 32
+  but found 40
+  
+  at Assert.That(Unsafe.SizeOf<RpcMethodDescriptor>()).IsEqualTo(32)
+    at SharpLink.UnitTests.Abstractions.RpcMethodDescriptorTests.FlagsMustRemainPackedAndBothDeconstructionShapesMustRemainCompatible() in /workspace/scratch/9e5903e2fbfb/sharplink-immutable-route/test/SharpLink.UnitTests/Abstractions/RpcMethodDescriptorTests.cs:30
+       --- TUnit internals omitted (run with --detailed-stacktrace for full trace) ---
+
+  In process file artifacts produced:
+    - /workspace/scratch/9e5903e2fbfb/sharplink-immutable-route/test/SharpLink.UnitTests/bin/Release/net10.0/TestResults/SharpLink.UnitTests-linux-net10.0-report.html
+
+Test run summary: Failed! - /workspace/scratch/9e5903e2fbfb/sharplink-immutable-route/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64)
+  total: 4
+  failed: 1
+  succeeded: 3
+  skipped: 0
+  duration: 445ms

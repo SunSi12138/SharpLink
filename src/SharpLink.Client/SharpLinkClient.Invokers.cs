@@ -393,7 +393,7 @@ internal sealed partial class SharpLinkClient
             reservationOwned = false;
             return StartUnaryCall(
                 connection,
-                method.ContractId,
+                method.WireRouteId,
                 method.MethodId,
                 requestId,
                 method.HasResponsePayload,
@@ -613,7 +613,7 @@ internal sealed partial class SharpLinkClient
             {
                 var emission = SendRpcCall(
                     connection.Session,
-                    method.ContractId,
+                    method.WireRouteId,
                     method.MethodId,
                     requestId,
                     flags,
@@ -717,7 +717,7 @@ internal sealed partial class SharpLinkClient
                 var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
                 var emission = SendRpcCall(
                     connection.Session,
-                    method.ContractId,
+                    method.WireRouteId,
                     method.MethodId,
                     requestId,
                     flags,
@@ -800,7 +800,7 @@ internal sealed partial class SharpLinkClient
                 producerLease = moduleProducerLifetime?.TakeLease() ?? default;
                 await SendRpcCall(
                     connection.Session,
-                    method.ContractId,
+                    method.WireRouteId,
                     method.MethodId,
                     requestId,
                     flags,
@@ -879,7 +879,7 @@ internal sealed partial class SharpLinkClient
             {
                 await SendRpcCall(
                     connection.Session,
-                    method.ContractId,
+                    method.WireRouteId,
                     method.MethodId,
                     requestId,
                     cancellationToken.CanBeCanceled || control.Deadline.HasValue
@@ -937,7 +937,7 @@ internal sealed partial class SharpLinkClient
             producerLease = moduleProducerLifetime?.TakeLease() ?? default;
             await SendRpcCall(
                 connection.Session,
-                method.ContractId,
+                method.WireRouteId,
                 method.MethodId,
                 requestId,
                 ProtocolV2FrameFlags.Cancellable,

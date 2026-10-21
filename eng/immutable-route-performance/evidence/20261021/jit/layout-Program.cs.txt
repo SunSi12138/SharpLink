@@ -1,0 +1,13 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Runtime.Loader;
+using System.Text.Json;
+var dir = Path.GetFullPath(args[0]);
+AssemblyLoadContext.Default.Resolving += (_, name) => File.Exists(Path.Combine(dir, name.Name + ".dll")) ? AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(dir, name.Name + ".dll")) : null;
+var client = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(dir, "SharpLink.Client.dll"));
+var abstractions = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(dir, "SharpLink.Abstractions.dll"));
+var request = abstractions.GetType("SharpLink.Abstractions.RpcEmptyRequest", true)!;
+var descriptor = abstractions.GetType("SharpLink.Abstractions.RpcMethodDescriptor", true)!;
+var state = client.GetType("SharpLink.Client.SharpLinkClient", true)!.GetNestedTypes(BindingFlags.NonPublic).Single(t => t.Name.StartsWith("<InvokeOneWayPlainCoreAsync>" )).MakeGenericType(request);
+int Size(Type type) => (int)typeof(Unsafe).GetMethod(nameof(Unsafe.SizeOf))!.MakeGenericMethod(type).Invoke(null, null)!;
+Console.WriteLine(JsonSerializer.Serialize(new { descriptorBytes = Size(descriptor), oneWayStateMachine = state.FullName, oneWayStateMachineBytes = Size(state) }, new JsonSerializerOptions { WriteIndented = true }));

@@ -1,5 +1,11 @@
 # Issue #775: immutable-route feasibility gate
 
+> Historical milestone: reproduce this probe at commit
+> `e97b886bcc3c423980de19bf8da18dfd1f9d2f70`. The subsequent dual-identity
+> transport experiment changes production sources intentionally and is described
+> in `doc/issue-775-immutable-route-transport.md`; this probe runner rejects those
+> changed sources by design. Statements of “not run” below describe this milestone.
+
 ## Verdict and scope
 
 **Stop the naive same-shape `ContractId = RouteId` substitution.** It changes the

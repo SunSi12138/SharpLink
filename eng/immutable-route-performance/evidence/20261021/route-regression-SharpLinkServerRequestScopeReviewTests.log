@@ -1,0 +1,10 @@
+
+  In process file artifacts produced:
+    - /workspace/scratch/9e5903e2fbfb/sharplink-immutable-route/test/SharpLink.UnitTests/bin/Release/net10.0/TestResults/SharpLink.UnitTests-linux-net10.0-report.html
+
+Test run summary: Passed! - /workspace/scratch/9e5903e2fbfb/sharplink-immutable-route/test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll (net10.0|x64)
+  total: 6
+  failed: 0
+  succeeded: 6
+  skipped: 0
+  duration: 589ms

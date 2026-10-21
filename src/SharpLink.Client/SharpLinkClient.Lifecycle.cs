@@ -327,6 +327,7 @@ internal sealed partial class SharpLinkClient
 
     public T Get<T>() where T : IService
     {
+        RejectUnpreparedProxyForExperiment();
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
             ValidateRemoteContractAssembly(registration);
@@ -347,6 +348,7 @@ internal sealed partial class SharpLinkClient
 
     public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
     {
+        RejectUnpreparedProxyForExperiment();
         ArgumentNullException.ThrowIfNull(metadata);
         if (metadata.Count == 0)
             return Get<T>();

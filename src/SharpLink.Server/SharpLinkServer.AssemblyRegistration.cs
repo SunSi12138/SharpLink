@@ -100,9 +100,10 @@ internal sealed partial class SharpLinkServer
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
 
+                        var dispatch = _serviceModuleRegistry.ImmutableRoutes.Prepare(candidate.Services);
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
-                        Volatile.Write(ref _services, candidate.Services);
+                        _serviceModuleRegistry.PublishServices(candidate.Services, dispatch);
                         _dynamicModules.Add(assembly, module);
                         _registryGeneration++;
                         ScheduleContractManifestPublish();
@@ -283,6 +284,7 @@ internal sealed partial class SharpLinkServer
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
                         }
 
+                        var dispatch = _serviceModuleRegistry.ImmutableRoutes.Prepare(candidate.Services);
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
@@ -291,10 +293,15 @@ internal sealed partial class SharpLinkServer
                         _detachedModuleServices.Add(oldModule, detachedServices);
                         _unregisterOperations.Add(oldAssembly, drainOperation);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
-                        Volatile.Write(ref _services, candidate.Services);
+                        // In the experimental route domain, close the old monotonic gate before
+                        // publishing its replacement. Legacy mode retains its established ordering.
+                        if (dispatch.Enabled)
+                            oldModule.TryBeginDraining();
+                        _serviceModuleRegistry.PublishServices(candidate.Services, dispatch);
                         _registryGeneration++;
                         ScheduleContractManifestPublish();
-                        oldModule.TryBeginDraining();
+                        if (!dispatch.Enabled)
+                            oldModule.TryBeginDraining();
                         published = true;
                         break;
                     }

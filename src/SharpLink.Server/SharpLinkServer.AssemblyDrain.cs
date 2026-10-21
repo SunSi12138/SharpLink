@@ -142,8 +142,9 @@ internal sealed partial class SharpLinkServer
                 else
                     nextFactories[codecType] = replacement;
             }
+            var dispatch = _serviceModuleRegistry.ImmutableRoutes.Prepare(nextServices);
             _runtimeContext.PublishGeneratedCodecs(nextFactories);
-            Volatile.Write(ref _services, nextServices);
+            _serviceModuleRegistry.PublishServices(nextServices, dispatch);
             _dynamicModules.Remove(assembly);
             _registryGeneration++;
             ScheduleContractManifestPublish();

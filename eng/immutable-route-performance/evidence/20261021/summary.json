@@ -1,0 +1,363 @@
+{
+  "interpretation": "Descriptive process-run medians/ranges only. Not a confidence interval, equivalence test, or zero-overhead claim.",
+  "configuration": {
+    "runtime": ".NET 10.0.2",
+    "buildSdk": "10.0.102",
+    "architecture": "X64",
+    "os": "Debian GNU/Linux 13 (trixie)",
+    "processorCount": 9,
+    "gcServer": false,
+    "tieredCompilation": "1",
+    "tieredPgo": "1",
+    "stopwatchFrequency": 1000000000,
+    "fixture": "Loopback TCP, empty request, int32 unary response, dynamic singleton, manual descriptor calls, no callbacks"
+  },
+  "groups": {
+    "baseline": {
+      "runs": 8,
+      "descriptorBytes": [
+        32
+      ],
+      "metrics": {
+        "unary.operationsPerSecond": {
+          "samples": [
+            7634.516254165674,
+            8899.482405569324,
+            9497.219687511899,
+            11390.397675835828,
+            11560.589195370449,
+            8661.397589170138,
+            9574.15820729073,
+            10717.821427879937
+          ],
+          "median": 9535.688947401315,
+          "min": 7634.516254165674,
+          "max": 11560.589195370449
+        },
+        "unary.latencyMicroseconds.p50": {
+          "samples": [
+            56.021,
+            69.425,
+            78.488,
+            66.475,
+            69.363,
+            83.307,
+            78.89,
+            63.121
+          ],
+          "median": 69.394,
+          "min": 56.021,
+          "max": 83.307
+        },
+        "unary.latencyMicroseconds.p95": {
+          "samples": [
+            273.395,
+            314.237,
+            223.855,
+            213.02,
+            213.966,
+            286.135,
+            233.594,
+            245.378
+          ],
+          "median": 239.486,
+          "min": 213.02,
+          "max": 314.237
+        },
+        "unary.latencyMicroseconds.p99": {
+          "samples": [
+            1074.504,
+            859.176,
+            562.66,
+            480.243,
+            433.421,
+            605.463,
+            554.816,
+            576.364
+          ],
+          "median": 569.512,
+          "min": 433.421,
+          "max": 1074.504
+        },
+        "unary.processAllocatedBytesPerOperation": {
+          "samples": [
+            392.072,
+            392.1352,
+            392.116,
+            392.1096,
+            391.9688,
+            392.1304,
+            392.16,
+            392.1744
+          ],
+          "median": 392.1232,
+          "min": 391.9688,
+          "max": 392.1744
+        },
+        "oneWay.senderOperationsPerSecond": {
+          "samples": [
+            996247.5141881087,
+            1560967.9099963387,
+            611559.5456418355,
+            1033973.8366982667,
+            744715.89073874,
+            820857.5436373206,
+            881127.347458727,
+            1858663.2330465564
+          ],
+          "median": 938687.4308234178,
+          "min": 611559.5456418355,
+          "max": 1858663.2330465564
+        },
+        "oneWay.serviceExecutionsPerSecond": {
+          "samples": [
+            783083.0199324151,
+            1174547.6464649169,
+            568291.792330426,
+            847356.1885294986,
+            661853.2024687177,
+            471241.1004763357,
+            609121.0925361597,
+            1073140.8826862776
+          ],
+          "median": 722468.1112005664,
+          "min": 471241.1004763357,
+          "max": 1174547.6464649169
+        },
+        "oneWay.processAllocatedBytesPerServiceExecution": {
+          "samples": [
+            229.00272,
+            218.83312,
+            196.8452,
+            222.268,
+            401.14888,
+            185.59496,
+            177.03064,
+            183.6416
+          ],
+          "median": 207.83916,
+          "min": 177.03064,
+          "max": 401.14888
+        }
+      }
+    },
+    "candidate": {
+      "runs": 8,
+      "descriptorBytes": [
+        40
+      ],
+      "metrics": {
+        "unary.operationsPerSecond": {
+          "samples": [
+            6267.891091837131,
+            6666.395522139463,
+            8757.291443457903,
+            9921.64071711972,
+            10109.361597798188,
+            11270.073354461858,
+            8956.330278801373,
+            9153.480586644813
+          ],
+          "median": 9054.905432723093,
+          "min": 6267.891091837131,
+          "max": 11270.073354461858
+        },
+        "unary.latencyMicroseconds.p50": {
+          "samples": [
+            46.577,
+            53.378,
+            75.677,
+            66.213,
+            66.765,
+            63.48,
+            77.623,
+            76.607
+          ],
+          "median": 66.489,
+          "min": 46.577,
+          "max": 77.623
+        },
+        "unary.latencyMicroseconds.p95": {
+          "samples": [
+            329.746,
+            309.069,
+            296.542,
+            289.254,
+            265.332,
+            227.552,
+            240.61,
+            256.246
+          ],
+          "median": 277.293,
+          "min": 227.552,
+          "max": 329.746
+        },
+        "unary.latencyMicroseconds.p99": {
+          "samples": [
+            1672.462,
+            1192.867,
+            730.381,
+            681.463,
+            593.15,
+            505.704,
+            600.998,
+            609.498
+          ],
+          "median": 645.4805,
+          "min": 505.704,
+          "max": 1672.462
+        },
+        "unary.processAllocatedBytesPerOperation": {
+          "samples": [
+            392.1672,
+            392.0968,
+            392.144,
+            392.112,
+            392.1856,
+            392.1488,
+            392.1384,
+            392.0944
+          ],
+          "median": 392.1412,
+          "min": 392.0944,
+          "max": 392.1856
+        },
+        "oneWay.senderOperationsPerSecond": {
+          "samples": [
+            2132841.653612609,
+            1944418.5620729183,
+            1004114.9836969883,
+            1096072.5331698402,
+            1444188.9080543988,
+            1252941.3895443268,
+            535638.5215584061,
+            1395432.4398384073
+          ],
+          "median": 1324186.9146913672,
+          "min": 535638.5215584061,
+          "max": 2132841.653612609
+        },
+        "oneWay.serviceExecutionsPerSecond": {
+          "samples": [
+            558505.8284635022,
+            666126.2606356216,
+            711236.2583464998,
+            846871.914713291,
+            795563.2013068622,
+            935607.0593311568,
+            509063.9109326713,
+            753253.4863546699
+          ],
+          "median": 732244.8723505848,
+          "min": 509063.9109326713,
+          "max": 935607.0593311568
+        },
+        "oneWay.processAllocatedBytesPerServiceExecution": {
+          "samples": [
+            185.38632,
+            195.7584,
+            197.77272,
+            275.08432,
+            203.02048,
+            213.24744,
+            241.85264,
+            253.21296
+          ],
+          "median": 208.13396,
+          "min": 185.38632,
+          "max": 275.08432
+        }
+      }
+    },
+    "candidateOrdinary": {
+      "runs": 2,
+      "descriptorBytes": [
+        40
+      ],
+      "metrics": {
+        "unary.operationsPerSecond": {
+          "samples": [
+            10340.272902798672,
+            9035.248983750884
+          ],
+          "median": 9687.760943274778,
+          "min": 9035.248983750884,
+          "max": 10340.272902798672
+        },
+        "unary.latencyMicroseconds.p50": {
+          "samples": [
+            55.888,
+            59.396
+          ],
+          "median": 57.641999999999996,
+          "min": 55.888,
+          "max": 59.396
+        },
+        "unary.latencyMicroseconds.p95": {
+          "samples": [
+            276.181,
+            348.602
+          ],
+          "median": 312.39149999999995,
+          "min": 276.181,
+          "max": 348.602
+        },
+        "unary.latencyMicroseconds.p99": {
+          "samples": [
+            625.354,
+            955.026
+          ],
+          "median": 790.19,
+          "min": 625.354,
+          "max": 955.026
+        },
+        "unary.processAllocatedBytesPerOperation": {
+          "samples": [
+            392.1888,
+            392.1584
+          ],
+          "median": 392.17359999999996,
+          "min": 392.1584,
+          "max": 392.1888
+        },
+        "oneWay.senderOperationsPerSecond": {
+          "samples": [
+            1933240.8625563956,
+            624733.3716061657
+          ],
+          "median": 1278987.1170812806,
+          "min": 624733.3716061657,
+          "max": 1933240.8625563956
+        },
+        "oneWay.serviceExecutionsPerSecond": {
+          "samples": [
+            987111.7751082985,
+            517810.25726506824
+          ],
+          "median": 752461.0161866834,
+          "min": 517810.25726506824,
+          "max": 987111.7751082985
+        },
+        "oneWay.processAllocatedBytesPerServiceExecution": {
+          "samples": [
+            202.96576,
+            191.59728
+          ],
+          "median": 197.28152,
+          "min": 191.59728,
+          "max": 202.96576
+        }
+      }
+    }
+  },
+  "candidateToBaselineMedianRatio": {
+    "unary.operationsPerSecond": 0.9495806210405756,
+    "unary.latencyMicroseconds.p50": 0.9581375911462086,
+    "unary.latencyMicroseconds.p95": 1.157867265727433,
+    "unary.latencyMicroseconds.p99": 1.1333922726825776,
+    "unary.processAllocatedBytesPerOperation": 1.0000459039403944,
+    "oneWay.senderOperationsPerSecond": 1.4106792860002277,
+    "oneWay.serviceExecutionsPerSecond": 1.0135324466207538,
+    "oneWay.processAllocatedBytesPerServiceExecution": 1.001418404500865
+  }
+}

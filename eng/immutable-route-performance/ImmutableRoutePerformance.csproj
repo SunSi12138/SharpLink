@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <EnablePackageValidation>false</EnablePackageValidation>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="BuildSdkVersion" Value="$(NETCoreSdkVersion)" />
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+    <Compile Include="../../test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs" Link="ImmutableRouteTransportSupport.cs" />
+  </ItemGroup>
+</Project>

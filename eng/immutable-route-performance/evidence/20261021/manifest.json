@@ -1,0 +1,266 @@
+{
+  "schema": "immutable-route-abba-v1",
+  "startedUtc": "2026-10-21T11:39:54.648082+00:00",
+  "completed": true,
+  "sourceBefore": {
+    "baseline": {
+      "head": "13928a35df4bff3cd99b14bd1df131aa3eb3bcdb",
+      "headTree": "18bc0d6936b787eeec48e0771b4d621653c5b931",
+      "status": "?? eng/immutable-route-performance/\n?? test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs",
+      "trackedDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedFileSha256": {
+        "eng/immutable-route-performance/GlobalUsings.cs": "d5570a69d66b966eaf6b46ba646155c97eda772ca2de4c5cdb6be38e9c1ade8f",
+        "eng/immutable-route-performance/ImmutableRoutePerformance.csproj": "751fd03de48fe59f2fe24bdc5ff2dc7d57d20ec0fdf45d5ed03cde91c2a5a2d6",
+        "eng/immutable-route-performance/Program.cs": "0abc862ff838db6f6f87d4e74bd229968fa945334381eb904ca9e7bc1222fc02",
+        "eng/immutable-route-performance/run_abba.py": "6c99c61dae37c5a5cc26e956b3c7a5275cf5cec7b174d11ce6fc6404101793d7",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs": "28999190d6f1875d8072e6346a19953b26055c8f64d5286c2faa39f09201d6b5"
+      },
+      "harnessSourceSha256": {
+        "eng/immutable-route-performance/Program.cs": "0abc862ff838db6f6f87d4e74bd229968fa945334381eb904ca9e7bc1222fc02",
+        "eng/immutable-route-performance/GlobalUsings.cs": "d5570a69d66b966eaf6b46ba646155c97eda772ca2de4c5cdb6be38e9c1ade8f",
+        "eng/immutable-route-performance/ImmutableRoutePerformance.csproj": "751fd03de48fe59f2fe24bdc5ff2dc7d57d20ec0fdf45d5ed03cde91c2a5a2d6",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs": "28999190d6f1875d8072e6346a19953b26055c8f64d5286c2faa39f09201d6b5"
+      },
+      "binarySha256": {
+        "Microsoft.Extensions.DependencyInjection.Abstractions.dll": "da04edc338d5aa0f38a1f5fa5ff3ee7e36affe9c961daf3ea724a428bd746bc6",
+        "Microsoft.Extensions.DependencyInjection.dll": "2d0e268bf76b4ce36a55ebb2767354db956c6660de65d6cccfc35c957fb12cfc",
+        "Microsoft.Extensions.Logging.Abstractions.dll": "7c242f8ca612fa1acc61f78efd5f8c89e01bd0bd47dc4ecc65e0e6e24f1a1668",
+        "SharpLink.Abstractions.dll": "cefa977033e860448fff571b38b18117b26bd02476abc4b8c104bb976373fb27",
+        "SharpLink.Client.dll": "0ac1b3c73a719dc5e86ba6be880e1a5aae10d8129d465d67064d8619cd0bc961",
+        "SharpLink.Runtime.dll": "1cde660a9665e3c224e6343290e37572463f00206ded2f9d085edf720aa23a9a",
+        "SharpLink.Sdk.dll": "f33b598d92d7d4031a8294029c801de0c7c1720419dc3211222cf1468f1e3bcf",
+        "SharpLink.Server.dll": "8fc99749ff8e39780d2a526d798443bd3577830d798f95ffad29846961807d47",
+        "SharpLink.UnitTests.dll": "1fe5c24c7b05561bd1905709f472d9ce9bdd6648c8df4d881d52a218533bc401",
+        "System.Threading.RateLimiting.dll": "4638d6b12ecce5eb1e0b0e5a9ebb23d1c2d708f6e8d3427adb9cf3e15f7ada71"
+      }
+    },
+    "candidate": {
+      "head": "d5f1c1904fd1137320b3f9799529242c59528cb0",
+      "headTree": "67a35ee0f0eb8aad0acb6f1c61c6eba43ee1ea19",
+      "status": "M doc/issue-775-immutable-route-probe.md\n M src/SharpLink.Abstractions/IRpcChannel.cs\n M src/SharpLink.Client/SharpLinkClient.ContractBinding.cs\n M src/SharpLink.Client/SharpLinkClient.Invokers.cs\n M src/SharpLink.Client/SharpLinkClient.Lifecycle.cs\n M src/SharpLink.Client/SharpLinkClient.Retry.cs\n M src/SharpLink.Runtime/ProtocolV2/ProtocolV2ContractManifest.cs\n M src/SharpLink.Runtime/ProtocolV2/ProtocolV2ContractManifestCodec.cs\n M src/SharpLink.Server/ServerServiceModuleRegistry.cs\n M src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs\n M src/SharpLink.Server/SharpLinkServer.AssemblyDrain.cs\n M src/SharpLink.Server/SharpLinkServer.AssemblyRegistration.cs\n M src/SharpLink.Server/SharpLinkServer.ContractManifest.cs\n M src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs\n M src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs\n M src/SharpLink.Server/SharpLinkServer.cs\n M test/SharpLink.UnitTests/Server/SharpLinkServerInvocationTestSupport.cs\n M test/SharpLink.UnitTests/Server/SharpLinkServerRequestScopeReviewTests.cs\n M test/SharpLink.UnitTests/Server/SharpLinkServerRequestScopeTests.cs\n?? doc/issue-775-immutable-route-transport.md\n?? doc/route-performance-harness.md\n?? eng/immutable-route-performance/\n?? src/SharpLink.Client/SharpLinkClient.ImmutableRouteExperiment.cs\n?? src/SharpLink.Server/ServerImmutableRouteRegistry.cs\n?? test/SharpLink.UnitTests/Protocol/ImmutableRouteManifestTests.cs\n?? test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSetup.cs\n?? test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs\n?? test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportTests.cs\n?? test/SharpLink.UnitTests/Server/ImmutableRouteRegistryTests.cs",
+      "trackedDiffSha256": "f1d2890f86278b99848f10d2bf65bfb8e6de2cfba0bce54639676437f67bf1d2",
+      "untrackedFileSha256": {
+        "doc/issue-775-immutable-route-transport.md": "9411e15ff28331c2c96b79dab33f1f7de69ec22020f5356d812820b09032db50",
+        "doc/route-performance-harness.md": "684b687514614f76c0428690f45b79e42f860587825a656a1e6a2d02ddc43acc",
+        "eng/immutable-route-performance/GlobalUsings.cs": "d5570a69d66b966eaf6b46ba646155c97eda772ca2de4c5cdb6be38e9c1ade8f",
+        "eng/immutable-route-performance/ImmutableRoutePerformance.csproj": "751fd03de48fe59f2fe24bdc5ff2dc7d57d20ec0fdf45d5ed03cde91c2a5a2d6",
+        "eng/immutable-route-performance/Program.cs": "0abc862ff838db6f6f87d4e74bd229968fa945334381eb904ca9e7bc1222fc02",
+        "eng/immutable-route-performance/run_abba.py": "6c99c61dae37c5a5cc26e956b3c7a5275cf5cec7b174d11ce6fc6404101793d7",
+        "src/SharpLink.Client/SharpLinkClient.ImmutableRouteExperiment.cs": "9d1f137f37aa294f89862573563e116bd113caf5f7f81fddf85e7490c8a22686",
+        "src/SharpLink.Server/ServerImmutableRouteRegistry.cs": "2dac0b7230568ac2081a3f0afa8de9e04819d793bbe2a0166475f764700087fe",
+        "test/SharpLink.UnitTests/Protocol/ImmutableRouteManifestTests.cs": "160e0b84dda496728e97b17ec3588a98dd9de2e69cebfc4a29f254f1ee1d6180",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSetup.cs": "ed15c946cac104df8d33fe6048296fdd8215d94dd3b530cbf2d112742aaedc14",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs": "28999190d6f1875d8072e6346a19953b26055c8f64d5286c2faa39f09201d6b5",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportTests.cs": "c38c0726bab9a13eed11909103f064edad0c524f99e97919edfdd8bb74678811",
+        "test/SharpLink.UnitTests/Server/ImmutableRouteRegistryTests.cs": "966b01cb59c14d1bfec7b776d2af467e33dcdc5ea39b30bcf6aa8ca804039fb7"
+      },
+      "harnessSourceSha256": {
+        "eng/immutable-route-performance/Program.cs": "0abc862ff838db6f6f87d4e74bd229968fa945334381eb904ca9e7bc1222fc02",
+        "eng/immutable-route-performance/GlobalUsings.cs": "d5570a69d66b966eaf6b46ba646155c97eda772ca2de4c5cdb6be38e9c1ade8f",
+        "eng/immutable-route-performance/ImmutableRoutePerformance.csproj": "751fd03de48fe59f2fe24bdc5ff2dc7d57d20ec0fdf45d5ed03cde91c2a5a2d6",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs": "28999190d6f1875d8072e6346a19953b26055c8f64d5286c2faa39f09201d6b5"
+      },
+      "binarySha256": {
+        "Microsoft.Extensions.DependencyInjection.Abstractions.dll": "da04edc338d5aa0f38a1f5fa5ff3ee7e36affe9c961daf3ea724a428bd746bc6",
+        "Microsoft.Extensions.DependencyInjection.dll": "2d0e268bf76b4ce36a55ebb2767354db956c6660de65d6cccfc35c957fb12cfc",
+        "Microsoft.Extensions.Logging.Abstractions.dll": "7c242f8ca612fa1acc61f78efd5f8c89e01bd0bd47dc4ecc65e0e6e24f1a1668",
+        "SharpLink.Abstractions.dll": "dfed65df4e576cadd70d70f7eb94b6c4087c8e5ac807e929c20d8934c5fea751",
+        "SharpLink.Client.dll": "788e20311d6c41860b8dd301c0c44b000a23f6253d9cea27698d4a0baef756fa",
+        "SharpLink.Runtime.dll": "a29be88ac27587efdd0d0ee337bb2fae71d9e43bb45c21c6855a03a607cacda7",
+        "SharpLink.Sdk.dll": "5be5c0f38123c85d1b55012598fd0c1726dfd3b727ae78a26a646841b4470de1",
+        "SharpLink.Server.dll": "aa9b985e0f95165edecf1e561e892c0fd3260a69c73e022bd872cda07fa8cc34",
+        "SharpLink.UnitTests.dll": "6548faa75e31740ac7b00419136eace158fcf2d2d9cc9188aaf5f2a9110b64bb",
+        "System.Threading.RateLimiting.dll": "4638d6b12ecce5eb1e0b0e5a9ebb23d1c2d708f6e8d3427adb9cf3e15f7ada71"
+      }
+    }
+  },
+  "dotnet": "/workspace/scratch/9e5903e2fbfb/.sharplink-dotnet/dotnet",
+  "dotnetInfo": ".NET SDK:\n Version:           10.0.102\n Commit:            4452502459\n Workload version:  10.0.100-manifests.73000c7b\n MSBuild version:   18.0.7+445250245\n\nRuntime Environment:\n OS Name:     debian\n OS Version:  13\n OS Platform: Linux\n RID:         linux-x64\n Base Path:   /workspace/scratch/9e5903e2fbfb/.sharplink-dotnet/sdk/10.0.102/\n\n.NET workloads installed:\nThere are no installed workloads to display.\nConfigured to use workload sets when installing new manifests.\nNo workload sets are installed. Run \"dotnet workload restore\" to install a workload set.\n\nHost:\n  Version:      10.0.2\n  Architecture: x64\n  Commit:       4452502459\n\n.NET SDKs installed:\n  10.0.102 [/workspace/scratch/9e5903e2fbfb/.sharplink-dotnet/sdk]\n\n.NET runtimes installed:\n  Microsoft.AspNetCore.App 10.0.2 [/workspace/scratch/9e5903e2fbfb/.sharplink-dotnet/shared/Microsoft.AspNetCore.App]\n  Microsoft.NETCore.App 10.0.2 [/workspace/scratch/9e5903e2fbfb/.sharplink-dotnet/shared/Microsoft.NETCore.App]\n\nOther architectures found:\n  None\n\nEnvironment variables:\n  DOTNET_CLI_HOME                          [/workspace/scratch/9e5903e2fbfb/.sharplink-cli]\n  DOTNET_CLI_TELEMETRY_OPTOUT              [1]\n  DOTNET_NOLOGO                            [1]\n  DOTNET_TieredCompilation                 [1]\n  DOTNET_TieredPGO                         [1]\n\nglobal.json file:\n  /workspace/scratch/9e5903e2fbfb/sharplink-immutable-route/global.json\n\nLearn more:\n  https://aka.ms/dotnet/info\n\nDownload .NET:\n  https://aka.ms/dotnet/download\n",
+  "environment": {
+    "DOTNET_TieredCompilation": "1",
+    "DOTNET_TieredPGO": "1"
+  },
+  "schedule": [
+    {
+      "group": "baseline",
+      "label": "block1-1-baseline",
+      "mode": "ordinary",
+      "file": "block1-1-baseline.json"
+    },
+    {
+      "group": "candidate",
+      "label": "block1-2-candidate",
+      "mode": "prepared",
+      "file": "block1-2-candidate.json"
+    },
+    {
+      "group": "candidate",
+      "label": "block1-3-candidate",
+      "mode": "prepared",
+      "file": "block1-3-candidate.json"
+    },
+    {
+      "group": "baseline",
+      "label": "block1-4-baseline",
+      "mode": "ordinary",
+      "file": "block1-4-baseline.json"
+    },
+    {
+      "group": "baseline",
+      "label": "block2-1-baseline",
+      "mode": "ordinary",
+      "file": "block2-1-baseline.json"
+    },
+    {
+      "group": "candidate",
+      "label": "block2-2-candidate",
+      "mode": "prepared",
+      "file": "block2-2-candidate.json"
+    },
+    {
+      "group": "candidate",
+      "label": "block2-3-candidate",
+      "mode": "prepared",
+      "file": "block2-3-candidate.json"
+    },
+    {
+      "group": "baseline",
+      "label": "block2-4-baseline",
+      "mode": "ordinary",
+      "file": "block2-4-baseline.json"
+    },
+    {
+      "group": "baseline",
+      "label": "block3-1-baseline",
+      "mode": "ordinary",
+      "file": "block3-1-baseline.json"
+    },
+    {
+      "group": "candidate",
+      "label": "block3-2-candidate",
+      "mode": "prepared",
+      "file": "block3-2-candidate.json"
+    },
+    {
+      "group": "candidate",
+      "label": "block3-3-candidate",
+      "mode": "prepared",
+      "file": "block3-3-candidate.json"
+    },
+    {
+      "group": "baseline",
+      "label": "block3-4-baseline",
+      "mode": "ordinary",
+      "file": "block3-4-baseline.json"
+    },
+    {
+      "group": "baseline",
+      "label": "block4-1-baseline",
+      "mode": "ordinary",
+      "file": "block4-1-baseline.json"
+    },
+    {
+      "group": "candidate",
+      "label": "block4-2-candidate",
+      "mode": "prepared",
+      "file": "block4-2-candidate.json"
+    },
+    {
+      "group": "candidate",
+      "label": "block4-3-candidate",
+      "mode": "prepared",
+      "file": "block4-3-candidate.json"
+    },
+    {
+      "group": "baseline",
+      "label": "block4-4-baseline",
+      "mode": "ordinary",
+      "file": "block4-4-baseline.json"
+    },
+    {
+      "group": "candidateOrdinary",
+      "label": "diagnostic-1-candidate-ordinary",
+      "mode": "ordinary",
+      "file": "diagnostic-1-candidate-ordinary.json"
+    },
+    {
+      "group": "candidateOrdinary",
+      "label": "diagnostic-2-candidate-ordinary",
+      "mode": "ordinary",
+      "file": "diagnostic-2-candidate-ordinary.json"
+    }
+  ],
+  "sourceAfter": {
+    "baseline": {
+      "head": "13928a35df4bff3cd99b14bd1df131aa3eb3bcdb",
+      "headTree": "18bc0d6936b787eeec48e0771b4d621653c5b931",
+      "status": "?? eng/immutable-route-performance/\n?? test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs",
+      "trackedDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedFileSha256": {
+        "eng/immutable-route-performance/GlobalUsings.cs": "d5570a69d66b966eaf6b46ba646155c97eda772ca2de4c5cdb6be38e9c1ade8f",
+        "eng/immutable-route-performance/ImmutableRoutePerformance.csproj": "751fd03de48fe59f2fe24bdc5ff2dc7d57d20ec0fdf45d5ed03cde91c2a5a2d6",
+        "eng/immutable-route-performance/Program.cs": "0abc862ff838db6f6f87d4e74bd229968fa945334381eb904ca9e7bc1222fc02",
+        "eng/immutable-route-performance/run_abba.py": "6c99c61dae37c5a5cc26e956b3c7a5275cf5cec7b174d11ce6fc6404101793d7",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs": "28999190d6f1875d8072e6346a19953b26055c8f64d5286c2faa39f09201d6b5"
+      },
+      "harnessSourceSha256": {
+        "eng/immutable-route-performance/Program.cs": "0abc862ff838db6f6f87d4e74bd229968fa945334381eb904ca9e7bc1222fc02",
+        "eng/immutable-route-performance/GlobalUsings.cs": "d5570a69d66b966eaf6b46ba646155c97eda772ca2de4c5cdb6be38e9c1ade8f",
+        "eng/immutable-route-performance/ImmutableRoutePerformance.csproj": "751fd03de48fe59f2fe24bdc5ff2dc7d57d20ec0fdf45d5ed03cde91c2a5a2d6",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs": "28999190d6f1875d8072e6346a19953b26055c8f64d5286c2faa39f09201d6b5"
+      },
+      "binarySha256": {
+        "Microsoft.Extensions.DependencyInjection.Abstractions.dll": "da04edc338d5aa0f38a1f5fa5ff3ee7e36affe9c961daf3ea724a428bd746bc6",
+        "Microsoft.Extensions.DependencyInjection.dll": "2d0e268bf76b4ce36a55ebb2767354db956c6660de65d6cccfc35c957fb12cfc",
+        "Microsoft.Extensions.Logging.Abstractions.dll": "7c242f8ca612fa1acc61f78efd5f8c89e01bd0bd47dc4ecc65e0e6e24f1a1668",
+        "SharpLink.Abstractions.dll": "cefa977033e860448fff571b38b18117b26bd02476abc4b8c104bb976373fb27",
+        "SharpLink.Client.dll": "0ac1b3c73a719dc5e86ba6be880e1a5aae10d8129d465d67064d8619cd0bc961",
+        "SharpLink.Runtime.dll": "1cde660a9665e3c224e6343290e37572463f00206ded2f9d085edf720aa23a9a",
+        "SharpLink.Sdk.dll": "f33b598d92d7d4031a8294029c801de0c7c1720419dc3211222cf1468f1e3bcf",
+        "SharpLink.Server.dll": "8fc99749ff8e39780d2a526d798443bd3577830d798f95ffad29846961807d47",
+        "SharpLink.UnitTests.dll": "1fe5c24c7b05561bd1905709f472d9ce9bdd6648c8df4d881d52a218533bc401",
+        "System.Threading.RateLimiting.dll": "4638d6b12ecce5eb1e0b0e5a9ebb23d1c2d708f6e8d3427adb9cf3e15f7ada71"
+      }
+    },
+    "candidate": {
+      "head": "d5f1c1904fd1137320b3f9799529242c59528cb0",
+      "headTree": "67a35ee0f0eb8aad0acb6f1c61c6eba43ee1ea19",
+      "status": "M doc/issue-775-immutable-route-probe.md\n M src/SharpLink.Abstractions/IRpcChannel.cs\n M src/SharpLink.Client/SharpLinkClient.ContractBinding.cs\n M src/SharpLink.Client/SharpLinkClient.Invokers.cs\n M src/SharpLink.Client/SharpLinkClient.Lifecycle.cs\n M src/SharpLink.Client/SharpLinkClient.Retry.cs\n M src/SharpLink.Runtime/ProtocolV2/ProtocolV2ContractManifest.cs\n M src/SharpLink.Runtime/ProtocolV2/ProtocolV2ContractManifestCodec.cs\n M src/SharpLink.Server/ServerServiceModuleRegistry.cs\n M src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs\n M src/SharpLink.Server/SharpLinkServer.AssemblyDrain.cs\n M src/SharpLink.Server/SharpLinkServer.AssemblyRegistration.cs\n M src/SharpLink.Server/SharpLinkServer.ContractManifest.cs\n M src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs\n M src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs\n M src/SharpLink.Server/SharpLinkServer.cs\n M test/SharpLink.UnitTests/Server/SharpLinkServerInvocationTestSupport.cs\n M test/SharpLink.UnitTests/Server/SharpLinkServerRequestScopeReviewTests.cs\n M test/SharpLink.UnitTests/Server/SharpLinkServerRequestScopeTests.cs\n?? doc/issue-775-immutable-route-transport.md\n?? doc/route-performance-harness.md\n?? eng/immutable-route-performance/\n?? src/SharpLink.Client/SharpLinkClient.ImmutableRouteExperiment.cs\n?? src/SharpLink.Server/ServerImmutableRouteRegistry.cs\n?? test/SharpLink.UnitTests/Protocol/ImmutableRouteManifestTests.cs\n?? test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSetup.cs\n?? test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs\n?? test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportTests.cs\n?? test/SharpLink.UnitTests/Server/ImmutableRouteRegistryTests.cs",
+      "trackedDiffSha256": "f1d2890f86278b99848f10d2bf65bfb8e6de2cfba0bce54639676437f67bf1d2",
+      "untrackedFileSha256": {
+        "doc/issue-775-immutable-route-transport.md": "9411e15ff28331c2c96b79dab33f1f7de69ec22020f5356d812820b09032db50",
+        "doc/route-performance-harness.md": "684b687514614f76c0428690f45b79e42f860587825a656a1e6a2d02ddc43acc",
+        "eng/immutable-route-performance/GlobalUsings.cs": "d5570a69d66b966eaf6b46ba646155c97eda772ca2de4c5cdb6be38e9c1ade8f",
+        "eng/immutable-route-performance/ImmutableRoutePerformance.csproj": "751fd03de48fe59f2fe24bdc5ff2dc7d57d20ec0fdf45d5ed03cde91c2a5a2d6",
+        "eng/immutable-route-performance/Program.cs": "0abc862ff838db6f6f87d4e74bd229968fa945334381eb904ca9e7bc1222fc02",
+        "eng/immutable-route-performance/run_abba.py": "6c99c61dae37c5a5cc26e956b3c7a5275cf5cec7b174d11ce6fc6404101793d7",
+        "src/SharpLink.Client/SharpLinkClient.ImmutableRouteExperiment.cs": "9d1f137f37aa294f89862573563e116bd113caf5f7f81fddf85e7490c8a22686",
+        "src/SharpLink.Server/ServerImmutableRouteRegistry.cs": "2dac0b7230568ac2081a3f0afa8de9e04819d793bbe2a0166475f764700087fe",
+        "test/SharpLink.UnitTests/Protocol/ImmutableRouteManifestTests.cs": "160e0b84dda496728e97b17ec3588a98dd9de2e69cebfc4a29f254f1ee1d6180",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSetup.cs": "ed15c946cac104df8d33fe6048296fdd8215d94dd3b530cbf2d112742aaedc14",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs": "28999190d6f1875d8072e6346a19953b26055c8f64d5286c2faa39f09201d6b5",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportTests.cs": "c38c0726bab9a13eed11909103f064edad0c524f99e97919edfdd8bb74678811",
+        "test/SharpLink.UnitTests/Server/ImmutableRouteRegistryTests.cs": "966b01cb59c14d1bfec7b776d2af467e33dcdc5ea39b30bcf6aa8ca804039fb7"
+      },
+      "harnessSourceSha256": {
+        "eng/immutable-route-performance/Program.cs": "0abc862ff838db6f6f87d4e74bd229968fa945334381eb904ca9e7bc1222fc02",
+        "eng/immutable-route-performance/GlobalUsings.cs": "d5570a69d66b966eaf6b46ba646155c97eda772ca2de4c5cdb6be38e9c1ade8f",
+        "eng/immutable-route-performance/ImmutableRoutePerformance.csproj": "751fd03de48fe59f2fe24bdc5ff2dc7d57d20ec0fdf45d5ed03cde91c2a5a2d6",
+        "test/SharpLink.UnitTests/Runtime/ImmutableRouteTransportSupport.cs": "28999190d6f1875d8072e6346a19953b26055c8f64d5286c2faa39f09201d6b5"
+      },
+      "binarySha256": {
+        "Microsoft.Extensions.DependencyInjection.Abstractions.dll": "da04edc338d5aa0f38a1f5fa5ff3ee7e36affe9c961daf3ea724a428bd746bc6",
+        "Microsoft.Extensions.DependencyInjection.dll": "2d0e268bf76b4ce36a55ebb2767354db956c6660de65d6cccfc35c957fb12cfc",
+        "Microsoft.Extensions.Logging.Abstractions.dll": "7c242f8ca612fa1acc61f78efd5f8c89e01bd0bd47dc4ecc65e0e6e24f1a1668",
+        "SharpLink.Abstractions.dll": "dfed65df4e576cadd70d70f7eb94b6c4087c8e5ac807e929c20d8934c5fea751",
+        "SharpLink.Client.dll": "788e20311d6c41860b8dd301c0c44b000a23f6253d9cea27698d4a0baef756fa",
+        "SharpLink.Runtime.dll": "a29be88ac27587efdd0d0ee337bb2fae71d9e43bb45c21c6855a03a607cacda7",
+        "SharpLink.Sdk.dll": "5be5c0f38123c85d1b55012598fd0c1726dfd3b727ae78a26a646841b4470de1",
+        "SharpLink.Server.dll": "aa9b985e0f95165edecf1e561e892c0fd3260a69c73e022bd872cda07fa8cc34",
+        "SharpLink.UnitTests.dll": "6548faa75e31740ac7b00419136eace158fcf2d2d9cc9188aaf5f2a9110b64bb",
+        "System.Threading.RateLimiting.dll": "4638d6b12ecce5eb1e0b0e5a9ebb23d1c2d708f6e8d3427adb9cf3e15f7ada71"
+      }
+    }
+  },
+  "finishedUtc": "2026-10-21T11:40:57.676347+00:00"
+}

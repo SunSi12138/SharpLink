@@ -27,7 +27,10 @@ internal sealed partial class SharpLinkServer
                 service.Key,
                 manifest.RpcAssemblyHash);
         }
-        return new ProtocolV2ContractManifest(_registryGeneration, entries);
+        var routes = _serviceModuleRegistry.ImmutableRoutes;
+        return routes.Enabled
+            ? new ProtocolV2ContractManifest(_registryGeneration, entries, routes.Scope, routes.ContractRoutes)
+            : new ProtocolV2ContractManifest(_registryGeneration, entries);
     }
 
     private void ScheduleContractManifestPublish()

@@ -1,0 +1,60 @@
+{
+  "baseline": {
+    "unary": {
+      "method": "SharpLink.Client.SharpLinkClient:InvokeUnaryCoreAsync[SharpLink.Abstractions.RpcEmptyRequest,int](SharpLink.Abstractions.RpcMethodDescriptor,SharpLink.Abstractions.RpcEmptyRequest,SharpLink.Abstractions.IRpcCodec`1[SharpLink.Abstractions.RpcEmptyRequest],SharpLink.Abstractions.IRpcCodec`1[int],SharpLink.Client.SharpLinkClient+ResolvedCallControl,System.Threading.CancellationToken):System.Threading.Tasks.ValueTask`1[int]:this (FullOpts)",
+      "codeBytes": [
+        "952"
+      ],
+      "stackReservations": [
+        "264",
+        "120"
+      ],
+      "extract": "/tmp/immutable-route-jit-20261021/baseline-unary.asm"
+    },
+    "oneway": {
+      "method": "SharpLink.Client.SharpLinkClient+<InvokeOneWayPlainCoreAsync>d__176`1[SharpLink.Abstractions.RpcEmptyRequest]:MoveNext():this (FullOpts)",
+      "codeBytes": [
+        "2480"
+      ],
+      "stackReservations": [
+        "480",
+        "104",
+        "104",
+        "104",
+        "104",
+        "104",
+        "104"
+      ],
+      "extract": "/tmp/immutable-route-jit-20261021/baseline-oneway.asm"
+    }
+  },
+  "candidate": {
+    "unary": {
+      "method": "SharpLink.Client.SharpLinkClient:InvokeUnaryCoreAsync[SharpLink.Abstractions.RpcEmptyRequest,int](SharpLink.Abstractions.RpcMethodDescriptor,SharpLink.Abstractions.RpcEmptyRequest,SharpLink.Abstractions.IRpcCodec`1[SharpLink.Abstractions.RpcEmptyRequest],SharpLink.Abstractions.IRpcCodec`1[int],SharpLink.Client.SharpLinkClient+ResolvedCallControl,System.Threading.CancellationToken):System.Threading.Tasks.ValueTask`1[int]:this (FullOpts)",
+      "codeBytes": [
+        "972"
+      ],
+      "stackReservations": [
+        "264",
+        "120"
+      ],
+      "extract": "/tmp/immutable-route-jit-20261021/candidate-unary.asm"
+    },
+    "oneway": {
+      "method": "SharpLink.Client.SharpLinkClient+<InvokeOneWayPlainCoreAsync>d__190`1[SharpLink.Abstractions.RpcEmptyRequest]:MoveNext():this (FullOpts)",
+      "codeBytes": [
+        "2531"
+      ],
+      "stackReservations": [
+        "480",
+        "104",
+        "104",
+        "104",
+        "104",
+        "104",
+        "104"
+      ],
+      "extract": "/tmp/immutable-route-jit-20261021/candidate-oneway.asm"
+    }
+  }
+}

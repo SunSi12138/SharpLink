@@ -12,6 +12,7 @@ internal sealed class ServerServiceModuleRegistry
 {
     private readonly Lock _gate = new();
     private FrozenDictionary<long, ServiceRegistration> _services;
+    private FrozenDictionary<long, ServiceRegistration> _dispatchServices;
     private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
@@ -23,6 +24,7 @@ internal sealed class ServerServiceModuleRegistry
     {
         ArgumentNullException.ThrowIfNull(services);
         _services = services;
+        _dispatchServices = services;
         DynamicModules = new DynamicModuleTable(this);
         UnregisterOperations = new UnregisterOperationTable(this);
         DetachedModuleServices = new DetachedModuleServiceTable(this);
@@ -35,6 +37,21 @@ internal sealed class ServerServiceModuleRegistry
     internal Lock Gate => _gate;
 
     internal ref FrozenDictionary<long, ServiceRegistration> ServicesStorage => ref _services;
+
+    // The dispatch field deliberately has the same owner and indirection shape as ServicesStorage.
+    // Experimental route preparation changes only its cold-published keys, not request lookup count.
+    internal ref FrozenDictionary<long, ServiceRegistration> DispatchServicesStorage => ref _dispatchServices;
+
+    internal ServerImmutableRouteRegistry ImmutableRoutes { get; } = new();
+
+    internal void PublishServices(
+        FrozenDictionary<long, ServiceRegistration> services,
+        ServerImmutableRouteRegistry.PreparedSnapshot dispatch)
+    {
+        ImmutableRoutes.Publish(dispatch);
+        Volatile.Write(ref _services, services);
+        Volatile.Write(ref _dispatchServices, dispatch.DispatchServices);
+    }
 
     internal ref long GenerationStorage => ref _generation;
 

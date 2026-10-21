@@ -198,7 +198,7 @@ internal sealed partial class SharpLinkServer
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out long contractId) ||
             !reader.TryReadLittleEndian(out long methodId) ||
-            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration) ||
+            !Volatile.Read(ref _dispatchServices).TryGetValue(contractId, out var registration) ||
             !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
         {
             return UnresolvedClientStreamCount;

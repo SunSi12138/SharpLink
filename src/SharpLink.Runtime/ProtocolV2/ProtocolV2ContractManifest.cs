@@ -10,7 +10,9 @@ internal sealed class ProtocolV2ContractManifest
 {
     internal ProtocolV2ContractManifest(
         long generation,
-        IEnumerable<KeyValuePair<long, RpcHash128>> contracts)
+        IEnumerable<KeyValuePair<long, RpcHash128>> contracts,
+        Guid routeScope = default,
+        IEnumerable<KeyValuePair<long, long>>? routes = null)
     {
         if (generation < 0)
             throw new ArgumentOutOfRangeException(nameof(generation));
@@ -32,6 +34,23 @@ internal sealed class ProtocolV2ContractManifest
         Generation = generation;
         Contracts = dictionary.ToFrozenDictionary();
         OrderedContracts = ordered;
+        RouteScope = routeScope;
+        if (routeScope == Guid.Empty)
+        {
+            if (routes is not null)
+                throw new ArgumentException("Routes require a nonempty scope.", nameof(routes));
+            Routes = FrozenDictionary<long, long>.Empty;
+        }
+        else
+        {
+            ArgumentNullException.ThrowIfNull(routes);
+            var routeMap = routes.ToDictionary();
+            if (routeMap.Count != dictionary.Count ||
+                routeMap.Any(pair => !dictionary.ContainsKey(pair.Key) || pair.Value <= 0) ||
+                routeMap.Values.Distinct().Count() != routeMap.Count)
+                throw new ArgumentException("Prepared routes must identify every contract exactly once with unique positive IDs.", nameof(routes));
+            Routes = routeMap.ToFrozenDictionary();
+        }
     }
 
     internal long Generation { get; }
@@ -39,4 +58,8 @@ internal sealed class ProtocolV2ContractManifest
     internal FrozenDictionary<long, RpcHash128> Contracts { get; }
 
     internal IReadOnlyList<KeyValuePair<long, RpcHash128>> OrderedContracts { get; }
+
+    // Experimental cold-control extension, not negotiated production protocol support.
+    internal Guid RouteScope { get; }
+    internal FrozenDictionary<long, long> Routes { get; }
 }

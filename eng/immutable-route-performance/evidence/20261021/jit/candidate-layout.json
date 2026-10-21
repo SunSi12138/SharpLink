@@ -1,0 +1,5 @@
+{
+  "descriptorBytes": 40,
+  "oneWayStateMachine": "SharpLink.Client.SharpLinkClient\u002B\u003CInvokeOneWayPlainCoreAsync\u003Ed__190\u00601[[SharpLink.Abstractions.RpcEmptyRequest, SharpLink.Abstractions, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null]]",
+  "oneWayStateMachineBytes": 200
+}
