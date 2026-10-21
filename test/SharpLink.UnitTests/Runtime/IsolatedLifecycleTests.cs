@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Reflection;
 using SharpLink.Client;
 using SharpLink.Server;
 using SharpLink.Sdk;
@@ -54,7 +55,7 @@ public sealed class IsolatedLifecycleTests
         Volatile.Write(ref expired, 1);
         await using var newClient = CreateClient(newServer.Endpoint);
         var failure = await CaptureFailureAsync(newClient.ConnectAsync().AsTask());
-        Ensure(failure is SharpLinkException, $"new preparation must fail authentication: {failure}");
+        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.AuthenticationExpired }, $"new preparation must fail authentication: {failure}");
         Ensure(await InvokeUnary(oldClient, Unary) == oldPlugin.State.Marker, "failed new preparation did not affect established session");
         Ensure(accepted == 1 && newPlugin.State.Calls == 0, "no new-domain execution with unavailable bootstrap authentication");
     }
@@ -72,6 +73,7 @@ public sealed class IsolatedLifecycleTests
         await client.ConnectAsync();
         Ensure(await InvokeUnary(client, Unary) == firstPlugin.State.Marker, "initial domain");
         await first.Server.StopAsync(TimeSpan.Zero);
+        await WaitUntilAsync(() => client.ReadyConnectionCount == 0);
         await using var second = await StartServerAsync(secondPlugin, bindEndpoint: first.Endpoint);
         await WaitUntilAsync(() => client.ReadyConnectionCount > 0);
         // Counterexample: same descriptor/client can reach a same-hash other server after reconnect.
@@ -122,8 +124,15 @@ public sealed class IsolatedLifecycleTests
             Ensure(!plugin.State.Disposed.Task.IsCompleted, "service not prematurely disposed");
         }
         finally { plugin.State.Release.TrySetResult(); }
-        Ensure(await held.WaitAsync(IsolatedLifecycleSupport.Timeout) == plugin.State.Marker, "uncancellable entered call finishes");
+        var heldFailure = await CaptureFailureAsync(held);
+        Ensure(heldFailure is SharpLinkException { Code: SharpLinkErrorCode.Unavailable },
+            "module retirement cancels RPC terminal outcome even when user code ignores cancellation");
         await plugin.State.Disposed.Task.WaitAsync(IsolatedLifecycleSupport.Timeout);
+        // Test-only isolation of module outcome from a separately observed baseline race:
+        // publication can fault if Stop changes session phase between Ready check and send.
+        var publishScheduled = typeof(SharpLinkServer).GetField(
+            "_contractManifestPublishScheduled", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await WaitUntilAsync(() => (int)publishScheduled.GetValue(fixture.Server)! == 0);
     }
     [Test]
     public async Task StopCancelsQueuedRequestRatherThanCompletingAllReceivedWork()
@@ -200,6 +209,7 @@ public sealed class IsolatedLifecycleTests
         await client.ConnectAsync();
         Ensure(await InvokeUnary(client, Unary) == firstPlugin.State.Marker, "first scoped domain is ready");
         await first.Server.StopAsync(TimeSpan.Zero);
+        await WaitUntilAsync(() => client.ReadyConnectionCount == 0);
         await using var second = await StartServerAsync(secondPlugin,
             authenticator: secondAuth, bindEndpoint: first.Endpoint);
         await rejected.Task.WaitAsync(IsolatedLifecycleSupport.Timeout);

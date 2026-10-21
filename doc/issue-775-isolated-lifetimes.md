@@ -103,3 +103,19 @@ Local build is supported. Local runtime execution was blocked before test cases:
 the default sandbox denied test runner IPC sockets, and the permitted escalation
 failed in sandbox setup. No protected paths or permissions were changed. The
 branch-only CI workflow runs the real TCP tests in GitHub's runner instead.
+
+## Initial CI finding retained
+
+Run [39599746128](https://github.com/SunSi12138/SharpLink/actions/runs/39599746128)
+ran eight cases: seven passed and module-timeout teardown failed. A background
+ContractManifest broadcast checked a Ready connection, then attempted its send
+after session phase became Draining. The resulting protocol exception surfaced
+through framework-task drain during server Stop. Production source is unchanged;
+this is an observed baseline shutdown/publication race, not proof every Stop fails.
+
+The follow-up fixture corrects the module timeout's expected RPC outcome to
+Unavailable and waits for the already-scheduled manifest publication to finish
+before teardown, using a test-only internal observation. This isolates the module
+resource assertion; it does not fix or erase the observed race and is not a public
+retirement API. Reconnect cases additionally wait for old Ready count to reach zero
+before binding the replacement listener, avoiding stale-Ready test observation.
