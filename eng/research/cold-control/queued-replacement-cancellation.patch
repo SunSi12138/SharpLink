@@ -1,0 +1,162 @@
+diff --git a/test/SharpLink.DynamicServices/DynamicPluginService.cs b/test/SharpLink.DynamicServices/DynamicPluginService.cs
+index 94cb054..8fff83b 100644
+--- a/test/SharpLink.DynamicServices/DynamicPluginService.cs
++++ b/test/SharpLink.DynamicServices/DynamicPluginService.cs
+@@ -8,6 +8,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
+ {
+     private static TaskCompletionSource _blockStarted = NewSignal();
+     private static TaskCompletionSource _blockRelease = NewSignal();
++    private static CancellationToken _blockCancellation;
+     private static TaskCompletionSource _synchronousBlockStarted = NewSignal();
+     private static TaskCompletionSource _synchronousBlockRelease = NewSignal();
+     private static TaskCompletionSource _rejectResponseStarted = NewSignal();
+@@ -31,6 +32,8 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
+ 
+     public static Task BlockStarted => Volatile.Read(ref _blockStarted).Task;
+ 
++    public static CancellationToken BlockCancellation => _blockCancellation;
++
+     public static Task SynchronousBlockStarted => Volatile.Read(ref _synchronousBlockStarted).Task;
+ 
+     public static Task RejectResponseStarted => Volatile.Read(ref _rejectResponseStarted).Task;
+@@ -41,6 +44,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
+     {
+         Volatile.Write(ref _blockStarted, NewSignal());
+         Volatile.Write(ref _blockRelease, NewSignal());
++        _blockCancellation = default;
+         Volatile.Write(ref _synchronousBlockStarted, NewSignal());
+         Volatile.Write(ref _synchronousBlockRelease, NewSignal());
+         Volatile.Write(ref _rejectResponseStarted, NewSignal());
+@@ -134,6 +138,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
+ 
+     public async ValueTask<int> BlockAsync(CancellationToken cancellationToken)
+     {
++        _blockCancellation = cancellationToken;
+         Volatile.Read(ref _blockStarted).TrySetResult();
+         await Volatile.Read(ref _blockRelease).Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+         return 42;
+diff --git a/test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.QueuedReplacementCancellation.cs b/test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.QueuedReplacementCancellation.cs
+new file mode 100644
+index 0000000..ce90f5a
+--- /dev/null
++++ b/test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.QueuedReplacementCancellation.cs
+@@ -0,0 +1,119 @@
++using System.Reflection;
++using System.Runtime.Loader;
++
++namespace SharpLink.IntegrationTests;
++
++public sealed partial class RuntimeAssemblyIntegrationTests
++{
++    [Test]
++    [NotInParallel]
++    public async Task QueuedCallRetargetedByCompatibleReplacementShouldObserveNewModuleCancellation()
++        => await VerifyQueuedModuleCancellationAsync(replaceWhileQueued: true);
++
++    [Test]
++    [NotInParallel]
++    public async Task QueuedCallWithoutReplacementShouldObserveItsModuleCancellation()
++        => await VerifyQueuedModuleCancellationAsync(replaceWhileQueued: false);
++
++    private static async Task VerifyQueuedModuleCancellationAsync(bool replaceWhileQueued)
++    {
++        await using var harness = await DynamicHarness.CreateAsync();
++        using var plugin = PluginBundle.Load("queued-replacement-original");
++        plugin.ResetServiceState();
++        await RegisterAllAsync(harness, plugin);
++        var proxy = GetProxy(harness.Client, plugin.ContractType);
++        var server = (SharpLinkServer)harness.Server;
++        harness.Server.EnableAdmissionControl(options =>
++        {
++            options.Global.UseConcurrency(1);
++            options.MaxQueuedCalls = 1;
++            options.MaxQueuedBytes = 64 * 1024;
++            options.MaxQueueDelay = TimeSpan.FromSeconds(30);
++        });
++        var admission = server.CurrentAdmissionProgramForTests!;
++        var holder = await admission.Controller.AcquireAsync(
++            new SharpLinkAdmissionContext(101, 202, RpcMethodKind.Unary, "test-holder", null, null),
++            1, false, default, CancellationToken.None);
++        Ensure(holder.IsAcquired, "an external test holder must occupy the only admission permit");
++
++        var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
++        Assembly? replacementAssembly = null;
++        Type? replacementType = null;
++        Task<int>? queued = null;
++        try
++        {
++            replacementAssembly = replacementContext.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
++            replacementType = replacementAssembly.GetType(
++                "SharpLink.DynamicPlugin.DynamicPluginService", throwOnError: true)!;
++            replacementType.GetMethod("Reset")!.Invoke(null, null);
++            queued = InvokeValueTaskAsync<int>(proxy, plugin.ContractType, "BlockAsync", CancellationToken.None)
++                .AsTask();
++            await WaitUntilAsync(() => admission.Kernel.QueuedCalls == 1);
++
++            var oldModule = GetDynamicModule(harness.Server, plugin.ServiceAssembly);
++            Ensure(oldModule.RemainingCalls == 0,
++                "an admission waiter must not hold an old module invocation lease");
++            if (replaceWhileQueued)
++            {
++                var replacement = await harness.Server.ReplaceAssemblyAsync(
++                    plugin.ServiceAssembly, replacementAssembly, TimeSpan.Zero);
++                Ensure(replacement.Succeeded && replacement.ReferencesReleased,
++                    "same-contract implementation replacement must publish while the waiter remains queued");
++            }
++            Ensure(!oldModule.ForcedCancellation.IsCancellationRequested,
++                "a normally drained old module must not confuse the new-module cancellation oracle");
++
++            var activeAssembly = replaceWhileQueued ? replacementAssembly : plugin.ServiceAssembly;
++            var activeType = activeAssembly.GetType(
++                "SharpLink.DynamicPlugin.DynamicPluginService", throwOnError: true)!;
++            holder.Lease!.Dispose();
++            await ((Task)activeType.GetProperty("BlockStarted")!.GetValue(null)!)
++                .WaitAsync(TimeSpan.FromSeconds(5));
++            if (replaceWhileQueued)
++            {
++                Ensure(!plugin.GetStaticTask("BlockStarted").IsCompleted,
++                    "the queued request must actually execute the replacement service, not the old service");
++            }
++            var handlerToken = (CancellationToken)activeType.GetProperty("BlockCancellation")!
++                .GetValue(null)!;
++            Ensure(handlerToken.CanBeCanceled && !handlerToken.IsCancellationRequested,
++                "the replacement handler starts with a live cooperative cancellation token");
++            var replacementModule = GetDynamicModule(harness.Server, activeAssembly);
++
++            _ = await harness.Server.UnregisterAssemblyAsync(activeAssembly, TimeSpan.Zero);
++            Ensure(replacementModule.ForcedCancellation.IsCancellationRequested,
++                "new module retirement must have synchronously requested forced cancellation");
++            Ensure(handlerToken.IsCancellationRequested,
++                "a queued call retargeted to the replacement must observe that replacement module's cancellation, not the already released old module's token");
++        }
++        finally
++        {
++            holder.Lease!.Dispose();
++            replacementType?.GetMethod("ReleaseBlock")!.Invoke(null, null);
++            plugin.ReleaseBlock();
++            if (queued is not null)
++            {
++                try { _ = await queued.WaitAsync(TimeSpan.FromSeconds(5)); }
++                catch (SharpLinkException) { }
++            }
++            if (replacementAssembly is not null)
++                _ = await harness.Server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
++            _ = await harness.Server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
++            _ = await harness.Server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
++            _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
++            replacementContext.Unload();
++        }
++    }
++
++    private sealed class SharedContractServiceLoadContext(Assembly contractAssembly)
++        : AssemblyLoadContext("queued-replacement-shared-contract", isCollectible: true)
++    {
++        protected override Assembly? Load(AssemblyName assemblyName)
++        {
++            if (AssemblyName.ReferenceMatchesDefinition(contractAssembly.GetName(), assemblyName))
++                return contractAssembly;
++            return Default.Assemblies.FirstOrDefault(candidate =>
++                AssemblyName.ReferenceMatchesDefinition(candidate.GetName(), assemblyName));
++        }
++    }
++}
