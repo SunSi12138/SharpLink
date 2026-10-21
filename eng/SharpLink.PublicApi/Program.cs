@@ -62,7 +62,7 @@ static IReadOnlyList<string> GetTypeForwarders(string assemblyPath)
     foreach (var handle in metadata.ExportedTypes)
     {
         var exported = metadata.GetExportedType(handle);
-        if ((exported.Attributes & TypeAttributes.Forwarder) == 0)
+        if (!exported.IsForwarder)
             continue;
 
         var name = metadata.GetString(exported.Name);
