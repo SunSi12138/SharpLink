@@ -27,9 +27,7 @@ is intentionally outside the Extended scope.
 ## Local-only evidence and access limitation
 
 The initial local raw logs, bad samples, full ownership prototype source/IL/JIT
-and reproduction bundle were sealed locally. Public archive upload was denied
-by permission review; one content-audited retry was also denied. Archive uploads
-stopped. The denied payload was not unpacked into plaintext or rerouted through CI.
+and reproduction bundle were sealed locally. Public archive upload was not authorized. Archive uploads stopped. The denied payload was not unpacked into plaintext or rerouted through CI.
 Consequently the local ownership/inbound comparison claims in the reports are
 not independently replayable from this public branch. They are not labelled CI
 results or production acceptance.

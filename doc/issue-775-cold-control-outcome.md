@@ -258,8 +258,7 @@ Extended scope and intentionally skipped, not claimed.
 
 Evidence access is limited: the raw local archives and ownership-prototype
 replay bundle are sealed locally, **not published**. Public archive upload was
-not authorized by the permission review, including one evidence-backed retry;
-it was stopped rather than repackaged or routed elsewhere. The
+not authorized. Those archives remain local, not repackaged or routed elsewhere. The
 [public evidence index](../eng/research/cold-control/README.md) distinguishes
 original source/model files and fresh CI output from those local-only observations.
 No remote ownership-prototype replay is claimed. The evidence branch's own final

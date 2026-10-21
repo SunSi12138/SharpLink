@@ -1,6 +1,6 @@
 # Same-session cold-control and physical-ownership acceptance ledger
 
-Status: research only, 2026-10-21. No implementation in this archive is a production quiescence API, and no partial cleanup candidate is recommended for publication as such.
+Status: research only, 2026-10-21. No implementation in these experiments is a production quiescence API, and no partial cleanup candidate is recommended for publication as such.
 
 **Access limitation:** the detailed prototype/source/IL/JIT/raw-results bundle
 is sealed locally but was not authorized for public archive upload. This public
@@ -63,7 +63,7 @@ Changed files are enumerated in `candidate-manifest.json`; complete reconstructi
 - This registry conservatively couples modules sharing one runtime: unrelated abandoned B work can delay A release. It does not couple separate runtimes, but it is not precise per-module ownership. Uncooperative physical work may retain indefinitely; a timeout does not free it.
 - `SharpLinkClient.Interceptors.cs`: ClientInterceptorState already owns the client, so its timeout-only replacement can register the task without a new successful-call owner capture. Stream wrappers need one of the representations above.
 - Client/server abandoned MoveNext cleanup is one physical task: force-yield without SynchronizationContext capture, await pending operation, then Dispose. Calling compiler-generated iterator Dispose concurrently with MoveNext can throw NotSupportedException and lose finally execution. A synchronously blocking Dispose must also not delay the public deadline.
-- `RpcSession.GeneratedServerBridge.cs`: parent-authored prototype reuses existing session runtime and existing deadline-won state. It catches cancellation of the waiter as well as deadline expiry and retains sequential cleanup. This is an ownership experiment, not evidence that all runtime ownership sources have been audited.
+- `RpcSession.GeneratedServerBridge.cs`: generated-server prototype reuses existing session runtime and existing deadline-won state. It catches cancellation of the waiter as well as deadline expiry and retains sequential cleanup. This is an ownership experiment, not evidence that all runtime ownership sources have been audited.
 
 ### Stop exclusion, measured
 
@@ -85,13 +85,13 @@ Evidence: [built-in inbound report](builtin-inbound-disposal-research.md) and it
 
 ## Test ledger
 
-All test sources below are in the archive under `test/SharpLink.UnitTests/`.
+All test sources below are in the local experimental snapshot under `test/SharpLink.UnitTests/`.
 
 - `Client/ColdQuiescenceOwnershipAuditTests.cs`: original 2/2 baseline counterexamples, static/dynamic blocked serialization after a delayed interceptor. Public deadline, pending/auxiliary/selection/logical counts drain while codec still executes; late Request publication is correctly rejected. `/tmp/cold-quiescence-audit-direct-test.log`.
 - `Client/AbandonedInvocationOwnershipCandidateTests.cs`: 20 cases. Three blocked-codec shapes; five invocation shapes times late next/fault/cancel; already-abandoned static Stop; registry transitivity and runtime isolation. ClientStreaming has its existing independent producer lease and is not falsely asserted to have zero leases.
 - `Client/AbandonedStreamOwnershipCounterexampleTests.cs`: six candidate regressions, two stream shapes times pending MoveNext deadline, the same deadline with slow subsequent disposal, MoveNext cancellation. The original six baseline counterexample assertions are preserved separately in `partial/AbandonedStreamOwnershipCounterexampleTests.cs`.
 - `Client/AbandonedIteratorSequentialCleanupTests.cs`: four compiler-generated iterator deadline/cancel cases, verifies eventual finally and exactly-once sequential disposal while scopes remain alive.
-- `Runtime/AbandonedGeneratedStreamOwnershipCandidateTests.cs`: six parent-authored cases: deadline/cancel x late fault; synthetic mailbox disposal; synchronous Dispose race. The mailbox case has the limitation above.
+- `Runtime/AbandonedGeneratedStreamOwnershipCandidateTests.cs`: six generated-server cases: deadline/cancel x late fault; synthetic mailbox disposal; synchronous Dispose race. The mailbox case has the limitation above.
 - `Client/AbandonedOwnership{Representation,Retention}Measurements.cs`: five measurement/probe cases, not throughput acceptance tests.
 - These Abandoned* groups total **41**, including five measurement cases. Direct consumed-owner and final state-helper Release builds: zero warnings/errors, 41/41, `/tmp/cold-direct-exchange-owner-build.log`, `/tmp/cold-direct-exchange-owner-tests.log`, and `exchange-direct-owner/regressions.json`. Final helper run is `/tmp/cold-direct-state-helper-{build,tests}.log` and `exchange-state-helper/regressions.json`. Do not call this 41 production tests or a full suite.
 - Separate Stop and CTS characterizations intentionally pass by asserting the remaining bad behavior. No favorable regression run overrides those counterexamples.
@@ -124,8 +124,7 @@ No complete FIFO-fence/pool-freeze/transaction implementation, hot-path certific
 
 The local source-only bundle is `physical-ownership-research-evidence.tar.gz`,
 SHA-256 `66adf52799e552f7c5c3235bee4a66a6cb05dc8502bb59e54430b0e58dd6ac5b`.
-It contains no compiled binaries. Archive publication was stopped after permission
-review rejected the upload and one evidence-backed retry. It was not extracted
+It contains no compiled binaries. Archive publication was not authorized. The bundle was not extracted
 into this branch or repackaged to bypass that decision. The public branch therefore
 cannot independently replay these ownership experiments. This access limitation
 is separate from the technical acceptance limitations above.
