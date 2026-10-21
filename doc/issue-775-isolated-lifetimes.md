@@ -2,9 +2,9 @@
 
 Baseline: `13928a35df4bff3cd99b14bd1df131aa3eb3bcdb`. Production `src/` is unchanged.
 This is a test-only feasibility investigation, not a new production feature or an
-implementation of every original #775 guarantee. Runtime results are pending CI
-at the initial evidence commit; inspect the exact-commit workflow before treating
-any case as passed.
+implementation of every original #775 guarantee. Corrected CI passed all eight focused real-TCP cases and all four unchanged
+descriptor tests at `4507cf6489da05749eedc1eec24d6db83a66d3ff`. The initial failure
+remains documented below. This is focused evidence, not a full release-suite pass.
 
 ## Contract under test
 
@@ -119,3 +119,24 @@ before teardown, using a test-only internal observation. This isolates the modul
 resource assertion; it does not fix or erase the observed race and is not a public
 retirement API. Reconnect cases additionally wait for old Ready count to reach zero
 before binding the replacement listener, avoiding stale-Ready test observation.
+
+## Final verification
+
+- [Corrected exact-code CI](https://github.com/SunSi12138/SharpLink/actions/runs/39600265980):
+  completed successfully on `4507cf6489da05749eedc1eec24d6db83a66d3ff`.
+- Eight lifecycle TCP cases passed; four original descriptor tests passed.
+- Production-source diff against baseline passed in that CI; no production fix,
+  added descriptor field, per-call wrapper, or additional lookup was introduced.
+- Local Release build: zero warnings/errors. Project-reference guard passed.
+  Maintainability guard passed (1,249 files, existing allowances unchanged).
+- Local SDK 10.0.102 compiled the tests. The repository's setup action permits
+  patch roll-forward; CI installed SDK 10.0.113 and runtime 10.0.13. These are
+  correctness tests, not a same-runtime performance comparison.
+
+The narrowly supported next step is a control/lifecycle design with trusted domain
+provisioning and handshake validation, plus an explicit full-retirement completion
+contract. Existing APIs demonstrate the isolation part, but full reclamation is
+not yet exposed or validated. Do not ship a controller that frees old resources
+merely because Stop returned or counters happened to read zero. Keep the manifest
+shutdown race as a separate correctness defect to diagnose, not hide inside a
+performance redesign. No production implementation, merge, or release is included.

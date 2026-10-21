@@ -1,0 +1,36 @@
+{
+  "baseline": "13928a35df4bff3cd99b14bd1df131aa3eb3bcdb",
+  "testedCommit": "4507cf6489da05749eedc1eec24d6db83a66d3ff",
+  "ciRun": 39600265980,
+  "ciConclusion": "success",
+  "realTcpCases": {
+    "passed": 8,
+    "failed": 0
+  },
+  "unchangedDescriptorTests": {
+    "passed": 4,
+    "failed": 0
+  },
+  "productionSourceChanged": false,
+  "productionSourceTree": "8efea1dc32f7b776b7a20e63521d0b2c80cf0f50",
+  "initialCiRun": 39599746128,
+  "initialCiCases": {
+    "passed": 7,
+    "failed": 1
+  },
+  "initialFailure": "ContractManifest send during Draining surfaced during module-test teardown; retained as baseline race, production not fixed",
+  "localRuntimeExecution": "blocked before cases by local socket sandbox; escalation sandbox setup failed",
+  "localSdk": "10.0.102",
+  "ciSdk": "10.0.113",
+  "ciRuntime": "10.0.13",
+  "notValidated": [
+    "collectible ALC reclamation",
+    "long-running streaming lifecycle",
+    "generated proxy construction in these fixtures",
+    "NativeAOT",
+    "shared memory",
+    "full retirement completion API",
+    "performance or resource contention"
+  ],
+  "scope": "test-only real TCP feasibility and counterexamples; no production implementation"
+}
