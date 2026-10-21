@@ -1,0 +1,30 @@
+name: Isolated Lifecycle Feasibility Evidence
+on:
+  push:
+    branches: ['verify/775-isolated-lifetimes-20261021']
+    paths:
+      - 'test/SharpLink.UnitTests/Runtime/IsolatedLifecycle*.cs'
+      - '.github/workflows/isolated-lifecycle-evidence.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  baseline-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-dotnet
+      - name: Verify unchanged production source
+        run: git diff --exit-code 13928a35df4bff3cd99b14bd1df131aa3eb3bcdb -- src
+      - name: Build test binary
+        run: dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release -v minimal
+      - name: Real TCP isolation and counterexamples
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build --treenode-filter '/*/*/IsolatedLifecycleTests/*'
+      - name: Original descriptor layout
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build --treenode-filter '/*/*/RpcMethodDescriptorTests/*'
