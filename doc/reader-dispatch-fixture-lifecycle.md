@@ -68,6 +68,29 @@ operations in about 12.109 seconds; the stalled control observed the original
 inner watchdog failure and one physically drained cleanup callback. This is a
 control of fixture semantics, not a reproduction of hosted scheduling pressure.
 
+### Timer-clock oracle follow-up
+
+The first version of the new stalled control additionally required a high-resolution
+`Stopwatch` measurement to be at least exactly 10.000 seconds. Five later jobs
+failed only that new assertion, with measured waits of 9.999249 to 9.999980 seconds:
+[main snapshot](https://github.com/SunSi12138/SharpLink/actions/runs/39745329573),
+[main lease](https://github.com/SunSi12138/SharpLink/actions/runs/39745329554),
+[main terminal](https://github.com/SunSi12138/SharpLink/actions/runs/39745329551),
+[physical lease](https://github.com/SunSi12138/SharpLink/actions/runs/39745339723),
+and [physical Fast](https://github.com/SunSi12138/SharpLink/actions/runs/39745637794).
+Every case preserved the original inner lost-wakeup exception, joined its worker,
+and physically drained exactly one cleanup callback and `Advance`.
+
+The [.NET 10.0.13 implementation](https://github.com/dotnet/runtime/blob/v10.0.13/src/libraries/System.Private.CoreLib/src/System/Threading/ManualResetEventSlim.cs#L402)
+converts the timeout to integer milliseconds and uses `Environment.TickCount64`
+with [remaining-time accounting](https://github.com/dotnet/runtime/blob/v10.0.13/src/libraries/System.Private.CoreLib/src/System/Threading/TimeoutHelper.cs#L19)
+before `Monitor.Wait`. This does not support the added cross-clock minimum-precision
+assertion, nor does it identify the exact native timing sequence in those runs.
+The correction instead records and asserts the actual ten-second argument passed
+to the inner wait, retaining the original error-identity, physical-drain and join
+checks. Elapsed time remains diagnostic; no epsilon or timeout adjustment is used.
+This follow-up changes none of the configured bounds listed above.
+
 ## Independent fixture ownership correction
 
 A source/timeline audit covered 144 relevant physical-work, generated-mapper,
