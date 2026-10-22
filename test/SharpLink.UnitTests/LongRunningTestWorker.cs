@@ -68,6 +68,30 @@ internal static class LongRunningTestWorker
         return task;
     }
 
+    /// <summary>Observes a bounded semantic phase without a pool-scheduled proxy continuation.</summary>
+    internal static void WaitForPhase(Task task, TimeSpan timeout)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        try
+        {
+            // Task.Wait installs an inline completion signal. WaitAsync would add a proxy
+            // continuation on the same pool that the test's user callback deliberately blocks.
+            if (!task.Wait(timeout))
+                throw new TimeoutException("The dedicated test controller's semantic phase timed out.");
+        }
+        catch (AggregateException) when (task.IsCompleted)
+        {
+            // Preserve the actual terminal type and identity, rather than Task.Wait's wrapper.
+        }
+        task.GetAwaiter().GetResult();
+    }
+
+    internal static TResult WaitForPhase<TResult>(Task<TResult> task, TimeSpan timeout)
+    {
+        WaitForPhase((Task)task, timeout);
+        return task.GetAwaiter().GetResult();
+    }
+
     /// <summary>Joins a cleanup owner while preserving any primary test failure.</summary>
     internal static async Task JoinAsync(Task task, TimeSpan timeout)
     {
