@@ -413,7 +413,8 @@ public sealed class BackpressuredSendOwnershipTests
                 submitted.TrySetResult((send.AsTask(), send.IsCompleted));
             }
             catch (Exception exception) { submitted.TrySetException(exception); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         using (gate.EnterScope())
         {
             producer.Start();
