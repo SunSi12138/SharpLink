@@ -53,7 +53,12 @@ public class AbandonedPhysicalWorkCycleTests
             await Task.WhenAll(a.Completion, b.Completion, c.Completion, d.Completion).WaitAsync(Watchdog);
             Ensure(!unrelated.Completion.IsCompleted, "an unrelated abandoned call is not a global drain dependency");
         }
-        finally { releaseC.TrySetResult(); hold.TrySetResult(); }
+        finally
+        {
+            releaseC.TrySetResult();
+            hold.TrySetResult();
+            await unrelated.Completion.WaitAsync(Watchdog);
+        }
 
         async Task First() { await a.Owner.WaitForDescendantAsync(b.Terminal); aLocalDone.TrySetResult(); }
         async Task Second()

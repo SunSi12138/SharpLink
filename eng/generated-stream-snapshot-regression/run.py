@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/GeneratedStreamSnapshotOwnershipTests.c
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/GeneratedStreamSnapshotOwnershipTests/*"
 FOCUSED_COUNT = 2
-FULL_COUNT = 2329  # Exact combined maintenance inventory; lease overlay adds eight cases where applicable.
+FULL_COUNT = 2331  # Exact inventory: two reader lifecycle controls added; focused/old-negative counts unchanged.
 
 
 def digest(path):

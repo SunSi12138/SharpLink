@@ -32,7 +32,7 @@ Production subtree: `c242f33f0041439b176c43460864a888237b79d9`.
 Build SDK 10.0.102, Release, zero warnings/errors. Tests below ran with official
 runtime 10.0.13, one reported processor and TUnit parallelism eight.
 
-- Full unit suite: **2,329 executed, 2,301 passed, 28 failed**, no skipped,
+- Full unit suite: **2,331 executed, 2,303 passed, 28 failed**, no skipped,
   cancelled or timed-out tests. The exact 28 case identities match the previous
   isolated prerequisite/environment run: 26 Unix socket/named-pipe permission
   denials and two expected-exception assertions receiving that socket denial.
@@ -56,8 +56,9 @@ runtime 10.0.13, one reported processor and TUnit parallelism eight.
   authoritative where local named-pipe access prevents the solution formatter.
 
 The three historical full-suite regression runners retain exact equality and all
-focused/old-negative controls. Their current combined inventories are 2,329 and
-2,337 for the runner that overlays eight lease-race cases; no threshold is relaxed.
+focused/old-negative controls. Their current combined inventories are 2,331 and
+2,339 for the runner that overlays eight lease-race cases. The explicit fixture lifecycle bound changes below are separate from
+unchanged callback watchdogs and performance/allocation thresholds.
 
 ## Ordinary cost and performance boundary
 
@@ -76,17 +77,20 @@ structural criterion nor the allocation improvement proves throughput equivalenc
 The real TLS sample ranges overlap and include an unfavorable runtime/mode median.
 Performance acceptance beyond these observations remains open.
 
-## Preserved validation risk
+## CI-directed fixture corrections and retained evidence
 
-The #931 precursor had one aggregate 10-second timeout in an unchanged 11,000-read
-queued-publication fixture. Its original worker outcome was not recorded. One
-bounded diagnostic campaign retained all limits/assertions and passed four full
-runs and four focused runs; all sixteen recorded workers finished exactly 11,000
-operations. That does **not** establish the original cause or a fix. Minimal durable
-progress/terminal diagnostics are retained, and the final #931 exact-head checks
-are green. Treat this as a disclosed timing/concurrency validation risk, not as a
-proven feature defect or a proven harmless baseline flake. See
-[the original evidence and bounded diagnosis](https://github.com/SunSi12138/SharpLink/pull/931#issuecomment-6334101442).
+The first feature head's three queued-reader failures now have direct terminal
+observations: every worker completed all 11,000 operations without an inner
+callback failure, but exceeded the separate aggregate ten-second wait. The
+[fixture lifecycle report](reader-dispatch-fixture-lifecycle.md) preserves those
+red runs, distinguishes the still-unknown scheduling cause and older unobserved
+#931 failure, and documents the explicit test-only whole-workload **10 to 30 second**
+and method-parent **30 to 60 second** changes. The per-callback and join watchdogs
+remain ten seconds, with unchanged workload, assertions and concurrency. Two new
+real controls distinguish delayed progress from a genuinely stalled callback.
+This is not a production-performance threshold change or a green-retry explanation.
+The separately joined SCC fixture tail closes test ownership without a causal
+claim about the observed scheduling delay.
 
 ## Hosted acceptance
 
@@ -100,3 +104,16 @@ A pending workflow is not a successful check.
 Neither prior research archives nor the excluded queued-handoff fixture are
 uploaded or executed by this workflow. Only ordinary reviewed source and fresh
 outputs from the published validation jobs are part of this deliverable.
+
+### Source reconstruction setup correction
+
+The first feature run's two new evidence jobs stopped before build or measurement:
+`git apply` discovered the enclosing checkout while running inside an archived
+source arm and silently skipped three patch files. The existing complete source
+hash guard correctly rejected the result. The corrected scripts isolate Git's
+repository discovery and inherited routing variables for that apply operation;
+all expected prerequisite source hashes are unchanged. Five source-only regressions
+cover the original failure, nested successful reconstruction, inherited routing,
+unchanged outer files and deliberate identity mismatch. Failure provenance is now
+written before rejection so the always-upload step can retain it. Neither setup
+run is counted as a runtime/native/performance result.
