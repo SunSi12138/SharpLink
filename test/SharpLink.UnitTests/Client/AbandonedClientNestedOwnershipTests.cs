@@ -118,28 +118,39 @@ public class AbandonedClientNestedOwnershipTests
         using var caller = new CancellationTokenSource();
         var interceptor = new CompletedOwnerInterceptor();
         await using var fixture = new AbandonedClientOwnershipTests.Fixture(interceptor);
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            var call = AbandonedClientOwnershipTests.Invoke(fixture.Channel, RpcMethodKind.Unary, caller.Token, timed: false);
-            await interceptor.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var cancellation = Task.Run(() => caller.Cancel());
-            await interceptor.CallbackEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            interceptor.Release.TrySetResult();
-            Exception? failure = null;
-            try { await call.WaitAsync(TimeSpan.FromSeconds(5)); }
-            catch (Exception exception) { failure = exception; }
-            Ensure(failure is OperationCanceledException, "completed owner handoff must not block the public terminal");
-            fixture.Module.TryBeginDraining();
-            Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "combined cancellation propagation retains the module");
-            interceptor.CallbackRelease.Set();
-            await Task.WhenAll(cancellation, fixture.Module.WaitForDrainAsync()).WaitAsync(TimeSpan.FromSeconds(5));
-        }
-        finally
-        {
-            interceptor.Release.TrySetResult();
-            interceptor.CallbackRelease.Set();
-            interceptor.Registration.Dispose();
-        }
+            Task? cancellation = null;
+            Task? call = null;
+            try
+            {
+                call = AbandonedClientOwnershipTests.Invoke(fixture.Channel, RpcMethodKind.Unary, caller.Token, timed: false);
+                LongRunningTestWorker.WaitForPhase(interceptor.Entered.Task, TimeSpan.FromSeconds(5));
+                cancellation = LongRunningTestWorker.Run(() => caller.Cancel());
+                LongRunningTestWorker.WaitForPhase(interceptor.CallbackEntered.Task, TimeSpan.FromSeconds(5));
+                interceptor.Release.TrySetResult();
+                Exception? failure = null;
+                try { LongRunningTestWorker.WaitForPhase(call, TimeSpan.FromSeconds(5)); }
+                catch (Exception exception) { failure = exception; }
+                Ensure(failure is OperationCanceledException, "completed owner handoff must not block the public terminal");
+                fixture.Module.TryBeginDraining();
+                Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "combined cancellation propagation retains the module");
+                interceptor.CallbackRelease.Set();
+                LongRunningTestWorker.WaitForPhase(Task.WhenAll(cancellation, fixture.Module.WaitForDrainAsync()), TimeSpan.FromSeconds(5));
+            }
+            finally
+            {
+                interceptor.Release.TrySetResult();
+                interceptor.CallbackRelease.Set();
+                if (cancellation is not null)
+                    LongRunningTestWorker.Join(cancellation, TimeSpan.FromSeconds(5));
+                if (call is not null)
+                    LongRunningTestWorker.Join(call, TimeSpan.FromSeconds(5));
+                interceptor.Registration.Dispose();
+                fixture.Module.TryBeginDraining();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TimeSpan.FromSeconds(5));
+            }
+        });
     }
 
     private sealed class CompletedOwnerInterceptor : ISharpLinkClientInterceptor

@@ -116,25 +116,28 @@ public class AbandonedGeneratedStreamOwnershipTests
         // Both the expired deadline and faulted source are already complete. Cleanup must
         // nevertheless force asynchronous entry before calling arbitrary DisposeAsync code.
         fixture.Terminate(cancel: false);
-        var pump = Task.Run(() => fixture.Pump(stream));
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            await stream.DisposeEntered.Task.WaitAsync(Watchdog);
-            var failure = await ObserveFailureAsync(pump);
-            AssertTerminal(failure, cancel: false);
-            var work = GetPhysicalWork(failure);
-            Ensure(work is not null && !work.IsCompleted,
-                "a synchronously blocked Dispose must remain owned without blocking the public deadline");
-            Ensure(IsTokenSourceAlive(stream.Token), "blocking Dispose must retain its linked source");
-            release.Set();
-            await work.WaitAsync(Watchdog);
-            Ensure(stream.DisposeCalls == 1, "blocking disposal must be invoked exactly once");
-        }
-        finally
-        {
-            release.Set();
-            await DrainPhysicalWorkAsync(pump);
-        }
+            var pump = LongRunningTestWorker.RunAsync(() => fixture.Pump(stream));
+            try
+            {
+                LongRunningTestWorker.WaitForPhase(stream.DisposeEntered.Task, Watchdog);
+                var failure = ObserveFailureSynchronously(pump);
+                AssertTerminal(failure, cancel: false);
+                var work = GetPhysicalWork(failure);
+                Ensure(work is not null && !work.IsCompleted,
+                    "a synchronously blocked Dispose must remain owned without blocking the public deadline");
+                Ensure(IsTokenSourceAlive(stream.Token), "blocking Dispose must retain its linked source");
+                release.Set();
+                LongRunningTestWorker.WaitForPhase(work, Watchdog);
+                Ensure(stream.DisposeCalls == 1, "blocking disposal must be invoked exactly once");
+            }
+            finally
+            {
+                release.Set();
+                DrainPhysicalWorkSynchronously(pump);
+            }
+        });
     }
 
     [Test]
@@ -143,29 +146,32 @@ public class AbandonedGeneratedStreamOwnershipTests
         await using var fixture = new Fixture();
         using var callbackRelease = new ManualResetEventSlim();
         var stream = new GatedStream(cancellationRelease: callbackRelease);
-        var pump = fixture.Pump(stream);
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            fixture.Terminate(cancel: false);
-            await stream.CancellationEntered.Task.WaitAsync(Watchdog);
-            var failure = await ObserveFailureAsync(pump);
-            AssertTerminal(failure, cancel: false);
-            var work = GetPhysicalWork(failure);
-            Ensure(work is not null && !work.IsCompleted,
-                "synchronous cancellation callbacks must be inside physical cleanup ownership");
-            Ensure(stream.DisposeCalls == 0, "blocked cancellation must not race enumerator disposal");
-            callbackRelease.Set();
-            stream.ReleaseMove(lateFault: false);
-            stream.DisposeRelease.TrySetResult();
-            await work.WaitAsync(Watchdog);
-        }
-        finally
-        {
-            callbackRelease.Set();
-            stream.ReleaseMove(lateFault: false);
-            stream.DisposeRelease.TrySetResult();
-            await DrainPhysicalWorkAsync(pump);
-        }
+            var pump = fixture.Pump(stream);
+            try
+            {
+                fixture.Terminate(cancel: false);
+                LongRunningTestWorker.WaitForPhase(stream.CancellationEntered.Task, Watchdog);
+                var failure = ObserveFailureSynchronously(pump);
+                AssertTerminal(failure, cancel: false);
+                var work = GetPhysicalWork(failure);
+                Ensure(work is not null && !work.IsCompleted,
+                    "synchronous cancellation callbacks must be inside physical cleanup ownership");
+                Ensure(stream.DisposeCalls == 0, "blocked cancellation must not race enumerator disposal");
+                callbackRelease.Set();
+                stream.ReleaseMove(lateFault: false);
+                stream.DisposeRelease.TrySetResult();
+                LongRunningTestWorker.WaitForPhase(work, Watchdog);
+            }
+            finally
+            {
+                callbackRelease.Set();
+                stream.ReleaseMove(lateFault: false);
+                stream.DisposeRelease.TrySetResult();
+                DrainPhysicalWorkSynchronously(pump);
+            }
+        });
     }
 
     [Test]
@@ -180,32 +186,35 @@ public class AbandonedGeneratedStreamOwnershipTests
         var codec = new BlockingSizedCodec(codecRelease, lateFault);
         var stream = new GatedStream(singleItem: true);
         await fixture.Session.AcquireStreamSendCreditAsync(900, 0, sizeof(int), CancellationToken.None);
-        var pump = fixture.Pump(stream, codec);
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            // The first credit wait makes the send asynchronous before user serialization blocks.
-            fixture.Session.ApplyWindowUpdate(900, new ProtocolV2WindowUpdate(0, sizeof(int)));
-            await codec.Entered.Task.WaitAsync(Watchdog);
-            fixture.Terminate(cancel);
-            var failure = await ObserveFailureAsync(pump);
-            AssertTerminal(failure, cancel);
-            var work = GetPhysicalWork(failure);
-            Ensure(work is not null && !work.IsCompleted, "the pending send must be physically owned");
-            Ensure(stream.DisposeCalls == 0, "Dispose must not overlap a framework-abandoned send");
-            Ensure(IsTokenSourceAlive(stream.Token), "pending send must retain its linked token source");
-            codecRelease.Set();
-            await stream.DisposeEntered.Task.WaitAsync(Watchdog);
-            Ensure(!work.IsCompleted, "send ownership must extend through stream cleanup");
-            stream.DisposeRelease.TrySetResult();
-            await work.WaitAsync(Watchdog);
-            Ensure(stream.DisposeCalls == 1, "abandoned send must dispose the producer exactly once");
-        }
-        finally
-        {
-            codecRelease.Set();
-            stream.DisposeRelease.TrySetResult();
-            await DrainPhysicalWorkAsync(pump);
-        }
+            var pump = fixture.Pump(stream, codec);
+            try
+            {
+                // The first credit wait makes the send asynchronous before user serialization blocks.
+                fixture.Session.ApplyWindowUpdate(900, new ProtocolV2WindowUpdate(0, sizeof(int)));
+                LongRunningTestWorker.WaitForPhase(codec.Entered.Task, Watchdog);
+                fixture.Terminate(cancel);
+                var failure = ObserveFailureSynchronously(pump);
+                AssertTerminal(failure, cancel);
+                var work = GetPhysicalWork(failure);
+                Ensure(work is not null && !work.IsCompleted, "the pending send must be physically owned");
+                Ensure(stream.DisposeCalls == 0, "Dispose must not overlap a framework-abandoned send");
+                Ensure(IsTokenSourceAlive(stream.Token), "pending send must retain its linked token source");
+                codecRelease.Set();
+                LongRunningTestWorker.WaitForPhase(stream.DisposeEntered.Task, Watchdog);
+                Ensure(!work.IsCompleted, "send ownership must extend through stream cleanup");
+                stream.DisposeRelease.TrySetResult();
+                LongRunningTestWorker.WaitForPhase(work, Watchdog);
+                Ensure(stream.DisposeCalls == 1, "abandoned send must dispose the producer exactly once");
+            }
+            finally
+            {
+                codecRelease.Set();
+                stream.DisposeRelease.TrySetResult();
+                DrainPhysicalWorkSynchronously(pump);
+            }
+        });
     }
 
     [Test]
@@ -526,6 +535,23 @@ public class AbandonedGeneratedStreamOwnershipTests
     {
         try { _ = token.WaitHandle; return true; }
         catch (ObjectDisposedException) { return false; }
+    }
+
+    private static Exception ObserveFailureSynchronously(Task task)
+    {
+        try { LongRunningTestWorker.WaitForPhase(task, Watchdog); }
+        catch (Exception exception) when (exception is not TimeoutException) { return exception; }
+        throw new InvalidOperationException("The generated pump did not produce its terminal failure.");
+    }
+
+    private static void DrainPhysicalWorkSynchronously(Task task)
+    {
+        try { LongRunningTestWorker.WaitForPhase(task, Watchdog); }
+        catch (Exception exception) when (exception is not TimeoutException)
+        {
+            if (GetPhysicalWork(exception) is { } work)
+                LongRunningTestWorker.WaitForPhase(work, Watchdog);
+        }
     }
 
     private static async Task<Exception> ObserveFailureAsync(Task task)

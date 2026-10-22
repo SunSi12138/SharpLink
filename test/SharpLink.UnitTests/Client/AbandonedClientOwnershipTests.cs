@@ -81,36 +81,47 @@ public class AbandonedClientOwnershipTests
         var stream = new ControlledStream();
         using var caller = new CancellationTokenSource();
         await using var fixture = new Fixture(new StreamInterceptor(stream));
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            var call = Invoke(fixture.Channel, kind, caller.Token);
-            await stream.Entered.Task.WaitAsync(TestTimeout);
-            if (cancelWaiter)
-                _ = Task.Run(() => caller.Cancel());
-            else
-                fixture.Clock.Advance(TimeSpan.FromSeconds(5));
-            var failure = await CaptureFailure(call);
-            Ensure(cancelWaiter ? failure is OperationCanceledException :
-                failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }, "selected public terminal");
-            fixture.Module.TryBeginDraining();
-            Ensure(stream.DisposeCount == 0, "Dispose must not run concurrently with abandoned MoveNext");
-            Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "pending MoveNext retains module");
-            if (lateFault)
-                stream.Move.TrySetException(new InvalidOperationException("late MoveNext failure"));
-            else
+            Task? call = null;
+            Task? cancellation = null;
+            try
+            {
+                call = Invoke(fixture.Channel, kind, caller.Token);
+                LongRunningTestWorker.WaitForPhase(stream.Entered.Task, TestTimeout);
+                if (cancelWaiter)
+                    cancellation = LongRunningTestWorker.Run(() => caller.Cancel());
+                else
+                    fixture.Clock.Advance(TimeSpan.FromSeconds(5));
+                var failure = CaptureFailureSynchronously(call);
+                Ensure(cancelWaiter ? failure is OperationCanceledException :
+                    failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }, "selected public terminal");
+                fixture.Module.TryBeginDraining();
+                Ensure(stream.DisposeCount == 0, "Dispose must not run concurrently with abandoned MoveNext");
+                Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "pending MoveNext retains module");
+                if (lateFault)
+                    stream.Move.TrySetException(new InvalidOperationException("late MoveNext failure"));
+                else
+                    stream.Move.TrySetResult(false);
+                LongRunningTestWorker.WaitForPhase(stream.DisposeEntered.Task, TestTimeout);
+                Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "pending synchronous Dispose retains module");
+                stream.DisposeRelease.Set();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TestTimeout);
+                Ensure(stream.DisposeCount == 1, "Dispose is invoked exactly once");
+                Ensure(!stream.ConcurrentDispose, "MoveNext completes before Dispose entry");
+            }
+            finally
+            {
                 stream.Move.TrySetResult(false);
-            await stream.DisposeEntered.Task.WaitAsync(TestTimeout);
-            Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "pending synchronous Dispose retains module");
-            stream.DisposeRelease.Set();
-            await fixture.Module.WaitForDrainAsync().WaitAsync(TestTimeout);
-            Ensure(stream.DisposeCount == 1, "Dispose is invoked exactly once");
-            Ensure(!stream.ConcurrentDispose, "MoveNext completes before Dispose entry");
-        }
-        finally
-        {
-            stream.Move.TrySetResult(false);
-            stream.DisposeRelease.Set();
-        }
+                stream.DisposeRelease.Set();
+                if (cancellation is not null)
+                    LongRunningTestWorker.Join(cancellation, TestTimeout);
+                if (call is not null)
+                    LongRunningTestWorker.Join(call, TestTimeout);
+                fixture.Module.TryBeginDraining();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TestTimeout);
+            }
+        });
     }
 
     [Test]
@@ -118,27 +129,35 @@ public class AbandonedClientOwnershipTests
     {
         var stream = new ControlledStream(blockCancellation: true);
         await using var fixture = new Fixture(new StreamInterceptor(stream));
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            var call = Invoke(fixture.Channel, RpcMethodKind.ServerStreaming);
-            await stream.Entered.Task.WaitAsync(TestTimeout);
-            fixture.Clock.Advance(TimeSpan.FromSeconds(5));
-            var failure = await CaptureFailure(call);
-            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }, "deadline precedes blocking callback");
-            await stream.CancellationEntered.Task.WaitAsync(TestTimeout);
-            fixture.Module.TryBeginDraining();
-            Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "cancellation callback retains physical owner");
-            stream.CancellationRelease.Set();
-            stream.Move.TrySetResult(false);
-            stream.DisposeRelease.Set();
-            await fixture.Module.WaitForDrainAsync().WaitAsync(TestTimeout);
-        }
-        finally
-        {
-            stream.CancellationRelease.Set();
-            stream.Move.TrySetResult(false);
-            stream.DisposeRelease.Set();
-        }
+            Task? call = null;
+            try
+            {
+                call = Invoke(fixture.Channel, RpcMethodKind.ServerStreaming);
+                LongRunningTestWorker.WaitForPhase(stream.Entered.Task, TestTimeout);
+                fixture.Clock.Advance(TimeSpan.FromSeconds(5));
+                var failure = CaptureFailureSynchronously(call);
+                Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }, "deadline precedes blocking callback");
+                LongRunningTestWorker.WaitForPhase(stream.CancellationEntered.Task, TestTimeout);
+                fixture.Module.TryBeginDraining();
+                Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "cancellation callback retains physical owner");
+                stream.CancellationRelease.Set();
+                stream.Move.TrySetResult(false);
+                stream.DisposeRelease.Set();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TestTimeout);
+            }
+            finally
+            {
+                stream.CancellationRelease.Set();
+                stream.Move.TrySetResult(false);
+                stream.DisposeRelease.Set();
+                if (call is not null)
+                    LongRunningTestWorker.Join(call, TestTimeout);
+                fixture.Module.TryBeginDraining();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TestTimeout);
+            }
+        });
     }
 
     [Test]
@@ -149,23 +168,34 @@ public class AbandonedClientOwnershipTests
         var stream = new ControlledStream(cooperativeCancellation: true);
         using var caller = new CancellationTokenSource();
         await using var fixture = new Fixture(new StreamInterceptor(stream));
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            var call = Invoke(fixture.Channel, kind, caller.Token, timed: false);
-            await stream.Entered.Task.WaitAsync(TestTimeout);
-            _ = Task.Run(() => caller.Cancel());
-            Ensure(await CaptureFailure(call) is OperationCanceledException, "untimed cooperative cancellation");
-            await stream.DisposeEntered.Task.WaitAsync(TestTimeout);
-            fixture.Module.TryBeginDraining();
-            Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "Dispose owns the module after public cancellation");
-            stream.DisposeRelease.Set();
-            await fixture.Module.WaitForDrainAsync().WaitAsync(TestTimeout);
-        }
-        finally
-        {
-            stream.Move.TrySetResult(false);
-            stream.DisposeRelease.Set();
-        }
+            Task? call = null;
+            Task? cancellation = null;
+            try
+            {
+                call = Invoke(fixture.Channel, kind, caller.Token, timed: false);
+                LongRunningTestWorker.WaitForPhase(stream.Entered.Task, TestTimeout);
+                cancellation = LongRunningTestWorker.Run(() => caller.Cancel());
+                Ensure(CaptureFailureSynchronously(call) is OperationCanceledException, "untimed cooperative cancellation");
+                LongRunningTestWorker.WaitForPhase(stream.DisposeEntered.Task, TestTimeout);
+                fixture.Module.TryBeginDraining();
+                Ensure(!fixture.Module.WaitForDrainAsync().IsCompleted, "Dispose owns the module after public cancellation");
+                stream.DisposeRelease.Set();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TestTimeout);
+            }
+            finally
+            {
+                stream.Move.TrySetResult(false);
+                stream.DisposeRelease.Set();
+                if (cancellation is not null)
+                    LongRunningTestWorker.Join(cancellation, TestTimeout);
+                if (call is not null)
+                    LongRunningTestWorker.Join(call, TestTimeout);
+                fixture.Module.TryBeginDraining();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TestTimeout);
+            }
+        });
     }
 
     [Test]
@@ -177,36 +207,44 @@ public class AbandonedClientOwnershipTests
     {
         var stream = new ControlledStream();
         await using var fixture = new Fixture(new StreamInterceptor(stream));
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            var call = Invoke(fixture.Channel, RpcMethodKind.ServerStreaming);
-            await stream.Entered.Task.WaitAsync(TestTimeout);
-            fixture.Clock.Advance(TimeSpan.FromSeconds(5));
-            var terminal = await CaptureFailure(call);
-            if (useAlias)
+            Task? call = null;
+            try
             {
-                var replacement = new InvalidOperationException("replacement terminal");
-                typeof(SharpLinkRuntimeContext).Assembly.GetType("SharpLink.Runtime.SharpLinkPhysicalWork")?
-                    .GetMethod("PreserveAbandonedUserWork", BindingFlags.Static | BindingFlags.NonPublic)?
-                    .Invoke(null, [terminal, replacement]);
-                terminal = replacement;
+                call = Invoke(fixture.Channel, RpcMethodKind.ServerStreaming);
+                LongRunningTestWorker.WaitForPhase(stream.Entered.Task, TestTimeout);
+                fixture.Clock.Advance(TimeSpan.FromSeconds(5));
+                var terminal = CaptureFailureSynchronously(call);
+                if (useAlias)
+                {
+                    var replacement = new InvalidOperationException("replacement terminal");
+                    typeof(SharpLinkRuntimeContext).Assembly.GetType("SharpLink.Runtime.SharpLinkPhysicalWork")?
+                        .GetMethod("PreserveAbandonedUserWork", BindingFlags.Static | BindingFlags.NonPublic)?
+                        .Invoke(null, [terminal, replacement]);
+                    terminal = replacement;
+                }
+                fixture.Module.TryBeginDraining();
+                if (throwFromDispose)
+                {
+                    stream.DisposeException = terminal;
+                    stream.Move.TrySetResult(false);
+                }
+                else
+                    stream.Move.TrySetException(terminal);
+                stream.DisposeRelease.Set();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TestTimeout);
             }
-            fixture.Module.TryBeginDraining();
-            if (throwFromDispose)
+            finally
             {
-                stream.DisposeException = terminal;
                 stream.Move.TrySetResult(false);
+                stream.DisposeRelease.Set();
+                if (call is not null)
+                    LongRunningTestWorker.Join(call, TestTimeout);
+                fixture.Module.TryBeginDraining();
+                LongRunningTestWorker.WaitForPhase(fixture.Module.WaitForDrainAsync(), TestTimeout);
             }
-            else
-                stream.Move.TrySetException(terminal);
-            stream.DisposeRelease.Set();
-            await fixture.Module.WaitForDrainAsync().WaitAsync(TestTimeout);
-        }
-        finally
-        {
-            stream.Move.TrySetResult(false);
-            stream.DisposeRelease.Set();
-        }
+        });
     }
 
     [Test]
@@ -220,37 +258,66 @@ public class AbandonedClientOwnershipTests
         using var secondCaller = new CancellationTokenSource();
         await using var first = new Fixture(firstInterceptor);
         await using var second = new Fixture(secondInterceptor);
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            var firstCall = Invoke(first.Channel, RpcMethodKind.ServerStreaming, firstCaller.Token);
-            var secondCall = Invoke(second.Channel, RpcMethodKind.ServerStreaming, secondCaller.Token);
-            await Task.WhenAll(a.Entered.Task, b.Entered.Task).WaitAsync(TestTimeout);
-            first.Clock.Advance(TimeSpan.FromSeconds(5));
-            second.Clock.Advance(TimeSpan.FromSeconds(5));
-            var firstTerminal = await CaptureFailure(firstCall);
-            var secondTerminal = await CaptureFailure(secondCall);
-            first.Module.TryBeginDraining();
-            second.Module.TryBeginDraining();
-            a.Move.TrySetException(secondTerminal);
-            b.Move.TrySetException(firstTerminal);
-            await Task.WhenAll(a.DisposeEntered.Task, b.DisposeEntered.Task).WaitAsync(TestTimeout);
-            b.DisposeRelease.Set();
-            await b.DisposeFinished.Task.WaitAsync(TestTimeout);
-            Ensure(!first.Module.WaitForDrainAsync().IsCompleted && !second.Module.WaitForDrainAsync().IsCompleted,
-                "both component modules must stay retained while either disposal is pending");
-            Ensure(IsAlive(a.Token) && IsAlive(b.Token) && IsAlive(firstInterceptor.Token) && IsAlive(secondInterceptor.Token),
-                "both inner and outer linked sources stay retained until all component cleanup finishes");
-            a.DisposeRelease.Set();
-            await Task.WhenAll(first.Module.WaitForDrainAsync(), second.Module.WaitForDrainAsync()).WaitAsync(TestTimeout);
-            Ensure(!a.ConcurrentDispose && !b.ConcurrentDispose, "every local MoveNext precedes its own Dispose");
-        }
-        finally { a.Move.TrySetResult(false); b.Move.TrySetResult(false); a.DisposeRelease.Set(); b.DisposeRelease.Set(); }
+            Task? firstCall = null;
+            Task? secondCall = null;
+            try
+            {
+                firstCall = Invoke(first.Channel, RpcMethodKind.ServerStreaming, firstCaller.Token);
+                secondCall = Invoke(second.Channel, RpcMethodKind.ServerStreaming, secondCaller.Token);
+                LongRunningTestWorker.WaitForPhase(Task.WhenAll(a.Entered.Task, b.Entered.Task), TestTimeout);
+                first.Clock.Advance(TimeSpan.FromSeconds(5));
+                second.Clock.Advance(TimeSpan.FromSeconds(5));
+                var firstTerminal = CaptureFailureSynchronously(firstCall);
+                var secondTerminal = CaptureFailureSynchronously(secondCall);
+                first.Module.TryBeginDraining();
+                second.Module.TryBeginDraining();
+                a.Move.TrySetException(secondTerminal);
+                b.Move.TrySetException(firstTerminal);
+                // Do not require two pool workers to be blocked simultaneously. Whichever
+                // real synchronous disposer starts first can finish while its peer stays held.
+                // All entry/handoff observations share the original five-second phase budget.
+                var entryStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                var entered = Task.WaitAny([a.DisposeEntered.Task, b.DisposeEntered.Task], TestTimeout);
+                Ensure(entered >= 0, "one component disposer must enter within the phase budget");
+                var completedFirst = entered == 0 ? a : b;
+                var held = entered == 0 ? b : a;
+                completedFirst.DisposeRelease.Set();
+                LongRunningTestWorker.WaitForPhase(completedFirst.DisposeFinished.Task, RemainingEntryBudget());
+                LongRunningTestWorker.WaitForPhase(held.DisposeEntered.Task, RemainingEntryBudget());
+                Ensure(!first.Module.WaitForDrainAsync().IsCompleted && !second.Module.WaitForDrainAsync().IsCompleted,
+                    "both component modules must stay retained while either disposal is pending");
+                Ensure(IsAlive(a.Token) && IsAlive(b.Token) && IsAlive(firstInterceptor.Token) && IsAlive(secondInterceptor.Token),
+                    "both inner and outer linked sources stay retained until all component cleanup finishes");
+                held.DisposeRelease.Set();
+                LongRunningTestWorker.WaitForPhase(Task.WhenAll(first.Module.WaitForDrainAsync(), second.Module.WaitForDrainAsync()), TestTimeout);
+                Ensure(!a.ConcurrentDispose && !b.ConcurrentDispose, "every local MoveNext precedes its own Dispose");
 
-        static bool IsAlive(CancellationToken token)
-        {
-            try { _ = token.WaitHandle; return true; }
-            catch (ObjectDisposedException) { return false; }
-        }
+                TimeSpan RemainingEntryBudget()
+                {
+                    var remaining = TestTimeout - System.Diagnostics.Stopwatch.GetElapsedTime(entryStarted);
+                    if (remaining <= TimeSpan.Zero)
+                        throw new TimeoutException("The component disposal entry phase timed out.");
+                    return remaining;
+                }
+            }
+            finally
+            {
+                a.Move.TrySetResult(false); b.Move.TrySetResult(false);
+                a.DisposeRelease.Set(); b.DisposeRelease.Set();
+                if (firstCall is not null) LongRunningTestWorker.Join(firstCall, TestTimeout);
+                if (secondCall is not null) LongRunningTestWorker.Join(secondCall, TestTimeout);
+                first.Module.TryBeginDraining(); second.Module.TryBeginDraining();
+                LongRunningTestWorker.WaitForPhase(Task.WhenAll(first.Module.WaitForDrainAsync(), second.Module.WaitForDrainAsync()), TestTimeout);
+            }
+
+            static bool IsAlive(CancellationToken token)
+            {
+                try { _ = token.WaitHandle; return true; }
+                catch (ObjectDisposedException) { return false; }
+            }
+        });
     }
 
     internal static async Task Invoke(
@@ -282,6 +349,13 @@ public class AbandonedClientOwnershipTests
                     _ = await enumerator.MoveNextAsync();
                 break;
         }
+    }
+
+    private static Exception CaptureFailureSynchronously(Task task)
+    {
+        try { LongRunningTestWorker.WaitForPhase(task, TestTimeout); }
+        catch (Exception exception) when (exception is not TimeoutException) { return exception; }
+        throw new Exception("Expected the selected public terminal.");
     }
 
     private static async Task<Exception> CaptureFailure(Task task)

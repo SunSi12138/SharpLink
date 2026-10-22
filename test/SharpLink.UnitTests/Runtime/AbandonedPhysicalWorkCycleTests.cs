@@ -122,28 +122,31 @@ public class AbandonedPhysicalWorkCycleTests
         using var release = new ManualResetEventSlim(false);
         var entered = Signal();
         using var callback = lifetime.Token.Register(() => { entered.TrySetResult(); release.Wait(); });
-        var cancellation = Task.Run(() => parent.Cancel());
-        try
+        await LongRunningTestWorker.Run(() =>
         {
-            await entered.Task.WaitAsync(Watchdog);
-            var terminal = new InvalidOperationException("blocked finalizer");
-            var owner = SharpLinkPhysicalWork.CreateOwner(terminal, lifetime);
-            owner.Track(Task.CompletedTask);
-            using var lateDependent = new Node();
-            lateDependent.Owner.Track(lateDependent.Owner.WaitForDescendantAsync(terminal));
-            var frozen = false;
-            try { await owner.WaitForDescendantAsync(lateDependent.Terminal); }
-            catch (InvalidOperationException) { frozen = true; }
-            Ensure(frozen, "a locally completed owner cannot mutate finalizing group membership");
-            using var unrelated = new Node();
-            unrelated.Owner.Track(Task.CompletedTask);
-            await unrelated.Completion.WaitAsync(Watchdog);
-            Ensure(!owner.Completion.IsCompleted && !lateDependent.Completion.IsCompleted,
-                "linked source propagation must finish before this owner or a late dependent can release");
-            release.Set();
-            await Task.WhenAll(cancellation, owner.Completion, lateDependent.Completion).WaitAsync(Watchdog);
-        }
-        finally { release.Set(); }
+            var cancellation = LongRunningTestWorker.Run(() => parent.Cancel());
+            try
+            {
+                LongRunningTestWorker.WaitForPhase(entered.Task, Watchdog);
+                var terminal = new InvalidOperationException("blocked finalizer");
+                var owner = SharpLinkPhysicalWork.CreateOwner(terminal, lifetime);
+                owner.Track(Task.CompletedTask);
+                using var lateDependent = new Node();
+                lateDependent.Owner.Track(lateDependent.Owner.WaitForDescendantAsync(terminal));
+                var frozen = false;
+                try { LongRunningTestWorker.WaitForPhase(owner.WaitForDescendantAsync(lateDependent.Terminal), Watchdog); }
+                catch (InvalidOperationException) { frozen = true; }
+                Ensure(frozen, "a locally completed owner cannot mutate finalizing group membership");
+                using var unrelated = new Node();
+                unrelated.Owner.Track(Task.CompletedTask);
+                LongRunningTestWorker.WaitForPhase(unrelated.Completion, Watchdog);
+                Ensure(!owner.Completion.IsCompleted && !lateDependent.Completion.IsCompleted,
+                    "linked source propagation must finish before this owner or a late dependent can release");
+                release.Set();
+                LongRunningTestWorker.WaitForPhase(Task.WhenAll(cancellation, owner.Completion, lateDependent.Completion), Watchdog);
+            }
+            finally { release.Set(); LongRunningTestWorker.Join(cancellation, Watchdog); }
+        });
     }
 
     [Test]

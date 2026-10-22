@@ -87,6 +87,64 @@ MaxStack/initLocals and EH regions were compared across those sets and match:
 also match the source revision above; different binary hashes are not treated as
 identical artifacts.
 
+## Low-core CI fixture correction, 2026-10-22
+
+The published candidate exposed a test-controller scheduling dependency: several
+fixtures deliberately block a synchronous user callback or disposer on a framework
+worker, but also required another shared-pool continuation to observe entry and
+release that gate. The correction moves those **controllers**, not framework
+cleanup, onto the existing dedicated test worker. Bounded synchronous task waits
+observe completion without a pool-scheduled proxy. Cancellation workers and
+publication owners are joined, including assertion-failure cleanup.
+
+The public cyclic-terminal test releases whichever real synchronous disposer enters
+first, then keeps its peer blocked and checks that **both** modules and linked token
+sources remain owned. It no longer requires two blocked pool workers simultaneously.
+Entry and handoff still share the original five-second budget. User callbacks and
+disposers remain synchronous; no production code, watchdog, allocation threshold,
+parallelism setting, suite serialization, or negative-control expectation changes.
+
+Reproduce with both environment settings explicit, using the intended installed
+runtime host:
+
+```sh
+DOTNET_PROCESSOR_COUNT=1 TUNIT_MAX_PARALLEL_TESTS=8 \
+  dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
+  --treenode-filter '/*/*/Abandoned*/*' --progress off --output Detailed
+# Omit --treenode-filter for the complete unit inventory.
+```
+
+The final test DLL SHA256 is
+`8b3e0604a2031b0fc2c39e205d4aaf5f37d46c2a61b97e962e1c5b684ec8e460`.
+Five focused runs on official runtime 10.0.13 pass **105/105** each. An independent
+no-build run passes **105/105**, the complete LocalAbort class **6/6**, and worker
+helper controls **2/2**, with source and DLL hashes unchanged. The exact revised
+client fixtures retain **33 baseline failures / 9 baseline positives**; generated
+stream fixtures retain **29 baseline failures**. Release build, whitespace,
+reference-boundary, and maintainability checks pass.
+
+This correction adds no cases. Including the separate retry-timer registration
+witness, the full inventory is **2,229**, or **2,237** with the historical driver's
+eight existing injected probes. All final full runs retain their actual results:
+
+| Runtime | Full-run pass / fail | Remaining failures |
+|---|---:|---|
+| 10.0.2, first | 2,200 / 29 | 28 known IPC failures plus bootstrap-handshake timeout |
+| 10.0.2, second | 2,201 / 28 | The same 28 known IPC failures |
+| 10.0.13, first | 2,201 / 28 | The same 28 known IPC failures |
+| 10.0.13, second | 2,201 / 28 | The same 28 known IPC failures |
+| 10.0.13, third | 2,199 / 30 | 28 known IPC failures, bootstrap timeout, and allocation outlier |
+
+Every physical-ownership case passes in these runs. The final run reproduces the
+existing `SuccessfulSuspensionsShouldNotAllocateAfterWarmup` failure exactly:
+**24,624 bytes instead of zero**. Its same-thread measurement and the runtime's
+`PoolingAsyncValueTaskMethodBuilder` implementation are unchanged from the pinned
+baseline. Concurrent test activity is context, not an allocation diagnosis. The
+existing bootstrap test also intermittently exceeds its two-second handshake
+bound. Neither assertion is relaxed or relabeled as an accepted failure. These
+observations remain open; this is **not** a green full-suite or production-acceptance
+claim, and exact-head hosted checks are still required.
+
 ## Successful-path representation and code generation
 
 Reproducible harness: [`scalar/README.md`](../eng/physical-ownership-probes/scalar/README.md).
