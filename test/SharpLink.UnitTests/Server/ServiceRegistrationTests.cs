@@ -12,7 +12,7 @@ using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
-public class ServiceRegistrationTests
+public partial class ServiceRegistrationTests
 {
     [Test]
     public async Task ScopedRegistrationsShouldNotAllocateSingletonGates()

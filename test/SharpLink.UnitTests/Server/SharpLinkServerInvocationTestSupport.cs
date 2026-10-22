@@ -418,7 +418,6 @@ public partial class SharpLinkServerInvocationTests
         private static readonly MethodInfo DispatchMethod = typeof(SharpLinkServer).GetMethod(
             "DispatchRpcAsync",
             BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.MakeGenericMethod(typeof(SharpLinkServer.ImmediateRequestDispatch))
             ?? throw new Exception("cannot find Server RPC dispatch path");
         private static readonly FieldInfo CallAdmissionField = typeof(SharpLinkServer).GetField(
             "_callAdmission",
@@ -502,7 +501,9 @@ public partial class SharpLinkServerInvocationTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
-                default(SharpLinkServer.ImmediateRequestDispatch)
+                null,
+                (flags & ProtocolV2FrameFlags.Cancellable) != 0,
+                null
             ])!;
         }
 

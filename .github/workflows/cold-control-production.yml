@@ -231,3 +231,39 @@ jobs:
           if [[ "$EXTENDED_RESULT" != "success" || "$CODEC_RESULT" != "success" ]]; then
             exit 1
           fi
+
+  queued-dispatch-evidence:
+    name: Queued dispatch source and native evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate and public baseline history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Verify outlined resource skeleton parity
+        run: python3 eng/tests/test_admitted_dispatch_parity.py
+
+      - name: Capture paired layout and native listings without timing thresholds
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/queued-registration-baseline"
+          git worktree add --detach "$baseline" 13928a35df4bff3cd99b14bd1df131aa3eb3bcdb
+          python3 eng/queued-registration-probes/run.py \
+            --baseline "$baseline" --candidate "$GITHUB_WORKSPACE" \
+            --output "$GITHUB_WORKSPACE/artifacts/queued-dispatch-evidence" \
+            --default-repeats 4
+
+      - name: Upload fresh paired evidence including negative samples
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: queued-dispatch-evidence-${{ github.sha }}
+          path: artifacts/queued-dispatch-evidence
+          if-no-files-found: error
+          retention-days: 30

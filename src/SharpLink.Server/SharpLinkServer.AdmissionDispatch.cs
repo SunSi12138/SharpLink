@@ -2,7 +2,7 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private ValueTask DispatchOneWayRpc<TSelection>(
+    private ValueTask DispatchOneWayRpc(
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -10,15 +10,11 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
-        TSelection selection)
-        where TSelection : struct, IRequestDispatchSelection
+        ServerCallCancellationState? admittedCallState = null,
+        bool admissionGranted = false,
+        int admittedClientStreamCount = 0,
+        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
     {
-        // The JIT folds these type tests while importing, including Tier0. Do not replace them
-        // with selection getters on the immediate path: QuickJit would retain those helper calls.
-        var admittedCallState = typeof(TSelection) == typeof(ImmediateRequestDispatch) ? null : selection.CallState;
-        var admissionGranted = typeof(TSelection) != typeof(ImmediateRequestDispatch);
-        var admittedClientStreamCount = typeof(TSelection) == typeof(ImmediateRequestDispatch) ? 0 : selection.ClientStreamCount;
-        var retainedAdmissionPayload = typeof(TSelection) == typeof(ImmediateRequestDispatch) ? null : selection.RetainedPayload;
         var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
         try
         {
@@ -27,10 +23,7 @@ internal sealed partial class SharpLinkServer
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
             var request = ReadRequestEnvelope(
                 session, payload, flags, admittedCallState?.Deadline ?? default);
-            ServiceRegistration serviceInfo;
-            if (!(typeof(TSelection) == typeof(ImmediateRequestDispatch)
-                    ? Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out serviceInfo!)
-                    : selection.TryGetService(this, request.InterfaceHash, out serviceInfo!)))
+            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
             {
                 if (admittedCallState is not null)
                 {
@@ -120,7 +113,7 @@ internal sealed partial class SharpLinkServer
                 }
                 if (!admissionTask.IsCompletedSuccessfully)
                 {
-                    if (!TryCopyAdmissionPayload(payload, flags, out var retainedPayload))
+                    if (!TryCopySelectedAdmissionPayload(payload, flags, serviceInfo, out var retainedPayload))
                     {
                         admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
                         return new ValueTask(RejectQueuedAdmissionForRetainedBudgetAsync(
@@ -148,8 +141,7 @@ internal sealed partial class SharpLinkServer
                         serverLoopToken,
                         descriptor.ClientStreamCount,
                         admittedCallState,
-                        admissionProgram,
-                        serviceInfo));
+                        admissionProgram));
                 }
 
                 var decision = admissionTask.Result;

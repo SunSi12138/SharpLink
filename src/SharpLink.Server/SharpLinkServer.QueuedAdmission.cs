@@ -1,13 +1,8 @@
-using System.Runtime.CompilerServices;
-
 namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    // Keep weak selection capture and queued continuation setup out of the ordinary dispatcher's
-    // frame, including Tier0. Only a genuinely suspended admission request reaches these entries.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private Task AwaitOneWayAdmissionAsync(
+    private async Task AwaitOneWayAdmissionAsync(
         ValueTask<AdmissionDecision> admissionTask,
         ServerRetainedAdmissionPayload retainedPayload,
         ServerConnectionState connection,
@@ -17,41 +12,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken,
         int clientStreamCount,
         ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram,
-        ServiceRegistration selectedService)
-        => AwaitSelectedOneWayAdmissionAsync(
-            admissionTask, retainedPayload, connection, requestId, flags, requestCancellationMap,
-            serverLoopToken, clientStreamCount, callState, admissionProgram,
-            new QueuedServiceSelection(selectedService));
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private ValueTask AwaitRpcAdmissionAsync(
-        ValueTask<AdmissionDecision> admissionTask,
-        ServerRetainedAdmissionPayload retainedPayload,
-        ServerConnectionState connection,
-        long requestId,
-        ProtocolV2FrameFlags flags,
-        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        CancellationToken serverLoopToken,
-        ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram,
-        ServiceRegistration selectedService)
-        => AwaitSelectedRpcAdmissionAsync(
-            admissionTask, retainedPayload, connection, requestId, flags, requestCancellationMap,
-            serverLoopToken, callState, admissionProgram, new QueuedServiceSelection(selectedService));
-
-    private async Task AwaitSelectedOneWayAdmissionAsync(
-        ValueTask<AdmissionDecision> admissionTask,
-        ServerRetainedAdmissionPayload retainedPayload,
-        ServerConnectionState connection,
-        long requestId,
-        ProtocolV2FrameFlags flags,
-        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        CancellationToken serverLoopToken,
-        int clientStreamCount,
-        ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram,
-        QueuedServiceSelection serviceSelection)
+        AdmissionProgram admissionProgram)
     {
         var transferred = false;
         try
@@ -76,7 +37,8 @@ internal sealed partial class SharpLinkServer
             }
 
             callState.AttachAdmissionLease(decision.Lease!);
-            var dispatchTask = DispatchOneWayRpc(
+            var dispatchTask = DispatchAdmittedOneWayRpc(
+                retainedPayload.SelectedService,
                 connection,
                 requestId,
                 flags,
@@ -84,7 +46,7 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 admissionProgram,
-                new AdmittedRequestDispatch(serviceSelection, callState, retainedPayload, clientStreamCount));
+                callState, true, clientStreamCount, retainedPayload);
             transferred = true;
             if (!dispatchTask.IsCompletedSuccessfully)
                 await dispatchTask.ConfigureAwait(false);
@@ -97,7 +59,7 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private async ValueTask AwaitSelectedRpcAdmissionAsync(
+    private async ValueTask AwaitRpcAdmissionAsync(
         ValueTask<AdmissionDecision> admissionTask,
         ServerRetainedAdmissionPayload retainedPayload,
         ServerConnectionState connection,
@@ -106,8 +68,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram,
-        QueuedServiceSelection serviceSelection)
+        AdmissionProgram admissionProgram)
     {
         var transferred = false;
         try
@@ -134,7 +95,8 @@ internal sealed partial class SharpLinkServer
             }
 
             callState.AttachAdmissionLease(decision.Lease!);
-            var dispatchTask = DispatchRpcAsync(
+            var dispatchTask = DispatchAdmittedRpcAsync(
+                retainedPayload.SelectedService,
                 connection,
                 requestId,
                 flags,
@@ -142,7 +104,7 @@ internal sealed partial class SharpLinkServer
                 requestCancellationMap,
                 serverLoopToken,
                 admissionProgram,
-                new AdmittedRequestDispatch(serviceSelection, callState, retainedPayload));
+                callState, true, retainedPayload);
             transferred = true;
             if ((flags & ProtocolV2FrameFlags.Compressed) != 0)
                 retainedPayload.Dispose();
@@ -156,5 +118,4 @@ internal sealed partial class SharpLinkServer
                 ReleasePendingAdmissionState(connection.Session, requestCancellationMap, requestId, callState);
         }
     }
-
 }
