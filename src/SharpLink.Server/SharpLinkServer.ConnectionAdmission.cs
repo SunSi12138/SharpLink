@@ -13,7 +13,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkConnectionAdmissionRun
 
         lock (_registryGate)
         {
-            if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            if (MaintenanceConfigured || CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             {
                 throw new InvalidOperationException(
                     "Connection admission publication is sealed because the server is stopping.");

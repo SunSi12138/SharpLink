@@ -112,7 +112,8 @@ internal sealed class ServerConnectionState
         var state = LifecycleState;
         var sessionAcceptsCalls = Session.CanAcceptCalls;
         if (state == ServerConnectionLifecycleState.Ready &&
-            (!sessionAcceptsCalls || Session.NegotiatedOptions is null || DefaultCallContext is null))
+            ((!sessionAcceptsCalls && Session.ProtocolPhase != RpcSessionProtocolPhase.MaintenancePaused) ||
+             Session.NegotiatedOptions is null || DefaultCallContext is null))
         {
             throw new InvalidOperationException(
                 "A Ready server connection must have a negotiated, call-accepting Session and a published authentication/call-context snapshot at a stable lifecycle boundary.");
@@ -400,10 +401,37 @@ internal sealed class ServerConnectionState
             throw new AggregateException(failures);
     }
 
+    /// <summary>
+    /// Called after an ingress fence (or reader shutdown) and ordinary request-owner drain.
+    /// Neither an empty map nor a callback snapshot is independently an admission barrier.
+    /// </summary>
+    internal async Task DrainPhysicalCancellationCallbacksAsync()
+    {
+        // A failing scan may publish the first cold sidecar before dropping its scan owner.
+        // Capture that sidecar only after the scan drain, not concurrently with it.
+        await DeadlineScheduler.DrainPhysicalCallbacksAsync().ConfigureAwait(false);
+        await ServerCancellationCallbackWork.CaptureDrain(CallCancellations).ConfigureAwait(false);
+    }
+
     private async Task CleanupServicesWhenCallsDrainAsync()
     {
         await _callsDrained.Task.ConfigureAwait(false);
+        // Closed-reader queued admissions can still be unwinding without an active-call slot.
+        // Their cancellation/removal continuations must finish before the map becomes sealed
+        // empty. This cold shutdown wait does not change ordinary admission accounting.
+        while (CallCancellations.Count != 0)
+            await Task.Delay(1).ConfigureAwait(false);
         List<Exception>? failures = null;
+        try
+        {
+            await DrainPhysicalCancellationCallbacksAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            // A fault is published only after the physical workers finish. Preserve it while
+            // still attempting independent disposers; this is not a successful drain certificate.
+            (failures ??= []).Add(exception);
+        }
         foreach (var registration in _services.Keys)
         {
             try

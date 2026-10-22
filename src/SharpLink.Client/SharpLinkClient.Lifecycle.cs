@@ -74,6 +74,8 @@ internal sealed partial class SharpLinkClient
 
     private async Task<ClientConnection> ConnectOneAsync(CancellationToken cancellationToken)
     {
+        lock (_poolGate)
+            ThrowIfMaintenanceFrozen();
         using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             _shutdownCts.Token);
@@ -112,7 +114,7 @@ internal sealed partial class SharpLinkClient
             Exception? poolException = null;
             lock (_poolGate)
             {
-                if (_shutdownCts.IsCancellationRequested ||
+                if (IsMaintenanceFrozen || _shutdownCts.IsCancellationRequested ||
                     State is SharpLinkConnectionState.Stopped)
                 {
                     poolException = CreateConnectionClosedException("Client stopped while connecting.");
@@ -381,11 +383,13 @@ internal sealed partial class SharpLinkClient
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders,
-            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
+            enableSessionRefresh: MaintenanceOptions is null && session.SupportsSessionRefreshReplacement,
+            enableCooperativeMaintenance: MaintenanceOptions is not null);
         var handshakePreference = CaptureResponseCompressionPreference();
         var handshakeRequest = ProtocolV2Negotiator.CreateClientOffer(
             negotiationPolicy,
-            ProtocolV2Capabilities.ContractManifest,
+            ProtocolV2Capabilities.ContractManifest | (MaintenanceOptions is null
+                ? ProtocolV2Capabilities.None : ProtocolV2Capabilities.CooperativeMaintenance),
             authPayload,
             handshakePreference.Generation,
             handshakePreference.Allowed);
@@ -452,6 +456,11 @@ internal sealed partial class SharpLinkClient
                                 }
                             }
                         }
+                        else if (header.Type == ProtocolV2FrameType.CooperativeMaintenance)
+                        {
+                            await HandleMaintenanceEnrollmentAsync(session,
+                                CooperativeMaintenanceMessage.Read(payload), ct).ConfigureAwait(false);
+                        }
                         else if (header.Type == ProtocolV2FrameType.ContractManifest)
                         {
                             if (negotiated is null || manifest is not null)
@@ -461,6 +470,9 @@ internal sealed partial class SharpLinkClient
                             }
                             else
                             {
+                                if (MaintenanceOptions is not null &&
+                                    session.MaintenanceEnrollment is not { Stage: CooperativeMaintenanceStage.Enrolled })
+                                    throw CreateProtocolViolationException("Maintenance enrollment must precede Ready publication.");
                                 manifest = ProtocolV2ContractManifestCodec.Read(payload, _protocolOptions);
                                 PublishRemoteContractManifest(session, manifest);
                                 handshakeCompleted = true;
@@ -560,6 +572,9 @@ internal sealed partial class SharpLinkClient
                     {
                         switch (header.Type)
                         {
+                            case ProtocolV2FrameType.CooperativeMaintenance:
+                                HandleMaintenanceControl(connection, payload);
+                                break;
                             case ProtocolV2FrameType.Ping:
                                 await session.SendPongWithBackpressureAsync(
                                     ReadMonotonicTimestamp(payload), ct).ConfigureAwait(false);

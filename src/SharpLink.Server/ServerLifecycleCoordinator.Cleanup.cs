@@ -70,12 +70,12 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        private async Task DisposeServicesWhenDrainedAsync(Task callsDrained)
+        private async Task DisposeServicesWhenDrainedAsync(Task callsDrained, Task frameworkCleanupTask)
         {
             try
             {
                 await callsDrained.ConfigureAwait(false);
-                await DisposeRegisteredServicesAsync().ConfigureAwait(false);
+                await DisposeRegisteredServicesAsync(frameworkCleanupTask).ConfigureAwait(false);
             }
             catch (Exception exception)
             {
@@ -83,9 +83,35 @@ internal sealed partial class SharpLinkServer
             }
         }
 
-        private async Task DisposeRegisteredServicesAsync()
+        private async Task DisposeRegisteredServicesAsync(Task frameworkCleanupTask)
         {
+            // Expiring the public Stop observer does not reclaim resources still used by the
+            // existing shutdown tasks. Their failures are reported by the shutdown owner.
+            try
+            {
+                await frameworkCleanupTask.ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+
+            // A connection closed while calls were active can outlive framework shutdown in
+            // the existing retired registry. All readers/producers and ordinary calls are now
+            // drained, so remaining service-cleanup owners form a closed physical tail set.
+            var connections = _server._connectionRegistry.SnapshotOwned();
+            var connectionCleanups = new Task[connections.Length];
+            for (var index = 0; index < connections.Length; index++)
+                connectionCleanups[index] = connections[index].ServiceCleanupTask;
             List<Exception>? failures = null;
+            try
+            {
+                await Task.WhenAll(connectionCleanups).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                (failures ??= []).Add(exception);
+            }
+
             try
             {
                 await _server.ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);

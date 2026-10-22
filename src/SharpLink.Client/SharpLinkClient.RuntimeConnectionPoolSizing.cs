@@ -92,7 +92,7 @@ internal sealed partial class SharpLinkClient : ISharpLinkConnectionPoolSizingRu
     private void EnsureConnectionPoolSizingPublicationAllowed()
     {
         var state = State;
-        if (Volatile.Read(ref _stopStarted) != 0 ||
+        if (MaintenanceOptions is not null || Volatile.Read(ref _stopStarted) != 0 ||
             state is SharpLinkConnectionState.Draining or
                 SharpLinkConnectionState.Stopped or
                 SharpLinkConnectionState.Faulted)
@@ -113,7 +113,7 @@ internal sealed partial class SharpLinkClient : ISharpLinkConnectionPoolSizingRu
     {
         lock (_stateGate)
         {
-            if (Volatile.Read(ref _stopStarted) != 0 || _shutdownCts.IsCancellationRequested)
+            if (MaintenanceOptions is not null || Volatile.Read(ref _stopStarted) != 0 || _shutdownCts.IsCancellationRequested)
                 return;
             if (_connectionPoolSizingReconcileTask is { IsCompleted: false })
                 return;
@@ -154,7 +154,7 @@ internal sealed partial class SharpLinkClient : ISharpLinkConnectionPoolSizingRu
         List<ClientConnection>? marked = null;
         lock (_poolGate)
         {
-            if (_poolStopping)
+            if (IsMaintenanceFrozen || _poolStopping)
                 return false;
 
             // Planned sources stay physically Ready to finish admitted work. They are

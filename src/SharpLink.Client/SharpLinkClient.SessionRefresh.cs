@@ -140,7 +140,7 @@ internal sealed partial class SharpLinkClient
 
         lock (_poolGate)
         {
-            if (_poolStopping || _shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
+            if (MaintenanceOptions is not null || _poolStopping || _shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
                 return;
 
             ClientConnection? source = null;
@@ -189,7 +189,7 @@ internal sealed partial class SharpLinkClient
                 ProtocolV2SessionRefreshRequested processedRequest = default;
                 lock (_poolGate)
                 {
-                    if (_poolStopping || Volatile.Read(ref _stopStarted) != 0)
+                    if (MaintenanceOptions is not null || _poolStopping || Volatile.Read(ref _stopStarted) != 0)
                     {
                         ReleaseFixedSessionRefreshWorkerLocked(owner);
                         return;
@@ -314,7 +314,7 @@ internal sealed partial class SharpLinkClient
     {
         lock (_poolGate)
         {
-            if (_poolStopping || _shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
+            if (MaintenanceOptions is not null || _poolStopping || _shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
                 return true;
             if (!_connections.Contains(source) || !source.CanAcceptCalls)
                 return true;
@@ -362,7 +362,7 @@ internal sealed partial class SharpLinkClient
             var sourceStillEligible = false;
             lock (_poolGate)
             {
-                if (_poolStopping || _shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
+                if (MaintenanceOptions is not null || _poolStopping || _shutdownCts.IsCancellationRequested || Volatile.Read(ref _stopStarted) != 0)
                     throw CreateConnectionClosedException("Client stopped while refreshing a session.");
 
                 sourceStillEligible = _connections.Contains(source) && source.CanAcceptCalls;

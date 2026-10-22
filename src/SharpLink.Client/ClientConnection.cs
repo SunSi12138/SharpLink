@@ -4,6 +4,7 @@ internal enum ClientConnectionState : byte
 {
     Ready,
     Draining,
+    MaintenancePaused,
     Closed
 }
 
@@ -289,19 +290,36 @@ internal sealed class ClientConnection :
     internal bool ShouldLogLateResponse(out int suppressedCount)
         => _lateResponseLogLimiter.ShouldLog(_timeProvider.GetTimestamp(), out suppressedCount);
 
+    internal void PauseForMaintenance()
+    {
+        if (Interlocked.CompareExchange(ref _state, (int)ClientConnectionState.MaintenancePaused,
+                (int)ClientConnectionState.Ready) != (int)ClientConnectionState.Ready)
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "Connection cannot enter maintenance.");
+    }
+
+    internal void ResumeFromMaintenance()
+    {
+        Session.ResumeFromMaintenance();
+        if (HasObservedFatalFailureForAdmission ||
+            Interlocked.CompareExchange(ref _state, (int)ClientConnectionState.Ready,
+                (int)ClientConnectionState.MaintenancePaused) != (int)ClientConnectionState.MaintenancePaused)
+            throw new SharpLinkException(SharpLinkErrorCode.Unavailable, "Connection cannot resume maintenance.");
+    }
+
     public bool MarkDraining()
     {
-        if (Interlocked.CompareExchange(
-                ref _state,
-                (int)ClientConnectionState.Draining,
-                (int)ClientConnectionState.Ready) == (int)ClientConnectionState.Ready)
+        while (true)
         {
+            var state = State;
+            if (state is not (ClientConnectionState.Ready or ClientConnectionState.MaintenancePaused))
+                return false;
+            if (Interlocked.CompareExchange(ref _state, (int)ClientConnectionState.Draining,
+                    (int)state) != (int)state)
+                continue;
             Session.MarkDraining();
             SharpLinkTelemetry.AddClientRetiringConnections(1);
             return true;
         }
-
-        return false;
     }
 
     public void Fail(Exception exception)

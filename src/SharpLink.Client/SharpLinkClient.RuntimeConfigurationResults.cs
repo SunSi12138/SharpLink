@@ -334,7 +334,7 @@ internal sealed partial class SharpLinkClient
 
     private bool IsRuntimeConfigurationPublicationClosed(SharpLinkConnectionState _)
     {
-        if (Volatile.Read(ref _stopStarted) != 0)
+        if (MaintenanceOptions is not null || Volatile.Read(ref _stopStarted) != 0)
             return true;
 
         return LifecycleState is

@@ -8,7 +8,7 @@ internal sealed partial class SharpLinkServer
     {
         lock (_stateGate)
         {
-            if (_lifecycle.HasStopStarted ||
+            if (MaintenanceConfigured || _lifecycle.HasStopStarted ||
                 CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             {
                 throw new InvalidOperationException(

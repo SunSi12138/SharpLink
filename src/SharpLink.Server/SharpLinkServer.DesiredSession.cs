@@ -43,7 +43,7 @@ internal sealed partial class SharpLinkServer
         lock (_stateGate)
         {
             var state = CurrentState;
-            if (_lifecycle.HasStopStarted ||
+            if (MaintenanceConfigured || _lifecycle.HasStopStarted ||
                 state is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             {
                 return SharpLinkServerDesiredSessionPublicationResult.Failure(

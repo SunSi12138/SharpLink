@@ -5,7 +5,7 @@ namespace SharpLink.Server;
 /// immutable publications that hold references into this kernel; ordinary program retirement does
 /// not cancel queued or active work.
 /// </summary>
-internal sealed class AdmissionStateKernel : IAsyncDisposable
+internal sealed partial class AdmissionStateKernel : IAsyncDisposable
 {
     private readonly Lock _accountingGate = new();
     private readonly Lock _registryGate = new();
@@ -495,7 +495,8 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         {
             if (!_programs.Remove(program))
                 throw new InvalidOperationException("Admission program reclamation lost its registered program.");
-            _retiredPrograms.Remove(program);
+            // Retain this existing owner through physical binding disposal and completion.
+            _retiredPrograms.Add(program);
             ReleaseBindingsLocked(program.Controller, ref dispose);
             if (_programs.Count == 0)
                 programsDrained = _programsDrained;
@@ -506,15 +507,9 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         DisposeStates(dispose);
         program.Controller.DetachReclaimedState(program);
         program.CompleteReclaim();
-        programsDrained?.TrySetResult(true);
-    }
-
-    internal void ReleaseUnpublishedBindings(SharpLinkAdmissionController controller)
-    {
-        List<IDisposable>? dispose = null;
         lock (_registryGate)
-            ReleaseBindingsLocked(controller, ref dispose);
-        DisposeStates(dispose);
+            _retiredPrograms.Remove(program);
+        programsDrained?.TrySetResult(true);
     }
 
     internal bool TryReserveQueue(
@@ -591,6 +586,23 @@ internal sealed class AdmissionStateKernel : IAsyncDisposable
         }
         drained?.TrySetResult(true);
         SharpLinkTelemetry.AddAdmissionActivePermits(-1);
+    }
+
+    // Cold certificate, valid only after all Request readers have crossed their ingress fences
+    // and admission publication has been sealed. Includes removed-but-still-reclaiming programs.
+    internal bool IsMaintenanceQuiescent
+    {
+        get
+        {
+            if (HasUnpublishedCleanupFailure)
+                return false;
+            lock (_accountingGate)
+                if (_queuedCalls != 0 || _activePermits != 0)
+                    return false;
+            lock (_registryGate)
+                return _programs.All(static program => program.ActiveUses == 0) &&
+                       _retiredPrograms.All(static program => program.IsReclaimed);
+        }
     }
 
     internal void StopAccepting()

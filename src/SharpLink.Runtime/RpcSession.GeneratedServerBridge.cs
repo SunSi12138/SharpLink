@@ -41,9 +41,20 @@ internal sealed partial class RpcSession
         var callContext = SharpLinkCallContext.Current;
         var deadline = callContext?.LocalRpcDeadline ?? default;
         var deadlineTimeProvider = callContext?.DeadlineTimeProvider;
-        using var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
-        var deadlineWon = false;
+        var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        IAsyncEnumerator<T> enumerator;
+        try
+        {
+            enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
+        }
+        catch (Exception exception)
+        {
+            if (SharpLinkPhysicalWork.TransferLifetime(exception, lifetimeCancellation) is { } terminal)
+                throw terminal;
+            lifetimeCancellation.Dispose();
+            throw;
+        }
+        var cleanupTransferred = false;
         try
         {
             var exactSizeCodec = codec as IRpcSizedCodec<T>;
@@ -61,16 +72,30 @@ internal sealed partial class RpcSession
                 else
                 {
                     var moveNextTask = moveNext.AsTask();
-                    if (!await SharpLinkTimer.WaitAsync(
-                            moveNextTask,
-                            deadline,
-                            deadlineTimeProvider,
-                            lifetimeCancellation.Token).ConfigureAwait(false))
+                    try
                     {
-                        deadlineWon = true;
-                        TryCancelGeneratedLifetime(lifetimeCancellation);
-                        _ = ObserveAbandonedGeneratedMoveNextAsync(moveNextTask);
-                        throw CreateGeneratedStreamDeadlineExceededException();
+                        if (!await SharpLinkTimer.WaitAsync(
+                                moveNextTask,
+                                deadline,
+                                deadlineTimeProvider,
+                                lifetimeCancellation.Token).ConfigureAwait(false))
+                        {
+                            var terminal = CreateGeneratedStreamDeadlineExceededException();
+                            cleanupTransferred = true;
+                            var owner = SharpLinkPhysicalWork.CreateOwner(terminal, lifetimeCancellation);
+                            owner.Track(CompleteAbandonedGeneratedStreamAsync(moveNextTask, enumerator, lifetimeCancellation, owner));
+                            throw terminal;
+                        }
+                    }
+                    catch (OperationCanceledException exception) when (lifetimeCancellation.IsCancellationRequested)
+                    {
+                        // The ownership association must use a fresh framework terminal, never
+                        // an exception instance that arbitrary user code could reuse elsewhere.
+                        var terminal = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
+                        cleanupTransferred = true;
+                        var owner = SharpLinkPhysicalWork.CreateCarrierOwner(terminal, exception, lifetimeCancellation);
+                        owner.Track(CompleteAbandonedGeneratedStreamAsync(moveNextTask, enumerator, lifetimeCancellation, owner));
+                        throw terminal;
                     }
                     hasNext = await moveNextTask.ConfigureAwait(false);
                 }
@@ -102,16 +127,30 @@ internal sealed partial class RpcSession
                 else
                 {
                     var sendTask = send.AsTask();
-                    if (!await SharpLinkTimer.WaitAsync(
-                            sendTask,
-                            deadline,
-                            deadlineTimeProvider,
-                            lifetimeCancellation.Token).ConfigureAwait(false))
+                    try
                     {
-                        deadlineWon = true;
-                        TryCancelGeneratedLifetime(lifetimeCancellation);
-                        _ = ObserveAbandonedGeneratedSendAsync(sendTask);
-                        throw CreateGeneratedStreamDeadlineExceededException();
+                        if (!await SharpLinkTimer.WaitAsync(
+                                sendTask,
+                                deadline,
+                                deadlineTimeProvider,
+                                lifetimeCancellation.Token).ConfigureAwait(false))
+                        {
+                            var terminal = CreateGeneratedStreamDeadlineExceededException();
+                            cleanupTransferred = true;
+                            var owner = SharpLinkPhysicalWork.CreateOwner(terminal, lifetimeCancellation);
+                            owner.Track(CompleteAbandonedGeneratedStreamAsync(sendTask, enumerator, lifetimeCancellation, owner));
+                            throw terminal;
+                        }
+                    }
+                    catch (OperationCanceledException exception) when (lifetimeCancellation.IsCancellationRequested)
+                    {
+                        // The ownership association must use a fresh framework terminal, never
+                        // an exception instance that arbitrary user code could reuse elsewhere.
+                        var terminal = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
+                        cleanupTransferred = true;
+                        var owner = SharpLinkPhysicalWork.CreateCarrierOwner(terminal, exception, lifetimeCancellation);
+                        owner.Track(CompleteAbandonedGeneratedStreamAsync(sendTask, enumerator, lifetimeCancellation, owner));
+                        throw terminal;
                     }
                     await sendTask.ConfigureAwait(false);
                 }
@@ -120,23 +159,86 @@ internal sealed partial class RpcSession
             ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
             SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
         }
+        catch (SharpLinkException exception) when (
+            !cleanupTransferred && exception.Code == SharpLinkErrorCode.DeadlineExceeded &&
+            ((deadlineTimeProvider is not null && deadline.IsExpired(deadlineTimeProvider)) ||
+                SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is not null))
+        {
+            // The source or final publication check can select its deadline after its ValueTask
+            // has been consumed. Retain any physical descendant before entering disposal.
+            var terminal = new SharpLinkException(
+                exception.Code, exception.DetailCode, exception.Message, exception);
+            cleanupTransferred = true;
+            var owner = SharpLinkPhysicalWork.CreateCarrierOwner(terminal, exception, lifetimeCancellation);
+            owner.Track(CompleteAbandonedGeneratedStreamAsync(
+                Task.FromException(exception), enumerator, lifetimeCancellation, owner));
+            throw terminal;
+        }
+        catch (OperationCanceledException exception) when (!cleanupTransferred &&
+            (lifetimeCancellation.IsCancellationRequested || SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is not null))
+        {
+            // Local call cancellation or an associated nested terminal can leave disposal
+            // pending. The source has been consumed already; transfer only remaining cleanup.
+            // An unassociated application cancellation retains ordinary disposal precedence.
+            var terminal = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
+            cleanupTransferred = true;
+            var owner = SharpLinkPhysicalWork.CreateCarrierOwner(terminal, exception, lifetimeCancellation);
+            owner.Track(CompleteAbandonedGeneratedStreamAsync(
+                Task.FromException(exception), enumerator, lifetimeCancellation, owner));
+            throw terminal;
+        }
         finally
         {
-            TryCancelGeneratedLifetime(lifetimeCancellation);
-            try
+            if (!cleanupTransferred)
             {
-                var dispose = enumerator.DisposeAsync();
-                if (deadlineWon && !dispose.IsCompletedSuccessfully)
-                    _ = ObserveAbandonedGeneratedDisposeAsync(dispose);
-                else
-                    await dispose.ConfigureAwait(false);
-            }
-            catch when (deadlineWon)
-            {
-                // The monotonic deadline is already terminal; a user enumerator that ignores
-                // cancellation cannot delay the RPC while its disposal completes.
+                try
+                {
+                    TryCancelGeneratedLifetime(lifetimeCancellation);
+                    await enumerator.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    // A disposal terminal can carry unfinished nested work. Transfer only its
+                    // linked lifetime; the enumerator has already been disposed exactly once.
+                    if (SharpLinkPhysicalWork.TransferLifetime(exception, lifetimeCancellation) is { } terminal)
+                        throw terminal;
+                    lifetimeCancellation.Dispose();
+                    throw;
+                }
+                lifetimeCancellation.Dispose();
             }
         }
+    }
+
+    private static async Task CompleteAbandonedGeneratedStreamAsync<T>(
+        Task operation,
+        IAsyncEnumerator<T> enumerator,
+        CancellationTokenSource lifetimeCancellation,
+        SharpLinkPhysicalWork.PhysicalOwner owner)
+    {
+        // Neither synchronous cancellation callbacks nor the synchronous prefix of DisposeAsync
+        // may hold the selected public terminal. Never capture an application context here.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+        TryCancelGeneratedLifetime(lifetimeCancellation);
+        try
+        {
+            await operation.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await owner.WaitForDescendantAsync(exception).ConfigureAwait(false);
+        }
+        try
+        {
+            // In particular, compiler-generated iterators reject concurrent MoveNext/Dispose.
+            await enumerator.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await owner.WaitForDescendantAsync(exception).ConfigureAwait(false);
+        }
+        // The owner releases the linked source only when all physical cleanup in its dependency
+        // component has finished, including aliases and cross-recycled terminal exceptions.
     }
 
     private static void TryCancelGeneratedLifetime(CancellationTokenSource cancellation)
@@ -205,24 +307,6 @@ internal sealed partial class RpcSession
         => new(
             SharpLinkErrorCode.DeadlineExceeded,
             "RPC deadline exceeded during server stream production.");
-
-    private static async Task ObserveAbandonedGeneratedMoveNextAsync(Task<bool> task)
-    {
-        try { _ = await task.ConfigureAwait(false); }
-        catch { }
-    }
-
-    private static async Task ObserveAbandonedGeneratedSendAsync(Task task)
-    {
-        try { await task.ConfigureAwait(false); }
-        catch { }
-    }
-
-    private static async Task ObserveAbandonedGeneratedDisposeAsync(ValueTask dispose)
-    {
-        try { await dispose.ConfigureAwait(false); }
-        catch { }
-    }
 
     // Keep the generated-server path concrete and codec-bound. Exact-size codecs retain the
     // credit-before-serialize path; only the universal unsized fallback enters the session-owned

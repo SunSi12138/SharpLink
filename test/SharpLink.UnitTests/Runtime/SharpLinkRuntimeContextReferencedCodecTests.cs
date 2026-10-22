@@ -97,6 +97,44 @@ public partial class SharpLinkRuntimeContextTests
     }
 
     [Test]
+    public void CodecPublicationShouldRejectAnOwnerAdoptedDuringValidation()
+    {
+        var expectedHash = new RpcHash128(0x1111111111111111UL, 0x2222222222222222UL);
+        var provider = new TestManifest("referenced-provider",
+            new HashedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(1), expectedHash));
+        var validationTrigger = new ReferencedCodecManifest("validation-trigger", []);
+        using var context = CreateRuntimeBuilder().Build(
+            new ISharpLinkGeneratedAssemblyManifest[] { provider, validationTrigger });
+        using var consumer = context.PrepareGeneratedManifest(new ReferencedCodecManifest(
+            "concurrently-adopted-consumer",
+            [new SharpLinkReferencedCodecDependency(typeof(ThirdAdapterValue), expectedHash)]));
+        var before = context.CreateGeneratedCodecSnapshot();
+        var revision = context.RegistrationRevision;
+        validationTrigger.BeforeDependenciesRead = () =>
+        {
+            validationTrigger.BeforeDependenciesRead = null;
+            context.AdoptGeneratedManifest(consumer);
+        };
+        try
+        {
+            var failure = CaptureFailure(() => context.PublishGeneratedCodecs(
+                new Dictionary<Type, RpcGeneratedCodecRegistration>()));
+            Ensure(failure is InvalidOperationException &&
+                   failure.Message.Contains("catalog changed", StringComparison.Ordinal),
+                "an owner adopted after the snapshot must invalidate the validated publication");
+            Ensure(context.RegistrationRevision == revision + 1,
+                "only the reentrant adoption may change the revision");
+            Ensure(ReferenceEquals(before, context.CreateGeneratedCodecSnapshot()),
+                "the rejected map must not remove a newly adopted owner's referenced Codec");
+        }
+        finally
+        {
+            validationTrigger.BeforeDependenciesRead = null;
+            context.ReleaseGeneratedManifest(consumer);
+        }
+    }
+
+    [Test]
     public void DisposedContextShouldRejectCodecResolution()
     {
         var context = CreateRuntimeBuilder().Build(includeGeneratedAssemblyCatalog: false);
@@ -127,7 +165,14 @@ public partial class SharpLinkRuntimeContextTests
         public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<string> Dependencies => [];
-        public IReadOnlyList<SharpLinkReferencedCodecDependency> ReferencedCodecDependencies { get; } =
-            referencedCodecDependencies;
+        internal Action? BeforeDependenciesRead { get; set; }
+        public IReadOnlyList<SharpLinkReferencedCodecDependency> ReferencedCodecDependencies
+        {
+            get
+            {
+                BeforeDependenciesRead?.Invoke();
+                return referencedCodecDependencies;
+            }
+        }
     }
 }
