@@ -2,7 +2,7 @@
 
 ## Result
 
-The adopted production source introduces no additional catalog/version/update queries, maintenance counters, or coordinator/CWT lookups in the audited ordinary RPC selection, request/response parsing and dispatch paths. Existing class layouts, field sets, signatures and selection IL are preserved. This is **not** a claim of identical machine code, zero total runtime cost, or throughput equivalence.
+The adopted production source introduces no additional catalog/version/update queries, maintenance counters, or coordinator/CWT lookups in the audited ordinary RPC selection, request/response parsing and dispatch paths. The eight audited ordinary class layouts, their field sets, signatures and selection IL are preserved. This is **not** a claim of identical machine code, zero total runtime cost, or throughput equivalence.
 
 The final no-ref callback correction removes the old **40-byte managed closure per healthy stream-progress helper call**, while retaining explicit background-scan and exceptional-ownership costs. Its remaining JIT stack and spill differences are disclosed below rather than inferred away from the allocation improvement.
 
