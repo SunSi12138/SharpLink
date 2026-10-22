@@ -175,27 +175,58 @@ public class ReadOwnershipPipeReaderDispatchTests
         bool late, bool useSchedulingContext)
     {
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var diagnostics = new QueuedRegistrationDiagnostics();
         var registeringThread = new Thread(() =>
         {
+            diagnostics.WorkerStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
-                ExerciseQueuedRegistration(late, useSchedulingContext);
+                ExerciseQueuedRegistration(late, useSchedulingContext, diagnostics);
+                diagnostics.WorkerTerminal = 1;
+                diagnostics.CompletionSetBefore = System.Diagnostics.Stopwatch.GetTimestamp();
                 completed.SetResult();
+                diagnostics.CompletionSetAfter = System.Diagnostics.Stopwatch.GetTimestamp();
             }
             catch (Exception error)
             {
+                diagnostics.WorkerError = error;
+                diagnostics.WorkerTerminal = 2;
+                diagnostics.CompletionSetBefore = System.Diagnostics.Stopwatch.GetTimestamp();
                 completed.SetException(error);
+                diagnostics.CompletionSetAfter = System.Diagnostics.Stopwatch.GetTimestamp();
+            }
+            finally
+            {
+                diagnostics.WorkerExited = System.Diagnostics.Stopwatch.GetTimestamp();
             }
         })
         { IsBackground = true };
         registeringThread.Start();
         try
         {
+            diagnostics.OuterWaitEntered = System.Diagnostics.Stopwatch.GetTimestamp();
             await completed.Task.WaitAsync(Timeout);
+            diagnostics.OuterOutcome = 1;
+            diagnostics.OuterOutcomeObserved = System.Diagnostics.Stopwatch.GetTimestamp();
+        }
+        catch (Exception error)
+        {
+            diagnostics.OuterOutcome = 2;
+            diagnostics.OuterError = error;
+            diagnostics.OuterOutcomeObserved = System.Diagnostics.Stopwatch.GetTimestamp();
+            diagnostics.CompletionStatusAtOuterError = completed.Task.Status.ToString();
+            diagnostics.IterationAtOuterError = Volatile.Read(ref diagnostics.CurrentIteration);
+            diagnostics.CompletedIterationsAtOuterError = Volatile.Read(ref diagnostics.CompletedIterations);
+            diagnostics.CallbacksAtOuterError = Volatile.Read(ref diagnostics.CallbacksObserved);
+            throw;
         }
         finally
         {
-            Ensure(registeringThread.Join(Timeout), "the registering thread must exit");
+            diagnostics.JoinEntered = System.Diagnostics.Stopwatch.GetTimestamp();
+            var joined = registeringThread.Join(Timeout);
+            diagnostics.JoinReturned = System.Diagnostics.Stopwatch.GetTimestamp();
+            diagnostics.WriteAfterJoin(late, useSchedulingContext, completed.Task, joined);
+            Ensure(joined, "the registering thread must exit");
         }
     }
 
@@ -242,7 +273,8 @@ public class ReadOwnershipPipeReaderDispatchTests
     // B policy-only tests are intentionally not carried forward: there is no mutable reader
     // dispatch switch, and public continuation registration does not classify context under the
     // reader's ownership gate. Context contracts are exercised above and in the lifetime tests.
-    private static void ExerciseQueuedRegistration(bool late, bool useSchedulingContext)
+    private static void ExerciseQueuedRegistration(bool late, bool useSchedulingContext,
+        QueuedRegistrationDiagnostics diagnostics)
     {
         Ensure(Task.CurrentId is null && SynchronizationContext.Current is null,
             "the fixture requires an ordinary registering thread");
@@ -259,6 +291,8 @@ public class ReadOwnershipPipeReaderDispatchTests
                 var result = read.GetAwaiter().GetResult();
                 reader.AdvanceTo(result.Buffer.End);
                 consumed++;
+                Volatile.Write(ref diagnostics.CallbacksObserved, consumed);
+                Volatile.Write(ref diagnostics.AdvanceCountObserved, inner.AdvanceCount);
             }
             catch (Exception exception)
             {
@@ -274,6 +308,7 @@ public class ReadOwnershipPipeReaderDispatchTests
         // late OnCompleted may allocate its independent work item. Benchmark it separately.
         for (var i = 0; i < 11_000; i++)
         {
+            Volatile.Write(ref diagnostics.CurrentIteration, i + 1);
             done.Reset();
             read = reader.ReadAsync();
             if (late) inner.Publish();
@@ -287,11 +322,78 @@ public class ReadOwnershipPipeReaderDispatchTests
                     catch (Exception exception) { error = exception; done.Set(); }
                 }, state: (object?)null, preferLocal: false);
             }
-            Ensure(done.Wait(Timeout), "queued registration must dispatch without a lost wakeup");
+            var waitStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            var dispatched = done.Wait(Timeout);
+            var waitTicks = System.Diagnostics.Stopwatch.GetTimestamp() - waitStarted;
+            if (waitTicks > diagnostics.MaximumWaitTicks)
+            {
+                diagnostics.MaximumWaitTicks = waitTicks;
+                diagnostics.MaximumWaitIteration = i + 1;
+            }
+            Ensure(dispatched, "queued registration must dispatch without a lost wakeup");
             Ensure(error is null, $"the queued consumer failed: {error}");
+            Volatile.Write(ref diagnostics.CompletedIterations, i + 1);
         }
         Ensure(consumed == 11_000 && inner.AdvanceCount == 11_000,
             "every queued consumer must run and release ownership exactly once");
+    }
+
+    // Local diagnostic overlay only. Preserve all original work and bounds.
+    private sealed class QueuedRegistrationDiagnostics
+    {
+        internal long WorkerStarted, WorkerExited, CompletionSetBefore, CompletionSetAfter;
+        internal long OuterWaitEntered, OuterOutcomeObserved, JoinEntered, JoinReturned;
+        internal long MaximumWaitTicks;
+        internal int CurrentIteration, CompletedIterations, CallbacksObserved, AdvanceCountObserved;
+        internal int MaximumWaitIteration, WorkerTerminal, OuterOutcome;
+        internal int IterationAtOuterError, CompletedIterationsAtOuterError, CallbacksAtOuterError;
+        internal Exception? WorkerError, OuterError;
+        internal string? CompletionStatusAtOuterError;
+
+        internal void WriteAfterJoin(bool late, bool useSchedulingContext, Task completed, bool joined)
+        {
+            // No output occurs in the measured iteration loop or on the worker/callback.
+            // A diagnostic formatting failure must not replace the original test outcome.
+            try
+            {
+                Console.WriteLine("QUEUED_DISPATCH_DIAGNOSTIC " + System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    late,
+                    useSchedulingContext,
+                    utcAfterJoin = DateTimeOffset.UtcNow.ToString("O"),
+                    stopwatchFrequency = System.Diagnostics.Stopwatch.Frequency,
+                    processorCount = Environment.ProcessorCount,
+                    workerStarted = WorkerStarted,
+                    workerExited = WorkerExited,
+                    completionSetBefore = CompletionSetBefore,
+                    completionSetAfter = CompletionSetAfter,
+                    outerWaitEntered = OuterWaitEntered,
+                    outerOutcomeObserved = OuterOutcomeObserved,
+                    joinEntered = JoinEntered,
+                    joinReturned = JoinReturned,
+                    joined,
+                    workerTerminal = WorkerTerminal,
+                    outerOutcome = OuterOutcome,
+                    completionStatusAfterJoin = completed.Status.ToString(),
+                    completionStatusAtOuterError = CompletionStatusAtOuterError,
+                    iteration = Volatile.Read(ref CurrentIteration),
+                    completedIterations = Volatile.Read(ref CompletedIterations),
+                    callbacksObserved = Volatile.Read(ref CallbacksObserved),
+                    advanceCountObserved = Volatile.Read(ref AdvanceCountObserved),
+                    iterationAtOuterError = IterationAtOuterError,
+                    completedIterationsAtOuterError = CompletedIterationsAtOuterError,
+                    callbacksAtOuterError = CallbacksAtOuterError,
+                    maximumWaitTicks = MaximumWaitTicks,
+                    maximumWaitIteration = MaximumWaitIteration,
+                    workerError = WorkerError?.ToString(),
+                    outerError = OuterError?.ToString()
+                }));
+            }
+            catch
+            {
+                // Diagnostics are not a new correctness assertion or a failure suppression path.
+            }
+        }
     }
 
     private static Exception? Capture(Action action)

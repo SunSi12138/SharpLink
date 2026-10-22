@@ -2,7 +2,7 @@ name: Send Credit Lease Race
 
 on:
   push:
-    branches: ['fix/send-credit-lease-capture-20261011']
+    branches: ['fix/send-credit-lease-capture-20261011', 'validation/dispatch-timeout-diagnostic-20261022']
     paths:
       - '.github/workflows/send-credit-lease-race.yml'
       - '.github/actions/setup-dotnet/**'
