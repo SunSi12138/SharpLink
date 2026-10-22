@@ -21,6 +21,11 @@ public interface IDynamicPluginService : IService
     [Oneway]
     ValueTask NotifyAsync(int value, CancellationToken cancellationToken);
 
+    ValueTask NoReturnAsync(int value, CancellationToken cancellationToken);
+
+    [Oneway]
+    ValueTask NotifyStreamAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken);
+
     ValueTask<int> ClientStreamAsync(
         IAsyncEnumerable<int> values,
         CancellationToken cancellationToken);

@@ -97,6 +97,49 @@ public class ServiceRegistrationTests
     }
 
     [Test]
+    [Arguments(SharpLinkServiceLifetime.Singleton)]
+    [Arguments(SharpLinkServiceLifetime.Connection)]
+    [Arguments(SharpLinkServiceLifetime.Call)]
+    public async Task RetiredSelectedRegistrationShouldRejectBeforeDisposedAccess(SharpLinkServiceLifetime lifetime)
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
+        using var codecRegistration = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(ServiceRegistrationTests).Assembly, manifest, codecRegistration);
+        using var provider = new ServiceCollection().BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var stub = new StubMarker();
+        var registration = lifetime switch
+        {
+            SharpLinkServiceLifetime.Singleton => ServiceRegistration.CreateSingleton(
+                typeof(object), stub, new object(), ownsService: false, module),
+            SharpLinkServiceLifetime.Connection => ServiceRegistration.CreateConnection(
+                typeof(object), stub, scopeFactory, static _ => new object(), disposeService: false, module),
+            _ => ServiceRegistration.CreatePerCall(
+                typeof(object), stub, scopeFactory, static _ => new object(), disposeService: false, module)
+        };
+        Ensure(registration.AcceptsCalls, "capture a running registration before the retirement race");
+        module.TryBeginDraining();
+        await registration.DisposeAsync();
+        module.MarkReleased();
+        try
+        {
+            if (lifetime == SharpLinkServiceLifetime.Singleton)
+                _ = registration.TryAcquireDynamicSingleton(isStream: false, out _, out _);
+            else
+                _ = await registration.AcquireAsync(null!, isStream: false);
+            throw new Exception("assert failed: retired registration must reject acquisition");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable,
+                "normal retirement must not surface disposed-object Internal");
+        }
+        Ensure(module.RemainingCalls == 0, "retirement rejection must not leak a module lease");
+    }
+
+    [Test]
     public async Task DynamicServiceDispatchShouldLookupMethodDescriptorOnlyOnce()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);

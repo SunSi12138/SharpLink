@@ -426,7 +426,8 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram)
+                        admissionProgram,
+                        default(ImmediateRequestDispatch))
                     : DispatchRpcAsync(
                         connection,
                         requestId,
@@ -434,7 +435,8 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram);
+                        admissionProgram,
+                        default(ImmediateRequestDispatch));
             }
             catch (SharpLinkException exception) when (
                 exception.Code == SharpLinkErrorCode.ProtocolViolation)

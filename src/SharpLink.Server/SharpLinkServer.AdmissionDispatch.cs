@@ -2,7 +2,7 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private ValueTask DispatchOneWayRpc(
+    private ValueTask DispatchOneWayRpc<TSelection>(
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -10,11 +10,15 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
-        ServerCallCancellationState? admittedCallState = null,
-        bool admissionGranted = false,
-        int admittedClientStreamCount = 0,
-        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
+        TSelection selection)
+        where TSelection : struct, IRequestDispatchSelection
     {
+        // The JIT folds these type tests while importing, including Tier0. Do not replace them
+        // with selection getters on the immediate path: QuickJit would retain those helper calls.
+        var admittedCallState = typeof(TSelection) == typeof(ImmediateRequestDispatch) ? null : selection.CallState;
+        var admissionGranted = typeof(TSelection) != typeof(ImmediateRequestDispatch);
+        var admittedClientStreamCount = typeof(TSelection) == typeof(ImmediateRequestDispatch) ? 0 : selection.ClientStreamCount;
+        var retainedAdmissionPayload = typeof(TSelection) == typeof(ImmediateRequestDispatch) ? null : selection.RetainedPayload;
         var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
         try
         {
@@ -23,7 +27,10 @@ internal sealed partial class SharpLinkServer
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
             var request = ReadRequestEnvelope(
                 session, payload, flags, admittedCallState?.Deadline ?? default);
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            ServiceRegistration serviceInfo;
+            if (!(typeof(TSelection) == typeof(ImmediateRequestDispatch)
+                    ? Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out serviceInfo!)
+                    : selection.TryGetService(this, request.InterfaceHash, out serviceInfo!)))
             {
                 if (admittedCallState is not null)
                 {
@@ -141,7 +148,8 @@ internal sealed partial class SharpLinkServer
                         serverLoopToken,
                         descriptor.ClientStreamCount,
                         admittedCallState,
-                        admissionProgram));
+                        admissionProgram,
+                        serviceInfo));
                 }
 
                 var decision = admissionTask.Result;
@@ -435,126 +443,6 @@ internal sealed partial class SharpLinkServer
         {
             if (ownsAdmissionProgramUse)
                 admissionProgram!.ReleaseUse();
-        }
-    }
-
-    private async Task AwaitOneWayAdmissionAsync(
-        ValueTask<AdmissionDecision> admissionTask,
-        ServerRetainedAdmissionPayload retainedPayload,
-        ServerConnectionState connection,
-        long requestId,
-        ProtocolV2FrameFlags flags,
-        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        CancellationToken serverLoopToken,
-        int clientStreamCount,
-        ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram)
-    {
-        var transferred = false;
-        try
-        {
-            AdmissionDecision decision;
-            try
-            {
-                decision = await admissionTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                decision = CreateAdmissionCancellationDecision(callState);
-            }
-            if (!decision.IsAcquired)
-            {
-                DrainRejectedOneWayStreams(
-                    connection.Session, requestId, clientStreamCount);
-                _ = RejectAdmission(connection.Session, requestId, decision, oneWay: true);
-                ReleaseAdmissionCallState(requestCancellationMap, requestId, callState);
-                transferred = true;
-                return;
-            }
-
-            callState.AttachAdmissionLease(decision.Lease!);
-            var dispatchTask = DispatchOneWayRpc(
-                connection,
-                requestId,
-                flags,
-                retainedPayload.Payload,
-                requestCancellationMap,
-                serverLoopToken,
-                admissionProgram,
-                callState,
-                admissionGranted: true,
-                admittedClientStreamCount: clientStreamCount,
-                retainedAdmissionPayload: retainedPayload);
-            transferred = true;
-            if (!dispatchTask.IsCompletedSuccessfully)
-                await dispatchTask.ConfigureAwait(false);
-        }
-        finally
-        {
-            retainedPayload.Dispose();
-            if (!transferred)
-                ReleasePendingAdmissionState(connection.Session, requestCancellationMap, requestId, callState);
-        }
-    }
-
-    private async ValueTask AwaitRpcAdmissionAsync(
-        ValueTask<AdmissionDecision> admissionTask,
-        ServerRetainedAdmissionPayload retainedPayload,
-        ServerConnectionState connection,
-        long requestId,
-        ProtocolV2FrameFlags flags,
-        StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        CancellationToken serverLoopToken,
-        ServerCallCancellationState callState,
-        AdmissionProgram admissionProgram)
-    {
-        var transferred = false;
-        try
-        {
-            AdmissionDecision decision;
-            try
-            {
-                decision = await admissionTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                decision = CreateAdmissionCancellationDecision(callState);
-            }
-            if (!decision.IsAcquired)
-            {
-                await RejectAdmission(
-                    connection.Session,
-                    requestId,
-                    decision,
-                    oneWay: false,
-                    callState: callState,
-                    cancellationToken: connection.ConnectionToken).ConfigureAwait(false);
-                return;
-            }
-
-            callState.AttachAdmissionLease(decision.Lease!);
-            var dispatchTask = DispatchRpcAsync(
-                connection,
-                requestId,
-                flags,
-                retainedPayload.Payload,
-                requestCancellationMap,
-                serverLoopToken,
-                admissionProgram,
-                callState,
-                admissionGranted: true,
-                retainedAdmissionPayload: retainedPayload);
-            transferred = true;
-            if ((flags & ProtocolV2FrameFlags.Compressed) != 0)
-                retainedPayload.Dispose();
-            if (!dispatchTask.IsCompletedSuccessfully)
-                await dispatchTask.ConfigureAwait(false);
-        }
-        finally
-        {
-            retainedPayload.Dispose();
-            if (!transferred)
-                ReleasePendingAdmissionState(connection.Session, requestCancellationMap, requestId, callState);
         }
     }
 

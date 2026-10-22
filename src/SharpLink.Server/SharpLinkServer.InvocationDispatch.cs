@@ -2,7 +2,7 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
-    private ValueTask DispatchRpcAsync(
+    private ValueTask DispatchRpcAsync<TSelection>(
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -10,10 +10,14 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
-        ServerCallCancellationState? admittedCallState = null,
-        bool admissionGranted = false,
-        ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
+        TSelection selection)
+        where TSelection : struct, IRequestDispatchSelection
     {
+        // The JIT folds these type tests while importing, including Tier0. Do not replace them
+        // with selection getters on the immediate path: QuickJit would retain those helper calls.
+        var admittedCallState = typeof(TSelection) == typeof(ImmediateRequestDispatch) ? null : selection.CallState;
+        var admissionGranted = typeof(TSelection) != typeof(ImmediateRequestDispatch);
+        var retainedAdmissionPayload = typeof(TSelection) == typeof(ImmediateRequestDispatch) ? null : selection.RetainedPayload;
         var ownsAdmissionProgramUse = admissionProgram is not null && !admissionGranted;
         try
         {
@@ -41,7 +45,10 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            ServiceRegistration serviceInfo;
+            if (!(typeof(TSelection) == typeof(ImmediateRequestDispatch)
+                    ? Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out serviceInfo!)
+                    : selection.TryGetService(this, request.InterfaceHash, out serviceInfo!)))
             {
                 ValueTask responseSend;
                 try
@@ -49,8 +56,8 @@ internal sealed partial class SharpLinkServer
                     responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
                         new SharpLinkException(
-                            SharpLinkErrorCode.Unimplemented,
-                            $"Service {request.InterfaceHash} is not implemented."),
+                            selection.MissingServiceErrorCode,
+                            selection.GetMissingServiceMessage(request.InterfaceHash)),
                         connection.ConnectionToken);
                 }
                 finally
@@ -154,7 +161,8 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         serverLoopToken,
                         admittedCallState,
-                        admissionProgram);
+                        admissionProgram,
+                        serviceInfo);
                 }
 
                 var decision = admissionTask.Result;

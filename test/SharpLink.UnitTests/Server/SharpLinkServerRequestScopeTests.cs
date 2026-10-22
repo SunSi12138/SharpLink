@@ -299,9 +299,11 @@ public class SharpLinkServerRequestScopeTests
             ?? throw new Exception("cannot find RequestId logging scope helper");
         private static readonly MethodInfo DispatchRpcMethod = typeof(SharpLinkServer).GetMethod(
             "DispatchRpcAsync", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.MakeGenericMethod(typeof(SharpLinkServer.ImmediateRequestDispatch))
             ?? throw new Exception("cannot find RPC dispatch path");
         private static readonly MethodInfo DispatchOneWayMethod = typeof(SharpLinkServer).GetMethod(
             "DispatchOneWayRpc", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.MakeGenericMethod(typeof(SharpLinkServer.ImmediateRequestDispatch))
             ?? throw new Exception("cannot find one-way dispatch path");
         private static readonly MethodInfo AwaitDispatchMethod = typeof(SharpLinkServer).GetMethod(
             "AwaitDispatchAsync", BindingFlags.Instance | BindingFlags.NonPublic)
@@ -383,9 +385,7 @@ public class SharpLinkServerRequestScopeTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
-                null,
-                false,
-                null
+                default(SharpLinkServer.ImmediateRequestDispatch)
             ])!;
 
         internal ValueTask DispatchOneWay(long requestId)
@@ -398,10 +398,7 @@ public class SharpLinkServerRequestScopeTests
                 Connection.CallCancellations,
                 CancellationToken.None,
                 null,
-                null,
-                false,
-                0,
-                null
+                default(SharpLinkServer.ImmediateRequestDispatch)
             ])!;
 
         internal Task Observe(ValueTask dispatchTask, long requestId)

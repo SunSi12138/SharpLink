@@ -161,7 +161,6 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         }
 
         var module = Module!;
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (!module.TryAcquire(isStream, out moduleLease))
         {
             throw new SharpLinkException(
@@ -169,6 +168,9 @@ internal sealed class ServiceRegistration : IAsyncDisposable
                 "RPC module is draining");
         }
 
+        // Retirement closes lease acquisition before it disposes registrations. A stale selected
+        // registration must report Unavailable, not misclassify normal retirement as object misuse.
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId);
         return true;
     }
@@ -221,7 +223,6 @@ internal sealed class ServiceRegistration : IAsyncDisposable
         IRpcGeneratedServerBridge? generatedBridge,
         long requestId)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         SharpLinkDynamicModuleLease moduleLease = default;
         if (_hasModule && !Module!.TryAcquire(isStream, out moduleLease))
         {
@@ -232,6 +233,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
 
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (_rootProvider is not null)
                 return ValueTask.FromResult(new ServiceLease(
                     GetOrCreateSingleton(generatedBridge, requestId),
