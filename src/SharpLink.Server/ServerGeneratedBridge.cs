@@ -89,30 +89,46 @@ internal sealed class ServerGeneratedBridge(
         catch (Exception exception) when (
             exception is not OutOfMemoryException and not StackOverflowException)
         {
-            // Once the framework call owner has selected a terminal, this pump has lost both
-            // user-code and wire-publication ownership. Do not run the application exception
-            // mapper and do not publish a second StreamComplete(Error); the selected call terminal
-            // is already responsible for the externally visible outcome. The local send-flow state
-            // still belongs to this pump and must be retired even though no wire terminal is sent.
-            if (GetSelectedTerminal(requestId) is { } selectedTerminal)
+            try
             {
-                session.CompleteSendStream(requestId, streamId, selectedTerminal);
-                return;
-            }
+                // Once the framework call owner has selected a terminal, this pump has lost both
+                // user-code and wire-publication ownership. Do not run the application exception
+                // mapper and do not publish a second StreamComplete(Error); the selected call terminal
+                // is already responsible for the externally visible outcome. The local send-flow state
+                // still belongs to this pump and must be retired even though no wire terminal is sent.
+                if (GetSelectedTerminal(requestId, out var publishModuleDrainResponse) is { } selectedTerminal)
+                {
+                    session.CompleteSendStream(requestId, streamId, selectedTerminal);
+                    if (publishModuleDrainResponse)
+                    {
+                        await session.SendRpcErrorWithBackpressureAsync(
+                            requestId, selectedTerminal, session.LifetimeToken).ConfigureAwait(false);
+                    }
+                    return;
+                }
 
-            var protocolError = server.MapStreamServiceException(
-                callCancellations,
-                session,
-                requestId,
-                contractId,
-                methodId,
-                exception);
-            session.SendStreamErrorAsync(requestId, streamId, protocolError);
+                var protocolError = server.MapStreamServiceException(
+                    callCancellations,
+                    session,
+                    requestId,
+                    contractId,
+                    methodId,
+                    SharpLinkPhysicalWork.GetLogicalException(exception));
+                session.SendStreamErrorAsync(requestId, streamId, protocolError);
+            }
+            finally
+            {
+                // Publish the logical terminal first, but keep the existing invocation, service
+                // and module owners until abandoned producer/send/disposal work physically ends.
+                if (SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is { } physicalWork)
+                    await physicalWork.ConfigureAwait(false);
+            }
         }
     }
 
-    private SharpLinkException? GetSelectedTerminal(long requestId)
+    private SharpLinkException? GetSelectedTerminal(long requestId, out bool publishModuleDrainResponse)
     {
+        publishModuleDrainResponse = false;
         if (callCancellations.TryCapture(
                 requestId,
                 static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
@@ -124,6 +140,11 @@ internal sealed class ServerGeneratedBridge(
                 var reason = callLease.State.Reason;
                 if (reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed))
                 {
+                    // The outer dispatcher normally sends this response after invocation ends.
+                    // Physical cleanup can outlive that terminal, so claim it here before awaiting
+                    // cleanup; the same claim prevents a second response from the dispatcher.
+                    publishModuleDrainResponse = reason == ServerCallCancellationReason.ModuleDraining &&
+                        callLease.State.TryClaimModuleDrainResponse();
                     return ServerCallTerminationMapper.CreateServerCancellationException(
                         reason,
                         deadlineExceeded: reason == ServerCallCancellationReason.DeadlineExceeded);
