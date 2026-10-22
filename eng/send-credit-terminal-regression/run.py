@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/SendCreditTerminalAccountingTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/SendCreditTerminalAccountingTests/*"
 FOCUSED_COUNT = 1
-FULL_COUNT = 2149  # Previous inventory plus 26 intrinsic send-ownership regression cases.
+FULL_COUNT = 2150  # Previous inventory plus 26 send-ownership cases and one retry-timer witness.
 
 
 def digest(path):
