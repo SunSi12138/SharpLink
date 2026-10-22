@@ -145,6 +145,50 @@ bound. Neither assertion is relaxed or relabeled as an accepted failure. These
 observations remain open; this is **not** a green full-suite or production-acceptance
 claim, and exact-head hosted checks are still required.
 
+A separate narrow follow-up moves the two existing `LateProducerAcquire` race
+workers off the shared pool and adds bounded failure-path release/join cleanup.
+Their real synchronous gates, original assertions, and race budgets stay intact.
+The complete dispatcher class passes **39/39 on both baseline and candidate**.
+One bounded full follow-up on runtime 10.0.13 reports **2,201 pass / 28 known IPC
+failures**, with bootstrap and allocation-zero passing in that run. This removes
+a source-proven fixture scheduling dependency; it does **not** prove that dependency
+caused the bootstrap timeout or close the independent allocation investigation.
+The earlier full-run failures above remain part of the evidence.
+
+## Reader allocation-oracle correction
+
+The subsequent investigation reproduced a real shared CoreCLR cast-cache allocation
+on the measured reader stack in **unchanged baseline and candidate code**. The
+historical failing full-suite invocation itself was not profiled, so this does not
+identify which historical test triggered it. Simple process isolation also failed;
+those negative results are retained in the
+[oracle report](../docs/validation/read-ownership-allocation-oracle.md).
+
+The two original bodies still execute once with 1,000 warmup rounds, 10,000 measured
+rounds, and an exact zero-byte assertion. A standalone child establishes a bounded,
+read-only-verified warmed cast-cache precondition and requires the identical table
+throughout measurement. Default tiering and a non-default flowing context remain
+in use. Unsupported CoreCLR/layout capabilities fail explicitly, not as skips.
+Two separate semantic cases retain real concurrent collectible assembly unloads.
+The original 30-second child execution budget is retained; the disclosed 90-second
+parent ceiling reserves launch, cleanup and reporting, not more measurement time.
+
+Independent final lifetime runs passed **37/37 on both x64 runtimes 10.0.2 and
+10.0.13**. Validated output records the actual child architecture, runtime, module
+ID, one execution, exact zero allocation and unchanged cache identity. An inserted
+ordinary 256-byte array causes the original assertion to fail with exactly 280 bytes,
+and a deliberately hung child is killed and joined at the 30-second deadline.
+Neither negative control is part of production code.
+
+A combined local full run on 10.0.13 selected **2,231 cases: 2,203 pass, 28 fail, 0 skip**.
+The failures were 26 direct IPC permission errors and two existing tests observing
+`SocketException` before their expected filesystem exception. There were no test
+timeouts in that run. This is not a green local full-suite result. Exact full-suite
+inventory assertions increase by two; all historic focused controls and budgets
+are unchanged. Hosted x64/arm64 oracle jobs run the normal lifetime class and a
+portable positive → exact 280-byte negative → restored positive control. Their
+terminal results and the new exact-head full CI remain required before acceptance.
+
 ## Successful-path representation and code generation
 
 Reproducible harness: [`scalar/README.md`](../eng/physical-ownership-probes/scalar/README.md).

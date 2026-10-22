@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/StreamFlowControllerLeaseRaceTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/StreamFlowControllerLeaseRaceTests/*"
 FOCUSED_COUNT = 8
-FULL_COUNT = 2237  # 2229 regular cases, including the retry timer witness; lease probe adds eight controls.
+FULL_COUNT = 2239  # 2231 regular cases; lease probe adds eight historical controls.
 
 
 def digest(path):
