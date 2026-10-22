@@ -240,8 +240,9 @@ public class ReadOwnershipPipeReaderDispatchTests
         Ensure(diagnostics.CompletedIterations == 0 && diagnostics.CallbacksObserved == 1 &&
             diagnostics.AdvanceCountObserved == 1 && control.HeldCallbackDrained,
             "failure cleanup must publish and physically finish the held callback exactly once");
-        Ensure(System.Diagnostics.Stopwatch.GetElapsedTime(0, diagnostics.MaximumWaitTicks) >= Timeout,
-            "the negative control must exercise the unchanged real 10-second callback wait");
+        // ManualResetEventSlim uses millisecond timeout accounting, not an exact Stopwatch minimum.
+        Ensure(diagnostics.CallbackWaitTimeout == TimeSpan.FromSeconds(10),
+            "the negative control must pass the unchanged 10-second timeout to the real callback wait");
     }
 
     private static async Task RunQueuedRegistration(bool late, bool useSchedulingContext,
@@ -354,6 +355,8 @@ public class ReadOwnershipPipeReaderDispatchTests
         var inner = new ControlledReader();
         var reader = new ReadOwnershipPipeReader(inner);
         var done = new ManualResetEventSlim();
+        var callbackWaitTimeout = Timeout;
+        diagnostics.CallbackWaitTimeout = callbackWaitTimeout;
         ValueTask<ReadResult> read = default;
         Exception? error = null;
         var consumed = 0;
@@ -401,7 +404,7 @@ public class ReadOwnershipPipeReaderDispatchTests
                     }, state: (object?)null, preferLocal: false);
                 }
                 var waitStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-                var dispatched = done.Wait(Timeout);
+                var dispatched = done.Wait(callbackWaitTimeout);
                 var waitTicks = System.Diagnostics.Stopwatch.GetTimestamp() - waitStarted;
                 if (waitTicks > diagnostics.MaximumWaitTicks)
                 {
@@ -502,6 +505,7 @@ public class ReadOwnershipPipeReaderDispatchTests
         internal long WorkerStarted, WorkerExited, CompletionSetBefore, CompletionSetAfter;
         internal long OuterWaitEntered, OuterOutcomeObserved, JoinEntered, JoinReturned;
         internal long MaximumWaitTicks;
+        internal TimeSpan CallbackWaitTimeout;
         internal int CurrentIteration, CompletedIterations, CallbacksObserved, AdvanceCountObserved;
         internal int MaximumWaitIteration, WorkerTerminal, OuterOutcome;
         internal int IterationAtOuterError, CompletedIterationsAtOuterError, CallbacksAtOuterError;
@@ -541,6 +545,7 @@ public class ReadOwnershipPipeReaderDispatchTests
                     iterationAtOuterError = IterationAtOuterError,
                     completedIterationsAtOuterError = CompletedIterationsAtOuterError,
                     callbacksAtOuterError = CallbacksAtOuterError,
+                    callbackWaitTimeout = CallbackWaitTimeout,
                     maximumWaitTicks = MaximumWaitTicks,
                     maximumWaitIteration = MaximumWaitIteration,
                     workerError = WorkerError?.ToString(),
