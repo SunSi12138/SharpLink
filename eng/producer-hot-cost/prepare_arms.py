@@ -3,7 +3,7 @@
 import argparse, hashlib, io, json, os, re, subprocess, tarfile
 from pathlib import Path, PurePosixPath
 PUBLIC_BASELINE = 'c60393508cecd20886e798a474f189f4faf52c62'
-EXPECTED = {'baseline':'c242f33f0041439b176c43460864a888237b79d9', 'candidate-final':'8915e61e5534f6e47a5d679bfbea5c0dcb812eaa'}
+EXPECTED = {'baseline':'c242f33f0041439b176c43460864a888237b79d9', 'candidate-final':'3bf0a1eb6b162016d07f9d9329b1b3ca560f68a3'}
 INPUTS = ['src', 'Directory.Build.props', 'Directory.Packages.props', 'global.json']
 def git(repo, *args):
     env={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}

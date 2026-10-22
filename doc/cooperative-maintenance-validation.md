@@ -28,11 +28,13 @@ the excluded queued-handoff fixture or a formal proof of arbitrary future change
 
 ## Final local source-bound checks
 
-Production subtree: `8915e61e5534f6e47a5d679bfbea5c0dcb812eaa`.
+Production subtree: `3bf0a1eb6b162016d07f9d9329b1b3ca560f68a3`.
+The only production delta from the previously measured `8915` tree is the cold
+[absolute Stop-budget adapter](server-stop-absolute-budget.md).
 Build SDK 10.0.102, Release, zero warnings/errors. Tests below ran with official
 runtime 10.0.13, one reported processor and TUnit parallelism eight.
 
-- Full unit suite: **2,394 executed, 2,366 passed, 28 failed**, no skipped,
+- Full unit suite: **2,412 executed, 2,384 passed, 28 failed**, no skipped,
   cancelled or timed-out tests. The exact 28 case identities match the previous
   isolated prerequisite/environment run: 26 Unix socket/named-pipe permission
   denials and two expected-exception assertions receiving that socket denial.
@@ -50,6 +52,9 @@ runtime 10.0.13, one reported processor and TUnit parallelism eight.
   boundary and the intentionally supported immutable unary-serializer case.
   Extension fault-containment integration passes **20/20** with both forced
   reply/disposal terminal orders.
+- The 18 absolute Stop-budget controls all pass, including two deterministic
+  source negatives that failed before the correction. The unchanged active and
+  retired callback Stop cases retain their five-second join watchdogs.
 - Final no-ref cancellation-tail controls: **19/19 passed**, including pre-schedule
   cleanup and reentrant release; these are not simulated `Task.Run` allocation
   failure tests.
@@ -63,8 +68,8 @@ runtime 10.0.13, one reported processor and TUnit parallelism eight.
   authoritative where local named-pipe access prevents the solution formatter.
 
 The three historical full-suite regression runners retain exact equality and all
-focused/old-negative controls. Their current combined inventories are 2,394 and
-2,402 for the runner that overlays eight lease-race cases. The explicit fixture lifecycle bound changes below are separate from
+focused/old-negative controls. Their current combined inventories are 2,412 and
+2,420 for the runner that overlays eight lease-race cases. The explicit fixture lifecycle bound changes below are separate from
 unchanged callback watchdogs and performance/allocation thresholds.
 
 ## Ordinary cost and performance boundary
@@ -111,7 +116,7 @@ claim about the observed scheduling delay.
 The feature workflow preserves the canonical Fast/Extended/allocation/API/codec
 jobs and adds source-prefix guards, actual x64/Arm64 allocation-oracle controls,
 and source-bound enabled TLS/native/streaming evidence. A reusable producer job
-adds fresh paired c603/c242 versus exact-head/8915 evidence on both official
+adds fresh paired c603/c242 versus exact-head/3bf0 evidence on both official
 runtimes; the existing canonical job bodies are unchanged. The existing optional
 browser/WASM matrix jobs remain explicitly skipped, not covered. All exact-head
 runs, failures and fresh artifacts are linked from the draft PR after completion.

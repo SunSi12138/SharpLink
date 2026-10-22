@@ -5,7 +5,8 @@ This authored kit replays the final producer-reservation correction. It does not
 ## Immutable source binding
 
 - Public baseline: `c60393508cecd20886e798a474f189f4faf52c62`, production `src` tree `c242f33f0041439b176c43460864a888237b79d9`.
-- Candidate: the exact invoking workflow `GITHUB_SHA`; its production `src` tree must be `8915e61e5534f6e47a5d679bfbea5c0dcb812eaa`.
+- Candidate: the exact invoking workflow `GITHUB_SHA`; its production `src` tree must be `3bf0a1eb6b162016d07f9d9329b1b3ca560f68a3`.
+- This tree differs from the previously measured `8915e61e5534f6e47a5d679bfbea5c0dcb812eaa` only in the cold server Stop absolute-budget adapter. The current workflow rebuilds and measures both complete source arms; the earlier local and f118 samples remain separately bound to 8915.
 - The preparer archives `src`, `Directory.Build.props`, `Directory.Packages.props` and `global.json`, records file hashes, refuses mismatched source trees and refuses existing destinations. No patch is applied relative to an enclosing repository. Failures write `source-provenance.json` before raising.
 
 From this directory, with both commits already fetched:
