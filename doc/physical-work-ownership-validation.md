@@ -262,3 +262,12 @@ A separately recorded, CPU-saturated diagnostic could help distinguish schedulin
 noise from persistent cost; it must not replace or discard these unfavorable
 samples. This matrix is not certification for separate hosts, larger payloads,
 more connections, other transports, asynchronous producers or server GC.
+
+## Later test-lifecycle correction
+
+The fixture-only [queued reader lifecycle report](reader-dispatch-fixture-lifecycle.md)
+records the later directly observed aggregate duration failures, the explicit
+outer 10-to-30-second and parent 30-to-60-second bound changes, unchanged inner
+correctness watchdogs/workload, and the separately joined SCC cleanup tail. These
+changes do not alter the production ownership source or retroactively explain
+the earlier failure whose terminal worker outcome was not recorded.

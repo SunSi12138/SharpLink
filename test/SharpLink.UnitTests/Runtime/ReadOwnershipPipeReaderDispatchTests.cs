@@ -8,6 +8,12 @@ namespace SharpLink.UnitTests.Runtime;
 public class ReadOwnershipPipeReaderDispatchTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+    // This is a whole-workload lifecycle guard, not a 10-second throughput assertion.
+    // Per-callback progress and the final worker Join retain their original 10-second bounds.
+    private static readonly TimeSpan QueuedWorkloadTimeout = TimeSpan.FromSeconds(30);
+    // 30s workload + 10s worker Join + 10s fault-control drain + 10s reporting headroom.
+    // Override only these tests; the assembly's ordinary 30-second policy is unchanged.
+    private const int QueuedWorkloadParentTimeoutMilliseconds = 60_000;
 
     [Test]
     [Arguments(0, false)]
@@ -167,21 +173,88 @@ public class ReadOwnershipPipeReaderDispatchTests
     }
 
     [Test]
+    [TUnit.Core.Timeout(QueuedWorkloadParentTimeoutMilliseconds)]
     [Arguments(false, false)]
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
-    public async Task QueuedPublicationOrLateRegistrationShouldDispatchExactlyOnce(
-        bool late, bool useSchedulingContext)
+    public Task QueuedPublicationOrLateRegistrationShouldDispatchExactlyOnce(
+        bool late, bool useSchedulingContext, CancellationToken cancellationToken)
+        => RunQueuedRegistration(late, useSchedulingContext, new QueuedRegistrationDiagnostics(),
+            cancellationToken: cancellationToken);
+
+    [Test]
+    [TUnit.Core.Timeout(QueuedWorkloadParentTimeoutMilliseconds)]
+    public async Task QueuedWorkloadLifecycleShouldAllowDelayedProgress(CancellationToken cancellationToken)
+    {
+        var diagnostics = new QueuedRegistrationDiagnostics();
+        var control = new QueuedRegistrationControl(delayProgress: true);
+        try
+        {
+            await RunQueuedRegistration(false, false, diagnostics, control, cancellationToken);
+            Ensure(control.ProgressPauses == 2, "both between-iteration delays must execute");
+            Ensure(diagnostics.CompletedIterations == 11_000 && diagnostics.CallbacksObserved == 11_000 &&
+                diagnostics.AdvanceCountObserved == 11_000,
+                "delayed progress must retain all 11,000 exactly-once operations");
+            Ensure(System.Diagnostics.Stopwatch.GetElapsedTime(diagnostics.WorkerStarted,
+                diagnostics.WorkerExited) > Timeout,
+                "the control must exceed the former aggregate throughput bound");
+            Ensure(diagnostics.WorkerTerminal == 1 && diagnostics.OuterOutcome == 1,
+                "bounded delayed progress must complete successfully");
+        }
+        finally
+        {
+            control.ReleaseAndDrain();
+        }
+    }
+
+    [Test]
+    [TUnit.Core.Timeout(QueuedWorkloadParentTimeoutMilliseconds)]
+    public async Task QueuedCallbackStallShouldKeepOriginalDeadlineAndDrain(CancellationToken cancellationToken)
+    {
+        var diagnostics = new QueuedRegistrationDiagnostics();
+        var control = new QueuedRegistrationControl(withholdPublication: true);
+        Exception? observed = null;
+        try
+        {
+            await RunQueuedRegistration(false, false, diagnostics, control, cancellationToken);
+        }
+        catch (Exception error)
+        {
+            observed = error;
+        }
+        finally
+        {
+            // Also runs if an assertion, outer guard, or worker Join fails.
+            control.ReleaseAndDrain();
+        }
+        Ensure(observed is InvalidOperationException &&
+            observed.Message == "queued registration must dispatch without a lost wakeup",
+            "an absent callback must fail the original per-callback deadline, not the outer lifecycle guard");
+        Ensure(ReferenceEquals(observed, diagnostics.WorkerError) &&
+            ReferenceEquals(observed, diagnostics.OuterError),
+            "the original inner failure must survive worker completion and observation unchanged");
+        Ensure(diagnostics.WorkerTerminal == 2 && diagnostics.WorkerExited != 0 &&
+            diagnostics.JoinReturned >= diagnostics.WorkerExited,
+            "the failing worker must be joined before this control returns");
+        Ensure(diagnostics.CompletedIterations == 0 && diagnostics.CallbacksObserved == 1 &&
+            diagnostics.AdvanceCountObserved == 1 && control.HeldCallbackDrained,
+            "failure cleanup must publish and physically finish the held callback exactly once");
+        Ensure(System.Diagnostics.Stopwatch.GetElapsedTime(0, diagnostics.MaximumWaitTicks) >= Timeout,
+            "the negative control must exercise the unchanged real 10-second callback wait");
+    }
+
+    private static async Task RunQueuedRegistration(bool late, bool useSchedulingContext,
+        QueuedRegistrationDiagnostics diagnostics, QueuedRegistrationControl? control = null,
+        CancellationToken cancellationToken = default)
     {
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var diagnostics = new QueuedRegistrationDiagnostics();
         var registeringThread = new Thread(() =>
         {
             diagnostics.WorkerStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
-                ExerciseQueuedRegistration(late, useSchedulingContext, diagnostics);
+                ExerciseQueuedRegistration(late, useSchedulingContext, diagnostics, control);
                 diagnostics.WorkerTerminal = 1;
                 diagnostics.CompletionSetBefore = System.Diagnostics.Stopwatch.GetTimestamp();
                 completed.SetResult();
@@ -205,7 +278,7 @@ public class ReadOwnershipPipeReaderDispatchTests
         try
         {
             diagnostics.OuterWaitEntered = System.Diagnostics.Stopwatch.GetTimestamp();
-            await completed.Task.WaitAsync(Timeout);
+            await completed.Task.WaitAsync(QueuedWorkloadTimeout, cancellationToken);
             diagnostics.OuterOutcome = 1;
             diagnostics.OuterOutcomeObserved = System.Diagnostics.Stopwatch.GetTimestamp();
         }
@@ -274,13 +347,13 @@ public class ReadOwnershipPipeReaderDispatchTests
     // dispatch switch, and public continuation registration does not classify context under the
     // reader's ownership gate. Context contracts are exercised above and in the lifetime tests.
     private static void ExerciseQueuedRegistration(bool late, bool useSchedulingContext,
-        QueuedRegistrationDiagnostics diagnostics)
+        QueuedRegistrationDiagnostics diagnostics, QueuedRegistrationControl? control)
     {
         Ensure(Task.CurrentId is null && SynchronizationContext.Current is null,
             "the fixture requires an ordinary registering thread");
         var inner = new ControlledReader();
         var reader = new ReadOwnershipPipeReader(inner);
-        using var done = new ManualResetEventSlim();
+        var done = new ManualResetEventSlim();
         ValueTask<ReadResult> read = default;
         Exception? error = null;
         var consumed = 0;
@@ -301,44 +374,129 @@ public class ReadOwnershipPipeReaderDispatchTests
             finally
             {
                 done.Set();
+                // The drain witness is published only AFTER the event is no longer touched.
+                control?.CallbackFinished();
             }
         };
         // B/P migration: preserve the 11,000-operation exactly-once/no-lost-wakeup workload.
         // The old zero-allocation registering-thread policy is not a pooled correctness promise;
         // late OnCompleted may allocate its independent work item. Benchmark it separately.
-        for (var i = 0; i < 11_000; i++)
+        try
         {
-            Volatile.Write(ref diagnostics.CurrentIteration, i + 1);
-            done.Reset();
-            read = reader.ReadAsync();
-            if (late) inner.Publish();
-            read.ConfigureAwait(useSchedulingContext).GetAwaiter().UnsafeOnCompleted(continuation);
-            if (!late)
+            for (var i = 0; i < 11_000; i++)
             {
-                // Queue the fixture producer explicitly; no removed reader policy is simulated.
-                ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                control?.BeforeIteration(i, diagnostics);
+                Volatile.Write(ref diagnostics.CurrentIteration, i + 1);
+                done.Reset();
+                read = reader.ReadAsync();
+                if (late) inner.Publish();
+                read.ConfigureAwait(useSchedulingContext).GetAwaiter().UnsafeOnCompleted(continuation);
+                if (!late && !(control?.WithholdPublication(i, inner) ?? false))
                 {
-                    try { inner.Publish(); }
-                    catch (Exception exception) { error = exception; done.Set(); }
-                }, state: (object?)null, preferLocal: false);
+                    // Queue the fixture producer explicitly; no removed reader policy is simulated.
+                    ThreadPool.UnsafeQueueUserWorkItem(_ =>
+                    {
+                        try { inner.Publish(); }
+                        catch (Exception exception) { error = exception; done.Set(); }
+                    }, state: (object?)null, preferLocal: false);
+                }
+                var waitStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                var dispatched = done.Wait(Timeout);
+                var waitTicks = System.Diagnostics.Stopwatch.GetTimestamp() - waitStarted;
+                if (waitTicks > diagnostics.MaximumWaitTicks)
+                {
+                    diagnostics.MaximumWaitTicks = waitTicks;
+                    diagnostics.MaximumWaitIteration = i + 1;
+                }
+                Ensure(dispatched, "queued registration must dispatch without a lost wakeup");
+                Ensure(error is null, $"the queued consumer failed: {error}");
+                Volatile.Write(ref diagnostics.CompletedIterations, i + 1);
             }
-            var waitStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-            var dispatched = done.Wait(Timeout);
-            var waitTicks = System.Diagnostics.Stopwatch.GetTimestamp() - waitStarted;
-            if (waitTicks > diagnostics.MaximumWaitTicks)
-            {
-                diagnostics.MaximumWaitTicks = waitTicks;
-                diagnostics.MaximumWaitIteration = i + 1;
-            }
-            Ensure(dispatched, "queued registration must dispatch without a lost wakeup");
-            Ensure(error is null, $"the queued consumer failed: {error}");
-            Volatile.Write(ref diagnostics.CompletedIterations, i + 1);
+            Ensure(consumed == 11_000 && inner.AdvanceCount == 11_000,
+                "every queued consumer must run and release ownership exactly once");
         }
-        Ensure(consumed == 11_000 && inner.AdvanceCount == 11_000,
-            "every queued consumer must run and release ownership exactly once");
+        finally
+        {
+            if (control is null)
+                done.Dispose();
+            else
+                control.ReleaseDrainAndDispose(done);
+        }
     }
 
-    // Local diagnostic overlay only. Preserve all original work and bounds.
+    private sealed class QueuedRegistrationControl(bool delayProgress = false, bool withholdPublication = false)
+    {
+        private ControlledReader? _heldReader;
+        private readonly TaskCompletionSource _heldCallbackFinished =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _publicationHeld;
+        internal int ProgressPauses { get; private set; }
+        internal bool HeldCallbackDrained { get; private set; }
+
+        internal void BeforeIteration(int iteration, QueuedRegistrationDiagnostics diagnostics)
+        {
+            if (!delayProgress || (iteration != 1 && iteration != 5_501))
+                return;
+            Ensure(Task.CurrentId is null && !Thread.CurrentThread.IsThreadPoolThread &&
+                SynchronizationContext.Current is null,
+                "progress delays belong only to the dedicated registration thread");
+            Ensure(diagnostics.CompletedIterations == iteration && diagnostics.CallbacksObserved == iteration &&
+                diagnostics.AdvanceCountObserved == iteration,
+                "a progress delay must begin only between fully consumed iterations");
+            Thread.Sleep(TimeSpan.FromSeconds(6));
+            ProgressPauses++;
+        }
+
+        internal bool WithholdPublication(int iteration, ControlledReader reader)
+        {
+            if (!withholdPublication || iteration != 0)
+                return false;
+            _heldReader = reader;
+            Volatile.Write(ref _publicationHeld, 1);
+            return true;
+        }
+
+        internal void CallbackFinished()
+        {
+            if (Volatile.Read(ref _publicationHeld) != 0)
+                _heldCallbackFinished.TrySetResult();
+        }
+
+        internal void ReleaseDrainAndDispose(ManualResetEventSlim done)
+        {
+            try
+            {
+                ReleaseAndDrain();
+            }
+            finally
+            {
+                if (Volatile.Read(ref _publicationHeld) == 0 || _heldCallbackFinished.Task.IsCompleted)
+                {
+                    done.Dispose();
+                }
+                else
+                {
+                    // A failed bounded drain must not dispose an event a late callback can touch.
+                    // Transfer disposal to the callback-end witness, without an unbounded wait.
+                    _ = _heldCallbackFinished.Task.ContinueWith(static (_, state) =>
+                        ((ManualResetEventSlim)state!).Dispose(), done, CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                }
+            }
+        }
+
+        internal void ReleaseAndDrain()
+        {
+            Interlocked.Exchange(ref _heldReader, null)?.Publish();
+            if (Volatile.Read(ref _publicationHeld) == 0)
+                return;
+            Ensure(_heldCallbackFinished.Task.Wait(Timeout),
+                "the withheld callback must physically finish before its event is disposed");
+            HeldCallbackDrained = true;
+        }
+    }
+
+    // Durable terminal/progress evidence; diagnostics do not replace correctness assertions.
     private sealed class QueuedRegistrationDiagnostics
     {
         internal long WorkerStarted, WorkerExited, CompletionSetBefore, CompletionSetAfter;
