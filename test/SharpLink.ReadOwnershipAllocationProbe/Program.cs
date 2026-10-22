@@ -76,11 +76,21 @@ internal static class Program
 
             var result = new
             {
-                scenario, nonce, assemblyMvid = args[3], runtime = Environment.Version.ToString(),
+                scenario,
+                nonce,
+                assemblyMvid = args[3],
+                runtime = Environment.Version.ToString(),
                 architecture = RuntimeInformation.ProcessArchitecture.ToString(),
-                executed = 1, passed = true, warmup = 1000, measured = 10000, allocated = 0,
-                cacheEntries = RequiredCacheEntries, primedTypes, cacheUnchanged = true,
-                nonDefaultContext = true, contextFlowEnabled = true
+                executed = 1,
+                passed = true,
+                warmup = 1000,
+                measured = 10000,
+                allocated = 0,
+                cacheEntries = RequiredCacheEntries,
+                primedTypes,
+                cacheUnchanged = true,
+                nonDefaultContext = true,
+                contextFlowEnabled = true
             };
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[4]))!);
             File.WriteAllText(args[4], JsonSerializer.Serialize(result));

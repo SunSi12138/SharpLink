@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-internal class StreamTransportConnection : ITransportConnection
+internal class StreamTransportConnection : ITransportConnection, IQuiescingTransportConnection
 {
     internal const int ReadBufferBytes = 16 * 1024;
 
@@ -30,6 +30,13 @@ internal class StreamTransportConnection : ITransportConnection
     {
         lock (_disposeGate)
             return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
+
+    ValueTask IQuiescingTransportConnection.DisposeAfterWritesAsync(Task writesDrained, Exception terminalException)
+    {
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= TransportShutdown.DisposeAfterWritesAsync(
+                Input, Output, _stream, null, writesDrained, terminalException));
     }
 
     private async Task DisposeCoreAsync()
@@ -67,11 +74,11 @@ internal class StreamTransportConnection : ITransportConnection
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 
-    internal static async ValueTask CompleteWriterAsync(PipeWriter writer)
+    internal static async ValueTask CompleteWriterAsync(PipeWriter writer, Exception? exception = null)
     {
         try
         {
-            await writer.CompleteAsync().ConfigureAwait(false);
+            await writer.CompleteAsync(exception).ConfigureAwait(false);
         }
         catch (Exception ex) when (IsExpectedDisposeException(ex))
         {
@@ -259,7 +266,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
     }
 }
 
-internal sealed class AnonymousPipeTransportConnection : ITransportConnection
+internal sealed class AnonymousPipeTransportConnection : ITransportConnection, IQuiescingTransportConnection
 {
     private readonly PipeStream _inputStream;
     private readonly PipeStream _outputStream;
@@ -286,6 +293,13 @@ internal sealed class AnonymousPipeTransportConnection : ITransportConnection
     {
         lock (_disposeGate)
             return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
+
+    ValueTask IQuiescingTransportConnection.DisposeAfterWritesAsync(Task writesDrained, Exception terminalException)
+    {
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= TransportShutdown.DisposeAfterWritesAsync(
+                Input, Output, _outputStream, _inputStream, writesDrained, terminalException));
     }
 
     private async Task DisposeCoreAsync()

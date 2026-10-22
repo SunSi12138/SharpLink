@@ -1,0 +1,23 @@
+{
+  "expected-prerequisite-sources.json": "c5208abfa59e95e632527cba9e104a8f67f359589e4e1f93133caa44ba11ce5a",
+  "capture_build_toolchain.py": "56c694bf8897188be931c454ebed8f5df659c21392db07345b3533e38ba19751",
+  "README.md": "b5bf2630896fd7599b9c2d17c1b9842b8bd1178fd13ea573b4ff6ac030cc1523",
+  "analyze.py": "1cdb250f45937b7cf95acb101a31fe0f24922b5b6867ae5e34bec501e43468c7",
+  "summarize.py": "7db912c05b6abed05c48cdb5ffa4285004efb1244806af96739387d25b0e4615",
+  "prepare_public_arms.py": "9c65e2996a8e34ea05c152d42ba583fe844ed2bdb6ab64c983ad80a3ab57152a",
+  "run_probe.py": "da2aa66bf8dec5e232de623bb360c8dcfe0baf8d088f4d4d2ea27b6c3180a23f",
+  "Directory.Packages.props": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+  ".gitignore": "bdd73d4a20aca4dba6b5cabc7b6276751a5324e116061347d0131215b8684ff2",
+  "build_arms.sh": "63f7bd47bde0c147a7172b26e535e309ee9457182728c8115dfa5ab08cbf1da2",
+  "Directory.Build.props": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+  "contracts/HotCostDynamic.Contracts.csproj": "4866a6afe2137e1c22daca55443d0556c2659d237dfdc0c1543739b2ee7a5ca4",
+  "contracts/Contract.cs": "cfe5ca51735cd6fc08704b817ca2e7038f4a5d092e8c2c1456989a243eec0105",
+  "probe/TlsNetwork.cs": "d78ff0286b00d7892bbe1e184c8f0fa4fd093c25ce652ff779afd59cefb60955",
+  "probe/HotCostProbe.csproj": "f584aa0cd6f561a38a897f5e55aa201d562a8aa1ef817178f277be8746bfa66c",
+  "probe/Program.cs": "6e81655f5bf337368353b6984df26297f329e74085777ba6b0bdc9217afd962b",
+  "services/HotCostDynamic.Services.csproj": "9e8be6b0f334b2c27c7fbae840ae53636f04ea43c618026f50a23a26bdb95262",
+  "services/Service.cs": "740b770fba3350127e80edf2c9fa4fa1f5fe3f70e097003d421d54b6421f7bbe",
+  "global.json": "a97385ba41542256aadfcc3a7f6ba18689347abc45e61d1a19980583f8c502a2",
+  "native_evidence.py": "2c7e1ce836e619978da188405152863fcf8e1eb49935cb0739e854838aab174c",
+  "test_native_evidence.py": "43f67f8e703b614b2e64ae22c7c3054b8ef0c7a45885e000d8e346b755be2697"
+}

@@ -53,8 +53,8 @@ internal sealed partial class SharpLinkServer
             {
                 // Publish physical callback ownership before the reader can consume a fence.
                 // Keep scheduling/closure allocation off the ordinary stream-progress path.
-                ServerCancellationCallbackWork.QueueNotification(
-                    requestCancellationMap, callLease, ref releaseLease);
+                releaseLease = false;
+                ServerCancellationCallbackWork.QueueNotification(requestCancellationMap, callLease);
             }
             return accepted;
         }

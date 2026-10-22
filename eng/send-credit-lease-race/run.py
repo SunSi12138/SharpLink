@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/StreamFlowControllerLeaseRaceTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/StreamFlowControllerLeaseRaceTests/*"
 FOCUSED_COUNT = 8
-FULL_COUNT = 2131  # 2123 regular cases plus eight unchanged lease-race probe cases.
+FULL_COUNT = 2337  # Exact combined maintenance inventory; lease overlay adds eight cases where applicable.
 
 
 def digest(path):

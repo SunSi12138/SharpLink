@@ -10,8 +10,10 @@ completion from an empty call map and zero ordinary owners alone.
 The existing exceptional notification branch now calls an outlined, non-inlined helper. Before
 scheduling, the helper publishes an owner in a lazy weak table keyed by the existing physical
 connection's `StripedLongMap`. The actual worker task includes both notification and `ReleaseUse`,
-including any deferred `ReturnCore` cleanup. Ownership transfers from the reader only after
-successful scheduling. The observer completes the cold batch only after that actual task ends.
+including any deferred `ReturnCore` cleanup. The reader transfers its acquired lease to the cold
+helper on entry; the helper transfers release to the worker only after successful scheduling.
+A pre-schedule failure releases the lease locally, keeping any published batch pending through
+`ReturnCore`. The observer completes a scheduled batch only after the actual worker task ends.
 No connection, call-state, ordinary-request, or healthy-frame field/counter/lookup is added.
 Outlining removes the baseline capturing lambda from the healthy stream-progress helper.
 
@@ -149,3 +151,36 @@ production APIs. Their executed outcomes are four expected negative failures and
 This checkpoint is scoped source/test evidence. Integrated maintenance authority/failure checks,
 full hosted CI, and the separately authored healthy/native/exceptional-cost report remain distinct
 gates. Smaller allocation or code size alone is not a throughput claim.
+
+
+### Bounded no-ref transfer follow-up
+
+The `73de7620` checkpoint passed the existing `releaseLease` finally flag by reference to the
+cold scheduling helper. Native inspection found that this exposed the flag's address in the
+healthy stream-progress method as well. The follow-up instead assigns the same flag `false`
+inside the existing notification branch and passes only the map and acquired lease by value.
+It adds no ordinary predicate, owner field, allocation, or registry participation. This is a
+source-shape correction; native equivalence or throughput cannot be inferred from it.
+
+`QueueNotification` owns that lease on entry, including failure during registry initialization.
+It marks a batch as started only after `Begin` succeeds. Closure construction and `Task.Run`
+are inside the protected region through the cold `ScheduleNotification` call, rather than a
+captured parameter whose display class could be allocated before the method's `try`. Before
+successful scheduling, the catch releases the lease exactly once and completes any started
+batch only after that release finishes. A cleanup failure preserves the original scheduling
+error in an aggregate. If no batch existed, failed cleanup attempts a sticky publication; a
+publication error is preserved as a third cause rather than replacing the first two. This does
+not claim recovery from arbitrary allocator exhaustion. After scheduling succeeds, observer
+setup is outside the local-release catch, so it cannot double-release a worker-owned lease.
+
+Three added controls cover a deterministic registry-lookup failure with held synchronous
+cleanup, the lookup/cleanup/publication multi-error path, and callback-reentrant parent release.
+The invalid-key controls exercise the same pre-schedule catch but are explicitly **not** a
+reproduction of `Task.Run` allocation or scheduling failure. No production failure-injection
+hook or forced out-of-memory condition is used. The original 16 callback/lifecycle/queued controls
+remain unchanged. Use the focused command above; its selection now includes these three cases.
+
+The separate same-mode audit compares the unchanged prerequisite, sealed ref-helper checkpoint,
+and this candidate on both runtimes and all JIT modes. The original 40-to-0-byte healthy allocation
+result must be reverified rather than traded for address-exposure or other native work. The
+extra scheduling helper is cold-only; cancellation-heavy costs are not inferred to be unchanged.

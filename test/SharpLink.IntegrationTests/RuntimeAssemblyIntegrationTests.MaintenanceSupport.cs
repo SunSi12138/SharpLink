@@ -38,6 +38,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         internal object[] Held = [];
         internal object[] HeldNotifications = [];
         internal ClientConnection[][] Captured = [];
+        internal Func<ValueTask>? BeforeCleanupForTesting;
 
         private MaintenanceHarness(bool separateOldImplementation)
         {
@@ -69,7 +70,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             if (expiringAuthentication)
                 harness._authenticationExpiresAt = harness.Clock.GetUtcNow().AddHours(1);
             try { await harness.StartAsync(beforeOptIn, gateSends); return harness; }
-            catch { await harness.DisposeAsync(); throw; }
+            catch (Exception startupFailure)
+            {
+                try { await harness.DisposeAsync(); }
+                catch (Exception cleanupFailure) { throw new AggregateException(startupFailure, cleanupFailure); }
+                throw;
+            }
         }
 
         private async Task StartAsync(Action<SharpLinkServer>? beforeOptIn, bool gateSends)
@@ -170,29 +176,48 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         public async ValueTask DisposeAsync()
         {
-            SendGate?.Release();
+            List<Exception> failures = [];
+            void Attempt(Action cleanup)
+            {
+                try { cleanup(); }
+                catch (Exception failure) { failures.Add(failure); }
+            }
+            async ValueTask AttemptAsync(Func<ValueTask> cleanup)
+            {
+                try { await cleanup(); }
+                catch (Exception failure) { failures.Add(failure); }
+            }
+            // A real cleanup failure must still fail the test, but cannot strand the other
+            // clients, server or collectible contexts and contaminate subsequent fixtures.
+            if (BeforeCleanupForTesting is not null)
+                await AttemptAsync(BeforeCleanupForTesting);
+            Attempt(() => SendGate?.Release());
             if (!_separateOldImplementation)
             {
-                Plugin.ReleaseBlock();
-                Plugin.InvokeServiceStatic("SharpLink.DynamicPlugin.PhysicalOwnershipProbeService", "ReleaseAll");
+                Attempt(Plugin.ReleaseBlock);
+                Attempt(() => Plugin.InvokeServiceStatic("SharpLink.DynamicPlugin.PhysicalOwnershipProbeService", "ReleaseAll"));
             }
             else if (SourceAssembly is not null)
             {
-                SourceAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!.GetMethod("ReleaseBlock")!.Invoke(null, null);
-                SourceAssembly.GetType("SharpLink.DynamicPlugin.PhysicalOwnershipProbeService", true)!.GetMethod("ReleaseAll")!.Invoke(null, null);
+                Attempt(() => SourceAssembly.GetType("SharpLink.DynamicPlugin.DynamicPluginService", true)!.GetMethod("ReleaseBlock")!.Invoke(null, null));
+                Attempt(() => SourceAssembly.GetType("SharpLink.DynamicPlugin.PhysicalOwnershipProbeService", true)!.GetMethod("ReleaseAll")!.Invoke(null, null));
             }
             foreach (var client in Clients)
             {
-                ((SharpLinkClient)client).MaintenanceControlSendBarrierForTesting = null;
-                await client.DisposeAsync();
+                Attempt(() => ((SharpLinkClient)client).MaintenanceControlSendBarrierForTesting = null);
+                await AttemptAsync(client.DisposeAsync);
             }
             if (Server is not null)
-                await Server.DisposeAsync();
-            await _services.DisposeAsync();
-            _replacementContext.Unload();
-            _oldImplementationContext?.Unload();
-            Plugin.Dispose();
-            _certificate.Dispose();
+                await AttemptAsync(Server.DisposeAsync);
+            await AttemptAsync(_services.DisposeAsync);
+            Attempt(_replacementContext.Unload);
+            Attempt(() => _oldImplementationContext?.Unload());
+            Attempt(Plugin.Dispose);
+            Attempt(_certificate.Dispose);
+            if (failures.Count == 1)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures.Count > 1)
+                throw new AggregateException(failures);
         }
     }
 

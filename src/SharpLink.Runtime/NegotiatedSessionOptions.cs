@@ -106,8 +106,7 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.HealthResponse or
                     ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-                    ProtocolV2FrameType.SessionRefreshRequested or
-                    ProtocolV2FrameType.CooperativeMaintenance,
+                    ProtocolV2FrameType.SessionRefreshRequested,
             RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal => false,
             _ => false
         };

@@ -86,7 +86,7 @@ reads. They are not allocation oracles. Test inventory increases by two.
 - Local testing is x64. Hosted arm64 and integrated full-suite acceptance are
   separate required validation; these local results do not claim either.
 
-Against source `4ce1e511216026327346280905c967c68ea59bd5`, raw measurement bodies
+Against public baseline `13928a35df4bff3cd99b14bd1df131aa3eb3bcdb`, raw measurement bodies
 are byte-identical after moving them into private static methods. SHA-256 below
 is over UTF-8 from the opening `{` through the closing `}`, inclusive, without
 surrounding indentation/newline; all whitespace inside the body is included:

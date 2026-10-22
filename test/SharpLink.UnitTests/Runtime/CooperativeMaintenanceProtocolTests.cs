@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.IO.Pipelines;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -89,6 +90,72 @@ public sealed class CooperativeMaintenanceProtocolTests
                 rejected = true;
             }
             Ensure(rejected, "control must be unflagged request-id-zero");
+        }
+    }
+
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(false, true)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task DrainingRejectsEveryMaintenanceStageInBothDirections(bool paused, bool server)
+    {
+        var output = new Pipe();
+        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+            "maintenance-draining-stages", new Pipe().Reader, output.Writer,
+            server ? RpcSessionTestFixture.ServerOptions() : RpcSessionTestFixture.ClientOptions(),
+            completeHandshake: false);
+        RpcSessionTestFixture.CompleteHandshake(session, ProtocolV2Capabilities.CooperativeMaintenance);
+        if (paused) session.PauseForMaintenance();
+        session.MarkDraining();
+
+        foreach (var stage in Enum.GetValues<CooperativeMaintenanceStage>())
+        {
+            var message = Message(stage);
+            var writer = new PooledByteBufferWriter();
+            var token = ProtocolV2FrameWriter.BeginFrame(writer,
+                ProtocolV2FrameType.CooperativeMaintenance, ProtocolV2FrameFlags.None, 0);
+            message.Write(writer);
+            ProtocolV2FrameWriter.EndFrame(writer, token);
+            var bytes = new ReadOnlySequence<byte>(writer.WrittenMemory);
+            Ensure(ProtocolV2FrameParser.TryReadFrame(ref bytes, new SharpLinkProtocolOptions(),
+                out var header, out var payload), "the stale control must otherwise be a valid frame");
+            Ensure(CooperativeMaintenanceMessage.Read(payload) == message, "valid stage and binding");
+            var inboundRejected = false;
+            try { session.EnsureInboundFrameAllowed(header.Type); }
+            catch (SharpLinkProtocolViolationException exception) when (
+                exception.Reason == ProtocolViolationReason.ProtocolState)
+            { inboundRejected = true; }
+            Ensure(inboundRejected, $"draining must reject inbound {stage} before its handler");
+
+            var outboundRejected = false;
+            try { await session.SendMaintenanceAsync(message); }
+            catch (SharpLinkException exception) when (
+                exception.Code == SharpLinkErrorCode.ProtocolViolation)
+            { outboundRejected = true; }
+            Ensure(outboundRejected, $"draining must reject outbound {stage} before enqueue");
+            Ensure(session.ProtocolPhase == RpcSessionProtocolPhase.Draining, "stale control cannot resume");
+        }
+        Ensure(!output.Reader.TryRead(out _), "rejected maintenance must not publish output bytes");
+    }
+
+    [Test]
+    public void UnimplementedMaintenanceAbortValuesAreRejectedOnReadAndWrite()
+    {
+        foreach (var value in new byte[] { 12, 13 })
+        {
+            var valid = Message(CooperativeMaintenanceStage.Freeze);
+            var writer = new PooledByteBufferWriter();
+            valid.Write(writer);
+            var bytes = writer.WrittenMemory.ToArray();
+            bytes[1] = value;
+            Reject(bytes);
+            var rejected = false;
+            try { (valid with { Stage = (CooperativeMaintenanceStage)value }).Write(new PooledByteBufferWriter()); }
+            catch (SharpLinkException exception) when (
+                exception.Code == SharpLinkErrorCode.ProtocolViolation)
+            { rejected = true; }
+            Ensure(rejected, "unimplemented control cannot be emitted or accepted");
         }
     }
 

@@ -13,40 +13,69 @@ internal static class ServerCancellationCallbackWork
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static void QueueNotification(
         StripedLongMap<ServerCallCancellationState> calls,
-        ServerCallCancellationLease callLease,
-        ref bool releaseLease)
+        ServerCallCancellationLease callLease)
     {
-        var owners = LazyInitializer.EnsureInitialized(ref s_owners);
-        var owner = owners.GetValue(calls, static _ => new Owner());
-        owner.Begin();
+        // This method owns the acquired lease on entry, including initialization failures.
+        // Only a successfully scheduled worker may take over its release.
+        Owner? startedOwner = null;
         Task work;
         try
         {
-            work = Task.Run(() =>
-            {
-                try
-                {
-                    callLease.State.NotifyInvocationCancellation();
-                }
-                finally
-                {
-                    // This can include linked-source, payload and admission cleanup. The work
-                    // remains published until the actual Task, including this finally, finishes.
-                    callLease.ReleaseUse();
-                }
-            });
+            var owners = LazyInitializer.EnsureInitialized(ref s_owners);
+            var owner = owners.GetValue(calls, static _ => new Owner());
+            owner.Begin();
+            startedOwner = owner;
+            work = ScheduleNotification(callLease);
         }
-        catch (Exception exception)
+        catch (Exception schedulingFailure)
         {
-            owner.Complete(exception);
+            try
+            {
+                callLease.ReleaseUse();
+            }
+            catch (Exception cleanupFailure)
+            {
+                if (startedOwner is null)
+                {
+                    try
+                    {
+                        RecordCleanupFailure(calls, cleanupFailure);
+                    }
+                    catch (Exception publicationFailure)
+                    {
+                        throw new AggregateException(schedulingFailure, cleanupFailure, publicationFailure);
+                    }
+                }
+                throw new AggregateException(schedulingFailure, cleanupFailure);
+            }
+            finally
+            {
+                // Keep the published batch pending through synchronous ReturnCore as well.
+                // Complete records its sticky failure before releasing batch ownership.
+                startedOwner?.Complete(schedulingFailure);
+            }
             throw;
         }
 
-        // Transfer only after scheduling succeeded. If scheduling failed, the caller still owns
-        // its existing finally. Subsequent observer allocation cannot cause a double release.
-        releaseLease = false;
-        _ = owner.ObserveAsync(work);
+        // The worker already owns release, even if observer setup subsequently fails.
+        _ = startedOwner.ObserveAsync(work);
     }
+
+    private static Task ScheduleNotification(ServerCallCancellationLease callLease)
+        // Keep even compiler-generated closure construction inside QueueNotification's try.
+        => Task.Run(() =>
+        {
+            try
+            {
+                callLease.State.NotifyInvocationCancellation();
+            }
+            finally
+            {
+                // This can include linked-source, payload and admission cleanup. The work
+                // remains published until the actual Task, including this finally, finishes.
+                callLease.ReleaseUse();
+            }
+        });
 
     internal static void RecordCleanupFailure(
         StripedLongMap<ServerCallCancellationState> calls,

@@ -560,18 +560,6 @@ internal sealed partial class RpcSession
                 cleanupException = exception;
             }
 
-            var pump = CapturePumpForStop();
-            try
-            {
-                pump?.Stop();
-                if (pump is not null)
-                    await pump.WaitForStopAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                cleanupException = CombineCleanupExceptions(cleanupException, exception);
-            }
-
             try
             {
                 await StartTransportDispose().ConfigureAwait(false);
@@ -679,44 +667,6 @@ internal sealed partial class RpcSession
 
     private void ReturnBuffer(IRpcByteBufferWriter writer)
         => RuntimeContext.Buffers.Return(writer);
-
-    private Task StartTransportDispose()
-    {
-        lock (_transportDisposeGate)
-        {
-            if (_transportDisposeTask is not null)
-                return _transportDisposeTask;
-
-            try
-            {
-                _transportDisposeTask = _transport.DisposeAsync().AsTask();
-            }
-            catch (Exception ex)
-            {
-                _transportDisposeTask = Task.FromException(ex);
-            }
-
-            return _transportDisposeTask;
-        }
-    }
-
-    private static void ObserveTransportDispose(Task disposeTask)
-    {
-        if (!disposeTask.IsCompletedSuccessfully)
-            _ = ObserveTransportDisposeAsync(disposeTask);
-    }
-
-    private static async Task ObserveTransportDisposeAsync(Task disposeTask)
-    {
-        try
-        {
-            await disposeTask.ConfigureAwait(false);
-        }
-        catch
-        {
-            // DisposeAsync awaits the same single-flight task and preserves this failure for the owner.
-        }
-    }
 
     private sealed record SessionTerminal(SessionTerminalState State, SharpLinkException Exception);
 

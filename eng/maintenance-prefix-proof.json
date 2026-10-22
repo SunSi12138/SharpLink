@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "scope": "No queued-admission cooperative maintenance only. These hashes are conservative review triggers, not an executable proof of physical quiescence. Callback tails have a separate owner and tests.",
+  "reviewed_source": [
+    {
+      "purpose": "selected registration and dispatch resource lifetime",
+      "path": "src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs",
+      "sha256": "b6317c83c695dd670c8318064190274501e1bf6eb71a99f8132b4d17bb9b11bc"
+    },
+    {
+      "purpose": "immediate admission and rejection branches",
+      "path": "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
+      "sha256": "ae035e50b9b32b7fd39d45bb8b1e9946c177adc1766199517edfb935eca5224e"
+    },
+    {
+      "purpose": "request permit before asynchronous persistent decode",
+      "path": "src/SharpLink.Server/SharpLinkServer.PersistentDecodeDispatch.cs",
+      "sha256": "9ce400f1ff0f64b642f04be333b06fe3b05c1bbd884d1faf20b6f0e36f24d53a"
+    },
+    {
+      "purpose": "synchronous no-queue acquisition",
+      "path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+      "sha256": "9c5c4f613e4d28726bae6f61087fa9ecdad0ea1cc3fef40ea5ce8fe75aaea704"
+    },
+    {
+      "purpose": "immutable queue capability classification",
+      "path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.MaintenanceEligibility.cs",
+      "sha256": "f1d3877fb022a75ce7ea97e8f0bbd8be623802bfada84869bfc48442fb697d82"
+    },
+    {
+      "purpose": "all-generation admission capability seal",
+      "path": "src/SharpLink.Server/Admission/AdmissionStateKernel.MaintenanceEligibility.cs",
+      "sha256": "722381373c1b8a880ed0bdd99eb0c5188644d229b4d48528391e77954f11850b"
+    },
+    {
+      "purpose": "sole FIFO request reader",
+      "path": "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs",
+      "start": "    private async Task ProcessRequestLoop(",
+      "sha256": "61a0e0db905f4bc9e6d336a7a9ef4142cab80473c6281f36ecd845903702742c"
+    },
+    {
+      "purpose": "inline dispatch prefix",
+      "path": "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs",
+      "start": "    private async Task DispatchRequestAsync(",
+      "sha256": "41c32408d796b7da7e510a474f0a064531c47e4a18d36cf27d4105451503dfc4"
+    },
+    {
+      "purpose": "error sender synchronous prefix",
+      "path": "src/SharpLink.Runtime/RpcSessionExtensions.cs",
+      "start": "    private static async ValueTask SendErrorFrameWithBackpressureAsync(",
+      "sha256": "ad637415b29cd8bf380f718971b6f34d5ee340baaa6aa982ddfb0b6db76f576e"
+    },
+    {
+      "purpose": "session pending-send ownership transfer",
+      "path": "src/SharpLink.Runtime/RpcSession.cs",
+      "start": "    private async ValueTask AwaitBackpressureEnqueueAsync(",
+      "sha256": "c5739cc5856b642b5244b966693fa750aac3a7f4dce2334892d17bcd80ecef09"
+    },
+    {
+      "purpose": "session sender synchronous prefix",
+      "path": "src/SharpLink.Runtime/RpcSession.cs",
+      "start": "    internal ValueTask SendPacketWithBackpressureAsync(",
+      "sha256": "f91206f732914a77ca77a59af9f815bac2bbb9521d8db03f6f740646f6c39e10"
+    },
+    {
+      "purpose": "pump synchronous publication entry",
+      "path": "src/SharpLink.Runtime/RpcSession.SendPump.cs",
+      "start": "        public ValueTask<SendEnqueueResult> EnqueueAsync(",
+      "sha256": "67cd32c591e5412af7a6262993b80200796ca562ca16aaecbe766144a6955d75"
+    },
+    {
+      "purpose": "intrinsic pending-node publication",
+      "path": "src/SharpLink.Runtime/RpcSession.SendPump.BackpressureOwnership.cs",
+      "start": "        private ValueTask<SendEnqueueResult> EnqueueWhenFull(",
+      "sha256": "28a41e8017aa5d3a84c5613751f4bad6104d15e36d7962cdb94d0e517725bf3c"
+    },
+    {
+      "purpose": "admission publication writer seal",
+      "path": "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",
+      "sha256": "c95bcac71d99af07f52e8fb9676023108d659f2dd4a3cb28ed4577b3e68f1768"
+    },
+    {
+      "purpose": "in-flight preparation writer exclusion",
+      "path": "src/SharpLink.Server/SharpLinkServer.ColdPreparation.cs",
+      "sha256": "a3d95981963617a83c24eecc3ca5520dcbcfff307ccdc538584faf1cb1e580ab"
+    },
+    {
+      "purpose": "service-registry cold writer eligibility",
+      "path": "src/SharpLink.Server/ServerServiceModuleRegistry.Maintenance.cs",
+      "sha256": "5ad03ad505c8934c6de0ecf8a78fa3c40923088bb2edd4d1c76f4c75616c0ffa"
+    },
+    {
+      "purpose": "actual capability opt-in under writer locks",
+      "path": "src/SharpLink.Server/SharpLinkServer.Maintenance.cs",
+      "start": "    internal ISharpLinkMaintenanceController ConfigureMaintenance(",
+      "sha256": "0a78fd16294fc06ab587c80a9c328353baa49889cdbb14db47702c1ea6d1775b"
+    },
+    {
+      "purpose": "retained program removal only after physical reclaim",
+      "path": "src/SharpLink.Server/Admission/AdmissionStateKernel.cs",
+      "start": "    internal void TryReclaimProgram(",
+      "sha256": "64db4f5ca2ec97bcee6b169e05f240b92a5a893e65f76fafc6873955360ecd95"
+    },
+    {
+      "purpose": "baseline service lease layout; queued-registration correction excluded",
+      "path": "src/SharpLink.Server/ServiceRegistration.cs",
+      "sha256": "07e52332895b50bc857c40e4c930359128dd67ba1f27d17deb878c7551b7f8b2"
+    },
+    {
+      "purpose": "baseline retained admission payload; queued-registration correction excluded",
+      "path": "src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs",
+      "sha256": "e26677d28acf3b27287c9106a93ee02f0dc181c40f6e12207e615766e3d4539e"
+    }
+  ]
+}

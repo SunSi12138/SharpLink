@@ -112,7 +112,9 @@ Session-refresh capability is not negotiated in this fixed-configuration mode.
 The bounded control envelope is exactly 144 bytes and uses a separately negotiated
 capability. It carries stage, domain/server/participant/runtime/session/operation
 incarnations, the plan correlation digest, participant session count and target
-catalog generation. Reserved bytes, stage, counts and identities are strict. Frames
+catalog generation. Only stages 1 through 11 are defined; unknown stages 12/13 are
+rejected, and no wire Abort protocol is promised. Reserved bytes, stage, counts and
+identities are strict. Frames
 are unflagged and use request ID zero. The controls use the ordinary send FIFO, not
 Ping/ACK priority. Their forced flush cannot overtake older normal frames.
 
@@ -150,6 +152,12 @@ Ping/ACK priority. Their forced flush cannot overtake older normal frames.
 7. Restore the server protocol phase and authorize each complete client pool to
    resume. Wait for every Resume acknowledgement, revalidate the cohort, and release
    the cold writer. Availability is restored in order, not atomically everywhere.
+
+Lifecycle Draining rejects maintenance controls: no maintenance stage is an Abort
+or Status operation that must survive host drain. The typed proof requires every
+session to remain MaintenancePaused, and cohort/client resume checks independently
+reject draining owners. Stopping and Terminal reject all frames, including
+maintenance controls.
 
 Authentication Subject/expiry is revalidated across the potentially unbounded drain,
 retirement, commit and resume boundaries using the server runtime TimeProvider.

@@ -14,9 +14,7 @@ internal enum CooperativeMaintenanceStage : byte
     Commit,
     Committed,
     Resume,
-    Resumed,
-    Abort,
-    Aborted
+    Resumed
 }
 
 internal readonly record struct MaintenanceDigest(ulong A, ulong B, ulong C, ulong D)
@@ -106,7 +104,7 @@ internal readonly record struct CooperativeMaintenanceMessage(
 
     private void Validate()
     {
-        if (Stage is < CooperativeMaintenanceStage.Welcome or > CooperativeMaintenanceStage.Aborted ||
+        if (Stage is < CooperativeMaintenanceStage.Welcome or > CooperativeMaintenanceStage.Resumed ||
             Domain == Guid.Empty || Server == Guid.Empty || Generation < 0 ||
             SessionCount < 0 || SessionCount > MaximumSessions)
             throw ProtocolV2FrameParser.Violation("Maintenance envelope fields are invalid.");
