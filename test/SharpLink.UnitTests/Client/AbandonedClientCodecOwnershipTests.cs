@@ -18,12 +18,14 @@ public class AbandonedClientCodecOwnershipTests
         var codec = new BlockingCodec();
         await using var fixture = new AbandonedClientOwnershipTests.Fixture(interceptor);
         await fixture.Client.ConnectAsync();
+        Task? invocation = null;
         try
         {
-            var invocation = AbandonedClientOwnershipTests.Invoke(fixture.Channel, kind, requestCodec: codec);
+            invocation = AbandonedClientOwnershipTests.Invoke(fixture.Channel, kind, requestCodec: codec);
             await interceptor.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             interceptor.StartNext.TrySetResult();
             await codec.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(!codec.UsedThreadPool, "the blocking codec test gate must not occupy the shared ThreadPool");
             fixture.Clock.Advance(TimeSpan.FromSeconds(5));
             Exception? failure = null;
             try { await invocation.WaitAsync(TimeSpan.FromSeconds(5)); }
@@ -40,8 +42,15 @@ public class AbandonedClientCodecOwnershipTests
         }
         finally
         {
+            // Also terminate an invocation whose assertion failed before the normal deadline
+            // step. Release and join the test-owned worker before another parallel test starts.
+            fixture.Clock.Advance(TimeSpan.FromSeconds(5));
             interceptor.StartNext.TrySetResult();
             codec.Release.Set();
+            if (invocation is not null)
+                await LongRunningTestWorker.JoinAsync(invocation, TimeSpan.FromSeconds(5));
+            if (interceptor.Entered.Task.IsCompleted)
+                await LongRunningTestWorker.JoinAsync(interceptor.Finished.Task, TimeSpan.FromSeconds(5));
         }
     }
 
@@ -64,7 +73,9 @@ public class AbandonedClientCodecOwnershipTests
             await StartNext.Task.ConfigureAwait(false);
             try
             {
-                return await next(context).ConfigureAwait(false);
+                // Serialize deliberately blocks until the test advances the manual deadline.
+                // Its owner must not consume the pool needed to observe entry and release it.
+                return await LongRunningTestWorker.RunAsync(() => next(context).AsTask()).ConfigureAwait(false);
             }
             catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.DeadlineExceeded)
             {
@@ -82,8 +93,10 @@ public class AbandonedClientCodecOwnershipTests
         internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal ManualResetEventSlim Release { get; } = new(false);
         internal bool Completed;
+        internal bool UsedThreadPool;
         public void Serialize(in RpcEmptyRequest value, IBufferWriter<byte> buffer)
         {
+            UsedThreadPool = Thread.CurrentThread.IsThreadPoolThread;
             Entered.TrySetResult();
             Release.Wait();
             Completed = true;
