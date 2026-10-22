@@ -1,0 +1,84 @@
+name: Producer ownership cost evidence
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+jobs:
+  producer-hot-evidence:
+    name: Producer TLS/native evidence (${{ matrix.runtime }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ['10.0.2', '10.0.13']
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install official build SDK and runtime distributions
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            10.0.102
+            10.0.113
+      - name: Verify authored files and exact public source arms
+        working-directory: eng/producer-hot-cost
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('.')
+          for name,expected in json.loads((root/'authored-files.sha256.json').read_text()).items():
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
+          PY
+          python3 -m unittest test_prepare_arms.py -v
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin c60393508cecd20886e798a474f189f4faf52c62
+          python3 prepare_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA"
+      - name: Build both source arms with the same SDK 10.0.102
+        working-directory: eng/producer-hot-cost
+        run: |
+          for kit in shapes retry; do
+            (cd "$kit" && python3 capture_build_toolchain.py && bash build_arms.sh baseline candidate-final)
+          done
+      - name: Isolate selected runtime without changing the build SDK
+        shell: bash
+        run: |
+          source_root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          runtime='${{ matrix.runtime }}'
+          target="$RUNNER_TEMP/producer-runtime-$runtime"
+          test -f "$source_root/shared/Microsoft.NETCore.App/$runtime/System.Private.CoreLib.dll"
+          test -f "$source_root/host/fxr/$runtime/libhostfxr.so"
+          mkdir -p "$target/host/fxr" "$target/shared/Microsoft.NETCore.App"
+          cp "$source_root/dotnet" "$target/dotnet"
+          cp -a "$source_root/host/fxr/$runtime" "$target/host/fxr/"
+          cp -a "$source_root/shared/Microsoft.NETCore.App/$runtime" "$target/shared/Microsoft.NETCore.App/"
+          echo "PRODUCER_RUNTIME_ROOT=$target" >> "$GITHUB_ENV"
+      - name: Replay enabled shape updates and separate retry success paths
+        working-directory: eng/producer-hot-cost
+        run: |
+          export DOTNET_ROOT="$PRODUCER_RUNTIME_ROOT"
+          export PATH="$DOTNET_ROOT:$PATH"
+          for kit in shapes retry; do
+            python3 "$kit/run_probe.py" --run-name runtime-${{ matrix.runtime }} --iterations 5000 --core-only
+          done
+          python3 summarize.py --group runtime-${{ matrix.runtime }} --expected-runtime '${{ matrix.runtime }}' --expected-head "$GITHUB_SHA"
+      - name: Upload fresh text/native evidence, including failure provenance
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: producer-cost-${{ matrix.runtime }}-${{ github.sha }}
+          path: |
+            eng/producer-hot-cost/source-provenance.json
+            eng/producer-hot-cost/summary-runtime-${{ matrix.runtime }}.json
+            eng/producer-hot-cost/shapes/evidence/build-toolchain.json
+            eng/producer-hot-cost/shapes/evidence/build-sdk-version.txt
+            eng/producer-hot-cost/shapes/evidence/runtime-${{ matrix.runtime }}/
+            eng/producer-hot-cost/retry/evidence/build-toolchain.json
+            eng/producer-hot-cost/retry/evidence/build-sdk-version.txt
+            eng/producer-hot-cost/retry/evidence/runtime-${{ matrix.runtime }}/
+          if-no-files-found: error

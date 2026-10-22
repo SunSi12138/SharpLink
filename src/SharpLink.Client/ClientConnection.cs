@@ -222,9 +222,8 @@ internal sealed class ClientConnection :
     }
 
     /// <summary>
-    /// Releases one anonymous selection reservation if present. Pending-call registration invokes
-    /// this as a transfer into pending capacity; test-only direct table registrations therefore
-    /// remain valid when no selection reservation exists.
+    /// Releases one existing selection reservation. Nonproducers transfer it to pending capacity;
+    /// outgoing stream groups retain it through physical production and enumerator disposal.
     /// </summary>
     internal void ReleaseCallAdmissionReservation()
     {
@@ -469,11 +468,6 @@ internal sealed class ClientConnection :
             return ValueTask.CompletedTask;
 
         return AwaitRemoteCompletionAndSendCancelAsync(requestId, dispatchState);
-    }
-
-    void IPendingCallOwner.OnPendingCallRegistered()
-    {
-        ReleaseCallAdmissionReservation();
     }
 
     void IPendingCallOwner.OnPendingCallCompleted(in PendingCallCompletion completion)

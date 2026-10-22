@@ -56,6 +56,15 @@ def run_probe(scenario, output_dir):
                 process.wait(timeout=10)
     if result_path.exists():
         report = json.loads(result_path.read_text(encoding="utf-8"))
+    if scenario in ("no-listener", "metric-control", "metric-minus", "metric-plus") and report is not None:
+        if report.get("registrationWitnessKind") != "pending-call-registered-field-before-response":
+            raise RuntimeError(f"{scenario}: missing exact registration witness kind; stale worker?")
+        if report.get("registrationRequestId", 0) <= 0:
+            raise RuntimeError(f"{scenario}: registration witness has no live request identity")
+        if scenario != "no-listener" and not (
+                report.get("positiveRegistrationState") == 0 and
+                report.get("positiveRegistrationId") == report["registrationRequestId"]):
+            raise RuntimeError(f"{scenario}: listener did not observe its own pre-MarkRegistered request")
     if timed_out:
         armed = (scenario == "metric-plus" and report is not None and
                  report.get("phase") == "dispose-enter" and

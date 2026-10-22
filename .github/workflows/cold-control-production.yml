@@ -392,3 +392,6 @@ jobs:
             eng/maintenance-stream-cost/evidence/build-sdk-version.txt
             eng/maintenance-stream-cost/evidence/runtime-${{ matrix.runtime }}/
           if-no-files-found: error
+
+  producer-cost-evidence:
+    uses: ./.github/workflows/producer-hot-evidence.yml

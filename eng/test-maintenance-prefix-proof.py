@@ -36,7 +36,7 @@ class MaintenancePrefixProofTests(unittest.TestCase):
     def test_reviewed_ownership_sources_have_not_changed(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         self.assertEqual(manifest["version"], 1)
-        self.assertEqual(len(manifest["reviewed_source"]), 20)
+        self.assertEqual(len(manifest["reviewed_source"]), 29)
         for entry in manifest["reviewed_source"]:
             with self.subTest(purpose=entry["purpose"], path=entry["path"]):
                 actual = hashlib.sha256(reviewed_bytes(entry)).hexdigest()

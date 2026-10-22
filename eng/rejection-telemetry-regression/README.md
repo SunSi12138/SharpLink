@@ -31,6 +31,12 @@ Pinned fixture SHA-256 values:
 
 The replay rejects other fixture versions or production trees. Adaptation to future source changes requires reviewing the assertions and source anchors, not bypassing the identity checks.
 
+### Public source checkpoint
+
+Use the [corrected-fixture c242 checkpoint](https://github.com/SunSi12138/SharpLink/commit/49ef50fcf7dbac9efb68f7dd234e6f27850a8db8), retained on `validation/rejection-telemetry-c242-20261022`, with baseline `c60393508cecd20886e798a474f189f4faf52c62`. Both have exactly the production tree pinned above. Create a clean detached worktree at the checkpoint and pass its full SHA as `--expected-head`; pass the baseline SHA as `--baseline-commit`.
+
+This checkpoint retains the known outgoing-producer maintenance-drain defect and is **not a deployment candidate**. It exists only to reproduce these fixture counterfactuals against identical runtime source. Do not run this pinned script against the physical-ownership PR's `de627` source or a later repaired maintenance runtime; those are intentionally rejected rather than silently treated as the same evidence.
+
 ## Portable replay
 
 Use Python 3.10 or later and a disposable, clean Git worktree containing the correction. The exact baseline commit must already exist in that repository and have both the baseline-identical fixture and the same production tree. Supply a .NET build host that satisfies `global.json` and a separate runtime host whose only .NET 10 runtime is `Microsoft.NETCore.App 10.0.13`.

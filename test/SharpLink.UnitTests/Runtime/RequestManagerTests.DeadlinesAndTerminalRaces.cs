@@ -192,8 +192,10 @@ public partial class PendingRequestTableTests
     public async Task TerminalRaceShouldNotifyItsOwnerExactlyOnce()
     {
         var owner = new TrackingPendingCallOwner();
+        using var registrations = new ScopedPendingRegistrationObserver(owner.ObserveRegistration);
         using var manager = CreateTable(1, owner);
-        var operation = manager.Rent<int>(out var requestId);
+        long requestId = 0;
+        var operation = registrations.Observe(() => manager.Rent<int>(out requestId));
         var responsePayload = SInt32Payload;
         var winners = await Task.WhenAll(
             Task.Run(() => manager.Dispatch(requestId, ref responsePayload)),
@@ -202,7 +204,7 @@ public partial class PendingRequestTableTests
             Task.Run(() => manager.TryComplete(requestId, PendingCallCompletionReason.ConnectionClosed)));
 
         Ensure(winners.Count(static winner => winner) == 1, "one terminal path must win");
-        Ensure(owner.RegisteredCount == 1, "the owner must observe one registration");
+        Ensure(owner.RegisteredCount == 1, "the scoped pre-MarkRegistered witness must observe one registration");
         Ensure(owner.CompletedCount == 1, "the owner must observe one terminal callback");
         Ensure(owner.ActiveCount == 0 && owner.MinimumActiveCount >= 0,
             "the owner count must balance without underflow");

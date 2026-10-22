@@ -588,20 +588,23 @@ public partial class PendingRequestTableTests
     public async Task CancellationShouldNotCompleteOwnerBeforeRegistrationIsPublished()
     {
         using var owner = new BlockingPendingCallOwner();
+        using var registrations = new ScopedPendingRegistrationObserver(owner.ObserveRegistration);
         using var manager = CreateTable(8, owner: owner);
         using var cancellation = new CancellationTokenSource();
-        var rentTask = LongRunningTestWorker.Run(() => manager.Rent(
+        var rentTask = LongRunningTestWorker.Run(() => registrations.Observe(() => manager.Rent(
             new Int32Codec(),
             PendingCallKind.Unary,
             deadline: default,
             cancellation.Token,
-            out _));
+            out _)));
         Task cancelTask = Task.CompletedTask;
         try
         {
             Ensure(owner.RegistrationEntered.Wait(RaceCoordinationTimeout),
-                "registration callback should reach the deterministic race gate");
+                "the scoped pre-MarkRegistered metric must reach the deterministic race gate");
             cancelTask = LongRunningTestWorker.Run(cancellation.Cancel);
+            Ensure(SpinWait.SpinUntil(() => cancellation.IsCancellationRequested, RaceCoordinationTimeout),
+                "cancellation must start before the registration witness is released");
             await Task.Delay(20);
             owner.AllowRegistration.Set();
 
@@ -716,7 +719,7 @@ public partial class PendingRequestTableTests
         internal int ActiveCount => Volatile.Read(ref _activeCount);
         internal int MinimumActiveCount => Volatile.Read(ref _minimumActiveCount);
 
-        public void OnPendingCallRegistered()
+        internal void ObserveRegistration()
         {
             RegistrationEntered.Set();
             AllowRegistration.Wait(RaceCoordinationTimeout);
@@ -752,10 +755,6 @@ public partial class PendingRequestTableTests
     {
         internal Exception? ProducerCancellationFailure { get; private set; }
 
-        public void OnPendingCallRegistered()
-        {
-        }
-
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
         }
@@ -786,7 +785,7 @@ public partial class PendingRequestTableTests
         internal int CompletedCount => Volatile.Read(ref _completedCount);
         internal int DisposeCount { get; private set; }
 
-        public void OnPendingCallRegistered()
+        internal void ObserveRegistration()
         {
             Interlocked.Increment(ref _registeredCount);
             Interlocked.Increment(ref _activeCount);

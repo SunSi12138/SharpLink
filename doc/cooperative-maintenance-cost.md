@@ -1,12 +1,19 @@
 # Cooperative-maintenance ordinary-path cost evidence
 
+> This report preserves the earlier **c242 coordinator-stage** measurements. The
+> current production subtree is **8915**, after outgoing-producer ownership was
+> repaired. Read the [producer delta report](../eng/producer-hot-cost/RESULTS.md)
+> alongside it: ordinary Unary/Retry accelerated-PGO frames grow by 16 bytes, and
+> stream-entry zeroing changes. Earlier elapsed samples are not rebound to 8915.
+> Neither stage establishes strict machine-work neutrality or throughput equivalence.
+
 ## Result
 
 The adopted production source introduces no additional catalog/version/update queries, maintenance counters, or coordinator/CWT lookups in the audited ordinary RPC selection, request/response parsing and dispatch paths. The eight audited ordinary class layouts, their field sets, signatures and selection IL are preserved. This is **not** a claim of identical machine code, zero total runtime cost, or throughput equivalence.
 
 The final no-ref callback correction removes the old **40-byte managed closure per healthy stream-progress helper call**, while retaining explicit background-scan and exceptional-ownership costs. Its remaining JIT stack and spill differences are disclosed below rather than inferred away from the allocation improvement.
 
-The measured final production subtree is `c242f33f0041439b176c43460864a888237b79d9`. The baseline is the complete published #931 physical-ownership plus #932 intrinsic-send production source, reconstructed and checked by the portable source manifest. It has no queue correction or compile shim. The no-ref callback correction is included in the feature delta. Both arms were built with SDK 10.0.102 and run on official runtimes 10.0.2/10.0.13, Linux x64.
+The measured coordinator-stage production subtree is `c242f33f0041439b176c43460864a888237b79d9`. The baseline is the complete published #931 physical-ownership plus #932 intrinsic-send production source, reconstructed and checked by the portable source manifest. It has no queue correction or compile shim. The no-ref callback correction is included in the feature delta. Both arms were built with SDK 10.0.102 and run on official runtimes 10.0.2/10.0.13, Linux x64.
 
 ## Actual small-item stream observations
 

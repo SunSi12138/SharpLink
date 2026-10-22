@@ -3,6 +3,9 @@
 - Status: Proposed, guarded first implementation
 - Scope: opt-in fixed server domain, compatible implementation-only replacements, **no queued admission**
 - Related: [prepared catalog transaction](0003-prepared-implementation-catalog.md)
+- Cost acceptance: no new ordinary catalog/update query or counter, but **not**
+  machine-work neutrality. Final ordinary Unary/Retry PGO frames and stream-entry
+  initialization change; see [producer cost evidence](../../eng/producer-hot-cost/RESULTS.md).
 
 ## Decision and supported scope
 
@@ -124,7 +127,15 @@ Ping/ACK priority. Their forced flush cannot overtake older normal frames.
    owned sessions and missing roster participants.
 2. Freeze each participant's complete local pool under its existing publication gate.
    Existing Ready selection/reservation double checks reject further selection.
-   Join reservation -> pending/auxiliary ownership and the final compression ACK.
+   Join selection reservations, pending/auxiliary ownership and the final compression ACK.
+   Each outgoing producer group retains its one existing selection reservation through
+   all stream parameters and sequential enumerator disposal, even after an early reply
+   or cancellation removes pending ownership. Nonproducer invocations transfer their
+   reservation before serialization as before; no new producer counter is introduced.
+   Generated multiple-stream writers join all parameter tasks with Task.WhenAll, so
+   one failed parameter cannot release the RPC reservation while a sibling still
+   disposes. The internal registration notification was removed because its sole
+   production action was this release; nonproducer callers perform it directly.
    Cancelled pending identities continue to forbid late Request publication even if
    their immutable codec eventually returns after resume.
 3. Send an ingress fence on each ordinary FIFO. The server reader records the fence
@@ -138,8 +149,10 @@ Ping/ACK priority. Their forced flush cannot overtake older normal frames.
    then capture intrinsic backpressured sends. Admission reclaim stays retained until
    physical disposal completes. A throwing disposal is not a successful drain.
 5. Send the reverse ordinary FIFO fence. Client readers consume all preceding
-   responses/data, join their existing auxiliary/stream/send owners, and send a final
-   ordinary-queue acknowledgement. Only this complete proof can materialize and
+   responses/data, join their existing receive/auxiliary/send owners, and send a final
+   ordinary-queue acknowledgement. Outgoing producer groups have already physically
+   finished at step 2; this is not a supervisor snapshot or a census of arbitrary
+   immutable client callbacks. Only this complete proof can materialize and
    irreversibly retire the old server implementation transaction. After all candidate
    callbacks, the typed proof revalidates operation, cohort and current authentication
    immediately before the no-callback registry-locked seal. This final observation is
@@ -205,7 +218,9 @@ unchanged. Once Freeze starts, any failure conservatively fails the entire domai
 closed, even before retirement. Failure after old retirement never rolls back or
 reopens. Stop is always available for terminal cleanup. Uncooperative physical work
 can keep an operation incomplete indefinitely; observer cancellation is not evidence
-that it drained.
+that it drained. This includes an uncooperative outgoing producer's MoveNext/Dispose:
+its existing reservation now also delays planned session-refresh retirement. Public
+reply completion does not promise producer disposal completion, and remains unchanged.
 
 Targeted tests exercise real TCP/TLS with two runtime participants and two physical
 connections each, all invocation shapes and held proxies, cancelled observers and

@@ -48,11 +48,35 @@ Framework-offloaded cancellation callbacks and scheduler callbacks require their
 separate physical cancellation owner and tests. A callback that does not return
 may prevent completion; a timeout is not permission to reclaim its resources.
 
+## Client outgoing producer closure
+
+Before its ingress fence, each frozen client waits its existing selection reservations
+and pending/auxiliary ownership. Nonproducers release selection ownership after pending
+registration and before serialization. Outgoing client-stream, one-way-stream and duplex
+groups instead retain that same reservation through the whole writer task, including
+sequential enumerator disposal. There is one reservation per RPC, never per parameter.
+Generated multi-parameter writers use Task.WhenAll, which waits every sibling even when
+one faults. Startup failure releases locally; a returned producer task owns the release
+before its supervisor registration. Early response/cancellation cannot steal it.
+
+The removed internal registration notification had one production implementation and
+one action: release this reservation. No replacement hook or successful-call counter is
+introduced. The six registration call sites, their exception exits and group cardinality
+have explicit unit coverage, including an unrelated held reservation and refresh cuts.
+The real four-TLS-session held-disposal control prevents old implementation retirement
+until producer release, then demonstrates old ALC collection with live sessions/proxies.
+
+This does not join arbitrary immutable client unary serializers or interceptor callbacks
+that no longer own pending identity. Their cancellation identity still rejects late
+Request publication. The reverse fence joins receive/auxiliary/send ownership; outgoing
+producer closure was established before the ingress fence, not by a supervisor snapshot.
+
 ## Change detection, not a formal proof
 
-`python3 eng/test-maintenance-prefix-proof.py` verifies twenty reviewed source
+`python3 eng/test-maintenance-prefix-proof.py` verifies twenty-nine reviewed source
 regions, including the actual reader, immediate admission/dispatch, persistent
-decode, sender prefix, and intrinsic pump enqueue. It also checks the reader's
+decode, sender prefix, intrinsic pump enqueue, and the client reservation/producer
+handoffs, generated Task.WhenAll group, and both cold fence predicates. It also checks the reader's
 inline Request branch. These conservative pins deliberately require review even
 for harmless source edits. They do not prove the argument automatically.
 
