@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/GeneratedStreamSnapshotOwnershipTests.c
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/GeneratedStreamSnapshotOwnershipTests/*"
 FOCUSED_COUNT = 2
-FULL_COUNT = 2123  # Includes the two Builder configuration audit cases from #843.
+FULL_COUNT = 2149  # Previous inventory plus 26 intrinsic send-ownership regression cases.
 
 
 def digest(path):

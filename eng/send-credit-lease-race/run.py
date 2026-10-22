@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/StreamFlowControllerLeaseRaceTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/StreamFlowControllerLeaseRaceTests/*"
 FOCUSED_COUNT = 8
-FULL_COUNT = 2131  # 2123 regular cases plus eight unchanged lease-race probe cases.
+FULL_COUNT = 2157  # Previous inventory plus 26 intrinsic send-ownership regression cases.
 
 
 def digest(path):
