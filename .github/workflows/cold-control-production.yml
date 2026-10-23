@@ -9,6 +9,7 @@ on:
       - fix/queued-registration-coherence-20261022
       - fix/physical-work-ownership-20261022
       - fix/backpressured-send-ownership-20261022
+      - codex/send-pump-terminal-publication
   workflow_dispatch:
 
 concurrency:
