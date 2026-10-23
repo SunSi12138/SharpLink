@@ -394,6 +394,8 @@ public sealed class ConnectionAdmissionTests
         using var listener = new MeterListener();
         var rejected = 0L;
         var reasons = new List<string>();
+        var rejectionSource = new AsyncLocal<object?>();
+        var expectedSource = new object();
         listener.InstrumentPublished = static (instrument, meterListener) =>
         {
             if (instrument.Meter.Name == "SharpLink" &&
@@ -404,14 +406,15 @@ public sealed class ConnectionAdmissionTests
         };
         listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
-            if (!instrument.Name.Equals("sharplink.connections.rejected", StringComparison.Ordinal))
+            if (!instrument.Name.Equals("sharplink.connections.rejected", StringComparison.Ordinal) ||
+                !ReferenceEquals(rejectionSource.Value, expectedSource))
                 return;
-            Interlocked.Add(ref rejected, value);
-            foreach (var tag in tags)
+            lock (reasons)
             {
-                if (tag.Key == "sharplink.admission.reason" && tag.Value is string reason)
+                rejected += value;
+                foreach (var tag in tags)
                 {
-                    lock (reasons)
+                    if (tag.Key == "sharplink.admission.reason" && tag.Value is string reason)
                         reasons.Add(reason);
                 }
             }
@@ -419,19 +422,51 @@ public sealed class ConnectionAdmissionTests
         listener.Start();
 
         var scripted = new ScriptedListener();
-        await using var harness = await StartServerAsync(scripted, options =>
-            options.MaxConcurrentConnections = 1);
+        ServerHarness started;
+        // The meter has no server/connection identity. Scope only this server's
+        // existing Task.Run execution context so concurrent tests cannot supply
+        // either its rejection count or its reason tags.
+        rejectionSource.Value = expectedSource;
+        try
+        {
+            started = await StartServerAsync(scripted, options =>
+                options.MaxConcurrentConnections = 1);
+        }
+        finally
+        {
+            rejectionSource.Value = null;
+        }
+        await using var harness = started;
 
         scripted.Enqueue(new TestConnection("telemetry-holder"));
         await YieldUntilAsync(
             () => harness.Server.ConnectionAdmission.ActiveConnections == 1,
             "the holder must occupy the only slot");
-        for (var index = 0; index < 3; index++)
-            scripted.Enqueue(new TestConnection($"telemetry-rejected-{index}"));
+        var rejectedConnections = new TestConnection[3];
+        for (var index = 0; index < rejectedConnections.Length; index++)
+        {
+            rejectedConnections[index] = new TestConnection($"telemetry-rejected-{index}");
+            scripted.Enqueue(rejectedConnections[index]);
+        }
         await YieldUntilAsync(
-            () => Volatile.Read(ref rejected) >= 3,
+            () =>
+            {
+                // The synchronous rejection callback completes before transport
+                // disposal begins; join all three local dispositions before reading
+                // the complete count and reason observation.
+                foreach (var connection in rejectedConnections)
+                {
+                    if (connection.DisposeCount != 1)
+                        return false;
+                }
+                lock (reasons)
+                    return rejected >= rejectedConnections.Length;
+            },
             "every rejected connection must be recorded by telemetry");
-        await Assert.That(reasons.Contains("connection_limit")).IsTrue();
+        List<string> recordedReasons;
+        lock (reasons)
+            recordedReasons = new List<string>(reasons);
+        await Assert.That(recordedReasons.Contains("connection_limit")).IsTrue();
     }
 
     // ------------------------------------------------------------------ server: real TCP

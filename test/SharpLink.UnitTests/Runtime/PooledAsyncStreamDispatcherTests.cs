@@ -357,35 +357,51 @@ public class PooledAsyncStreamDispatcherTests
             acquireEntered.Set();
             releaseAcquire.Wait();
         });
-        var oldDispatch = Task.Run(async () => await first.DispatchAsync(Payload));
-        Ensure(acquireEntered.Wait(RaceCoordinationTimeout),
-            "the old dispatch must pause after reading Active and before acquiring producer ownership");
+        PooledAsyncStreamDispatcher<ReferenceItem>? current = first;
+        var oldDispatch = LongRunningTestWorker.RunAsync(() => first.DispatchAsync(Payload).AsTask());
+        try
+        {
+            Ensure(acquireEntered.Wait(RaceCoordinationTimeout),
+                "the old dispatch must pause after reading Active and before acquiring producer ownership");
 
-        first.Complete(exception: null);
-        await first.DisposeAsync();
-        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
-            "the old lease must enter the pool while the deliberately late producer has no ownership");
+            first.Complete(exception: null);
+            await first.DisposeAsync();
+            current = null;
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "the old lease must enter the pool while the deliberately late producer has no ownership");
 
-        releaseAcquire.Set();
-        var oldFailure = await CaptureFailureAsync(oldDispatch.WaitAsync(RaceCoordinationTimeout));
+            releaseAcquire.Set();
+            var oldFailure = await CaptureFailureAsync(oldDispatch.WaitAsync(RaceCoordinationTimeout));
 #if DEBUG
-        Ensure(oldFailure is ObjectDisposedException,
-            "a producer that increments after Returned must be rejected as an old lease");
+            Ensure(oldFailure is ObjectDisposedException,
+                "a producer that increments after Returned must be rejected as an old lease");
 #else
-        Ensure(oldFailure is null,
-            "Release builds must silently discard a producer that increments after Returned");
+            Ensure(oldFailure is null,
+                "Release builds must silently discard a producer that increments after Returned");
 #endif
 
-        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
-            default,
-            new ReferenceItemCodec());
-        Ensure(ReferenceEquals(first, second),
-            "the returned instance must remain reusable after balancing the stale producer increment");
-        second.Complete(exception: null);
-        await second.DisposeAsync();
-        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
-            "the rejected producer must not strand the later lease outside the pool");
-        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+            var second = current = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+                default,
+                new ReferenceItemCodec());
+            Ensure(ReferenceEquals(first, second),
+                "the returned instance must remain reusable after balancing the stale producer increment");
+            second.Complete(exception: null);
+            await second.DisposeAsync();
+            current = null;
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "the rejected producer must not strand the later lease outside the pool");
+        }
+        finally
+        {
+            releaseAcquire.Set();
+            await LongRunningTestWorker.JoinAsync(oldDispatch, RaceCoordinationTimeout);
+            if (current is not null)
+            {
+                current.Complete(exception: null);
+                await current.DisposeAsync().AsTask().WaitAsync(RaceCoordinationTimeout);
+            }
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
     }
 
     [Test]
@@ -402,39 +418,55 @@ public class PooledAsyncStreamDispatcherTests
             acquireEntered.Set();
             releaseAcquire.Wait();
         });
-        var oldDispatch = Task.Run(async () => await first.DispatchAsync(Payload));
-        Ensure(acquireEntered.Wait(RaceCoordinationTimeout),
-            "the old dispatch must pause before its producer increment");
+        PooledAsyncStreamDispatcher<ReferenceItem>? current = first;
+        var oldDispatch = LongRunningTestWorker.RunAsync(() => first.DispatchAsync(Payload).AsTask());
+        try
+        {
+            Ensure(acquireEntered.Wait(RaceCoordinationTimeout),
+                "the old dispatch must pause before its producer increment");
 
-        first.Complete(exception: null);
-        await first.DisposeAsync();
-        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
-            default,
-            new ReferenceItemCodec());
-        Ensure(ReferenceEquals(first, second),
-            "the test must rent the same dispatcher as a new generation before releasing the old producer");
-        var newEnumerator = second.GetAsyncEnumerator();
+            first.Complete(exception: null);
+            await first.DisposeAsync();
+            current = null;
+            var second = current = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+                default,
+                new ReferenceItemCodec());
+            Ensure(ReferenceEquals(first, second),
+                "the test must rent the same dispatcher as a new generation before releasing the old producer");
+            var newEnumerator = second.GetAsyncEnumerator();
 
-        releaseAcquire.Set();
-        var oldFailure = await CaptureFailureAsync(oldDispatch.WaitAsync(RaceCoordinationTimeout));
+            releaseAcquire.Set();
+            var oldFailure = await CaptureFailureAsync(oldDispatch.WaitAsync(RaceCoordinationTimeout));
 #if DEBUG
-        Ensure(oldFailure is ObjectDisposedException,
-            "a late producer from the old generation must be rejected after rerent");
+            Ensure(oldFailure is ObjectDisposedException,
+                "a late producer from the old generation must be rejected after rerent");
 #else
-        Ensure(oldFailure is null,
-            "Release builds must silently discard a late producer from the old generation");
+            Ensure(oldFailure is null,
+                "Release builds must silently discard a late producer from the old generation");
 #endif
 
-        await second.DispatchAsync(Payload);
-        second.Complete(exception: null);
-        Ensure(await newEnumerator.MoveNextAsync() && newEnumerator.Current is not null,
-            "the old producer rollback must not corrupt the new generation item or Current");
-        Ensure(!await newEnumerator.MoveNextAsync(),
-            "the new generation must contain exactly its own item");
-        await newEnumerator.DisposeAsync();
-        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
-            "balancing the stale producer count must leave the new terminal lease returnable");
-        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+            await second.DispatchAsync(Payload);
+            second.Complete(exception: null);
+            Ensure(await newEnumerator.MoveNextAsync() && newEnumerator.Current is not null,
+                "the old producer rollback must not corrupt the new generation item or Current");
+            Ensure(!await newEnumerator.MoveNextAsync(),
+                "the new generation must contain exactly its own item");
+            await newEnumerator.DisposeAsync();
+            current = null;
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "balancing the stale producer count must leave the new terminal lease returnable");
+        }
+        finally
+        {
+            releaseAcquire.Set();
+            await LongRunningTestWorker.JoinAsync(oldDispatch, RaceCoordinationTimeout);
+            if (current is not null)
+            {
+                current.Complete(exception: null);
+                await current.DisposeAsync().AsTask().WaitAsync(RaceCoordinationTimeout);
+            }
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
     }
 
     [Test]

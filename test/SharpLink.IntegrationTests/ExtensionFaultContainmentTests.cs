@@ -192,17 +192,23 @@ public sealed class ExtensionFaultContainmentTests
     [Test]
     public async Task ClientStreamMoveNextAndDisposeFailuresShouldReleasePendingAndProducerState()
     {
-        foreach (var producer in new[]
+        // These faults prevent clean EOF. Dispose-only runs under both explicit terminal orders
+        // in ExtensionFaultContainmentProducerTerminalTests, because a reply may already have won.
+        foreach (var (scenario, producer) in new[]
                  {
-                     new OneShotThrowingAsyncEnumerable(throwMoveNext: true, throwDispose: false),
-                     new OneShotThrowingAsyncEnumerable(throwMoveNext: false, throwDispose: true),
-                     new OneShotThrowingAsyncEnumerable(throwMoveNext: true, throwDispose: true)
+                     ("MoveNext only", new OneShotThrowingAsyncEnumerable(throwMoveNext: true, throwDispose: false)),
+                     ("MoveNext and Dispose", new OneShotThrowingAsyncEnumerable(throwMoveNext: true, throwDispose: true))
                  })
         {
             await using var harness = await ExtensionFaultHarness.CreateAsync();
-            var failure = await CaptureFailureAsync(harness.Service.UploadAsync(producer).AsTask());
-            Ensure(failure is not null, "client stream producer/dispose injection should fail the call");
-            await harness.AssertReusableAsync("client stream producer/dispose failure");
+            var call = harness.Service.UploadAsync(producer).AsTask();
+            var failure = await CaptureFailureAsync(call);
+            Ensure(failure is not null,
+                $"client stream {scenario} injection should fail the call; terminal={call.Status}, " +
+                $"result={(call.IsCompletedSuccessfully ? call.Result.ToString() : "none")}");
+            await ExtensionFaultContainmentProducerTerminalTests.AssertProducerDrainedAsync(harness)
+                .ConfigureAwait(false);
+            await harness.AssertReusableAsync($"client stream {scenario} failure");
         }
     }
 
