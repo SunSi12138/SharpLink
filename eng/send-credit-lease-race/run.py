@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/StreamFlowControllerLeaseRaceTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/StreamFlowControllerLeaseRaceTests/*"
 FOCUSED_COUNT = 8
-FULL_COUNT = 2158  # Previous inventory plus 26 send-ownership cases and one retry-timer witness.
+FULL_COUNT = 2162  # Previous inventory plus four synchronous send-telemetry reentrancy controls.
 
 
 def digest(path):
