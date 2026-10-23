@@ -45,6 +45,9 @@ jobs:
       - name: Generated ABI evidence shell regression tests
         run: python3 -m unittest discover -s eng/tests -p 'test_generated_abi_evidence_batch.py' -v
 
+      - name: Admitted dispatch source parity guards
+        run: python3 eng/tests/test_admitted_dispatch_parity.py
+
       - name: Maintainability Debt Gate Tests
         run: python3 eng/test-verify-maintainability.py
 

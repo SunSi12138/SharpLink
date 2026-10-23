@@ -8,6 +8,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 {
     private static TaskCompletionSource _blockStarted = NewSignal();
     private static TaskCompletionSource _blockRelease = NewSignal();
+    private static CancellationToken _blockCancellation;
     private static TaskCompletionSource _synchronousBlockStarted = NewSignal();
     private static TaskCompletionSource _synchronousBlockRelease = NewSignal();
     private static TaskCompletionSource _rejectResponseStarted = NewSignal();
@@ -31,6 +32,8 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     public static Task BlockStarted => Volatile.Read(ref _blockStarted).Task;
 
+    public static CancellationToken BlockCancellation => _blockCancellation;
+
     public static Task SynchronousBlockStarted => Volatile.Read(ref _synchronousBlockStarted).Task;
 
     public static Task RejectResponseStarted => Volatile.Read(ref _rejectResponseStarted).Task;
@@ -41,6 +44,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     {
         Volatile.Write(ref _blockStarted, NewSignal());
         Volatile.Write(ref _blockRelease, NewSignal());
+        _blockCancellation = default;
         Volatile.Write(ref _synchronousBlockStarted, NewSignal());
         Volatile.Write(ref _synchronousBlockRelease, NewSignal());
         Volatile.Write(ref _rejectResponseStarted, NewSignal());
@@ -66,6 +70,15 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
     {
         Interlocked.Add(ref _notifications, value);
         return ValueTask.CompletedTask;
+    }
+
+    public ValueTask NoReturnAsync(int value, CancellationToken cancellationToken)
+        => NotifyAsync(value, cancellationToken);
+
+    public async ValueTask NotifyStreamAsync(IAsyncEnumerable<int> values, CancellationToken cancellationToken)
+    {
+        await foreach (var value in values.WithCancellation(cancellationToken).ConfigureAwait(false))
+            Interlocked.Add(ref _notifications, value);
     }
 
     public async ValueTask<int> ClientStreamAsync(
@@ -134,6 +147,7 @@ public sealed class DynamicPluginService : IDynamicPluginService, IAsyncDisposab
 
     public async ValueTask<int> BlockAsync(CancellationToken cancellationToken)
     {
+        _blockCancellation = cancellationToken;
         Volatile.Read(ref _blockStarted).TrySetResult();
         await Volatile.Read(ref _blockRelease).Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         return 42;

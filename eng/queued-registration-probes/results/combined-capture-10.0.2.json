@@ -1,0 +1,738 @@
+{
+  "baseline": {
+    "head": "13928a35df4bff3cd99b14bd1df131aa3eb3bcdb",
+    "dirty": false,
+    "runtime": ".NET 10.0.2",
+    "serverSha256": "5fcdc1562c222da6c7b6ff46ddd3a5056f0dca566ef125b7f9fb987b8796f6e4",
+    "native": [
+      {
+        "mode": "fullopts",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (FullOpts)",
+        "nativeBytes": 3245,
+        "stackSubtract": "312"
+      },
+      {
+        "mode": "fullopts",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (FullOpts)",
+        "nativeBytes": 7003,
+        "stackSubtract": "0x528"
+      },
+      {
+        "mode": "fullopts",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (FullOpts)",
+        "nativeBytes": 2455,
+        "stackSubtract": "808"
+      },
+      {
+        "mode": "fullopts",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (FullOpts)",
+        "nativeBytes": 7699,
+        "stackSubtract": "0x538"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6541,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8618,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier1)",
+        "nativeBytes": 3245,
+        "stackSubtract": "312"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2455,
+        "stackSubtract": "808"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 7699,
+        "stackSubtract": "0x538"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 7003,
+        "stackSubtract": "0x528"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6541,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8618,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Instrumented Tier0)",
+        "nativeBytes": 3099,
+        "stackSubtract": "624"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 2571,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 9642,
+        "stackSubtract": "0xAB0"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 7295,
+        "stackSubtract": "0x800"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier1)",
+        "nativeBytes": 2829,
+        "stackSubtract": "200"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2384,
+        "stackSubtract": "792"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 13503,
+        "stackSubtract": "0x838"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 11666,
+        "stackSubtract": "0x7A8"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6541,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8618,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Instrumented Tier0)",
+        "nativeBytes": 3099,
+        "stackSubtract": "624"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 2571,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 7295,
+        "stackSubtract": "0x800"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 9642,
+        "stackSubtract": "0xAB0"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier1)",
+        "nativeBytes": 2820,
+        "stackSubtract": "200"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2384,
+        "stackSubtract": "792"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 11700,
+        "stackSubtract": "0x7A8"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 13404,
+        "stackSubtract": "0x838"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6541,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8618,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Instrumented Tier0)",
+        "nativeBytes": 3099,
+        "stackSubtract": "624"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 2571,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 7295,
+        "stackSubtract": "0x800"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 9642,
+        "stackSubtract": "0xAB0"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier1)",
+        "nativeBytes": 2829,
+        "stackSubtract": "200"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2384,
+        "stackSubtract": "792"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 11652,
+        "stackSubtract": "0x7A8"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 13294,
+        "stackSubtract": "0x7F8"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6541,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8618,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Instrumented Tier0)",
+        "nativeBytes": 3099,
+        "stackSubtract": "624"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 2571,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 9642,
+        "stackSubtract": "0xAB0"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 7295,
+        "stackSubtract": "0x800"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__361:MoveNext():this (Tier1)",
+        "nativeBytes": 2833,
+        "stackSubtract": "200"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2384,
+        "stackSubtract": "792"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 13285,
+        "stackSubtract": "0x808"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 11700,
+        "stackSubtract": "0x7A8"
+      }
+    ]
+  },
+  "candidate": {
+    "head": "0d161acf1a25840caa3604b92a0c892bc17bebd1",
+    "dirty": false,
+    "runtime": ".NET 10.0.2",
+    "serverSha256": "15783b6bd3a32cbbee8321c69ac541aa4a64529ebad4c0a8b33091fb4c5ba048",
+    "native": [
+      {
+        "mode": "fullopts",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (FullOpts)",
+        "nativeBytes": 3245,
+        "stackSubtract": "312"
+      },
+      {
+        "mode": "fullopts",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (FullOpts)",
+        "nativeBytes": 7009,
+        "stackSubtract": "0x528"
+      },
+      {
+        "mode": "fullopts",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (FullOpts)",
+        "nativeBytes": 2463,
+        "stackSubtract": "808"
+      },
+      {
+        "mode": "fullopts",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (FullOpts)",
+        "nativeBytes": 7706,
+        "stackSubtract": "0x538"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6548,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8625,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier1)",
+        "nativeBytes": 3245,
+        "stackSubtract": "312"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2463,
+        "stackSubtract": "808"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 7706,
+        "stackSubtract": "0x538"
+      },
+      {
+        "mode": "nopgo",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 7009,
+        "stackSubtract": "0x528"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6548,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8625,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Instrumented Tier0)",
+        "nativeBytes": 3099,
+        "stackSubtract": "624"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 2571,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 7302,
+        "stackSubtract": "0x800"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 9649,
+        "stackSubtract": "0xAB0"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier1)",
+        "nativeBytes": 2820,
+        "stackSubtract": "200"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2392,
+        "stackSubtract": "792"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 11713,
+        "stackSubtract": "0x7A8"
+      },
+      {
+        "mode": "default-1",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 13490,
+        "stackSubtract": "0x838"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6548,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8625,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Instrumented Tier0)",
+        "nativeBytes": 3099,
+        "stackSubtract": "624"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 2571,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 9649,
+        "stackSubtract": "0xAB0"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 7302,
+        "stackSubtract": "0x800"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier1)",
+        "nativeBytes": 2820,
+        "stackSubtract": "200"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2392,
+        "stackSubtract": "792"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 13397,
+        "stackSubtract": "0x838"
+      },
+      {
+        "mode": "default-2",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 11655,
+        "stackSubtract": "0x7A8"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6548,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8625,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Instrumented Tier0)",
+        "nativeBytes": 3099,
+        "stackSubtract": "624"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 2571,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 9649,
+        "stackSubtract": "0xAB0"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 7302,
+        "stackSubtract": "0x800"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier1)",
+        "nativeBytes": 2829,
+        "stackSubtract": "200"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2392,
+        "stackSubtract": "792"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 13498,
+        "stackSubtract": "0x838"
+      },
+      {
+        "mode": "default-3",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 11669,
+        "stackSubtract": "0x7A8"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier0)",
+        "nativeBytes": 2477,
+        "stackSubtract": "560"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 6548,
+        "stackSubtract": "0x7F0"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 2406,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier0)",
+        "nativeBytes": 8625,
+        "stackSubtract": "0xA80"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Instrumented Tier0)",
+        "nativeBytes": 3099,
+        "stackSubtract": "624"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 2571,
+        "stackSubtract": "0x410"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 9649,
+        "stackSubtract": "0xAB0"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Instrumented Tier0)",
+        "nativeBytes": 7302,
+        "stackSubtract": "0x800"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer+<DispatchRequestAsync>d__365:MoveNext():this (Tier1)",
+        "nativeBytes": 2829,
+        "stackSubtract": "200"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:InvokeServiceAsync(SharpLink.Server.ServiceRegistration,SharpLink.Server.ServerConnectionState,SharpLink.Runtime.RpcSession,long,long,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Abstractions.IRpcByteBufferWriter,System.Threading.CancellationToken,SharpLink.Abstractions.SharpLinkCallContextSnapshot):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 2392,
+        "stackSubtract": "792"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchOneWayRpc(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,int,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 13422,
+        "stackSubtract": "0x838"
+      },
+      {
+        "mode": "default-4",
+        "method": "for method SharpLink.Server.SharpLinkServer:DispatchRpcAsync(SharpLink.Server.ServerConnectionState,long,byte,System.Buffers.ReadOnlySequence`1[byte],SharpLink.Runtime.StripedLongMap`1[SharpLink.Server.ServerCallCancellationState],System.Threading.CancellationToken,SharpLink.Server.AdmissionProgram,SharpLink.Server.ServerCallCancellationState,bool,SharpLink.Server.ServerRetainedAdmissionPayload):System.Threading.Tasks.ValueTask:this (Tier1)",
+        "nativeBytes": 11690,
+        "stackSubtract": "0x7B8"
+      }
+    ]
+  }
+}

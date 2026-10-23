@@ -128,7 +128,7 @@ internal sealed partial class SharpLinkServer
                 }
                 if (!admissionTask.IsCompletedSuccessfully)
                 {
-                    if (!TryCopyAdmissionPayload(payload, flags, out var queuedRetainedPayload))
+                    if (!TryCopySelectedAdmissionPayload(payload, flags, serviceInfo, out var queuedRetainedPayload))
                     {
                         admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
                         return RejectQueuedAdmissionForRetainedBudgetAsync(
