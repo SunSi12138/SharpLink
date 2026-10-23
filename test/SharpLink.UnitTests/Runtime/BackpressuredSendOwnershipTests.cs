@@ -10,6 +10,83 @@ public sealed class BackpressuredSendOwnershipTests
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TerminalDrainClosesQueueBeforeAReservedProducerPublishes(bool protocolProgress)
+    {
+        await using var fixture = new Fixture();
+        fixture.Session.SendPacket(fixture.Frame(1, 800));
+        await fixture.Output.FirstFlushEntered.Task.WaitAsync(Timeout);
+        var pump = Pump(fixture.Session);
+        var pumpTask = (Task)Field(pump, "_pumpLifetime")!;
+        var packet = new ReturnGateWriter();
+        packet.ReleaseReturn();
+        using (packet.BeginPacketScope(protocolProgress ? ProtocolV2FrameType.Ping : ProtocolV2FrameType.Response,
+                   ProtocolV2FrameFlags.None, 2))
+        {
+        }
+        var scope = new AsyncLocal<bool>();
+        var reserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var submitted = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resumeProducer = new ManualResetEventSlim();
+        Exception? callbackFailure = null;
+        using var listener = ListenForReservation(scope, () =>
+        {
+            reserved.TrySetResult();
+            if (!resumeProducer.Wait(Timeout))
+                callbackFailure = new TimeoutException("the reserved producer was not resumed");
+        });
+        var producer = new Thread(() =>
+        {
+            scope.Value = true;
+            try
+            {
+                fixture.Session.SendPacket(packet);
+                submitted.TrySetResult(null);
+            }
+            catch (Exception exception) { submitted.TrySetResult(exception); }
+        })
+        { IsBackground = true };
+        try
+        {
+            producer.Start();
+            await reserved.Task.WaitAsync(Timeout);
+
+            // Model the reachable Stop interleaving after publishing _stopped,
+            // before either writer is completed. The ordinary producer has
+            // passed its stop check and reserved capacity, but has not TryWritten.
+            // Do not call Stop/Dispose before the assertions: either would hide
+            // the channel-publication window this controlled schedule exercises.
+            pump.GetType().GetField("_stopped", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(pump, 1);
+            fixture.Output.Release();
+            await pumpTask.WaitAsync(Timeout);
+            Ensure(packet.ReturnCount == 0 && fixture.Session.QueuedSendBytes == packet.WrittenCount,
+                "the paused producer must still own its exact reservation after the pump has exited");
+
+            resumeProducer.Set();
+            var failure = await submitted.Task.WaitAsync(Timeout);
+            Ensure(producer.Join(Timeout), "the resumed producer must finish its own cleanup");
+            Ensure(callbackFailure is null, "the reservation callback must stay within its controlled phase");
+            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed } &&
+                packet.ReturnCount == 1 && fixture.Session.QueuedSendBytes == 0,
+                $"the terminal queue must reject late publication and return it once: failure={failure?.GetType().Name ?? "none"}, returns={packet.ReturnCount}, bytes={fixture.Session.QueuedSendBytes}");
+        }
+        finally
+        {
+            resumeProducer.Set();
+            fixture.Output.Release();
+            if ((producer.ThreadState & ThreadState.Unstarted) == 0)
+                Ensure(producer.Join(Timeout), "the dedicated producer must terminate");
+            await fixture.Session.DisposeAsync().AsTask().WaitAsync(Timeout);
+            // The historical counterexample accepts a frame after its last drain.
+            // Reclaim it only after assertions and after both real owners finish.
+            pump.GetType().GetMethod("DrainQueuedFrames", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(pump, [new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test cleanup")]);
+        }
+    }
+
+    [Test]
     public async Task ReservationMetricCancellationCannotStealGrantedFrame()
     {
         var scope = new AsyncLocal<bool>();
