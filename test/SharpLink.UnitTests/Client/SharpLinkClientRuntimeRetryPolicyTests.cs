@@ -77,7 +77,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
     [Test]
     public async Task UpdateBetweenAttemptsShouldNotMutateCurrentCustomLoop()
     {
-        var timeProvider = new ManualTimeProvider();
+        var timeProvider = new RetryDelayTimeProvider();
         var transport = new TestClientTransportFactory();
         var policy = new RecordingDelayPolicy(TimeSpan.FromSeconds(1));
         await using var client = ClientBuilderTestHelper.Build(transport, builder =>
@@ -91,7 +91,9 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(client).AsTask();
         var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
-        await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        // Policy evaluation publishes before Task.Delay creates its timer. Advancing
+        // that early can leave the real retry due one manual second in the future.
+        await timeProvider.RetryTimerRegistered.WaitAsync(TimeSpan.FromSeconds(2));
 
         client.DisableRetry();
         timeProvider.Advance(TimeSpan.FromSeconds(1));
@@ -110,6 +112,63 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
             ProtocolV2FrameType.Request,
             TimeSpan.FromMilliseconds(100)),
             "future logical call should observe the disabled generation");
+    }
+
+    [Test]
+    public async Task AdvanceBeforeRetryTimerRegistrationShouldLeaveTheRetryPending()
+    {
+        var timeProvider = new RetryDelayTimeProvider();
+        var transport = new TestClientTransportFactory();
+        var policy = new RecordingDelayPolicy(TimeSpan.FromSeconds(1));
+        timeProvider.BeforeRetryTimerRegistration = () =>
+        {
+            Ensure(policy.EvaluationStarted.IsCompleted,
+                "policy evaluation is visible before the retry timer is registered");
+            // Force the old fixture's allowed ordering without a sleep or a blocked
+            // ThreadPool worker: its only Advance wins immediately before registration.
+            timeProvider.Advance(TimeSpan.FromSeconds(1));
+        };
+        await using var client = ClientBuilderTestHelper.Build(transport, builder =>
+        {
+            builder.UseTimeProvider(timeProvider);
+            builder.DisableRequestTimeout();
+        });
+        client.UpdateRetryPolicy(policy, RetryOptions(2, TimeSpan.Zero));
+        await client.ConnectAsync();
+
+        using var cancellation = new CancellationTokenSource();
+        var invocation = ClientInvokerTestHelper.InvokeIdempotentUnaryAsync(
+            client, cancellationToken: cancellation.Token).AsTask();
+        try
+        {
+            var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+            await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
+            await timeProvider.RetryTimerRegistered.WaitAsync(TimeSpan.FromSeconds(2));
+            try
+            {
+                Ensure(timeProvider.GetTimestamp() == TimeSpan.TicksPerSecond &&
+                       timeProvider.EarliestTimerTimestamp == 2 * TimeSpan.TicksPerSecond,
+                    "the premature advance leaves the newly registered retry due at manual second two");
+                Ensure(!await transport.Connection.TryWaitForSentPacket(
+                    ProtocolV2FrameType.Request, TimeSpan.FromMilliseconds(100)),
+                    "the original single clock advance cannot release a subsequently registered retry");
+                Ensure(!invocation.IsCompleted && policy.Count == 1,
+                    "the captured logical call is waiting for its retry timer, not another policy evaluation");
+            }
+            finally
+            {
+                timeProvider.Advance(TimeSpan.FromSeconds(1));
+            }
+            var second = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
+            await transport.Connection.InjectInt32ResponseAsync(unchecked((long)second.RequestId));
+            Ensure(await invocation == 0, "advancing after registration releases the original captured loop");
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { await invocation.WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        }
     }
 
     [Test]
@@ -254,6 +313,34 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
                 await _release.Task.ConfigureAwait(false);
             }
             return await next(context).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class RetryDelayTimeProvider : TimeProvider
+    {
+        private readonly ManualTimeProvider _clock = new();
+        private readonly TaskCompletionSource _retryTimerRegistered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Action? BeforeRetryTimerRegistration;
+        internal Task RetryTimerRegistered => _retryTimerRegistered.Task;
+        internal long EarliestTimerTimestamp => _clock.EarliestTimerTimestamp;
+        internal void Advance(TimeSpan elapsed) => _clock.Advance(elapsed);
+        public override long TimestampFrequency => _clock.TimestampFrequency;
+        public override TimeZoneInfo LocalTimeZone => _clock.LocalTimeZone;
+        public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
+        public override long GetTimestamp() => _clock.GetTimestamp();
+
+        public override ITimer CreateTimer(
+            TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var isRetryDelay = dueTime == TimeSpan.FromSeconds(1) && period == Timeout.InfiniteTimeSpan;
+            if (isRetryDelay)
+                Interlocked.Exchange(ref BeforeRetryTimerRegistration, null)?.Invoke();
+            var timer = _clock.CreateTimer(callback, state, dueTime, period);
+            if (isRetryDelay)
+                _retryTimerRegistered.TrySetResult();
+            return timer;
         }
     }
 
