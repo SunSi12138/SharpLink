@@ -17,7 +17,7 @@ internal sealed partial class SharpLinkServer
                     $"Server state '{CurrentState}' does not accept runtime interceptor replacement.");
             }
 
-            if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            if (MaintenanceConfigured || CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             {
                 throw new InvalidOperationException(
                     $"Server state '{CurrentState}' does not accept runtime interceptor replacement.");

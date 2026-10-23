@@ -1,0 +1,294 @@
+{
+  "Scope": "Descriptive repeated same-behavior actual TLS/auth pool2 integer streams, finite explicit1h deadline.2 warmup+5 observed samples per process;3 processes per cell. Producer release after first consumed item through result. Process managed allocations include TLS/framework/application/background work. No throughput equivalence, regression budget or general performance conclusion. PGO uses accelerated promotion.",
+  "Source": {
+    "Base": "73de76207295db0060bcb2c42d0f3a5c8140e1c0",
+    "CandidateOverlay": {
+      "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs": "2d3bff5f4637da962e372d991ceb333be2ec2f37d648dabc165389fa797e64db",
+      "src/SharpLink.Server/ServerCancellationCallbackWork.cs": "f512119a2cca471fc8763b82bc950190f4573601f288da7b0d785e7fa970bc9e"
+    },
+    "Status": "Completed: all36 direct helper and24 matched stream launches pass; remaining representation differences disclosed.",
+    "Prerequisite": "4471526522d9b9a7bcf4fbde1b5c50faa63d8f8e",
+    "CandidateCommit": "ed5f17db02d80ddd23c14338aff524f8971e8ca3"
+  },
+  "CollectionStarted": "2026-10-22T07:01:31.888199+00:00",
+  "CollectionFinished": "2026-10-22T07:02:22.094082+00:00",
+  "Launches": 24,
+  "SamplesIncludingWarmup": 168,
+  "MeasuredSamples": 120,
+  "Groups": [
+    {
+      "Runtime": "10.0.2",
+      "Mode": "fullopts",
+      "Arm": "published-prerequisites",
+      "MeasuredSamples": 15,
+      "ProcessLaunches": 3,
+      "LaunchMedians": [
+        {
+          "Repetition": 0,
+          "MedianMilliseconds": 35.61963,
+          "MedianManagedBytes": 4228152
+        },
+        {
+          "Repetition": 1,
+          "MedianMilliseconds": 40.379365,
+          "MedianManagedBytes": 3812736
+        },
+        {
+          "Repetition": 2,
+          "MedianMilliseconds": 36.356323,
+          "MedianManagedBytes": 3980656
+        }
+      ],
+      "Milliseconds": {
+        "Min": 32.29839,
+        "Median": 37.104368,
+        "Max": 46.196651
+      },
+      "ManagedBytes": {
+        "Min": 3079776,
+        "Median": 3973040,
+        "Max": 5398032
+      }
+    },
+    {
+      "Runtime": "10.0.2",
+      "Mode": "fullopts",
+      "Arm": "candidate",
+      "MeasuredSamples": 15,
+      "ProcessLaunches": 3,
+      "LaunchMedians": [
+        {
+          "Repetition": 0,
+          "MedianMilliseconds": 35.292285,
+          "MedianManagedBytes": 1009440
+        },
+        {
+          "Repetition": 1,
+          "MedianMilliseconds": 39.217431,
+          "MedianManagedBytes": 2050600
+        },
+        {
+          "Repetition": 2,
+          "MedianMilliseconds": 33.343685,
+          "MedianManagedBytes": 1185632
+        }
+      ],
+      "Milliseconds": {
+        "Min": 32.495704,
+        "Median": 35.292285,
+        "Max": 44.190079
+      },
+      "ManagedBytes": {
+        "Min": 729384,
+        "Median": 1185632,
+        "Max": 3042760
+      }
+    },
+    {
+      "Runtime": "10.0.2",
+      "Mode": "pgo",
+      "Arm": "published-prerequisites",
+      "MeasuredSamples": 15,
+      "ProcessLaunches": 3,
+      "LaunchMedians": [
+        {
+          "Repetition": 0,
+          "MedianMilliseconds": 51.718149,
+          "MedianManagedBytes": 4624016
+        },
+        {
+          "Repetition": 1,
+          "MedianMilliseconds": 33.159727,
+          "MedianManagedBytes": 4155296
+        },
+        {
+          "Repetition": 2,
+          "MedianMilliseconds": 36.872148,
+          "MedianManagedBytes": 3963248
+        }
+      ],
+      "Milliseconds": {
+        "Min": 31.937504,
+        "Median": 37.807995,
+        "Max": 72.836876
+      },
+      "ManagedBytes": {
+        "Min": 3030424,
+        "Median": 4198792,
+        "Max": 7319680
+      }
+    },
+    {
+      "Runtime": "10.0.2",
+      "Mode": "pgo",
+      "Arm": "candidate",
+      "MeasuredSamples": 15,
+      "ProcessLaunches": 3,
+      "LaunchMedians": [
+        {
+          "Repetition": 0,
+          "MedianMilliseconds": 39.024719,
+          "MedianManagedBytes": 2598040
+        },
+        {
+          "Repetition": 1,
+          "MedianMilliseconds": 39.706837,
+          "MedianManagedBytes": 1384968
+        },
+        {
+          "Repetition": 2,
+          "MedianMilliseconds": 36.810962,
+          "MedianManagedBytes": 1568256
+        }
+      ],
+      "Milliseconds": {
+        "Min": 29.723793,
+        "Median": 39.024719,
+        "Max": 69.725242
+      },
+      "ManagedBytes": {
+        "Min": 717760,
+        "Median": 1568256,
+        "Max": 5475248
+      }
+    },
+    {
+      "Runtime": "10.0.13",
+      "Mode": "fullopts",
+      "Arm": "published-prerequisites",
+      "MeasuredSamples": 15,
+      "ProcessLaunches": 3,
+      "LaunchMedians": [
+        {
+          "Repetition": 0,
+          "MedianMilliseconds": 30.179339,
+          "MedianManagedBytes": 4097480
+        },
+        {
+          "Repetition": 1,
+          "MedianMilliseconds": 31.683012,
+          "MedianManagedBytes": 4030624
+        },
+        {
+          "Repetition": 2,
+          "MedianMilliseconds": 33.352303,
+          "MedianManagedBytes": 4180408
+        }
+      ],
+      "Milliseconds": {
+        "Min": 28.37389,
+        "Median": 31.895964,
+        "Max": 59.3778
+      },
+      "ManagedBytes": {
+        "Min": 3685112,
+        "Median": 4097480,
+        "Max": 5047656
+      }
+    },
+    {
+      "Runtime": "10.0.13",
+      "Mode": "fullopts",
+      "Arm": "candidate",
+      "MeasuredSamples": 15,
+      "ProcessLaunches": 3,
+      "LaunchMedians": [
+        {
+          "Repetition": 0,
+          "MedianMilliseconds": 30.430972,
+          "MedianManagedBytes": 1347952
+        },
+        {
+          "Repetition": 1,
+          "MedianMilliseconds": 30.87195,
+          "MedianManagedBytes": 1667296
+        },
+        {
+          "Repetition": 2,
+          "MedianMilliseconds": 28.159271,
+          "MedianManagedBytes": 1169832
+        }
+      ],
+      "Milliseconds": {
+        "Min": 26.851717,
+        "Median": 29.974296,
+        "Max": 41.45854
+      },
+      "ManagedBytes": {
+        "Min": 954272,
+        "Median": 1256696,
+        "Max": 1943536
+      }
+    },
+    {
+      "Runtime": "10.0.13",
+      "Mode": "pgo",
+      "Arm": "published-prerequisites",
+      "MeasuredSamples": 15,
+      "ProcessLaunches": 3,
+      "LaunchMedians": [
+        {
+          "Repetition": 0,
+          "MedianMilliseconds": 35.364678,
+          "MedianManagedBytes": 4717480
+        },
+        {
+          "Repetition": 1,
+          "MedianMilliseconds": 39.428035,
+          "MedianManagedBytes": 4830704
+        },
+        {
+          "Repetition": 2,
+          "MedianMilliseconds": 38.329638,
+          "MedianManagedBytes": 4106472
+        }
+      ],
+      "Milliseconds": {
+        "Min": 30.833696,
+        "Median": 38.060343,
+        "Max": 73.143648
+      },
+      "ManagedBytes": {
+        "Min": 3157648,
+        "Median": 4672456,
+        "Max": 5967096
+      }
+    },
+    {
+      "Runtime": "10.0.13",
+      "Mode": "pgo",
+      "Arm": "candidate",
+      "MeasuredSamples": 15,
+      "ProcessLaunches": 3,
+      "LaunchMedians": [
+        {
+          "Repetition": 0,
+          "MedianMilliseconds": 30.995863,
+          "MedianManagedBytes": 1234320
+        },
+        {
+          "Repetition": 1,
+          "MedianMilliseconds": 36.336848,
+          "MedianManagedBytes": 1804200
+        },
+        {
+          "Repetition": 2,
+          "MedianMilliseconds": 44.492986,
+          "MedianManagedBytes": 1082784
+        }
+      ],
+      "Milliseconds": {
+        "Min": 26.7588,
+        "Median": 35.690878,
+        "Max": 58.388995
+      },
+      "ManagedBytes": {
+        "Min": 643968,
+        "Median": 1238232,
+        "Max": 2480432
+      }
+    }
+  ],
+  "FinalAdoptedCommit": "3ba9c581bbac4e42817d5e31e62715fde28a2edc",
+  "ProductionSrcTree": "c242f33f0041439b176c43460864a888237b79d9"
+}

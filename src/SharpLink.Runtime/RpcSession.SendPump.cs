@@ -2,7 +2,7 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    private sealed class SendPump
+    private sealed partial class SendPump
     {
         private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
 
@@ -33,8 +33,11 @@ internal sealed partial class RpcSession
         private readonly Channel<OwnedFrame> _normalQueue;
         private readonly Lock _admissionGate = new();
         private readonly WakeupSignal _wakeup = new();
-        private readonly Task _pumpTask;
-        private TaskCompletionSource<bool>? _capacityChanged;
+        // Usually the pump Task itself. A genuinely capacity-waiting operation
+        // replaces this cold lifetime slot with its intrinsic queue, which
+        // retains the same Task until all physical cleanup has finished.
+        private object _pumpLifetime;
+        private PendingEnqueueQueue? _capacityChanged;
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
@@ -67,7 +70,7 @@ internal sealed partial class RpcSession
 
             _progressQueue = CreateFrameQueue();
             _normalQueue = CreateFrameQueue();
-            _pumpTask = RunAsync();
+            _pumpLifetime = RunAsync();
         }
 
         private static int ComputeProgressReserveBytes(int maxQueuedBytes)
@@ -133,29 +136,50 @@ internal sealed partial class RpcSession
             return SendEnqueueResult.Closed;
         }
 
-        public async ValueTask<SendEnqueueResult> EnqueueAsync(
+        public ValueTask<SendEnqueueResult> EnqueueAsync(
             OwnedFrame frame,
             CancellationToken cancellationToken)
         {
+            bool reserved;
             try
             {
-                await ReserveAsync(frame.Length, frame.IsProtocolProgress, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref _stopped) != 0)
+                    throw CreateTransportClosedException();
+                reserved = TryReserve(frame.Length, frame.IsProtocolProgress);
             }
-            catch (Exception)
+            catch (Exception exception)
             {
-                ReturnUnreserved(frame);
-                throw;
+                try
+                {
+                    ReturnUnreserved(frame);
+                }
+                catch (Exception cleanupException)
+                {
+                    return ValueTask.FromException<SendEnqueueResult>(cleanupException);
+                }
+                return ValueTask.FromException<SendEnqueueResult>(exception);
             }
 
-            if (Volatile.Read(ref _stopped) == 0 &&
-                (frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
+            try
             {
-                _wakeup.Signal();
-                return SendEnqueueResult.Accepted;
-            }
+                if (!reserved)
+                    return EnqueueWhenFull(frame, cancellationToken);
 
-            CompleteReserved(frame, exception: null, completeFlushWaiter: false);
-            return SendEnqueueResult.Closed;
+                if (Volatile.Read(ref _stopped) == 0 &&
+                    (frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
+                {
+                    _wakeup.Signal();
+                    return ValueTask.FromResult(SendEnqueueResult.Accepted);
+                }
+
+                CompleteReserved(frame, exception: null, completeFlushWaiter: false);
+                return ValueTask.FromResult(SendEnqueueResult.Closed);
+            }
+            catch (Exception exception)
+            {
+                return ValueTask.FromException<SendEnqueueResult>(exception);
+            }
         }
 
         private async Task RunAsync()
@@ -431,34 +455,6 @@ internal sealed partial class RpcSession
             }
         }
 
-        private async ValueTask ReserveAsync(
-            int bytes,
-            bool isProtocolProgress,
-            CancellationToken cancellationToken)
-        {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (Volatile.Read(ref _stopped) != 0)
-                    throw CreateTransportClosedException();
-                if (TryReserve(bytes, isProtocolProgress))
-                    return;
-
-                Task waitTask;
-                lock (_admissionGate)
-                {
-                    if (Volatile.Read(ref _stopped) != 0)
-                        throw CreateTransportClosedException();
-                    if (TryReserve(bytes, isProtocolProgress))
-                        return;
-                    _capacityChanged ??= new TaskCompletionSource<bool>(
-                        TaskCreationOptions.RunContinuationsAsynchronously);
-                    waitTask = _capacityChanged.Task;
-                }
-                await waitTask.WaitAsync(cancellationToken).ConfigureAwait(false);
-            }
-        }
-
         private void ReleaseBatch(List<OwnedFrame> pending, Exception? exception)
         {
             for (var index = 0; index < pending.Count; index++)
@@ -516,20 +512,6 @@ internal sealed partial class RpcSession
 
         public long QueuedBytes => Volatile.Read(ref _queuedBytes);
 
-        private void PulseCapacityWaiters()
-        {
-            if (Volatile.Read(ref _capacityChanged) is null)
-                return;
-
-            TaskCompletionSource<bool>? waiters;
-            lock (_admissionGate)
-            {
-                waiters = _capacityChanged;
-                _capacityChanged = null;
-            }
-            waiters?.TrySetResult(true);
-        }
-
         public void Stop()
         {
             if (Interlocked.Exchange(ref _stopped, 1) != 0)
@@ -559,7 +541,20 @@ internal sealed partial class RpcSession
         private static SharpLinkException CreateTransportClosedException()
             => new(SharpLinkErrorCode.ConnectionClosed, "Transport output completed.");
 
-        public ValueTask WaitForStopAsync()
-            => _pumpTask.IsCompletedSuccessfully ? ValueTask.CompletedTask : new ValueTask(_pumpTask);
+        public async ValueTask WaitForStopAsync()
+        {
+            try
+            {
+                var lifetime = Volatile.Read(ref _pumpLifetime);
+                var pumpTask = lifetime is Task task ? task : ((PendingEnqueueQueue)lifetime).PumpTask;
+                await pumpTask.ConfigureAwait(false);
+            }
+            finally
+            {
+                // Stop prevents new pending nodes. Join cancellation/failed
+                // reservation cleanup even when the pump itself has finished.
+                await CaptureBackpressuredSendDrain().ConfigureAwait(false);
+            }
+        }
     }
 }

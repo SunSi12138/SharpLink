@@ -1,0 +1,397 @@
+name: Cold control production validation
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - feat/cooperative-maintenance-20261022
+  workflow_dispatch:
+
+concurrency:
+  group: cold-control-production-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      # Keep the same bounded test concurrency as the three-platform release gate.
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Start Fast validation timing
+        run: echo "FAST_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Production Project Reference Boundary Guard
+        run: python3 eng/check-project-reference-boundaries.py
+
+      - name: Verify Formatting
+        run: dotnet format whitespace Sharplink.slnx --no-restore --verify-no-changes --verbosity minimal
+
+      - name: Performance matrix shell regression tests
+        run: python3 -m unittest discover -s eng/tests -p 'test_performance_matrix_*.py' -v
+
+      - name: Generated ABI evidence shell regression tests
+        run: python3 -m unittest discover -s eng/tests -p 'test_generated_abi_evidence_batch.py' -v
+
+      - name: Maintainability Debt Gate Tests
+        run: python3 eng/test-verify-maintainability.py
+
+      - name: Maintainability Debt Gate
+        run: bash eng/check-maintainability.sh
+
+      - name: Build Release
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Verify Generated Assemblies Do Not Reference Runtime
+        run: ./eng/verify-generated-assembly-dependencies.sh
+
+      - name: Unit Tests
+        run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Generator Tests
+        run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
+
+      - name: Load Test Tests
+        run: dotnet test --project test/SharpLink.LoadTest.Tests/SharpLink.LoadTest.Tests.csproj -c Release --no-build
+
+      - name: Record Fast validation steps elapsed
+        if: always()
+        shell: bash
+        run: |
+          now=$(date +%s)
+          elapsed=$((now - FAST_STARTED_AT))
+          minutes=$((elapsed / 60))
+          seconds=$((elapsed % 60))
+          {
+            echo "### PR Fast timing"
+            echo
+            printf -- "- Fast validation steps elapsed: %dm %02ds\n" "$minutes" "$seconds"
+            echo "- Scope: first workflow step through the final validation step; runner setup and action post-cleanup are excluded"
+            echo "- Full Fast job target: <= 3m under normal hosted-runner conditions"
+            echo "- Hard timeout: 5m"
+            echo "- Previous PR Quick full active-duration median: 7m 03s (representative fresh-run range: 6m 47s to 7m 06s)"
+            echo "- Compare the completed Actions job timestamps for an exact like-for-like full-duration comparison"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  external-server-tcp-api:
+    name: Server TCP external consumer compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Compile positive and negative API consumer probes
+        run: python3 eng/check-server-tcp-api-contract.py
+
+  allocation-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Deterministic managed-allocation gate
+        uses: ./.github/actions/allocation-gate
+        with:
+          artifact-directory: artifacts/perf/allocation-gate
+          negative-control: 'true'
+
+      - name: Upload allocation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: allocation-gate-${{ github.sha }}
+          path: artifacts/perf/allocation-gate
+          if-no-files-found: error
+          retention-days: 30
+
+  bash32-macos:
+    name: macOS system Bash 3.2 matrix regression
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Confirm system Bash 3.2 compatibility
+        run: |
+          /bin/bash --version
+          /bin/bash -c '[[ ${BASH_VERSINFO[0]} -eq 3 && ${BASH_VERSINFO[1]} -eq 2 ]]'
+          /bin/bash -n eng/run-performance-matrix.sh
+
+      - name: Exercise actual performance shell with no-load dotnet shim
+        env:
+          SHARPLINK_MATRIX_SHELL: /bin/bash
+        run: python3 -m unittest discover -s eng/tests -p 'test_performance_matrix_*.py' -v
+  codec-compatibility:
+    uses: ./.github/workflows/codec-compatibility.yml
+    with:
+      browser_evidence: false
+
+  extended:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Restore
+        run: dotnet restore Sharplink.slnx
+
+      - name: Build Debug
+        run: dotnet build Sharplink.slnx --no-restore -c Debug -v minimal
+
+      - name: Debug Admission Rollback Test
+        run: >-
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
+          -c Debug --no-build
+          --treenode-filter "/*/*/ServerCallAdmissionTests/LifecycleChangeAfterCapacityAcquisitionShouldRollbackBothScopes"
+
+      - name: Build Release prerequisite
+        run: dotnet build Sharplink.slnx --no-restore -c Release -v minimal
+
+      - name: Integration Tests
+        run: >-
+          dotnet run -c Release --no-build
+          --project test/SharpLink.IntegrationTests
+          --
+          --maximum-parallel-tests 1
+          --timeout 120s
+
+      - name: Run NativeAOT Transport and Topology Smoke
+        env:
+          SHARPLINK_AOT_RID: linux-x64
+        run: ./eng/run-shared-memory-aot-process-smoke.sh
+
+      - name: Pack
+        run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify reviewed public and protected API
+        run: bash ./eng/verify-public-api.sh artifacts/nuget
+
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Run NuGet package smoke
+        uses: ./.github/actions/package-smoke
+
+      - name: Demo Oneway
+        run: dotnet run -c Release --no-build --project demo/Oneway
+
+      - name: Load Smoke
+        run: dotnet run -c Release --no-build --project test/SharpLink.LoadTest -- --mode local --transport sharedmemory --operation add --concurrency 1,4 --warmup 2 --duration 5 --metrics-port 0
+
+  extended-summary:
+    needs: [extended, codec-compatibility]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report Extended confidence
+        shell: bash
+        env:
+          EXTENDED_RESULT: ${{ needs.extended.result }}
+          CODEC_RESULT: ${{ needs.codec-compatibility.result }}
+        run: |
+          {
+            echo "### PR Extended confidence"
+            echo
+            echo "- Integration/AOT/package/demo/load: $EXTENDED_RESULT"
+            echo "- Desktop codec compatibility: $CODEC_RESULT"
+            echo "- Browser/WASM codec evidence is owned by Nightly/merge-to-dev."
+            echo "- This tier is advisory by default; PR Fast / fast remains the normal required gate."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$EXTENDED_RESULT" != "success" || "$CODEC_RESULT" != "success" ]]; then
+            exit 1
+          fi
+
+  reader-allocation-oracle:
+    name: Reader allocation oracle (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: X64
+          - runner: ubuntu-24.04-arm
+            architecture: Arm64
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_PROCESSOR_COUNT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Record actual SDK and runtime
+        run: |
+          mkdir -p artifacts/reader-allocation
+          dotnet --info | tee artifacts/reader-allocation/dotnet-info.txt
+      - name: Build exact test and child modules
+        run: dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release -m:1 -nr:false -p:UseSharedCompilation=false
+      - name: Run both consumer oracles and concurrent-unload semantic controls
+        run: |
+          dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
+            --treenode-filter '/*/*/ReadOwnershipPipeReaderLifetimeTests/*' \
+            --progress off --output Detailed \
+            --results-directory artifacts/reader-allocation/lifetime
+      - name: Verify exact lifetime inventory and child architecture
+        run: >-
+          python3 eng/read-ownership-allocation/verify_lifetime.py
+          --results artifacts/reader-allocation/lifetime
+          --architecture '${{ matrix.architecture }}'
+      - name: Require exact 280-byte negative and restored positive
+        run: |
+          python3 eng/read-ownership-allocation/run_counterfactual.py \
+            --repo . --output artifacts/reader-allocation/counterfactual \
+            --build-dotnet dotnet --runtime-dotnet dotnet \
+            --expected-architecture '${{ matrix.architecture }}'
+          git diff --exit-code -- test/SharpLink.UnitTests/Runtime/ReadOwnershipPipeReaderLifetimeTests.cs
+      - name: Upload fresh oracle evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reader-allocation-${{ matrix.architecture }}-${{ github.sha }}
+          path: artifacts/reader-allocation/
+          if-no-files-found: error
+
+  maintenance-prefix-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require review of changed FIFO ownership regions
+        run: python3 eng/test-maintenance-prefix-proof.py
+
+  maintenance-enabled-hot-evidence:
+    name: Enabled TLS maintenance evidence (${{ matrix.runtime }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ['10.0.2', '10.0.13']
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout exact feature source and public prerequisites
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify nested-checkout source reconstruction and failure provenance
+        run: python3 eng/test-maintenance-source-reconstruction.py
+      - name: Install official SDKs containing both selected runtimes
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            10.0.102
+            10.0.113
+      - name: Verify authored sources and construct exact production arms
+        working-directory: eng/maintenance-hot-cost
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('.')
+          manifest=json.loads((root/'authored-files.sha256.json').read_text())
+          assert len(manifest)==21
+          for name,expected in manifest.items():
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
+          PY
+          python3 test_native_evidence.py
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin 37b92f20e20ce8a7b751660d56d636a0ce1660e7 b488fe43aec90962adb2e5a6bcca04153d142092 f4be372ae4b013c767eb7f5eb0e43aad1cdb41fe
+          python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA"
+          test "$(dotnet --version)" = "10.0.102"
+          python3 capture_build_toolchain.py
+          bash build_arms.sh published-prerequisites candidate
+      - name: Verify and build the matched streaming evidence arms
+        working-directory: eng/maintenance-stream-cost
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib,json,pathlib
+          root=pathlib.Path('.')
+          manifest=json.loads((root/'authored-files.json').read_text())
+          assert len(manifest)==19
+          for name,expected in manifest.items():
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
+          PYTHON
+          python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA"
+          test "$(dotnet --version)" = "10.0.102"
+          python3 capture_build_toolchain.py
+          bash build_arms.sh published-prerequisites candidate
+      - name: Isolate the selected installed runtime without changing build SDK
+        shell: bash
+        run: |
+          source_root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          runtime='${{ matrix.runtime }}'
+          target="$RUNNER_TEMP/maintenance-runtime-$runtime"
+          test -f "$source_root/shared/Microsoft.NETCore.App/$runtime/System.Private.CoreLib.dll"
+          test -f "$source_root/host/fxr/$runtime/libhostfxr.so"
+          mkdir -p "$target/host/fxr" "$target/shared/Microsoft.NETCore.App"
+          cp "$source_root/dotnet" "$target/dotnet"
+          cp -a "$source_root/host/fxr/$runtime" "$target/host/fxr/"
+          cp -a "$source_root/shared/Microsoft.NETCore.App/$runtime" "$target/shared/Microsoft.NETCore.App/"
+          echo "MAINTENANCE_RUNTIME_ROOT=$target" >> "$GITHUB_ENV"
+      - name: Capture all four modes with two persistent authenticated TLS sessions
+        working-directory: eng/maintenance-hot-cost
+        run: |
+          export DOTNET_ROOT="$MAINTENANCE_RUNTIME_ROOT"
+          export PATH="$DOTNET_ROOT:$PATH"
+          python3 run_probe.py --run-name runtime-${{ matrix.runtime }} --iterations 5000
+          python3 analyze.py --group runtime-${{ matrix.runtime }}
+          python3 summarize.py --group runtime-${{ matrix.runtime }} --expected-runtime '${{ matrix.runtime }}'
+      - name: Retain all matched TLS small-item streaming samples
+        working-directory: eng/maintenance-stream-cost
+        run: |
+          export DOTNET_ROOT="$MAINTENANCE_RUNTIME_ROOT"
+          export PATH="$DOTNET_ROOT:$PATH"
+          python3 run_stream.py --run-name runtime-${{ matrix.runtime }} --expected-runtime '${{ matrix.runtime }}'
+          python3 summarize_stream.py --group runtime-${{ matrix.runtime }}
+      - name: Upload only fresh source provenance and text/JSON/native evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maintenance-enabled-${{ matrix.runtime }}-${{ github.sha }}
+          path: |
+            eng/maintenance-hot-cost/source-provenance.json
+            eng/maintenance-hot-cost/evidence/build-toolchain.json
+            eng/maintenance-hot-cost/evidence/build-sdk-version.txt
+            eng/maintenance-hot-cost/evidence/runtime-${{ matrix.runtime }}/
+            eng/maintenance-hot-cost/comparison-runtime-${{ matrix.runtime }}/
+            eng/maintenance-stream-cost/source-provenance.json
+            eng/maintenance-stream-cost/evidence/build-toolchain.json
+            eng/maintenance-stream-cost/evidence/build-sdk-version.txt
+            eng/maintenance-stream-cost/evidence/runtime-${{ matrix.runtime }}/
+          if-no-files-found: error
+
+  producer-cost-evidence:
+    uses: ./.github/workflows/producer-hot-evidence.yml

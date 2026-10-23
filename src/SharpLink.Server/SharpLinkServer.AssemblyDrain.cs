@@ -14,6 +14,8 @@ internal sealed partial class SharpLinkServer
         Task<SharpLinkAssemblyUnregisterResult> operation;
         lock (_registryGate)
         {
+            if (MaintenanceConfigured || _serviceModuleRegistry.IsColdWriterHeld)
+                throw new InvalidOperationException("A prepared server catalog owns the cold writer.");
             if (_unregisterOperations.TryGetValue(assembly, out operation!))
                 return WaitForUnregisterAsync(operation, cancellationToken);
             if (!_dynamicModules.TryGetValue(assembly, out var module))
@@ -112,86 +114,100 @@ internal sealed partial class SharpLinkServer
 
     private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
     {
-        ServiceRegistration[] removedServices;
-        RpcGeneratedManifestRegistration codecRegistration;
-        lock (_registryGate)
+        IDisposable? cleanup = null;
+        try
         {
-            if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
-                return;
-            var services = Volatile.Read(ref _services);
-            if (!_detachedModuleServices.Remove(module, out removedServices!))
+            ServiceRegistration[] removedServices;
+            RpcGeneratedManifestRegistration codecRegistration;
+            lock (_registryGate)
             {
-                removedServices = services.Values
-                    .Where(service => ReferenceEquals(service.Module, module))
-                    .ToArray();
+                if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
+                    return;
+                var services = Volatile.Read(ref _services);
+                if (!_detachedModuleServices.Remove(module, out removedServices!))
+                {
+                    removedServices = services.Values
+                        .Where(service => ReferenceEquals(service.Module, module))
+                        .ToArray();
+                }
+                var nextServices = services
+                    .Where(pair => !ReferenceEquals(pair.Value.Module, module))
+                    .ToDictionary(static pair => pair.Key, static pair => pair.Value)
+                    .ToFrozenDictionary();
+                var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
+                codecRegistration = module.CodecRegistration;
+                var removedCodecTypes = codecRegistration.Codecs.Keys.ToArray();
+                var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                for (var index = 0; index < removedCodecTypes.Length; index++)
+                {
+                    var codecType = removedCodecTypes[index];
+                    var replacement = FindReplacementCodec(codecType, module);
+                    if (replacement is null)
+                        nextFactories.Remove(codecType);
+                    else
+                        nextFactories[codecType] = replacement;
+                }
+                _runtimeContext.PublishGeneratedCodecs(nextFactories);
+                Volatile.Write(ref _services, nextServices);
+                cleanup = _serviceModuleRegistry.EnterPreparation();
+                _dynamicModules.Remove(assembly);
+                _registryGeneration++;
+                ScheduleContractManifestPublish();
             }
-            var nextServices = services
-                .Where(pair => !ReferenceEquals(pair.Value.Module, module))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                .ToFrozenDictionary();
-            var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
-            codecRegistration = module.CodecRegistration;
-            var removedCodecTypes = codecRegistration.Codecs.Keys.ToArray();
-            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            for (var index = 0; index < removedCodecTypes.Length; index++)
-            {
-                var codecType = removedCodecTypes[index];
-                var replacement = FindReplacementCodec(codecType, module);
-                if (replacement is null)
-                    nextFactories.Remove(codecType);
-                else
-                    nextFactories[codecType] = replacement;
-            }
-            _runtimeContext.PublishGeneratedCodecs(nextFactories);
-            Volatile.Write(ref _services, nextServices);
-            _dynamicModules.Remove(assembly);
-            _registryGeneration++;
-            ScheduleContractManifestPublish();
-        }
 
-        List<Exception>? failures = null;
-        var connections = _connectionRegistry.SnapshotOwned();
-        foreach (var connection in connections)
-        {
+            List<Exception>? failures = null;
+            var connections = _connectionRegistry.SnapshotOwned();
+            foreach (var connection in connections)
+            {
+                for (var index = 0; index < removedServices.Length; index++)
+                {
+                    try
+                    {
+                        await connection.DisposeServiceAsync(removedServices[index]).ConfigureAwait(false);
+                    }
+                    catch (Exception exception)
+                    {
+                        (failures ??= []).Add(exception);
+                    }
+                }
+            }
             for (var index = 0; index < removedServices.Length; index++)
             {
                 try
                 {
-                    await connection.DisposeServiceAsync(removedServices[index]).ConfigureAwait(false);
+                    await removedServices[index].DisposeAsync().ConfigureAwait(false);
                 }
                 catch (Exception exception)
                 {
                     (failures ??= []).Add(exception);
                 }
             }
-        }
-        for (var index = 0; index < removedServices.Length; index++)
-        {
             try
             {
-                await removedServices[index].DisposeAsync().ConfigureAwait(false);
+                _runtimeContext.ReleaseGeneratedManifest(codecRegistration);
             }
             catch (Exception exception)
             {
                 (failures ??= []).Add(exception);
             }
+            finally
+            {
+                module.MarkReleased();
+            }
+            if (failures is { Count: 1 })
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures is not null)
+                throw new AggregateException(failures);
         }
-        try
+        catch
         {
-            _runtimeContext.ReleaseGeneratedManifest(codecRegistration);
+            if (cleanup is not null)
+            {
+                lock (_registryGate) _serviceModuleRegistry.MarkRetirementFailed();
+            }
+            throw;
         }
-        catch (Exception exception)
-        {
-            (failures ??= []).Add(exception);
-        }
-        finally
-        {
-            module.MarkReleased();
-        }
-        if (failures is { Count: 1 })
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
-        if (failures is not null)
-            throw new AggregateException(failures);
+        finally { cleanup?.Dispose(); }
     }
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(
@@ -225,13 +241,23 @@ internal sealed partial class SharpLinkServer
 
     private async Task ReleaseDrainedDynamicModulesAsync()
     {
+        // Stop has already changed lifecycle state under Gate, so no new prepared release can
+        // start. Join an existing physical disposal owner before touching the same resources.
+        PreparedImplementationReplacement? prepared;
+        lock (_registryGate)
+            prepared = _serviceModuleRegistry.ColdWriter as PreparedImplementationReplacement;
+        List<Exception>? failures = null;
+        if (prepared is not null)
+        {
+            try { await prepared.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
         KeyValuePair<Assembly, SharpLinkDynamicModule>[] modules;
         lock (_registryGate)
             modules = [.. _dynamicModules];
 
         var manifests = modules.Select(static pair => pair.Value.Manifest).ToArray();
         var order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
-        List<Exception>? failures = null;
         for (var index = 0; index < order.Length; index++)
         {
             var pair = modules[order[index]];

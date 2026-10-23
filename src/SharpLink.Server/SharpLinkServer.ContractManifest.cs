@@ -35,10 +35,13 @@ internal sealed partial class SharpLinkServer
         // Before Running there are no published callable sessions; their initial handshake reads
         // the current registry snapshot. Once draining starts, registry cleanup must not enqueue
         // fresh framework work or perturb shutdown failure aggregation.
-        if (CurrentState != ServerState.Running)
-            return;
-        if (Interlocked.Exchange(ref _contractManifestPublishScheduled, 1) != 0)
-            return;
+        lock (_registryGate)
+        {
+            if (CurrentState != ServerState.Running || IsMaintenancePublicationClosed)
+                return;
+            if (Interlocked.Exchange(ref _contractManifestPublishScheduled, 1) != 0)
+                return;
+        }
         TrackFrameworkTask(PublishContractManifestUpdatesAsync(), "ContractManifestPublish");
     }
 
@@ -52,21 +55,30 @@ internal sealed partial class SharpLinkServer
             {
                 if (ContractManifestPublishBarrierForTesting is { } barrier)
                     await barrier().ConfigureAwait(false);
-                var snapshot = CreateContractManifestSnapshot();
-                publishedGeneration = snapshot.Generation;
-                foreach (var connection in _connectionRegistry.SnapshotActive())
+                lock (_registryGate)
                 {
-                    if (connection.LifecycleState != ServerConnectionLifecycleState.Ready ||
-                        (connection.Session.NegotiatedCapabilities & ProtocolV2Capabilities.ContractManifest) == 0)
+                    // A prepared writer owns all manifest publication until completion. Holding
+                    // the same gate through enqueue prevents a pre-lease snapshot escaping later.
+                    if (IsMaintenancePublicationClosed)
+                        return;
+                    var snapshot = CreateContractManifestSnapshotLocked();
+                    publishedGeneration = snapshot.Generation;
+                    foreach (var connection in _connectionRegistry.SnapshotActive())
                     {
-                        continue;
-                    }
-                    try
-                    {
-                        connection.Session.SendContractManifest(snapshot);
-                    }
-                    catch (Exception exception) when (IsExpectedSessionShutdownException(exception))
-                    {
+                        if (IsMaintenancePublicationClosed)
+                            return;
+                        if (connection.LifecycleState != ServerConnectionLifecycleState.Ready ||
+                            (connection.Session.NegotiatedCapabilities & ProtocolV2Capabilities.ContractManifest) == 0)
+                        {
+                            continue;
+                        }
+                        try
+                        {
+                            connection.Session.SendContractManifest(snapshot);
+                        }
+                        catch (Exception exception) when (IsExpectedSessionShutdownException(exception))
+                        {
+                        }
                     }
                 }
 

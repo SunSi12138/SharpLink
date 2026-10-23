@@ -1,0 +1,7 @@
+/arms/
+/evidence/
+/comparison-*/
+/source-provenance.json
+/__pycache__/
+**/bin/
+**/obj/

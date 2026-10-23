@@ -140,6 +140,9 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
+            await EnrollMaintenanceConnectionAsync(connection, authResult.Context, handshakeCts.Token)
+                .ConfigureAwait(false);
+
             if (CurrentState != ServerState.Running)
             {
                 connection.MarkDraining();
@@ -154,6 +157,7 @@ internal sealed partial class SharpLinkServer
                 // published as a later manifest generation). The request loop is still stopped.
                 lock (_registryGate)
                 {
+                    EnsureMaintenanceReadyPublicationAllowed();
                     if (CurrentState != ServerState.Running)
                     {
                         connection.MarkDraining();
@@ -166,9 +170,14 @@ internal sealed partial class SharpLinkServer
 
                 await session.FlushSendQueueAsync(ct).ConfigureAwait(false);
             }
-            else if (!connection.MarkReady(authResult.Context))
+            else
             {
-                return;
+                lock (_registryGate)
+                {
+                    EnsureMaintenanceReadyPublicationAllowed();
+                    if (!connection.MarkReady(authResult.Context))
+                        return;
+                }
             }
 
             // The handshake (TLS + Protocol v2 + authentication) is complete: release the
@@ -244,14 +253,17 @@ internal sealed partial class SharpLinkServer
         var id = connection.Session.Id;
         while (true)
         {
-            if (_connectionRegistry.TryAdd(id, connection))
-                return;
-
-            if (!_connectionRegistry.TryGetValue(id, out var previous))
-                continue;
-            if (!_connectionRegistry.TryUpdate(id, connection, previous))
-                continue;
-
+            ServerConnectionState previous;
+            lock (_registryGate)
+            {
+                EnsureMaintenanceReadyPublicationAllowed();
+                if (_connectionRegistry.TryAdd(id, connection))
+                    return;
+                if (!_connectionRegistry.TryGetValue(id, out previous!))
+                    continue;
+                if (!_connectionRegistry.TryUpdate(id, connection, previous))
+                    continue;
+            }
             await RetireConnectionAsync(previous).ConfigureAwait(false);
             return;
         }
@@ -326,6 +338,13 @@ internal sealed partial class SharpLinkServer
         try
         {
             await connection.ServiceCleanupTask.ConfigureAwait(false);
+        }
+        catch
+        {
+            // Publish the cold failure before removing its retired physical owner. A later
+            // cohort must not mistake completed-but-failed cleanup for successful reclamation.
+            lock (_registryGate) _serviceModuleRegistry.MarkRetirementFailed();
+            throw;
         }
         finally
         {

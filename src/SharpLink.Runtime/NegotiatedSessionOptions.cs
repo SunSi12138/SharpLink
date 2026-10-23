@@ -37,6 +37,7 @@ internal enum RpcSessionProtocolPhase : byte
     Handshaking,
     Ready,
     Draining,
+    MaintenancePaused,
     Stopping,
     Terminal
 }
@@ -50,7 +51,8 @@ internal static class RpcSessionProtocolRules
         ProtocolV2Capabilities.HealthCheck |
         ProtocolV2Capabilities.CancellationReason |
         ProtocolV2Capabilities.ContractManifest |
-        ProtocolV2Capabilities.SessionRefresh;
+        ProtocolV2Capabilities.SessionRefresh |
+        ProtocolV2Capabilities.CooperativeMaintenance;
 
     internal static bool IsFrameAllowed(
         RpcSessionProtocolPhase phase,
@@ -75,7 +77,23 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.ContractManifest or
                     ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-                    ProtocolV2FrameType.SessionRefreshRequested,
+                    ProtocolV2FrameType.SessionRefreshRequested or
+                    ProtocolV2FrameType.CooperativeMaintenance,
+            RpcSessionProtocolPhase.MaintenancePaused =>
+                frameType is ProtocolV2FrameType.Ping or
+                    ProtocolV2FrameType.Pong or
+                    ProtocolV2FrameType.Response or
+                    ProtocolV2FrameType.Cancel or
+                    ProtocolV2FrameType.StreamData or
+                    ProtocolV2FrameType.StreamComplete or
+                    ProtocolV2FrameType.WindowUpdate or
+                    ProtocolV2FrameType.GoAway or
+                    ProtocolV2FrameType.HealthResponse or
+                    ProtocolV2FrameType.ContractManifest or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
+                    ProtocolV2FrameType.ResponseCompressionPreferenceAck or
+                    ProtocolV2FrameType.SessionRefreshRequested or
+                    ProtocolV2FrameType.CooperativeMaintenance,
             RpcSessionProtocolPhase.Draining =>
                 frameType is ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or

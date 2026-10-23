@@ -1,6 +1,8 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
 
@@ -419,7 +421,12 @@ public class ReadOwnershipPipeReaderLifetimeTests
     }
 
     [Test]
-    public void SuccessfulSuspensionsShouldNotAllocateAfterWarmup()
+    [Timeout(90_000)]
+    public Task SuccessfulSuspensionsShouldNotAllocateAfterWarmup(CancellationToken cancellationToken)
+        => ReadOwnershipAllocationProbe.RunAsync(nameof(SuccessfulSuspensionsShouldNotAllocateAfterWarmup),
+            cancellationToken);
+
+    private static void MeasureSuccessfulSuspensions()
     {
         // A single reader, warm same-thread cache, and one outstanding box. This exact zero is
         // a controlled allocation regression, not a promise for bursts or cross-thread reads.
@@ -460,7 +467,12 @@ public class ReadOwnershipPipeReaderLifetimeTests
     }
 
     [Test]
-    public void RegisteredConsumerSuspensionsShouldNotAllocateAfterWarmup()
+    [Timeout(90_000)]
+    public Task RegisteredConsumerSuspensionsShouldNotAllocateAfterWarmup(CancellationToken cancellationToken)
+        => ReadOwnershipAllocationProbe.RunAsync(nameof(RegisteredConsumerSuspensionsShouldNotAllocateAfterWarmup),
+            cancellationToken);
+
+    private static void MeasureRegisteredConsumerSuspensions()
     {
         // Only this warm single-thread fixture with a cached callback is required to allocate
         // zero. Late queued registration and multiple simultaneously rented boxes may allocate.
@@ -490,6 +502,100 @@ public class ReadOwnershipPipeReaderLifetimeTests
             current.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(continuation);
             fake.Publish();
         }
+    }
+
+    [Test]
+    [Timeout(90_000)]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task SuccessfulSuspensionsShouldPreserveOwnershipDuringConcurrentAssemblyUnloads(
+        bool registeredConsumer, CancellationToken cancellationToken)
+    {
+        // Assembly unload flushes the runtime-wide cast cache. Keep real concurrent unload
+        // coverage in this process, but do not attribute those runtime allocations to a reader.
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var rounds = 0;
+        var unloads = 0;
+        var reads = LongRunningTestWorker.Run(() =>
+        {
+            var fake = new AllocationFreePipeReader();
+            var reader = new ReadOwnershipPipeReader(fake);
+            ValueTask<ReadResult> current = default;
+            var consumed = 0;
+            Action consume = () =>
+            {
+                var result = current.GetAwaiter().GetResult();
+                Ensure(result.Buffer.IsEmpty, "a completed read must preserve its empty result");
+                reader.AdvanceTo(result.Buffer.End);
+                consumed++;
+            };
+            while (!stop.IsCancellationRequested || Volatile.Read(ref rounds) < 11_000)
+            {
+                current = reader.ReadAsync();
+                Ensure(!current.IsCompleted, "each read must suspend before publication");
+                if (registeredConsumer)
+                    current.ConfigureAwait(false).GetAwaiter().UnsafeOnCompleted(consume);
+                fake.Publish();
+                if (!registeredConsumer)
+                    consume();
+                Ensure(consumed == Volatile.Read(ref rounds) + 1,
+                    "every publication must be consumed and released exactly once");
+                Interlocked.Increment(ref rounds);
+            }
+        });
+        var unloading = LongRunningTestWorker.Run(() =>
+        {
+            WaitForProgress(0);
+            for (var i = 0; i < 8; i++)
+            {
+                stop.Token.ThrowIfCancellationRequested();
+                var before = Volatile.Read(ref rounds);
+                var type = CreateCollectibleType();
+                Collect();
+                Ensure(!type.IsAlive, "the unrelated collectible assembly must actually unload");
+                WaitForProgress(before);
+                Interlocked.Increment(ref unloads);
+            }
+        });
+        try
+        {
+            await unloading.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            stop.Cancel();
+            try
+            {
+                await LongRunningTestWorker.JoinAsync(unloading, Timeout).ConfigureAwait(false);
+            }
+            finally
+            {
+                await reads.WaitAsync(Timeout).ConfigureAwait(false);
+            }
+        }
+        Ensure(unloads == 8 && rounds >= 11_000,
+            "both reader modes must complete at least 11,000 reads across all eight assembly unloads");
+
+        void WaitForProgress(int before)
+        {
+            Ensure(SpinWait.SpinUntil(() => stop.IsCancellationRequested || reads.IsCompleted ||
+                Volatile.Read(ref rounds) > before, Timeout),
+                "reader ownership must keep progressing across assembly unload");
+            stop.Token.ThrowIfCancellationRequested();
+            if (reads.IsCompleted)
+                reads.GetAwaiter().GetResult();
+            Ensure(Volatile.Read(ref rounds) > before, "the reader stopped before the unload worker");
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static WeakReference CreateCollectibleType()
+    {
+        var assembly = AssemblyBuilder.DefineDynamicAssembly(
+            new AssemblyName("ReadOwnershipUnrelatedUnload"), AssemblyBuilderAccess.RunAndCollect);
+        var module = assembly.DefineDynamicModule("probe");
+        var type = module.DefineType("UnrelatedType", TypeAttributes.Public).CreateType()!;
+        return new WeakReference(type);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

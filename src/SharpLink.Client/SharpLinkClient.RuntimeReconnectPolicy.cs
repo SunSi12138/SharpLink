@@ -120,7 +120,7 @@ internal sealed partial class SharpLinkClient
     private void EnsureReconnectPolicyPublicationAllowed()
     {
         var state = State;
-        if (Volatile.Read(ref _stopStarted) != 0 ||
+        if (MaintenanceOptions is not null || Volatile.Read(ref _stopStarted) != 0 ||
             state is SharpLinkConnectionState.Draining or SharpLinkConnectionState.Stopped or SharpLinkConnectionState.Faulted)
         {
             throw new InvalidOperationException(

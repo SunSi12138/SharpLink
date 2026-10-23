@@ -244,7 +244,6 @@ public class PendingRequestTableConcurrentDeadlineArmRaceTests
     private sealed class NoopOwner : IPendingCallOwner
     {
         internal static NoopOwner Instance { get; } = new();
-        public void OnPendingCallRegistered() { }
         public void OnPendingCallCompleted(in PendingCallCompletion completion) { }
         public void OnProducerCancellationCallbackFailed(Exception exception) { }
     }

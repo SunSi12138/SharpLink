@@ -394,11 +394,6 @@ internal sealed partial class SharpLinkServer
                         SharpLinkServer.LogForcedCallsRemaining(_server._logger, unfinishedCalls);
                         SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
                     }
-
-                    // Pending admission is not a user-call metric, but it retains the service graph
-                    // until the provisional local/global ownership transfer is fully resolved.
-                    _deferredServiceCleanupTask ??=
-                        DisposeServicesWhenDrainedAsync(_callsDrained.Task);
                 }
 
                 CancelForShutdown(_forceStopCts, "CallCancellation");
@@ -411,6 +406,13 @@ internal sealed partial class SharpLinkServer
                     closeSessionsTask,
                     WaitForAcceptRuntimeShutdownAsync(),
                     frameworkTasksTask);
+                if (!callsDrained)
+                {
+                    // Public Stop remains bounded; retained services wait for both ordinary
+                    // calls and the existing shutdown owners, including cancellation tails.
+                    _deferredServiceCleanupTask ??=
+                        DisposeServicesWhenDrainedAsync(_callsDrained.Task, frameworkCleanupTask);
+                }
 
                 var frameworkCleanupCompleted = false;
                 try
@@ -443,7 +445,7 @@ internal sealed partial class SharpLinkServer
 
                 if (callsDrained)
                 {
-                    var serviceCleanupTask = DisposeRegisteredServicesAsync();
+                    var serviceCleanupTask = DisposeRegisteredServicesAsync(frameworkCleanupTask);
                     try
                     {
                         if (!await WaitUntilWithRuntimeTimeAsync(
@@ -507,9 +509,6 @@ internal sealed partial class SharpLinkServer
                     SharpLinkServer.LogForcedCallsRemaining(_server._logger, unfinishedCalls);
                     SharpLinkTelemetry.RecordForcedStopCalls(unfinishedCalls);
                 }
-
-                _deferredServiceCleanupTask ??=
-                    DisposeServicesWhenDrainedAsync(_callsDrained.Task);
             }
 
             var frameworkCleanupTask = Task.WhenAll(
@@ -517,6 +516,11 @@ internal sealed partial class SharpLinkServer
                 DisposeAllSessionsAsync(),
                 WaitForAcceptRuntimeShutdownAsync(),
                 _server._frameworkTasks.DrainAsync());
+            if (!callsDrained)
+            {
+                _deferredServiceCleanupTask ??=
+                    DisposeServicesWhenDrainedAsync(_callsDrained.Task, frameworkCleanupTask);
+            }
             var frameworkCleanupCompleted = false;
             try
             {
@@ -545,7 +549,7 @@ internal sealed partial class SharpLinkServer
 
             if (callsDrained)
             {
-                var serviceCleanupTask = DisposeRegisteredServicesAsync();
+                var serviceCleanupTask = DisposeRegisteredServicesAsync(frameworkCleanupTask);
                 try
                 {
                     if (!await WaitUntilWithRuntimeTimeAsync(

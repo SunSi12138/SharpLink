@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/SendCreditTerminalAccountingTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/SendCreditTerminalAccountingTests/*"
 FOCUSED_COUNT = 1
-FULL_COUNT = 2123  # Includes the two Builder configuration audit cases from #843.
+FULL_COUNT = 2412  # Exact inventory includes 18 absolute Stop-budget controls; historical focused/negative counts unchanged.
 
 
 def digest(path):

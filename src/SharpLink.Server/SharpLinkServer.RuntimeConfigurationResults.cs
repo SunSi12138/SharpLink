@@ -10,7 +10,7 @@ internal sealed partial class SharpLinkServer
         {
             Volatile.Read(ref _replacementStateGateEnteredForTesting)?.Invoke();
             var state = CurrentState;
-            if (_lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
+            if (MaintenanceConfigured || _lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
                 return LifecycleClosed($"Server state '{state}' does not accept runtime interceptor replacement.");
 
             Volatile.Write(ref _serverInterceptorGeneration, candidate);
@@ -24,7 +24,7 @@ internal sealed partial class SharpLinkServer
         lock (_stateGate)
         {
             var state = CurrentState;
-            if (_lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
+            if (MaintenanceConfigured || _lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
                 return LifecycleClosed($"Server state '{state}' does not accept response compression policy updates.");
             _responseCompressionPolicy.Update(policy);
             return SharpLinkRuntimeConfigurationUpdateResult.Success();
@@ -42,7 +42,7 @@ internal sealed partial class SharpLinkServer
         lock (_stateGate)
         {
             var state = CurrentState;
-            if (_lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
+            if (MaintenanceConfigured || _lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
                 return LifecycleClosed("Call-capacity publication is sealed because the server is stopping.");
 
             _callAdmission.UpdateLimits(candidate);
@@ -75,34 +75,34 @@ internal sealed partial class SharpLinkServer
         Action<SharpLinkAdmissionControlOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
-        var candidate = CreateAdmissionProgram(configure);
-        Volatile.Read(ref s_afterAdmissionCandidateBuiltForTests)?.Invoke(this, candidate);
-
-        lock (_registryGate)
+        using var preparation = TryEnterColdPreparation();
+        if (preparation is null)
+            return LifecycleClosed("Maintenance or shutdown has sealed admission preparation.");
+        AdmissionProgram? candidate = null;
+        try
         {
-            var state = CurrentState;
-            if (IsRuntimeConfigurationPublicationClosed(state))
+            candidate = CreateAdmissionProgram(configure);
+            Volatile.Read(ref s_afterAdmissionCandidateBuiltForTests)?.Invoke(this, candidate);
+            lock (_registryGate)
             {
-                candidate.Retire();
-                return LifecycleClosed("Admission publication is sealed because the server is stopping.");
-            }
-
-            if (ReadAdmissionPublication().IsEnabled)
-            {
-                candidate.Retire();
-                return PublicationConflict("Admission control is already enabled.");
-            }
-
-            try
-            {
+                if (IsRuntimeConfigurationPublicationClosed(CurrentState))
+                {
+                    candidate.Retire();
+                    return LifecycleClosed("Admission publication is sealed because the server is stopping.");
+                }
+                if (ReadAdmissionPublication().IsEnabled)
+                {
+                    candidate.Retire();
+                    return PublicationConflict("Admission control is already enabled.");
+                }
                 PublishAdmissionProgram(candidate, AdmissionPublicationIntent.Enable);
                 return SharpLinkRuntimeConfigurationUpdateResult.Success();
             }
-            catch
-            {
-                candidate.Retire();
-                throw;
-            }
+        }
+        catch
+        {
+            candidate?.Retire();
+            throw;
         }
     }
 
@@ -110,6 +110,9 @@ internal sealed partial class SharpLinkServer
         Action<SharpLinkAdmissionControlOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
+        using var preparation = TryEnterColdPreparation();
+        if (preparation is null)
+            return LifecycleClosed("Maintenance or shutdown has sealed admission preparation.");
         AdmissionProgram source;
 
         lock (_registryGate)
@@ -213,8 +216,8 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private static bool IsRuntimeConfigurationPublicationClosed(ServerState state)
-        => state is ServerState.Draining or ServerState.Stopped or ServerState.Faulted;
+    private bool IsRuntimeConfigurationPublicationClosed(ServerState state)
+        => MaintenanceConfigured || state is ServerState.Draining or ServerState.Stopped or ServerState.Faulted;
 
     private static SharpLinkRuntimeConfigurationUpdateResult LifecycleClosed(string message)
         => SharpLinkRuntimeConfigurationUpdateResult.Failure(

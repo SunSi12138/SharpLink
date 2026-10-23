@@ -262,10 +262,6 @@ public class PendingRequestTableDeadlineFinalArmRaceTests
     {
         internal static readonly NoopOwner Instance = new();
 
-        public void OnPendingCallRegistered()
-        {
-        }
-
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
         }

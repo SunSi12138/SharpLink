@@ -8,16 +8,55 @@ namespace SharpLink.Server;
 /// Owns the server service snapshot and dynamic-module bookkeeping that must move together under
 /// one registry synchronization boundary.
 /// </summary>
-internal sealed class ServerServiceModuleRegistry
+internal sealed partial class ServerServiceModuleRegistry
 {
     private readonly Lock _gate = new();
     private FrozenDictionary<long, ServiceRegistration> _services;
-    private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
+    private Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<SharpLinkDynamicModule, ServiceRegistration[]> _detachedModuleServices = [];
     private long _generation;
+    private object? _coldWriter;
+    private static readonly object FailedClosedWriter = new();
+
+    // Cold paths access this only while holding Gate. Ordinary dispatch never participates.
+    internal bool IsColdWriterHeld => _coldWriter is not null;
+    internal object? ColdWriter => _coldWriter;
+
+    internal void AcquireColdWriter(object writer)
+    {
+        if (_coldWriter is not null || _preparationWriters != 0 || _retirementFailed || _unregisterOperations.Count != 0 ||
+            _dynamicModules.Values.Any(static module => module.State != SharpLinkDynamicModuleState.Running))
+            throw new InvalidOperationException("The server catalog has an active writer or retiring module.");
+        _coldWriter = writer;
+    }
+
+    internal void ValidateColdWriter(object writer)
+    {
+        if (!ReferenceEquals(_coldWriter, writer))
+            throw new InvalidOperationException("The prepared server catalog no longer owns its cold writer.");
+    }
+
+    internal void ReleaseColdWriter(object writer)
+    {
+        ValidateColdWriter(writer);
+        _coldWriter = null;
+    }
+
+    internal void RetainFailedClosedWriter(object writer)
+    {
+        ValidateColdWriter(writer);
+        _coldWriter = FailedClosedWriter;
+    }
+
+    internal Dictionary<Assembly, SharpLinkDynamicModule> CaptureModules()
+        => new(_dynamicModules, ReferenceEqualityComparer.Instance);
+
+    internal void CommitPreparedModules(Dictionary<Assembly, SharpLinkDynamicModule> modules)
+        => _dynamicModules = modules;
+
 
     internal ServerServiceModuleRegistry(FrozenDictionary<long, ServiceRegistration> services)
     {
