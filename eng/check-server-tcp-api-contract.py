@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""External consumer compilation gate for 3.0's Server-only typed IPAddress TCP API.
+"""External consumer compilation gate for 3.0's TCP, Builder and logger APIs.
 
 This compiles a fresh project *outside* the repository against the real production
 projects. The negative compilations must fail for the removed Server overloads;
 the positive compilation must continue to accept Server IPAddress, Client string
-IP and standalone RuntimeContext. No runtime socket or benchmark workload runs.
+IP and standalone RuntimeContext. Both builders must remain publicly constructible
+and fluent, while external subclasses must fail specifically with CS0509.
+Explicit logger configuration and Hosting registration remain public, while each
+Host-only logger fallback must be inaccessible to the external consumer.
+No runtime socket or benchmark workload runs.
 """
 
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -16,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT = ROOT / "src/SharpLink.Client/SharpLink.Client.csproj"
 SERVER = ROOT / "src/SharpLink.Server/SharpLink.Server.csproj"
 RUNTIME = ROOT / "src/SharpLink.Runtime/SharpLink.Runtime.csproj"
+HOSTING = ROOT / "src/SharpLink.Hosting/SharpLink.Hosting.csproj"
 SERVER_SOURCE = ROOT / "src/SharpLink.Server/TransportExtensions.cs"
 CLIENT_SOURCE = ROOT / "src/SharpLink.Client/TransportExtensions.cs"
 SERVER_BASELINE = ROOT / "eng/public-api/3.0.0/SharpLink.Server.api.txt"
@@ -23,7 +29,10 @@ SERVER_BASELINE = ROOT / "eng/public-api/3.0.0/SharpLink.Server.api.txt"
 PREFIX = """
 using System.Net;
 using System.Net.Security;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpLink.Client;
+using SharpLink.Hosting;
 using SharpLink.Runtime;
 using SharpLink.Server;
 public static class ConsumerProbe
@@ -44,8 +53,18 @@ POSITIVE = """
         _ = SharpClientBuilder.Create().UseTcp("127.0.0.1", 19090);
         _ = SharpClientBuilder.Create().UseTcp(
             "127.0.0.1", 19090, new SslClientAuthenticationOptions());
+        _ = new SharpClientBuilder().UseRequestTimeout().UseTcp("127.0.0.1", 19090);
+        _ = new SharpLinkServerBuilder().UseTcp(0, IPAddress.Loopback);
+        _ = (ISharpLinkServerBuilder)SharpLinkServerBuilder.Create();
         using var runtime = new SharpLinkRuntimeContextBuilder().Build();
         _ = runtime.Codecs.GetCodec<int>();
+        _ = SharpClientBuilder.Create().UseLoggerFactory(NullLoggerFactory.Instance);
+        _ = SharpLinkServerBuilder.Create().UseLoggerFactory(NullLoggerFactory.Instance);
+        _ = SharpLinkMultiClusterClientBuilder.Create().UseLoggerFactory(NullLoggerFactory.Instance);
+        var services = new ServiceCollection();
+        _ = services.AddSharpLinkClient(builder => builder.UseLoggerFactory(NullLoggerFactory.Instance));
+        _ = services.AddSharpLinkServer(builder => builder.UseLoggerFactory(NullLoggerFactory.Instance));
+        _ = services.AddSharpLinkMultiClusterClient(builder => builder.UseLoggerFactory(NullLoggerFactory.Instance));
 """
 NEGATIVE_PLAIN = '        _ = SharpLinkServerBuilder.Create().UseTcp(0, "127.0.0.1");'
 NEGATIVE_TLS = """
@@ -141,17 +160,58 @@ def verify_no_legacy_server_calls_in_checkout() -> None:
                     )
 
 
-def compile_project(code: str, path: Path) -> subprocess.CompletedProcess[str]:
-    (path / "Probe.cs").write_text(PREFIX + code + SUFFIX, encoding="utf-8")
+def compile_project(code: str, path: Path, *, declarations: str = "") -> subprocess.CompletedProcess[str]:
+    (path / "Probe.cs").write_text(PREFIX + code + SUFFIX + declarations, encoding="utf-8")
     return run("dotnet", "build", str(path / "Consumer.csproj"),
                "-c", "Release", "--no-restore", "--verbosity", "minimal", cwd=path)
+
+
+def verify_sealed_builders(folder: Path) -> None:
+    for builder in ("SharpClientBuilder", "SharpLinkServerBuilder"):
+        rejected = compile_project(
+            "", folder, declarations=f"\npublic class ExternalSubclass : {builder} {{ }}\n"
+        )
+        details = rejected.stdout + rejected.stderr
+        errors = re.findall(r"(?m)^.*\berror\s+[A-Z]+\d+.*$", details)
+        if rejected.returncode == 0 or not errors or any(
+            not re.search(r"Probe\.cs\(\d+,\d+\): error CS0509:", error)
+            or "ExternalSubclass" not in error
+            or builder not in error
+            for error in errors
+        ):
+            raise RuntimeError(
+                f"Expected external inheritance of {builder} to fail only with CS0509:\n"
+                + details
+            )
+        print(f"PASS: external {builder} inheritance rejected with CS0509")
+
+
+def verify_host_only_logger_fallbacks(folder: Path) -> None:
+    for builder in ("SharpClientBuilder", "SharpLinkServerBuilder", "SharpLinkMultiClusterClientBuilder"):
+        rejected = compile_project(
+            f"        {builder}.Create().UseLoggerFactoryIfUnset(NullLoggerFactory.Instance);", folder
+        )
+        details = rejected.stdout + rejected.stderr
+        errors = re.findall(r"(?m)^.*\berror\s+[A-Z]+\d+.*$", details)
+        if rejected.returncode == 0 or not errors or any(
+            not re.search(r"Probe\.cs\(\d+,\d+\): error CS(?:1061|0122):", error)
+            or "UseLoggerFactoryIfUnset" not in error
+            or builder not in error
+            for error in errors
+        ):
+            raise RuntimeError(
+                f"Expected external {builder} logger fallback access to fail only with CS1061/CS0122:\n"
+                + details
+            )
+        print(f"PASS: external {builder}.UseLoggerFactoryIfUnset access rejected")
 
 
 def main() -> None:
     verify_static_contract()
     verify_no_legacy_server_calls_in_checkout()
     with tempfile.TemporaryDirectory(prefix="sharplink-external-tcp-") as location:
-        folder = Path(location)
+        folder = Path(location).resolve()
+        (folder / "global.json").write_bytes((ROOT / "global.json").read_bytes())
         (folder / "Consumer.csproj").write_text(
             '<Project Sdk="Microsoft.NET.Sdk">\n'
             '  <PropertyGroup>\n'
@@ -163,6 +223,7 @@ def main() -> None:
             f'    <ProjectReference Include="{CLIENT}" />\n'
             f'    <ProjectReference Include="{SERVER}" />\n'
             f'    <ProjectReference Include="{RUNTIME}" />\n'
+            f'    <ProjectReference Include="{HOSTING}" />\n'
             '  </ItemGroup>\n'
             '</Project>\n',
             encoding="utf-8",
@@ -177,6 +238,7 @@ def main() -> None:
             raise RuntimeError("Typed Server, Client and standalone Context API compile failed:\n"
                                + passed.stdout + passed.stderr)
         print("PASS: positive Server typed TLS/plain, Client string IP, standalone Context")
+        print("PASS: public Client/Server/MultiCluster logger configuration and Hosting registration")
 
         for name, source in (("plain", NEGATIVE_PLAIN), ("tls", NEGATIVE_TLS)):
             rejected = compile_project(source, folder)
@@ -189,7 +251,9 @@ def main() -> None:
                     + details
                 )
             print(f"PASS: Server {name} string IP rejected by C# compiler")
-    print("PASS: 3.0 Server TCP external-API contract")
+        verify_sealed_builders(folder)
+        verify_host_only_logger_fallbacks(folder)
+    print("PASS: 3.0 TCP, Builder and logger external-API contracts")
 
 
 if __name__ == "__main__":

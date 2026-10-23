@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "published_version": "2.0.3",
+  "candidate_version": "3.0.0",
+  "candidate_source_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+  "generator": "eng/SharpLink.PublicApi (PublicApiGenerator)",
+  "generator_sha256": "e182beec449f4128daf9b8260a8b492e5c106572c0b9891e148e6a4cb4b044f6",
+  "packages": {
+    "candidate": [
+      {
+        "id": "SharpLink.Abstractions",
+        "version": "3.0.0",
+        "source": "artifacts/candidate-nuget/SharpLink.Abstractions.3.0.0.nupkg",
+        "package_sha256": "d7a167b5471bca79da9c2ac28a3e59940dce9935131b62de472e7debb4a6d7ce",
+        "repository_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+        "assembly_path": "lib/net10.0/SharpLink.Abstractions.dll",
+        "assembly_sha256": "b51370b9a65304cd88979966cfcaa9f4ebf2162be499ecc31037c08e0f1089f2",
+        "assembly_identity": {
+          "Name": "SharpLink.Abstractions",
+          "Version": "3.0.0.0",
+          "FullName": "SharpLink.Abstractions, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "8f4896b2-404f-4135-a8d5-30b946bdee00",
+          "InformationalVersion": "3.0.0+7bb8fecbea60f179cda17ff796a04d11b9c0ca83"
+        },
+        "inventory_sha256": {
+          "api.txt": "36b44d77ce5e14870af8897e1b4f0f2ea8a14669409a78d07286df11a65ce44e",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Runtime",
+        "version": "3.0.0",
+        "source": "artifacts/candidate-nuget/SharpLink.Runtime.3.0.0.nupkg",
+        "package_sha256": "2a69f8f0fdb8ad05e9d44fe27b416aba795b17dd4d4269628b9d981333abbd63",
+        "repository_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+        "assembly_path": "lib/net10.0/SharpLink.Runtime.dll",
+        "assembly_sha256": "08ec1309d90d63714114e5d06a4788daf5daf107ed2a48d8909fd15f93493f3b",
+        "assembly_identity": {
+          "Name": "SharpLink.Runtime",
+          "Version": "3.0.0.0",
+          "FullName": "SharpLink.Runtime, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "b77d8c3c-3bcc-40ed-953d-efb64416431c",
+          "InformationalVersion": "3.0.0+7bb8fecbea60f179cda17ff796a04d11b9c0ca83"
+        },
+        "inventory_sha256": {
+          "api.txt": "40303d24112573abb0276d7096481dcbc617401f1f40ad27169e40271535f39c",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Client",
+        "version": "3.0.0",
+        "source": "artifacts/candidate-nuget/SharpLink.Client.3.0.0.nupkg",
+        "package_sha256": "dd5d699866f8cb8fcf3748fabcf0f0028186571655a68ac373a749bf7450f5f2",
+        "repository_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+        "assembly_path": "lib/net10.0/SharpLink.Client.dll",
+        "assembly_sha256": "575ddf513a7e0f11986c625c1a533268f6433d64b02e5d0ce8f420759cc1125b",
+        "assembly_identity": {
+          "Name": "SharpLink.Client",
+          "Version": "3.0.0.0",
+          "FullName": "SharpLink.Client, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "d5a2417b-d935-4d98-ab95-a0f18851c9b8",
+          "InformationalVersion": "3.0.0+7bb8fecbea60f179cda17ff796a04d11b9c0ca83"
+        },
+        "inventory_sha256": {
+          "api.txt": "87f3aed77f9fc53fe644f12cc93979d0cb3454a7f01fbc4d4e31f89dafb0a7c5",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Server",
+        "version": "3.0.0",
+        "source": "artifacts/candidate-nuget/SharpLink.Server.3.0.0.nupkg",
+        "package_sha256": "fc9e9f17d102403a6128a032828fa4945fd68a8d850e4d4addc28cf323eb8210",
+        "repository_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+        "assembly_path": "lib/net10.0/SharpLink.Server.dll",
+        "assembly_sha256": "99f88e53a74edc3a4e88127302ace4a7164c8dca34504f7f4aa6da001b0109ff",
+        "assembly_identity": {
+          "Name": "SharpLink.Server",
+          "Version": "3.0.0.0",
+          "FullName": "SharpLink.Server, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "74487c1e-6a69-466d-9598-0bf182ceac89",
+          "InformationalVersion": "3.0.0+7bb8fecbea60f179cda17ff796a04d11b9c0ca83"
+        },
+        "inventory_sha256": {
+          "api.txt": "05d6722042d5040ebc3d369e638cc9bb383bf146d80d6218829caa0aedd97aff",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Hosting",
+        "version": "3.0.0",
+        "source": "artifacts/candidate-nuget/SharpLink.Hosting.3.0.0.nupkg",
+        "package_sha256": "f686a71dad10fcc51008320d3ff46ab2dd702cef7f1b54343a4922f4656cfcdc",
+        "repository_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+        "assembly_path": "lib/net10.0/SharpLink.Hosting.dll",
+        "assembly_sha256": "f941199bb6838dff0f151cd270b1dcd1a0956bfbea9cc0074ed0a25346378f72",
+        "assembly_identity": {
+          "Name": "SharpLink.Hosting",
+          "Version": "3.0.0.0",
+          "FullName": "SharpLink.Hosting, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "ac915de7-4a12-4eb2-9375-44ee08e1e972",
+          "InformationalVersion": "3.0.0+7bb8fecbea60f179cda17ff796a04d11b9c0ca83"
+        },
+        "inventory_sha256": {
+          "api.txt": "a2863aea6550c2ff1236ec68ffec48f754a561cc3f21efc738df62bc08c0dd70",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Sdk",
+        "version": "3.0.0",
+        "source": "artifacts/candidate-nuget/SharpLink.Sdk.3.0.0.nupkg",
+        "package_sha256": "d4666c7b27c700643444bf533aa7a5e0ba19274f0f229ca0c63fec4dea44c76d",
+        "repository_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+        "assembly_path": "lib/net10.0/SharpLink.Sdk.dll",
+        "assembly_sha256": "459fa3645fe97439543b8c52ec54c353232639a588011f46efd0abdba1296f6f",
+        "assembly_identity": {
+          "Name": "SharpLink.Sdk",
+          "Version": "3.0.0.0",
+          "FullName": "SharpLink.Sdk, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "fd92c299-a02d-457a-b698-c99a63937e69",
+          "InformationalVersion": "3.0.0+7bb8fecbea60f179cda17ff796a04d11b9c0ca83"
+        },
+        "inventory_sha256": {
+          "api.txt": "28d2502f082c237db1e7132acf92a6d5aa26ef398a15f21e5dc2c55e24380a66",
+          "forwarders.txt": "b678367a9421a564697a1b74009d2ce2f604dcfd1d4c26729b41cc67a71ee056"
+        }
+      },
+      {
+        "id": "SharpLink.Serializer.SharpPack",
+        "version": "3.0.0",
+        "source": "artifacts/candidate-nuget/SharpLink.Serializer.SharpPack.3.0.0.nupkg",
+        "package_sha256": "a354d736001975d25226098e6d116084748bdf43016a7deaedb480396dee2bb6",
+        "repository_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+        "assembly_path": "lib/net10.0/SharpLink.Serializer.SharpPack.dll",
+        "assembly_sha256": "6cb9f980f430995502f19e6b5f21de9831be1b0f19aa0d329f7d4ce4e2e7ced6",
+        "assembly_identity": {
+          "Name": "SharpLink.Serializer.SharpPack",
+          "Version": "3.0.0.0",
+          "FullName": "SharpLink.Serializer.SharpPack, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "8f3371b6-838e-43ad-b020-707cfe45d531",
+          "InformationalVersion": "3.0.0+7bb8fecbea60f179cda17ff796a04d11b9c0ca83"
+        },
+        "inventory_sha256": {
+          "api.txt": "b0953d78e97ee2b857b85e1dee46ebf55d9003d43927902f6e28d9549a3b2fae",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Compression.Zstd",
+        "version": "3.0.0",
+        "source": "artifacts/candidate-nuget/SharpLink.Compression.Zstd.3.0.0.nupkg",
+        "package_sha256": "b566e1503f34dfe7015b528eca1aa0b82ef9615b92afe2d3e8fc847a7d1cacd1",
+        "repository_commit": "7bb8fecbea60f179cda17ff796a04d11b9c0ca83",
+        "assembly_path": "lib/net10.0/SharpLink.Compression.Zstd.dll",
+        "assembly_sha256": "4756f6ce994f7b914d8c1d1178aa0ecdcd3baae30c6bcad2684e62c86904f726",
+        "assembly_identity": {
+          "Name": "SharpLink.Compression.Zstd",
+          "Version": "3.0.0.0",
+          "FullName": "SharpLink.Compression.Zstd, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "d2f98a48-2d9e-4f26-9f54-dfa17159d62a",
+          "InformationalVersion": "3.0.0+7bb8fecbea60f179cda17ff796a04d11b9c0ca83"
+        },
+        "inventory_sha256": {
+          "api.txt": "24971998e2ff57f32774cc8856988283640107d54df45913fd3dd80dc104d7dc",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    ],
+    "published": [
+      {
+        "id": "SharpLink.Abstractions",
+        "version": "2.0.3",
+        "source": "https://api.nuget.org/v3-flatcontainer/sharplink.abstractions/2.0.3/sharplink.abstractions.2.0.3.nupkg",
+        "package_sha256": "596e40b616e619a83303d108e66ebe3828d16be720e95dfc061ca76027517464",
+        "repository_commit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+        "assembly_path": "lib/net10.0/SharpLink.Abstractions.dll",
+        "assembly_sha256": "4afcb2e8497b3be853b457571c45502ef345d7618f898f1fc405dd166c56d999",
+        "assembly_identity": {
+          "Name": "SharpLink.Abstractions",
+          "Version": "2.0.3.0",
+          "FullName": "SharpLink.Abstractions, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "cc224e24-5ef4-4081-87ba-6554bb7c15b2",
+          "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+        },
+        "inventory_sha256": {
+          "api.txt": "d091e7e581cfbf012f7fabec2500bc446cd14f2af1bbc9ae52a1c82a24f91fcb",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Runtime",
+        "version": "2.0.3",
+        "source": "https://api.nuget.org/v3-flatcontainer/sharplink.runtime/2.0.3/sharplink.runtime.2.0.3.nupkg",
+        "package_sha256": "f891f2567ecca71d84be5f888eba72872a76aeaf9626e0314bb99a57c097468a",
+        "repository_commit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+        "assembly_path": "lib/net10.0/SharpLink.Runtime.dll",
+        "assembly_sha256": "6bacf35534ac20f25703614b1db33aee3cb6669daf4735041e0896e1a4809ef4",
+        "assembly_identity": {
+          "Name": "SharpLink.Runtime",
+          "Version": "2.0.3.0",
+          "FullName": "SharpLink.Runtime, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "07d8520b-2648-41e2-abf3-b98019efbc8c",
+          "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+        },
+        "inventory_sha256": {
+          "api.txt": "0a420a90aec6b4fe95b40d03ce12c9a12e4553f3d410af51e150e3e24b142173",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Client",
+        "version": "2.0.3",
+        "source": "https://api.nuget.org/v3-flatcontainer/sharplink.client/2.0.3/sharplink.client.2.0.3.nupkg",
+        "package_sha256": "e347fb97f20e213dcf4fda3b1ad44fa08566ac982da1f11a7801b074e34d616f",
+        "repository_commit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+        "assembly_path": "lib/net10.0/SharpLink.Client.dll",
+        "assembly_sha256": "254ad983f2201b62e0848b115b21beddcab6cc1da1abf9033489bd011eea1c54",
+        "assembly_identity": {
+          "Name": "SharpLink.Client",
+          "Version": "2.0.3.0",
+          "FullName": "SharpLink.Client, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "9eb08e6f-7256-44b6-9310-2efb78074999",
+          "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+        },
+        "inventory_sha256": {
+          "api.txt": "6365c3574319ecfda12f62912aa538fe57fd608609ee165bdd17440d6db6e9a7",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Server",
+        "version": "2.0.3",
+        "source": "https://api.nuget.org/v3-flatcontainer/sharplink.server/2.0.3/sharplink.server.2.0.3.nupkg",
+        "package_sha256": "0d818ba7bf74d66f55edd25a693882ced26097b293105a587d6c34debb5135dc",
+        "repository_commit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+        "assembly_path": "lib/net10.0/SharpLink.Server.dll",
+        "assembly_sha256": "b39d5750913ed1861abe660135c769bf6a469bb408008f7a52e724868623b2b8",
+        "assembly_identity": {
+          "Name": "SharpLink.Server",
+          "Version": "2.0.3.0",
+          "FullName": "SharpLink.Server, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "19fac972-2b66-459e-9caf-4958b50e52ec",
+          "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+        },
+        "inventory_sha256": {
+          "api.txt": "5fe698797e12764835fc31bc2b17594dc51cc0f9b20688bef2feae8f43629f17",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Hosting",
+        "version": "2.0.3",
+        "source": "https://api.nuget.org/v3-flatcontainer/sharplink.hosting/2.0.3/sharplink.hosting.2.0.3.nupkg",
+        "package_sha256": "12263e92f6c92496fcf8fd4014ac8a7534bedfdc4539667034df4d92f8cdc970",
+        "repository_commit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+        "assembly_path": "lib/net10.0/SharpLink.Hosting.dll",
+        "assembly_sha256": "ff70a583faba4ccc399786d553c25cb60aece9b33b14a124f2de43bff2e31829",
+        "assembly_identity": {
+          "Name": "SharpLink.Hosting",
+          "Version": "2.0.3.0",
+          "FullName": "SharpLink.Hosting, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "060e7c52-899f-422f-9257-962f96ca01ee",
+          "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+        },
+        "inventory_sha256": {
+          "api.txt": "a2863aea6550c2ff1236ec68ffec48f754a561cc3f21efc738df62bc08c0dd70",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Sdk",
+        "version": "2.0.3",
+        "source": "https://api.nuget.org/v3-flatcontainer/sharplink.sdk/2.0.3/sharplink.sdk.2.0.3.nupkg",
+        "package_sha256": "e33ee8702f3f0b4e9475cd3ac06f89dcb835aabbe2c1ca1d6ea9fa47736f4f81",
+        "repository_commit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+        "assembly_path": "lib/net10.0/SharpLink.Sdk.dll",
+        "assembly_sha256": "d50f418fc2e475c2f99af1f024581987eb52487150cfdddc9d143a295bf0bf08",
+        "assembly_identity": {
+          "Name": "SharpLink.Sdk",
+          "Version": "2.0.3.0",
+          "FullName": "SharpLink.Sdk, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "f04763fb-68af-47f9-8d85-c399b2d5b87a",
+          "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+        },
+        "inventory_sha256": {
+          "api.txt": "28d2502f082c237db1e7132acf92a6d5aa26ef398a15f21e5dc2c55e24380a66",
+          "forwarders.txt": "b678367a9421a564697a1b74009d2ce2f604dcfd1d4c26729b41cc67a71ee056"
+        }
+      },
+      {
+        "id": "SharpLink.Serializer.SharpPack",
+        "version": "2.0.3",
+        "source": "https://api.nuget.org/v3-flatcontainer/sharplink.serializer.sharppack/2.0.3/sharplink.serializer.sharppack.2.0.3.nupkg",
+        "package_sha256": "d8aee3165675e16468a1aecf367419538cd3d430ded9e7e51b25864f50c0d454",
+        "repository_commit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+        "assembly_path": "lib/net10.0/SharpLink.Serializer.SharpPack.dll",
+        "assembly_sha256": "eaef862bf41959d97146fe8f9dc5e870d7ba1436abade6b85b17b88b56efafff",
+        "assembly_identity": {
+          "Name": "SharpLink.Serializer.SharpPack",
+          "Version": "2.0.3.0",
+          "FullName": "SharpLink.Serializer.SharpPack, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "e4c7b5b2-11c5-45e9-9842-4ae2b14f1f0c",
+          "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+        },
+        "inventory_sha256": {
+          "api.txt": "b0953d78e97ee2b857b85e1dee46ebf55d9003d43927902f6e28d9549a3b2fae",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "id": "SharpLink.Compression.Zstd",
+        "version": "2.0.3",
+        "source": "https://api.nuget.org/v3-flatcontainer/sharplink.compression.zstd/2.0.3/sharplink.compression.zstd.2.0.3.nupkg",
+        "package_sha256": "256223caefb3aadaa4114b2c4b84785e239d1c8feb82bcd3eadd723138975591",
+        "repository_commit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+        "assembly_path": "lib/net10.0/SharpLink.Compression.Zstd.dll",
+        "assembly_sha256": "b8ab0abe213f75ec8262648336463162fe16f4b1e7e20f19e062c70e3d36c1e8",
+        "assembly_identity": {
+          "Name": "SharpLink.Compression.Zstd",
+          "Version": "2.0.3.0",
+          "FullName": "SharpLink.Compression.Zstd, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+          "ModuleVersionId": "81e3c05e-ef17-44f3-846a-77d97e4981da",
+          "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+        },
+        "inventory_sha256": {
+          "api.txt": "24971998e2ff57f32774cc8856988283640107d54df45913fd3dd80dc104d7dc",
+          "forwarders.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    ]
+  },
+  "completed_at_utc": "2026-10-23T13:07:07.481752+00:00"
+}

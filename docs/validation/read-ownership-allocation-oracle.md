@@ -2,9 +2,16 @@
 
 The two exact-zero reader tests now measure a deliberately warmed runtime cast cache,
 not arbitrary activity in the full test-runner process. Production reader code is
-unchanged. The original measurement bodies still execute once, including their
+unchanged. The measurement loops still execute once, including their
 1,000 warmup rounds, 10,000 measured rounds, distinct consumer paths, and zero-byte
 assertions. No allocation is subtracted or exempted.
+
+The dev integration also preserves the Gen2-disturbance guard introduced by #935:
+the child completes a forced collection before warmup and rejects any Gen2
+collection during the warmup/measurement interval. This is independent of the
+stable cast-cache precondition. Neither a disturbed GC interval nor a replaced
+cast-cache table is accepted as a zero-allocation pass. The additional guard does
+not change the 1,000 warmup rounds, 10,000 measured rounds, or exact zero budget.
 
 ## Why process isolation alone was insufficient
 
@@ -86,13 +93,19 @@ reads. They are not allocation oracles. Test inventory increases by two.
 - Local testing is x64. Hosted arm64 and integrated full-suite acceptance are
   separate required validation; these local results do not claim either.
 
-Against public baseline `13928a35df4bff3cd99b14bd1df131aa3eb3bcdb`, raw measurement bodies
+At the historical #931 source checkpoint, against public baseline
+`13928a35df4bff3cd99b14bd1df131aa3eb3bcdb`, raw measurement bodies
 are byte-identical after moving them into private static methods. SHA-256 below
 is over UTF-8 from the opening `{` through the closing `}`, inclusive, without
 surrounding indentation/newline; all whitespace inside the body is included:
 
 - Successful: `2de020f10445d0fabbc4a065ce60c348bd94128fcceab774d9e97d74383f6cd8`
 - Registered: `f8e87a1ff152b1baed738db50e70ec0d0870098703d93948e20bf94989b8329c`
+
+These are historical hashes, not hashes of the integrated methods containing the
+additional #935 Gen2 guard. Integration validation must run both consumer styles
+and the real 280-byte counterfactual against the combined source; the prior hashes
+or prior green jobs cannot substitute for that run.
 
 ## Primary runtime sources
 

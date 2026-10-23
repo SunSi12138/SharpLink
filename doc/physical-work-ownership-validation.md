@@ -1,5 +1,10 @@
 # Physical RPC ownership: scope and validation
 
+For integration with current dev, see the [integration boundary and validation
+record](physical-work-ownership-dev-integration.md). The historical source seals,
+counts and samples below are retained as history, not substituted for new-head
+combination validation.
+
 Production source comparison: `13928a35df4bff3cd99b14bd1df131aa3eb3bcdb`
 to `520b544b56af4d4b298446b96c3a39446abedfa4`, using .NET SDK 10.0.102,
 runtime 10.0.2, Linux x64. The latter hash is the local source seal; this branch

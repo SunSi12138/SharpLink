@@ -63,4 +63,65 @@ public partial class AbandonedGeneratedMapperOwnershipTests
             "logical mapping metadata must survive completed cleanup");
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CancellationCarrierPreservesLogicalMapperInstanceAndDeclaredMetadata(bool taskCanceled)
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var canceledTask = Task.FromCanceled(cancellation.Token);
+        OperationCanceledException original = taskCanceled
+            ? new TaskCanceledException(canceledTask)
+            : new ApplicationCancellation("custom application cancellation", cancellation.Token);
+        var child = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        SharpLinkPhysicalWork.TrackAbandonedUserWork(original, child.Task);
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
+        var carrier = SharpLinkPhysicalWork.TransferLifetime(original, lifetime)!;
+        var physicalWork = SharpLinkPhysicalWork.GetAbandonedUserWork(carrier)!;
+
+        await using var fixture = new Fixture(original);
+        var stream = new FailureStream(carrier, boundary: 0);
+        var pump = fixture.Pump(stream);
+        try
+        {
+            Ensure(!ReferenceEquals(carrier, original) && ReferenceEquals(carrier.InnerException, original),
+                "physical handoff creates a fresh carrier while retaining its exact original cause");
+            Ensure(carrier.GetType() == (taskCanceled ? typeof(TaskCanceledException) : typeof(OperationCanceledException)) &&
+                carrier.Message == original.Message &&
+                ((OperationCanceledException)carrier).CancellationToken == cancellation.Token,
+                "standard cancellation category, message and token survive a custom-subtype or Task-bearing terminal");
+            if (taskCanceled)
+            {
+                Ensure(ReferenceEquals(((TaskCanceledException)original).Task, canceledTask) &&
+                    ((TaskCanceledException)carrier).Task is null,
+                    "the original Task stays on the original exception; a fresh carrier does not clone Task identity");
+            }
+            Ensure(ReferenceEquals(await fixture.Mapper.Observed.Task.WaitAsync(Watchdog), original),
+                "the application mapper must receive the original cancellation instance, not its public carrier");
+            Ensure(!pump.IsCompleted && !physicalWork.IsCompleted,
+                "publishing the mapped terminal cannot release its pending physical child");
+            await fixture.AssertMappedWireAsync();
+            child.TrySetResult();
+            await stream.DisposeEntered.Task.WaitAsync(Watchdog);
+            Ensure(!pump.IsCompleted && stream.DisposeCalls == 1,
+                "the actual invocation continues to own asynchronous producer disposal");
+            stream.DisposeRelease.TrySetResult();
+            await pump.WaitAsync(Watchdog);
+            await physicalWork.WaitAsync(Watchdog);
+            Ensure(ReferenceEquals(SharpLinkPhysicalWork.GetLogicalException(carrier), original),
+                "completed physical cleanup does not erase the mapper's logical exception identity");
+        }
+        finally
+        {
+            child.TrySetResult();
+            stream.DisposeRelease.TrySetResult();
+            await pump.WaitAsync(Watchdog);
+            await physicalWork.WaitAsync(Watchdog);
+        }
+    }
+
+    private sealed class ApplicationCancellation(string message, CancellationToken cancellationToken)
+        : OperationCanceledException(message, cancellationToken);
+
 }

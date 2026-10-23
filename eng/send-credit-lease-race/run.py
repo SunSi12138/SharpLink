@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/StreamFlowControllerLeaseRaceTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/StreamFlowControllerLeaseRaceTests/*"
 FOCUSED_COUNT = 8
-FULL_COUNT = 2241  # Exact inventory: two reader lifecycle controls added; focused/old-negative counts unchanged.
+FULL_COUNT = 2290  # Verified 2282 regular cases plus eight unchanged injected controls.
 
 
 def digest(path):

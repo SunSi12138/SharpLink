@@ -432,12 +432,19 @@ public class ReadOwnershipPipeReaderLifetimeTests
         // a controlled allocation regression, not a promise for bursts or cross-thread reads.
         var fake = new AllocationFreePipeReader();
         var reader = new ReadOwnershipPipeReader(fake);
+        // The child separately verifies a stable, warmed runtime cast cache. Preserve the
+        // dev Gen2-disturbance guard as well: neither condition permits subtracting allocations.
+        // Finish prior collections and reject a disturbed measurement window.
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        var gen2Before = GC.CollectionCount(2);
         for (var i = 0; i < 1_000; i++)
             Round();
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 10_000; i++)
             Round();
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var gen2After = GC.CollectionCount(2);
+        Ensure(gen2After == gen2Before, "the allocation measurement must not overlap a Gen2 collection");
         Ensure(allocated == 0, $"successful suspended read/release must allocate 0 bytes, got {allocated}");
 
         void Round()
@@ -486,12 +493,17 @@ public class ReadOwnershipPipeReaderLifetimeTests
             reader.AdvanceTo(result.Buffer.End);
             consumed++;
         };
+        // Keep the same Gen2-free measurement contract as the unregistered fixture.
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true);
+        var gen2Before = GC.CollectionCount(2);
         for (var i = 0; i < 1_000; i++)
             Round();
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 10_000; i++)
             Round();
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var gen2After = GC.CollectionCount(2);
+        Ensure(gen2After == gen2Before, "the allocation measurement must not overlap a Gen2 collection");
         Ensure(consumed == 11_000, "every pending read must invoke its registered consumer exactly once");
         Ensure(allocated == 0, $"suspended reads with a cached consumer must allocate 0 bytes, got {allocated}");
 
