@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "scope": "production-declarations",
+  "projectGlob": "src/**/*.csproj",
+  "requiredGeneratedProjects": [
+    "src/SharpLink.Client/SharpLink.Client.csproj",
+    "src/SharpLink.GenerationControl/SharpLink.GenerationControl.csproj"
+  ],
+  "excludedScopes": [
+    "Generated consumer projects in demo/test/samples and synthetic Generator.Tests source strings are not included in this production-only slice.",
+    "Other OS/RID profiles are not inferred from the current host run; each release platform needs its own inventory.",
+    "Invocation/reference call graphs, reflection/DI/ALC consumers and external users are not proven by declaration/signature edges.",
+    "Metadata-only compiler lowering, package forwarders and source-to-packed API mapping remain independent evidence.",
+    "Human classifications and approval of public/internal/sealed decisions remain outstanding; all decisions start as needs-decision."
+  ]
+}

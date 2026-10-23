@@ -3,6 +3,8 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Only eng/SharpLink.ApiInventory loads the pinned SDK MSBuild. -->
+    <PackageVersion Include="Microsoft.Build.Locator" Version="1.11.2" />
     <!--  分析器依赖  -->
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.9.0">
       <PrivateAssets>all</PrivateAssets>
