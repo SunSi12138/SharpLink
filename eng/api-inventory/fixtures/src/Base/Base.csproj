@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><AssemblyName>Fixture.Base</AssemblyName></PropertyGroup>
+  <ItemGroup><Compile Include="../../Shared.cs" Link="Shared.cs" /></ItemGroup>
+</Project>

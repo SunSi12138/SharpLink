@@ -189,6 +189,23 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Verify Roslyn inventory fixtures and failure controls
+        run: python3 -m unittest discover -s eng/tests -p 'test_api_inventory.py' -v
+
+      - name: Inventory actual production project declarations
+        run: python3 eng/run-api-inventory.py --output artifacts/api-inventory/release
+
+      - name: Upload Roslyn inventory and failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: roslyn-api-inventory
+          path: |
+            artifacts/api-inventory
+            artifacts/api-inventory-fixtures
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
 
