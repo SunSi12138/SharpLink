@@ -298,7 +298,7 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private bool TryCreateRollingSessionRefreshRequest(
+    internal bool TryCreateRollingSessionRefreshRequest(
         SharpLinkServerDesiredSessionSnapshot pinned,
         out ProtocolV2SessionRefreshRequested request)
     {
@@ -319,9 +319,4 @@ internal sealed partial class SharpLinkServer
             return true;
         }
     }
-
-    internal bool TryCreateRollingSessionRefreshRequestForTesting(
-        SharpLinkServerDesiredSessionSnapshot pinned,
-        out ProtocolV2SessionRefreshRequested request)
-        => TryCreateRollingSessionRefreshRequest(pinned, out request);
 }

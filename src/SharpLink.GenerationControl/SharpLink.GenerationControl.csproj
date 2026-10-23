@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- This package first ships after 2.0.0, so there is no published 2.0.0 NuGet baseline to compare against. -->
+    <!-- This optional package first ships in 3.0.0; no 2.x binary compatibility baseline exists. -->
     <PackageValidationBaselineVersion />
   </PropertyGroup>
   <ItemGroup>

@@ -243,7 +243,7 @@ public partial class TransportConnectionIntegrationTests
     public async Task TcpServerStartShouldStopNormallyWhenCancellationIsRequested()
     {
         var server = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .Build();

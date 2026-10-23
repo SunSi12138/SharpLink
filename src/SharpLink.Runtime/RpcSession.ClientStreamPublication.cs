@@ -6,23 +6,8 @@ internal sealed partial class RpcSession
         long requestId,
         ushort streamId,
         T item,
-        RpcDeadline deadline,
-        TimeProvider timeProvider,
-        CancellationToken terminalToken)
-        => SendClientStreamChunkAsync(
-            requestId,
-            streamId,
-            item,
-            RuntimeContext.Codecs.GetCodec<T>(),
-            deadline,
-            timeProvider,
-            terminalToken);
-
-    internal ValueTask SendClientStreamChunkAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
         IRpcCodec<T> codec,
+        IRpcSizedCodec<T>? exactSizeCodec,
         RpcDeadline deadline,
         TimeProvider timeProvider,
         CancellationToken terminalToken)
@@ -31,15 +16,14 @@ internal sealed partial class RpcSession
         ArgumentNullException.ThrowIfNull(timeProvider);
         ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
 
-        if (codec is IRpcSizedCodec<T> sizedCodec &&
-            sizedCodec.CanExactSize &&
-            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
+        if (exactSizeCodec is not null &&
+            exactSizeCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
         {
             return SendClientStreamChunkKnownSizeAsync(
                 requestId,
                 streamId,
                 item,
-                sizedCodec,
+                exactSizeCodec,
                 knownEncodedBytes,
                 sizedSnapshot,
                 deadline,
@@ -165,6 +149,7 @@ internal sealed partial class RpcSession
         var creditAcquired = false;
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
+        var operationFailed = false;
         try
         {
             await AcquireStreamSendCreditAsync(
@@ -189,8 +174,9 @@ internal sealed partial class RpcSession
                 sizedCodec.SerializeSized(item, writer, encodedBytes, sizedSnapshot);
                 if (sizedSnapshot is not null)
                 {
-                    sizedCodec.ReleaseSnapshot(sizedSnapshot);
+                    var snapshotToRelease = sizedSnapshot;
                     sizedSnapshot = null;
+                    sizedCodec.ReleaseSnapshot(snapshotToRelease);
                 }
             }
 
@@ -207,16 +193,34 @@ internal sealed partial class RpcSession
         }
         catch
         {
+            operationFailed = true;
             if (creditAcquired)
                 ReturnUnsentStreamCredit(requestId, streamId, creditBytes);
             throw;
         }
         finally
         {
-            if (sizedSnapshot is not null)
-                sizedCodec.ReleaseSnapshot(sizedSnapshot);
-            if (ownsWriter && writer is not null)
-                RuntimeContext.Buffers.Return(writer);
+            try
+            {
+                if (sizedSnapshot is not null)
+                {
+                    var snapshotToRelease = sizedSnapshot;
+                    sizedSnapshot = null;
+                    try
+                    {
+                        sizedCodec.ReleaseSnapshot(snapshotToRelease);
+                    }
+                    catch when (operationFailed)
+                    {
+                        // Cleanup must not replace the serialization or credit failure.
+                    }
+                }
+            }
+            finally
+            {
+                if (ownsWriter && writer is not null)
+                    RuntimeContext.Buffers.Return(writer);
+            }
         }
     }
 

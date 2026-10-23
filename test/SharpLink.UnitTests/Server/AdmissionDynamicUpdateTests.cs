@@ -699,7 +699,7 @@ public sealed class AdmissionDynamicUpdateTests
 
     private static SharpLinkServer CreateServer(TimeProvider? timeProvider = null)
     {
-        var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback.ToString());
+        var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback);
         if (timeProvider is not null)
             builder.UseTimeProvider(timeProvider);
         return (SharpLinkServer)builder.Build();

@@ -37,10 +37,13 @@ public partial class RpcGenerator
             sb.AppendLine("                    __exactWriter.Advance(0);");
             sb.AppendLine("                    SerializeSized(in value, writer, __exactSize, __sizedSnapshot);");
             sb.AppendLine("                }");
-            sb.AppendLine("                finally");
+            sb.AppendLine("                catch");
             sb.AppendLine("                {");
-            sb.AppendLine("                    ReleaseSnapshot(__sizedSnapshot);");
+            sb.AppendLine("                    try { ReleaseSnapshot(__sizedSnapshot); }");
+            sb.AppendLine("                    catch { /* Preserve the original writer/serializer exception. */ }");
+            sb.AppendLine("                    throw;");
             sb.AppendLine("                }");
+            sb.AppendLine("                ReleaseSnapshot(__sizedSnapshot);");
             sb.AppendLine("                return;");
             sb.AppendLine("            }");
             sb.AppendLine("        }");
@@ -93,26 +96,7 @@ public partial class RpcGenerator
         sb.AppendLine($"{indent}RpcGeneratedCodecWire.WriteObjectEnd(writer);");
     }
 
-    private static void AppendDtoSuppressedSerializeBody(
-        StringBuilder sb,
-        DtoCodecAnalysisModel model,
-        Dictionary<string, int> complexIndexes,
-        string indent)
-    {
-        for (var memberIndex = 0; memberIndex < model.Members.Length; memberIndex++)
-        {
-            var member = model.Members[memberIndex];
-            if (member.Kind != GeneratedMemberKind.String)
-                continue;
 
-            var value = $"value.{EscapeIdentifier(member.Identifier)}";
-            sb.AppendLine($"{indent}var __string_{memberIndex} = {value};");
-            sb.AppendLine(
-                $"{indent}var __stringByteCount_{memberIndex} = __string_{memberIndex} is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__string_{memberIndex});");
-        }
-
-        AppendDtoSerializeBody(sb, model, complexIndexes, useCachedStrings: true, useCachedMembers: false, indent: indent);
-    }
 
     private static void AppendDtoMemberWrite(
         StringBuilder sb,
@@ -141,6 +125,15 @@ public partial class RpcGenerator
                 sb.AppendLine(GetFixedWriteExpression(member.TypeName, value, indent.Length));
                 break;
             case GeneratedMemberKind.NullableFixed:
+                // Non-cached member getters can change between reads. Preserve the
+                // first value for this field's presence and payload, without hoisting
+                // getters for unrelated fields.
+                if (cachedMemberIndex < 0)
+                {
+                    var local = "__nullableValue_" + member.FieldId.ToString(InvariantCulture);
+                    sb.AppendLine($"{indent}var {local} = {value};");
+                    value = local;
+                }
                 sb.AppendLine($"{indent}if (!{value}.HasValue)");
                 sb.AppendLine($"{childIndent}RpcGeneratedCodecWire.WriteFieldKey(writer, {fieldId}, RpcGeneratedWireType.Null);");
                 sb.AppendLine($"{indent}else");
@@ -170,7 +163,7 @@ public partial class RpcGenerator
                 var index = complexIndexes[member.Name];
                 sb.AppendLine($"{indent}RpcGeneratedCodecWire.WriteFieldKey(writer, {fieldId}, RpcGeneratedWireType.LengthDelimited);");
                 sb.AppendLine($"{indent}var lengthToken_{index} = RpcGeneratedCodecWire.BeginLength(rpcWriter);");
-                sb.AppendLine($"{indent}__codec_{index}.Serialize({value}, writer);");
+                sb.AppendLine($"{indent}__codec_{index}.Serialize({value}!, writer);");
                 sb.AppendLine($"{indent}RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_{index});");
                 break;
         }

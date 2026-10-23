@@ -162,6 +162,10 @@ public sealed class SharpLinkMultiClusterClientBuilder
                 .ToArray();
             try
             {
+                // Bind logger precedence at Build: explicit child > coordinator > Host.
+                // This also covers child slots added before or after UseLoggerFactory.
+                if (_loggerFactory is not null)
+                    configuration.Builder.UseLoggerFactoryIfUnset(_loggerFactory);
                 configuration.Builder.ApplyRequestTimeoutPolicyIfUnspecified(_requestTimeoutPolicy);
                 var plan = configuration.Builder.CompileForMultiCluster(staticManifests);
                 configuredConnections = checked(configuredConnections + plan.MaximumConnections);
@@ -222,25 +226,21 @@ public sealed class SharpLinkMultiClusterClientBuilder
         }
     }
 
-    /// <summary>Applies a logger factory to child builders that do not already have one.</summary>
-    public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
+    /// <summary>Configures an application-owned coordinator logger. Unconfigured children inherit it at Build.</summary>
+    public SharpLinkMultiClusterClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
+    {
+        _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
+        return this;
+    }
+
+    /// <summary>Uses the Host logger only if no coordinator logger was configured.</summary>
+    internal void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _loggerFactory ??= loggerFactory;
-        foreach (var configuration in _clusters.Values)
-            configuration.Builder.UseLoggerFactoryIfUnset(loggerFactory);
     }
 
-    internal static SharpLinkPreparedCluster PrepareRuntimeCluster(
-        SharpLinkClusterKey cluster,
-        SharpClientBuilder builder,
-        bool allowDynamicContracts)
-        => PrepareRuntimeCluster(
-            cluster,
-            builder,
-            allowDynamicContracts,
-            GlobalCatalogManifestSource.Instance,
-            GlobalCatalogClusterRouteSource.Instance);
+
 
     internal static SharpLinkPreparedCluster PrepareRuntimeCluster(
         SharpLinkClusterKey cluster,

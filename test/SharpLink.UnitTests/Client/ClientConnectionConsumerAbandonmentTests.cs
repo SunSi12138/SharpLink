@@ -43,9 +43,10 @@ public class ClientConnectionConsumerAbandonmentTests
             dispatcher,
             deadline: default,
             cancellationToken: CancellationToken.None);
-        session.StreamManager.Register(requestId, dispatcher);
+        session.StreamManager.Register(requestId, 0, dispatcher);
         await session.StreamManager.DispatchChunkAsync(
             requestId,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 }));
 
         var remoteCompletion = LongRunningTestWorker.Run(
@@ -175,9 +176,10 @@ public class ClientConnectionConsumerAbandonmentTests
             dispatcher,
             deadline: default,
             cancellationToken: CancellationToken.None);
-        connection.Session.StreamManager.Register(requestId, dispatcher);
+        connection.Session.StreamManager.Register(requestId, 0, dispatcher);
         connection.Session.StreamManager.Register(
             requestId + 1,
+            0,
             new ThrowingCompleteDispatcher(ownerCleanupFailure));
 
         var completionFailure = CaptureException(() => connection.PendingCalls.TryComplete(
@@ -237,10 +239,11 @@ public class ClientConnectionConsumerAbandonmentTests
             dispatcher,
             deadline: default,
             cancellationToken: CancellationToken.None);
-        connection.Session.StreamManager.Register(requestId, dispatcher);
+        connection.Session.StreamManager.Register(requestId, 0, dispatcher);
 
         var dispatch = connection.Session.StreamManager.DispatchChunkAsync(
             requestId,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 })).AsTask();
         await dispatcher.DispatchEntered.Task.WaitAsync(RaceCoordinationTimeout);
         Ensure(!dispatch.IsCompleted,
@@ -257,7 +260,15 @@ public class ClientConnectionConsumerAbandonmentTests
             "the owner must remain published until the outstanding dispatch actually drains");
 
         dispatcher.ReleaseDispatch();
-        await dispatch.WaitAsync(RaceCoordinationTimeout);
+        try
+        {
+            await dispatch.WaitAsync(RaceCoordinationTimeout);
+        }
+        catch (Exception exception) when (ReferenceEquals(exception, drainFailure))
+        {
+            // The drain continuation can detach before the lease's Release returns,
+            // surfacing this same injected callback failure on the dispatch as well.
+        }
         await dispatcher.DrainFailureRaised.Task.WaitAsync(RaceCoordinationTimeout);
         var disconnected = await WaitForReadinessSnapshotAsync(
             client,

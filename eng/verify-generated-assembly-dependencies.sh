@@ -7,6 +7,7 @@ TARGET_FRAMEWORK="${SHARPLINK_TARGET_FRAMEWORK:-net10.0}"
 SCANNER="$ROOT/test/SharpLink.GeneratedAssemblyScanner/SharpLink.GeneratedAssemblyScanner.csproj"
 
 assemblies=(
+  "$ROOT/src/SharpLink.GenerationControl/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SharpLink.GenerationControl.dll"
   "$ROOT/demo/MultiCluster.Orders.Contracts/bin/$CONFIGURATION/$TARGET_FRAMEWORK/MultiCluster.Orders.Contracts.dll"
   "$ROOT/demo/MultiCluster.Payments.Contracts/bin/$CONFIGURATION/$TARGET_FRAMEWORK/MultiCluster.Payments.Contracts.dll"
   "$ROOT/demo/SeparatedContracts/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SeparatedContracts.dll"
@@ -14,6 +15,8 @@ assemblies=(
   "$ROOT/test/SharpLink.AotServices/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SharpLink.AotServices.dll"
   "$ROOT/test/SharpLink.DynamicContracts/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SharpLink.DynamicPlugin.Contracts.dll"
   "$ROOT/test/SharpLink.DynamicServices/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SharpLink.DynamicPlugin.Services.dll"
+  "$ROOT/test/SharpLink.ReplacementContracts/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SharpLink.DynamicPlugin.Contracts.dll"
+  "$ROOT/test/SharpLink.ReplacementServices/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SharpLink.DynamicPlugin.Services.dll"
 )
 
 for assembly in "${assemblies[@]}"; do

@@ -87,7 +87,7 @@ public sealed class SharpLinkServerDesiredSessionBackpressureTests
         {
             releaseCancellation.Set();
             await disconnect.WaitAsync(TimeSpan.FromSeconds(5));
-            registry.TryRemove(newSession.Id, out _);
+            registry.TryRemove(new KeyValuePair<string, ServerConnectionState>(newSession.Id, connection));
             await connection.CloseAsync();
             await oldInput.Writer.CompleteAsync();
             await oldOutput.Reader.CompleteAsync();
@@ -218,7 +218,7 @@ public sealed class SharpLinkServerDesiredSessionBackpressureTests
             }
             foreach (var connection in cohort)
             {
-                registry.TryRemove(connection.Session.Id, out _);
+                registry.TryRemove(new KeyValuePair<string, ServerConnectionState>(connection.Session.Id, connection));
                 await connection.CloseAsync();
                 await pipes[connection.Session.Id].Input.Writer.CompleteAsync();
                 await pipes[connection.Session.Id].Output.Reader.CompleteAsync();

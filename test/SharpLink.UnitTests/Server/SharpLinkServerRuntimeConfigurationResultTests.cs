@@ -128,7 +128,7 @@ public sealed class SharpLinkServerRuntimeConfigurationResultTests
 
     private static SharpLinkServer CreateAdmissionServer()
         => (SharpLinkServer)SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .Build();
 
     private static Exception CaptureException(Action action)

@@ -39,7 +39,7 @@ public static class Program
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         await using var server = serverBuilder.Build();
         var serverTask = Task.Run(async () =>

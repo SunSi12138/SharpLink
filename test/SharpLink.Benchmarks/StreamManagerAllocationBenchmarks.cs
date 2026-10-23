@@ -68,7 +68,7 @@ public class StreamManagerAllocationBenchmarks
             {
                 var manager = Volatile.Read(ref _concurrentManager)
                     ?? throw new InvalidOperationException("Concurrent manager was not published.");
-                manager.Register(workerIndex + 1, _concurrentDispatchers[workerIndex]);
+                manager.Register(workerIndex + 1, 0, _concurrentDispatchers[workerIndex]);
             }
             catch (Exception exception)
             {
@@ -91,7 +91,7 @@ public class StreamManagerAllocationBenchmarks
     public int CreateAndCompleteOneStream()
     {
         var manager = new StreamManager();
-        manager.Register(1, new NoOpDispatcher());
+        manager.Register(1, 0, new NoOpDispatcher());
         var active = manager.ActiveStreamCount;
         manager.CompleteAll(exception: null);
         return active;
@@ -102,7 +102,7 @@ public class StreamManagerAllocationBenchmarks
     {
         var manager = new StreamManager();
         for (var index = 0; index < 32; index++)
-            manager.Register(index + 1, new NoOpDispatcher());
+            manager.Register(index + 1, 0, new NoOpDispatcher());
         var active = manager.ActiveStreamCount;
         manager.CompleteAll(exception: null);
         return active;

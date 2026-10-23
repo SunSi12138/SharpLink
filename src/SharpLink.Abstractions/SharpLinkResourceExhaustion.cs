@@ -36,10 +36,7 @@ internal static class SharpLinkResourceExhaustion
         string message)
         => new(code, detailCode, message);
 
-    internal static SharpLinkException CreateRemote(
-        SharpLinkErrorCode code,
-        string message)
-        => new(code, message);
+
 
     internal static string GetReason(Exception exception)
         => exception is SharpLinkException

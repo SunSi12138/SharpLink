@@ -126,10 +126,12 @@ Coordinator 的 `ReplaceClusterAsync` 先把 candidate child connect/validate �
 
 Server-side dynamic service/module replacement 的 publication boundary 与 multi-cluster proxy binding 不同：
 
-- 已经开始的调用继续使用其捕获的旧 server generation/service/codec；
+- 已经开始的调用保持其捕获的旧 server generation/service/codec 选择，不会中途改投新 generation；
 - replacement publication 之后到达 Server 的新调用使用新 generation；
 - 旧 generation 在 drain 完成后才可卸载；
 - 普通 client proxy 只绑定自己的 client/channel，并不持有某个 server service object，因此仅仅因为 Server 发布了新 service/module generation，**不需要重新 `Get<T>()`**。
+
+Admission 排队只保留所选 registration 的身份，不代表已经取得旧 module 的执行租约，也不会阻止旧 collectible service 卸载。排队期间旧 registration 被 replacement / unregister 退役时，恢复后的 request/response RPC 以 `Unavailable` 拒绝；OneWay 不执行 handler，并按原请求的 stream shape 排空。即使 replacement 使用相同 contract assembly 和兼容 wire shape，也不会让旧 cancellation token 与新 service / codec 混用。已经取得旧 module 执行租约的调用仍按原 drain / cancellation 生命周期完成。 客户端另行获准的 retry 是新的 physical attempt，可以按既有 deadline / retry policy 选择新 generation；这不等于把同一已排队 attempt 转移到新 registration。
 
 如果替换的是 **client-side collectible contract assembly** 本身，则旧 proxy/type/codec 仍属于旧 AssemblyLoadContext；要使用新 contract assembly 并允许旧 ALC 卸载，必须释放旧 proxy/type 等强引用，并从新 contract generation 获取新的 proxy。这是 client module ownership 问题，不是 server service rebind。
 

@@ -69,8 +69,35 @@ public partial class RpcGenerator
         IMethodSymbol constructor,
         out string invalidDetail)
     {
+        // The generated activator supplies constructor arguments only; it cannot
+        // provide an object initializer for required fields and properties.
+        // Respect the C# contract of a constructor marked SetsRequiredMembers.
+        var setsRequiredMembers = constructor.GetAttributes().Any(static attribute =>
+            IsAttribute(attribute, "System.Diagnostics.CodeAnalysis", "SetsRequiredMembersAttribute"));
+        if (!setsRequiredMembers)
+        {
+            for (var type = constructor.ContainingType; type is not null; type = type.BaseType)
+            {
+                if (!type.GetMembers().Any(static member =>
+                    member is IPropertySymbol { IsRequired: true } ||
+                    member is IFieldSymbol { IsRequired: true }))
+                    continue;
+                invalidDetail = "required service members need a constructor annotated with [SetsRequiredMembers] before the generated activator can call it";
+                return false;
+            }
+        }
+
         foreach (var parameter in constructor.Parameters)
         {
+            // A direct dynamic parameter cannot appear inside typeof(dynamic) in the
+            // generated DI dependency descriptor. Do not synthesize runtime binder
+            // semantics in the NativeAOT-friendly service activator.
+            if (parameter.Type.TypeKind == TypeKind.Dynamic)
+            {
+                invalidDetail =
+                    $"constructor dependency '{parameter.Name}' is dynamic; use an explicit service type such as object";
+                return false;
+            }
             if (parameter.RefKind is RefKind.Ref or RefKind.Out or RefKind.RefReadOnlyParameter)
             {
                 invalidDetail =

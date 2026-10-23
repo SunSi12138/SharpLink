@@ -7,7 +7,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Success
@@ -58,7 +58,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Success
@@ -109,7 +109,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Success
@@ -163,7 +163,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (_, _) => ValueTask.FromResult(
                 new SharpLinkAuthenticationResult(
                     IsAuthenticated: true,
@@ -202,7 +202,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (_, _) => ValueTask.FromResult(
                 new SharpLinkAuthenticationResult(
                     IsAuthenticated: false,
@@ -241,7 +241,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseAuthenticator(SharpLinkAuthenticator.CreateServer(static (_, _) => ValueTask.FromResult(
                 SharpLinkAuthenticationResult.Authenticate(
@@ -279,7 +279,7 @@ public partial class TransportConnectionIntegrationTests
         const int maxAuthenticationBytes = 32;
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseProtocol(static options => options.MaxMetadataBytes = maxAuthenticationBytes);
 
@@ -316,7 +316,7 @@ public partial class TransportConnectionIntegrationTests
         var expiresAt = new DateTimeOffset(2030, 4, 19, 12, 34, 56, TimeSpan.Zero);
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Authenticate(
@@ -379,7 +379,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseAuthenticator(CreateServerAuthenticator(static token =>
                 SharpLinkAuthenticationResult.Authenticate(
@@ -442,7 +442,7 @@ public partial class TransportConnectionIntegrationTests
         var expiresAt = new DateTimeOffset(2030, 4, 19, 12, 34, 56, TimeSpan.Zero);
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseAuthenticator(CreateServerAuthenticator(static message => message == "expected-token"
                 ? SharpLinkAuthenticationResult.Authenticate(

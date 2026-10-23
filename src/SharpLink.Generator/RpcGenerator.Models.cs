@@ -1,6 +1,6 @@
 namespace SharpLink.Generator;
 
-internal record RpcServiceModel(
+internal sealed record RpcServiceModel(
     string ServiceName,
     string ServiceNamespace,
     string ServiceFullName,
@@ -10,9 +10,9 @@ internal record RpcServiceModel(
     EquatableArray<string> AssemblyDependencies,
     Location? Location);
 
-internal record RpcConstructorParameterModel(string Name, string TypeName);
+internal sealed record RpcConstructorParameterModel(string Name, string TypeName);
 
-internal record RpcInterfaceModel(
+internal sealed record RpcInterfaceModel(
     string Name,
     string Namespace,
     string FullName,
@@ -22,7 +22,7 @@ internal record RpcInterfaceModel(
     EquatableArray<string> AssemblyDependencies,
     Location? Location);
 
-internal record RpcMethodModel(
+internal sealed record RpcMethodModel(
     string Name,
     string ReturnType,
     string DisplayReturnType,
@@ -53,7 +53,7 @@ internal record RpcMethodModel(
         StringComparison.Ordinal);
 }
 
-internal record RpcParameterModel(
+internal sealed record RpcParameterModel(
     string Name,
     string Type,
     string DisplayType,
@@ -126,7 +126,8 @@ internal readonly record struct StaticRouteConflictModel(
 internal readonly record struct ReferencedManifestBootstrapModel(
     string AssemblyIdentity,
     string ManifestTypeName,
-    bool HasRegisterMethod);
+    bool HasRegisterMethod,
+    string? ExternAlias);
 
 internal sealed record RpcUnionModel(
     string TypeName,
@@ -158,7 +159,8 @@ internal enum GeneratedCodecKind
     ReadOnlyMemory,
     ImmutableArray,
     Nullable,
-    Custom
+    Custom,
+    UnsafeBlit
 }
 
 internal enum GeneratedMemberKind
@@ -207,7 +209,9 @@ internal sealed record GeneratedCodecModel(
     ImmutableArray<string> AssemblyDependencies,
     Location? Location)
 {
+    public GeneratedUnsafeBlitRequirementModel? UnsafeBlitRequirement { get; init; }
     public bool ElementIsString { get; init; }
+    public bool CustomCodecSupportsConcreteDispatch { get; init; }
     public ulong CodecHashHigh { get; init; }
     public ulong CodecHashLow { get; init; }
 }

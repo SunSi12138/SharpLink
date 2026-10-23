@@ -2,6 +2,8 @@
 
 `SharpLink.GenerationControl` is an optional, statically compiled generation-declaration contract for deployments where either endpoint can change generation first. It is deliberately separate from Protocol v2 and the ordinary RPC data path.
 
+The package ships the RPC contract, DTOs, generated API 5 artifacts, and local provider interfaces only. Applications implement the service, inventory publication, epoch/revision acceptance, reconciliation loop, and provider. There is no built-in coordinator or automatic synchronization service.
+
 The central rule is:
 
 > Peer can inform me, but peer cannot mutate me.

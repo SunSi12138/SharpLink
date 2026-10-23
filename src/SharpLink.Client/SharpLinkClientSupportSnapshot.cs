@@ -283,7 +283,7 @@ public sealed record SharpLinkConnectionFailureSnapshot(
     UseStringEnumConverter = true,
     WriteIndented = true)]
 [JsonSerializable(typeof(SharpLinkClientSupportSnapshot))]
-internal partial class SharpLinkClientSupportIndentedJsonContext : JsonSerializerContext
+internal sealed partial class SharpLinkClientSupportIndentedJsonContext : JsonSerializerContext
 {
 }
 
@@ -293,7 +293,7 @@ internal partial class SharpLinkClientSupportIndentedJsonContext : JsonSerialize
     UseStringEnumConverter = true,
     WriteIndented = false)]
 [JsonSerializable(typeof(SharpLinkClientSupportSnapshot))]
-internal partial class SharpLinkClientSupportCompactJsonContext : JsonSerializerContext
+internal sealed partial class SharpLinkClientSupportCompactJsonContext : JsonSerializerContext
 {
 }
 

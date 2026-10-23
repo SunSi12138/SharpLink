@@ -1,7 +1,7 @@
 namespace SharpLink.Client;
 
 /// <summary>Configures and creates an independently owned SharpLink RPC client.</summary>
-public partial class SharpClientBuilder
+public sealed partial class SharpClientBuilder
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
     private static readonly TimeSpan RecommendedRequestTimeout = TimeSpan.FromSeconds(30);
@@ -116,13 +116,6 @@ public partial class SharpClientBuilder
         return this;
     }
 
-    /// <summary>Sets a fallback codec resolver scoped to clients built by this builder.</summary>
-    internal SharpClientBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
-    {
-        Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
-        return this;
-    }
-
     /// <summary>Uses the supplied application-owned logger factory.</summary>
     public SharpClientBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
     {
@@ -157,7 +150,7 @@ public partial class SharpClientBuilder
     }
 
     /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
-    public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
+    internal void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         Configure(() =>
         {

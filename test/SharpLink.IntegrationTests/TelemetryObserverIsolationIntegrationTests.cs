@@ -208,7 +208,7 @@ public sealed class TelemetryObserverIsolationIntegrationTests
         {
             var cancellation = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback)
                 .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();

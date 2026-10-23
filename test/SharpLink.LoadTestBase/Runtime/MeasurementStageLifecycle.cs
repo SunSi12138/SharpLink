@@ -90,7 +90,9 @@ public sealed class MeasurementStageLifecycle
             return false;
         }
 
-        Volatile.Write(ref _startingOperations[admissionSlot].IsStarting, 1);
+        // Publish before rechecking the stop state; release-only publication
+        // permits both this worker and the stopping thread to miss each other.
+        Interlocked.Exchange(ref _startingOperations[admissionSlot].IsStarting, 1);
         if (Volatile.Read(ref _state) != 1)
         {
             Volatile.Write(ref _startingOperations[admissionSlot].IsStarting, 0);

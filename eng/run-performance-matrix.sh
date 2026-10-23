@@ -19,6 +19,7 @@ if [[ "$TIER" == "full" ]]; then
   DEFAULT_WARMUP=5
   DEFAULT_DURATION=20
   DEFAULT_STREAM_OPERATION=all
+  DEFAULT_MAXIMUM_RECORDED_OPERATIONS=300000000
   REPETITIONS="${REPETITIONS:-5}"
 else
   DEFAULT_TRANSPORTS="tcp,sharedmemory"
@@ -28,7 +29,14 @@ else
   DEFAULT_WARMUP=1
   DEFAULT_DURATION=3
   DEFAULT_STREAM_OPERATION=s2c
+  DEFAULT_MAXIMUM_RECORDED_OPERATIONS=30000000
   REPETITIONS="${REPETITIONS:-1}"
+fi
+
+if [[ ! "$REPETITIONS" =~ ^[1-9][0-9]*$ ]] ||
+   (( ${#REPETITIONS} > 9 )); then
+  echo "SHARPLINK_MATRIX_REPETITIONS must be a positive integer (1..999999999)." >&2
+  exit 2
 fi
 
 TRANSPORTS_CSV="${SHARPLINK_MATRIX_TRANSPORTS:-$DEFAULT_TRANSPORTS}"
@@ -37,6 +45,7 @@ PAYLOADS_CSV="${SHARPLINK_MATRIX_PAYLOADS:-$DEFAULT_PAYLOADS}"
 CONCURRENCY_OVERRIDE="${SHARPLINK_MATRIX_CONCURRENCY:-}"
 CONCURRENCY="${CONCURRENCY_OVERRIDE:-$DEFAULT_CONCURRENCY}"
 MAX_SEND_QUEUE_BYTES="${SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES:-67108864}"
+MAXIMUM_RECORDED_OPERATIONS="${SHARPLINK_MATRIX_MAXIMUM_RECORDED_OPERATIONS:-$DEFAULT_MAXIMUM_RECORDED_OPERATIONS}"
 WARMUP="${SHARPLINK_MATRIX_WARMUP:-$DEFAULT_WARMUP}"
 DURATION="${SHARPLINK_MATRIX_DURATION:-$DEFAULT_DURATION}"
 STREAM_OPERATION="${SHARPLINK_MATRIX_STREAM_OPERATION:-$DEFAULT_STREAM_OPERATION}"
@@ -44,9 +53,40 @@ WORKLOADS=",${SHARPLINK_MATRIX_WORKLOADS:-unary,oneway,oneway-backpressure,async
 IFS=',' read -r -a TRANSPORTS <<< "$TRANSPORTS_CSV"
 IFS=',' read -r -a PROFILES <<< "$PROFILES_CSV"
 IFS=',' read -r -a PAYLOADS <<< "$PAYLOADS_CSV"
+IFS=',' read -r -a RUNTIME_LIST <<< "$RUNTIMES"
+
+# Independently calculate the requested report count before any build or work.
+# A non-empty environment-info artifact is not workload evidence.
+EXPECTED_WORKLOAD_COUNT=0
+for runtime in "${RUNTIME_LIST[@]}"; do
+  expected_per_pool=0
+  [[ "$WORKLOADS" == *,unary,* ]] && expected_per_pool=$((expected_per_pool + ${#PAYLOADS[@]}))
+  [[ "$WORKLOADS" == *,oneway,* ]] && expected_per_pool=$((expected_per_pool + 1))
+  [[ "$WORKLOADS" == *,async,* ]] && expected_per_pool=$((expected_per_pool + 2))
+  [[ "$WORKLOADS" == *,streams,* ]] && expected_per_pool=$((expected_per_pool + 1))
+  [[ "$runtime" == jit && "$WORKLOADS" == *,oneway-backpressure,* ]] &&
+    expected_per_pool=$((expected_per_pool + 1))
+  for transport in "${TRANSPORTS[@]}"; do
+    pool_count=2
+    [[ "$transport" == anonymous ]] && pool_count=1
+    EXPECTED_WORKLOAD_COUNT=$((EXPECTED_WORKLOAD_COUNT +
+        REPETITIONS * pool_count * ${#PROFILES[@]} * expected_per_pool))
+  done
+done
+if (( EXPECTED_WORKLOAD_COUNT == 0 )); then
+  echo "SharpLink performance matrix configuration schedules no workloads." >&2
+  exit 2
+fi
 
 if [[ ! "$MAX_SEND_QUEUE_BYTES" =~ ^[1-9][0-9]*$ ]]; then
   echo "SHARPLINK_MATRIX_MAX_SEND_QUEUE_BYTES must be a positive integer." >&2
+  exit 2
+fi
+
+if [[ ! "$MAXIMUM_RECORDED_OPERATIONS" =~ ^[1-9][0-9]*$ ]] \
+  || (( ${#MAXIMUM_RECORDED_OPERATIONS} > 10 )) \
+  || (( MAXIMUM_RECORDED_OPERATIONS > 2147483647 )); then
+  echo "SHARPLINK_MATRIX_MAXIMUM_RECORDED_OPERATIONS must be an integer between 1 and 2147483647." >&2
   exit 2
 fi
 
@@ -82,10 +122,16 @@ case "$(uname -s)-$(uname -m)" in
   MINGW*-x86_64|MSYS*-x86_64|CYGWIN*-x86_64) RID=win-x64 ;;
 esac
 
+# This invocation publishes each AOT project once. Scalars are deliberate:
+# the system /bin/bash on macOS is Bash 3.2 (no associative arrays).
+AOT_LOADTEST_PUBLISHED=0
+AOT_STREAMLOADTEST_PUBLISHED=0
+
 run_project() {
   local runtime="$1"
   local project="$2"
   shift 2
+  set -- "$@" --maximum-recorded-operations "$MAXIMUM_RECORDED_OPERATIONS"
   if [[ "$runtime" == "jit" ]]; then
     dotnet run -c Release --no-build --project "$project" -- "$@"
     return
@@ -101,13 +147,57 @@ run_project() {
   if [[ "$RID" == win-* ]]; then
     executable="$executable.exe"
   fi
-  if [[ ! -x "$executable" ]]; then
+  local already_published
+  case "$name" in
+    SharpLink.LoadTest) already_published="$AOT_LOADTEST_PUBLISHED" ;;
+    SharpLink.StreamLoadTest) already_published="$AOT_STREAMLOADTEST_PUBLISHED" ;;
+    *)
+      echo "Unexpected NativeAOT performance project: $project" >&2
+      exit 2
+      ;;
+  esac
+  if [[ "$already_published" == "0" ]]; then
+    # A stale executable cannot attest to the current source/build inputs.
+    # Remove it first, then fail closed if this publish fails or omits output.
+    rm -f "$executable"
     dotnet publish "$project" -c Release -r "$RID" /p:PublishAot=true -o "$publish" -v minimal
+    if [[ ! -x "$executable" ]]; then
+      echo "NativeAOT publish did not produce an executable: $executable" >&2
+      exit 1
+    fi
+    case "$name" in
+      SharpLink.LoadTest) AOT_LOADTEST_PUBLISHED=1 ;;
+      SharpLink.StreamLoadTest) AOT_STREAMLOADTEST_PUBLISHED=1 ;;
+    esac
   fi
   "$executable" "$@"
 }
 
-IFS=',' read -r -a RUNTIME_LIST <<< "$RUNTIMES"
+COMPLETED_WORKLOAD_COUNT=0
+invoke_matrix_workload() {
+  local report_path=""
+  local previous=""
+  for argument in "$@"; do
+    if [[ "$previous" == "--json-output" ]]; then
+      report_path="$argument"
+      break
+    fi
+    previous="$argument"
+  done
+  if [[ -z "$report_path" ]]; then
+    echo "Performance matrix workload has no JSON report target." >&2
+    exit 2
+  fi
+  # A stale file from an earlier run must not satisfy the current workload.
+  rm -f "$report_path"
+  run_project "$@"
+  if [[ ! -s "$report_path" ]]; then
+    echo "Performance matrix workload produced no report: $report_path" >&2
+    exit 1
+  fi
+  COMPLETED_WORKLOAD_COUNT=$((COMPLETED_WORKLOAD_COUNT + 1))
+}
+
 for runtime in "${RUNTIME_LIST[@]}"; do
   for repetition in $(seq 1 "$REPETITIONS"); do
     ordered_transports=("${TRANSPORTS[@]}")
@@ -134,7 +224,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
               if [[ "$payload" == "0" ]]; then
                 operation=empty
               fi
-              run_project "$runtime" test/SharpLink.LoadTest \
+              invoke_matrix_workload "$runtime" test/SharpLink.LoadTest \
                 --mode local --transport "$transport" --operation "$operation" \
                 --payload-size "$payload" --concurrency "$payload_concurrency" \
                 --warmup "$WARMUP" --duration "$DURATION" --metrics-port 0 \
@@ -149,7 +239,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
           # backpressure as part of logical-send latency. The profile-default
           # many-producer workload below records raw saturation separately.
           if [[ "$WORKLOADS" == *,oneway,* ]]; then
-            run_project "$runtime" test/SharpLink.LoadTest \
+            invoke_matrix_workload "$runtime" test/SharpLink.LoadTest \
               --mode local --transport "$transport" --operation oneway \
               --payload-size 0 --concurrency 1 \
               --warmup "$WARMUP" --duration "$DURATION" --metrics-port 0 \
@@ -159,7 +249,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
           fi
 
           if [[ "$runtime" == "jit" && "$WORKLOADS" == *,oneway-backpressure,* ]]; then
-            run_project "$runtime" test/SharpLink.LoadTest \
+            invoke_matrix_workload "$runtime" test/SharpLink.LoadTest \
               --mode local --transport "$transport" --operation oneway \
               --payload-size 0 --concurrency "$CONCURRENCY" \
               --warmup "$WARMUP" --duration "$DURATION" --metrics-port 0 \
@@ -170,7 +260,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
 
           if [[ "$WORKLOADS" == *,async,* ]]; then
             for operation in yield delay; do
-              run_project "$runtime" test/SharpLink.LoadTest \
+              invoke_matrix_workload "$runtime" test/SharpLink.LoadTest \
                 --mode local --transport "$transport" --operation "$operation" \
                 --payload-size 0 --concurrency "$CONCURRENCY" \
                 --warmup "$WARMUP" --duration "$DURATION" --metrics-port 0 \
@@ -181,7 +271,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
           fi
 
           if [[ "$WORKLOADS" == *,streams,* ]]; then
-            run_project "$runtime" test/SharpLink.StreamLoadTest \
+            invoke_matrix_workload "$runtime" test/SharpLink.StreamLoadTest \
               --mode local --transport "$transport" --operation "$STREAM_OPERATION" --stream-size 256 \
               --concurrency "$CONCURRENCY" --warmup "$WARMUP" --duration "$DURATION" \
               --profile "$profile" --min-connections "$min_connections" \
@@ -194,4 +284,8 @@ for runtime in "${RUNTIME_LIST[@]}"; do
   done
 done
 
-echo "SharpLink performance matrix complete: $OUTPUT_ROOT"
+if (( COMPLETED_WORKLOAD_COUNT != EXPECTED_WORKLOAD_COUNT )); then
+  echo "Performance matrix report coverage mismatch: expected $EXPECTED_WORKLOAD_COUNT, completed $COMPLETED_WORKLOAD_COUNT." >&2
+  exit 1
+fi
+echo "SharpLink performance matrix complete: $OUTPUT_ROOT (reports=$COMPLETED_WORKLOAD_COUNT)"

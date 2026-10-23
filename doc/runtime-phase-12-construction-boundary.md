@@ -53,11 +53,11 @@ partially validated runtime state to a constructor.
 | Client one/many endpoint configurations and endpoint factory | `UseEndpoint` / `UseEndpoints`; compile freezes one endpoint snapshot, materialization calls the factory once per frozen endpoint |
 | Client dynamic resolver and dynamic transport factory | `UseEndpointResolver` / `UseDnsEndpoints`; builder binds the resolver's `TimeProvider` before runtime construction |
 | Client heartbeat, request timeout, session flush, pool | `UseHeartbeat`, `UseRequestTimeout` / `DisableRequestTimeout`, `UseRpcSessionFlush`, `UseConnectionPool` |
-| Client runtime context, protocol, serializer/codec, logger | `UseRuntime`, `UseTimeProvider`, `UseProtocol`, `UseSerializer` / `UseCodec`, `UseLoggerFactory` |
+| Client runtime context, protocol, logger; generated Codec policy | `UseRuntime`, `UseTimeProvider`, `UseProtocol`, `UseLoggerFactory`; wire Codec configured through generated Contract attributes/Adapter |
 | Client auth, interceptors, cluster selection, retry/admission | `UseAuthenticator`, `AddInterceptor`, `UseCluster` / `UseLoadBalancing` / `UseEndpointSelector`, `UseRetry`, `UseEndpointAdmission` / `UseCircuitBreaker` |
 | Client nullable topology choice, catalog fallback, reconnect jitter default | frozen `ClientTopologyPlan`, `SharpLinkGeneratedManifestSource`, and Builder-owned reconnect strategy; only the internal deterministic-test setting can replace jitter |
 | Server listener, heartbeat, session flush, logger | `UseTransport`, `UseHeartbeat`, `UseRpcSessionFlush`, `UseLoggerFactory` |
-| Server runtime context, protocol, serializer/codec | `UseRuntime`, `UseTimeProvider`, `UseProtocol`, `UseSerializer` / `UseCodec` |
+| Server runtime context, protocol; generated Codec policy | `UseRuntime`, `UseTimeProvider`, `UseProtocol`; wire Codec configured through generated Contract attributes/Adapter |
 | Server auth, interceptors, exception mapper | `UseAuthenticator`, `RequireAuthentication`, `AddInterceptor`, `UseExceptionMapper` / `EnableDetailedErrors` |
 | Server provider and services | `UseServiceProvider`, automatic registration, `DisableAutomaticServiceRegistration`, `EnableService`, `ExcludeService`, `ReplaceService` |
 | Server admission, manifest snapshot, provider/service cleanup, shutdown plan | Builder compile/materialization and its transaction; `ServerServiceCleanup` is prebuilt before the Server exists and the current fixed shutdown policy is `ServerShutdownPlan.Default` |

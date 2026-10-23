@@ -6,10 +6,12 @@ Issue #251 adds a hard managed-allocation regression gate for a small set of ste
 
 - `rpc-add-sharedmemory-c1`: tiny unary RPC, one in-flight worker.
 - `rpc-add-sharedmemory-c8`: the same RPC with eight concurrent workers on the steady-state client/session path.
-- `rpc-oneway-sharedmemory-c1`: tiny OneWay send path.
+- `rpc-oneway-sharedmemory-c1`: tiny OneWay send path, with the receiver's current asynchronous read pending before each send.
 - `send-pump-idle-wake-balanced`: enqueue -> idle send-pump wake -> force-flush -> drain cycle.
 
 Every case uses at least five independent samples. A sample is normalized only when every requested operation completes successfully. The gate checks both the median B/op and the min/max spread; missing/malformed budgets, runtime-major mismatch, unstable samples, empty filters, non-Release builds, and operation failures all fail closed. JSON is written on both pass and failure.
+
+The OneWay receiver and ordinary send-pump idle/wake preconditions are bounded to five seconds and remain inside the measured operation. An empty setup flush starts the lazy send pump outside measurement. These constraints select the intended waiting path without changing workloads or allocation budgets; see [measurement boundaries and failure diagnostics](../../doc/allocation-gate.md).
 
 ## Running locally or in CI
 
@@ -26,6 +28,15 @@ dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
   -c Release --no-build -- \
   --allocation-gate-self-test \
   --output artifacts/perf/allocation-gate-self-test.json
+```
+
+The server call-admission benchmark also has a fast smoke test that initializes its real TCP-backed
+benchmark environment, acquires and releases one call slot, and cleans up without running the full
+BenchmarkDotNet measurement suite. CI runs this after building the benchmark project:
+
+```bash
+dotnet run --project test/SharpLink.Benchmarks/SharpLink.Benchmarks.csproj \
+  -c Release --no-build -- --server-call-admission-smoke-test
 ```
 
 A negative-control run can inject managed allocation into each measured target operation:

@@ -21,7 +21,7 @@ builder.Logging.SetMinimumLevel(LogLevel.Information);
 builder.Services.AddSharpLinkServer(server =>
 {
     server
-        .UseTcp(port, "127.0.0.1")
+        .UseTcp(port, global::System.Net.IPAddress.Parse("127.0.0.1"))
         ;
 });
 

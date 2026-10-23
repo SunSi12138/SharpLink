@@ -15,6 +15,16 @@ public sealed partial class BuildPlanBuilderTests
     [Test]
     public async Task ServerBuilderShouldStayConsumedAfterSuccessAndFailure()
     {
+        // Issue #805: public Fluent builders are not third-party subclassing SPIs.
+        // A sealed CLR type also forbids compilation of derived classes (CS0509).
+        if (!typeof(SharpClientBuilder).IsPublic || !typeof(SharpClientBuilder).IsSealed ||
+            !typeof(SharpLinkServerBuilder).IsPublic || !typeof(SharpLinkServerBuilder).IsSealed ||
+            !typeof(ISharpLinkServerBuilder).IsAssignableFrom(typeof(SharpLinkServerBuilder)))
+        {
+            throw new Exception(
+                "Public Client/Server builders must remain configurable without allowing inheritance.");
+        }
+
         var successfulTransport = new TrackingServerListener();
         var successfulBuilder = CreateServerBuilder().UseTransport(successfulTransport);
         await using var server = successfulBuilder.Build();
@@ -48,6 +58,26 @@ public sealed partial class BuildPlanBuilderTests
 
         await using var server = builder.Build();
         Ensure(server is not null, "loopback plaintext TCP must build by default.");
+
+        // #805: the typed Server overloads remain viable without string-IP APIs.
+        var typedBuilder = CreateServerBuilder().UseTcp(0, IPAddress.Loopback);
+        var typedAddress = typedBuilder.Transport!.LocalEndPoint as IPEndPoint;
+        Ensure(typedAddress is not null && typedAddress.Address.Equals(IPAddress.Loopback),
+            "typed IPAddress TCP overload must preserve loopback binding");
+        await using var typedServer = typedBuilder.Build();
+        Ensure(typedServer is not null, "typed IPAddress TCP must still build");
+
+        var tlsOptions = new SslServerAuthenticationOptions
+        {
+            ServerCertificateSelectionCallback = static (_, _) => null!
+        };
+        var typedTlsBuilder = CreateServerBuilder()
+            .UseTcp(0, tlsOptions, IPAddress.Loopback, tlsHandshakeTimeout: TimeSpan.FromSeconds(2));
+        var tlsAddress = typedTlsBuilder.Transport!.LocalEndPoint as IPEndPoint;
+        Ensure(tlsAddress is not null && tlsAddress.Address.Equals(IPAddress.Loopback),
+            "typed TLS Server TCP overload must preserve loopback binding");
+        await using var typedTlsServer = typedTlsBuilder.Build();
+        Ensure(typedTlsServer is not null, "typed IPAddress TLS must still build");
     }
 
     [Test]

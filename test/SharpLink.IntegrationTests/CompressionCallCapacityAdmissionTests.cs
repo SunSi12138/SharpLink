@@ -416,7 +416,7 @@ public class CompressionCallCapacityAdmissionTests
                     options.Global.UseConcurrency(admissionConcurrency));
             }
 
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>

@@ -11,10 +11,18 @@ namespace SharpLink.Generated;
 
 internal static class __SharpLinkGeneratedUtf16
 {
-    internal static int GetByteCount(string value) => checked(value.Length * sizeof(char));
+    internal static int GetByteCount(string value)
+    {
+        var byteCount = checked(value.Length * sizeof(char));
+        if (byteCount > RpcGeneratedCodecWire.MaximumStringPayloadBytes)
+            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Generated string payload exceeds the protocol maximum.");
+        return byteCount;
+    }
 
     internal static void WriteStringKnownSize(IBufferWriter<byte> writer, string value, int byteCount)
     {
+        if (byteCount < 0 || (byteCount & 1) != 0 || byteCount > RpcGeneratedCodecWire.MaximumStringPayloadBytes)
+            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, "Generated string payload exceeds the protocol maximum.");
         var length = writer.GetSpan(sizeof(int));
         global::System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(length, byteCount);
         writer.Advance(sizeof(int));
@@ -43,16 +51,17 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         __snapshotPool.Add(snapshot);
     }
 
-    private readonly IRpcCodec<global::System.Collections.Generic.List<string>> __codec_0;
+    private readonly global::SharpLink.Generated.__SharpLinkGeneratedCodec_E73FF795487FA4FB __codec_0;
+    private readonly IRpcSizedCodec<global::System.Collections.Generic.List<string>>? __sizedCodec_0;
     private readonly bool __canExactSize;
 
     internal __SharpLinkGeneratedCodec_A2C1A7F2F97244B4(IRpcCodecProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
-        __codec_0 = provider.GetCodec<global::System.Collections.Generic.List<string>>();
+        __codec_0 = (global::SharpLink.Generated.__SharpLinkGeneratedCodec_E73FF795487FA4FB)provider.GetCodec<global::System.Collections.Generic.List<string>>();
+        __sizedCodec_0 = (object)__codec_0 as IRpcSizedCodec<global::System.Collections.Generic.List<string>>;
         __canExactSize = true;
-        if (__codec_0 is not IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sizedCodec_0 ||
-            !__sizedCodec_0.CanExactSize)
+        if (__sizedCodec_0 is null || !__sizedCodec_0.CanExactSize)
             __canExactSize = false;
     }
 
@@ -77,10 +86,13 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
                     __exactWriter.Advance(0);
                     SerializeSized(in value, writer, __exactSize, __sizedSnapshot);
                 }
-                finally
+                catch
                 {
-                    ReleaseSnapshot(__sizedSnapshot);
+                    try { ReleaseSnapshot(__sizedSnapshot); }
+                    catch { /* Preserve the original writer/serializer exception. */ }
+                    throw;
                 }
+                ReleaseSnapshot(__sizedSnapshot);
                 return;
             }
         }
@@ -110,7 +122,7 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         RpcGeneratedCodecWire.WriteUnmanaged<int>(writer, __fixed_1);
         RpcGeneratedCodecWire.WriteFieldKey(writer, 381526208U, RpcGeneratedWireType.LengthDelimited);
         var lengthToken_0 = RpcGeneratedCodecWire.BeginLength(rpcWriter);
-        __codec_0.Serialize(__complex_2, writer);
+        __codec_0.Serialize(__complex_2!, writer);
         RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_0);
         RpcGeneratedCodecWire.WriteObjectEnd(writer);
     }
@@ -137,8 +149,22 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
 
     private void ReleaseCapturedChildren(__SizedSnapshot snapshot)
     {
-        if (__codec_0 is IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0 && snapshot.__nestedSnapshot_0 is not null)
-            __sized_0.ReleaseSnapshot(snapshot.__nestedSnapshot_0);
+        global::System.Runtime.ExceptionServices.ExceptionDispatchInfo? __firstCleanupError = null;
+        var __childSnapshot_0 = snapshot.__nestedSnapshot_0;
+        snapshot.__nestedSnapshot_0 = null;
+        var __sized_0 = __sizedCodec_0;
+        if (__sized_0 is not null && __childSnapshot_0 is not null)
+        {
+            try
+            {
+                __sized_0.ReleaseSnapshot(__childSnapshot_0);
+            }
+            catch (Exception __exception)
+            {
+                __firstCleanupError ??= global::System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(__exception);
+            }
+        }
+        __firstCleanupError?.Throw();
     }
 
     public bool TryGetEncodedSize(in global::FixturePayload value, out int size)
@@ -151,7 +177,8 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         size = 2;
         size = checked(size + (value.Name is null ? 1 : 5 + __SharpLinkGeneratedUtf16.GetByteCount(value.Name)));
         size = checked(size + 4 + 4);
-        if (__codec_0 is not IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0 ||
+        var __sized_0 = __sizedCodec_0;
+        if (__sized_0 is null ||
             !__sized_0.CanExactSize ||
             !__sized_0.TryGetEncodedSize(value.Tags, out var __nestedSize_0))
         {
@@ -171,19 +198,23 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
             return true;
         }
         var __snapshot = RentSnapshot();
+        var __snapshotCleanupStarted = false;
+        try
+        {
         size = 10;
         __snapshot.__string_0 = value.Name;
         __snapshot.__stringByteCount_0 = __snapshot.__string_0 is null ? 0 : __SharpLinkGeneratedUtf16.GetByteCount(__snapshot.__string_0);
         __snapshot.__fixed_1 = value.Count;
         __snapshot.__complex_2 = value.Tags;
-        if (__codec_0 is not IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0 ||
+        var __sized_0 = __sizedCodec_0;
+        if (__sized_0 is null ||
             !__sized_0.CanExactSize ||
             !__sized_0.TryGetEncodedSize(__snapshot.__complex_2, out __snapshot.__nestedSize_0, out __snapshot.__nestedSnapshot_0))
         {
             size = 0;
             snapshot = null;
-            ReleaseCapturedChildren(__snapshot);
-            ReturnSnapshot(__snapshot);
+            __snapshotCleanupStarted = true;
+            ReleaseSnapshot(__snapshot);
             return false;
         }
         checked
@@ -193,6 +224,16 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         }
         snapshot = __snapshot;
         return true;
+        }
+        catch
+        {
+            if (!__snapshotCleanupStarted)
+            {
+                try { ReleaseSnapshot(__snapshot); }
+                catch { /* The capture exception takes precedence. */ }
+            }
+            throw;
+        }
     }
 
     public void SerializeSized(in global::FixturePayload value, IBufferWriter<byte> buffer, int size, IRpcSizedCodecSnapshot? snapshot)
@@ -218,10 +259,11 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
         RpcGeneratedCodecWire.WriteUnmanaged<int>(buffer, __snapshot.__fixed_1);
         RpcGeneratedCodecWire.WriteFieldKey(buffer, 381526208U, RpcGeneratedWireType.LengthDelimited);
         var lengthToken_0 = RpcGeneratedCodecWire.BeginLength(rpcWriter);
-        if (__codec_0 is IRpcSizedCodec<global::System.Collections.Generic.List<string>> __sized_0)
+        var __sized_0 = __sizedCodec_0;
+        if (__sized_0 is not null)
             __sized_0.SerializeSized(__snapshot.__complex_2, buffer, __snapshot.__nestedSize_0, __snapshot.__nestedSnapshot_0);
         else
-            __codec_0.Serialize(__snapshot.__complex_2, buffer);
+            __codec_0.Serialize(__snapshot.__complex_2!, buffer);
         RpcGeneratedCodecWire.EndLength(rpcWriter, lengthToken_0);
         RpcGeneratedCodecWire.WriteObjectEnd(buffer);
     }
@@ -230,8 +272,14 @@ internal sealed class __SharpLinkGeneratedCodec_A2C1A7F2F97244B4 : IRpcCodec<glo
     {
         if (snapshot is not __SizedSnapshot __snapshot)
             return;
-        ReleaseCapturedChildren(__snapshot);
-        ReturnSnapshot(__snapshot);
+        try
+        {
+            ReleaseCapturedChildren(__snapshot);
+        }
+        finally
+        {
+            ReturnSnapshot(__snapshot);
+        }
     }
 
     public global::FixturePayload? Deserialize(in ReadOnlySequence<byte> buffer)

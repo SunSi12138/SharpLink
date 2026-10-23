@@ -317,7 +317,7 @@ public sealed class DynamicAdmissionRuntimeControlTests
                 serverBuilder.UseRuntime(serverRuntimeConfigure);
             if (admissionConfigure is not null)
                 serverBuilder.UseAdmissionControl(admissionConfigure);
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = (SharpLinkServer)serverBuilder.Build();
             var serverTask = RunServerAsync(server, serverCancellation.Token);

@@ -2,18 +2,21 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private static void AppendCollectionCodec(StringBuilder sb, GeneratedCodecModel model)
+    private static void AppendCollectionCodec(
+        StringBuilder sb,
+        GeneratedCodecModel model,
+        IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
         sb.AppendLine($"internal sealed class {model.CodecName} : IRpcCodec<{model.TypeName}>");
         sb.AppendLine("{");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine($"    private readonly IRpcCodec<{model.KeyType}> __keyCodec;");
-            sb.AppendLine($"    private readonly IRpcCodec<{model.ValueType}> __valueCodec;");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(model.KeyType!, model.KeyType!, concreteCodecTypes)} __keyCodec;");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(model.ValueType!, model.ValueType!, concreteCodecTypes)} __valueCodec;");
         }
         else
         {
-            sb.AppendLine($"    private readonly IRpcCodec<{model.ElementType}> __elementCodec;");
+            sb.AppendLine($"    private readonly {GetCodecStorageType(model.ElementType!, model.ElementType!, concreteCodecTypes)} __elementCodec;");
         }
         sb.AppendLine();
         sb.AppendLine($"    internal {model.CodecName}(IRpcCodecProvider provider)");
@@ -21,12 +24,12 @@ public partial class RpcGenerator
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(provider);");
         if (model.Kind == GeneratedCodecKind.Dictionary)
         {
-            sb.AppendLine($"        __keyCodec = provider.GetCodec<{model.KeyType}>();");
-            sb.AppendLine($"        __valueCodec = provider.GetCodec<{model.ValueType}>();");
+            sb.AppendLine($"        __keyCodec = {GetCodecResolveExpression("provider", model.KeyType!, model.KeyType!, concreteCodecTypes)};");
+            sb.AppendLine($"        __valueCodec = {GetCodecResolveExpression("provider", model.ValueType!, model.ValueType!, concreteCodecTypes)};");
         }
         else
         {
-            sb.AppendLine($"        __elementCodec = provider.GetCodec<{model.ElementType}>();");
+            sb.AppendLine($"        __elementCodec = {GetCodecResolveExpression("provider", model.ElementType!, model.ElementType!, concreteCodecTypes)};");
         }
         sb.AppendLine("    }");
         sb.AppendLine();
@@ -203,12 +206,13 @@ public partial class RpcGenerator
 
     private static string GetArrayCreationType(string elementType, string lengthExpression)
     {
-        if (elementType.EndsWith("[]", StringComparison.Ordinal))
-        {
-            var firstRank = elementType.IndexOf("[]", StringComparison.Ordinal);
-            return elementType.Substring(0, firstRank) + "[" + lengthExpression + "]" +
-                   elementType.Substring(firstRank);
-        }
-        return elementType + "[" + lengthExpression + "]";
+        // Only the trailing array ranks belong to the element type itself.
+        // Ranks inside generic type arguments must not receive the allocation length.
+        var suffixStart = elementType.Length;
+        while (suffixStart >= 2 &&
+               elementType.Substring(suffixStart - 2, 2) == "[]")
+            suffixStart -= 2;
+        return elementType.Substring(0, suffixStart) + "[" + lengthExpression + "]" +
+               elementType.Substring(suffixStart);
     }
 }

@@ -50,9 +50,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         internal Type ContractType { get; private set; }
         private Type? ServiceType { get; set; }
 
-        internal static PluginBundle Load(string contextName, bool loadService = true)
+        internal static PluginBundle Load(string contextName, bool loadService = true, bool replacement = false)
         {
-            var directory = GetPluginOutputDirectory();
+            var directory = GetPluginOutputDirectory(replacement);
             var context = new PluginLoadContext(contextName, directory);
             var contract = context.LoadFromAssemblyPath(
                 Path.Combine(directory, "SharpLink.DynamicPlugin.Contracts.dll"));
@@ -126,7 +126,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 _ = Unload();
         }
 
-        private static string GetPluginOutputDirectory()
+        private static string GetPluginOutputDirectory(bool replacement)
         {
             var directory = new DirectoryInfo(AppContext.BaseDirectory);
             while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Sharplink.slnx")))
@@ -136,7 +136,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             return Path.Combine(
                 directory.FullName,
                 "test",
-                "SharpLink.DynamicServices",
+                replacement ? "SharpLink.ReplacementServices" : "SharpLink.DynamicServices",
                 "bin",
                 "Release",
                 "net10.0");
@@ -392,7 +392,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             => _expectedServerStopFailure = message;
 
         internal static async Task<DynamicHarness> CreateAsync(
-            bool registerDynamicServiceDependencies = true)
+            bool registerDynamicServiceDependencies = true,
+            IManifestReadinessControl? control = null,
+            ISharpLinkCompressionProvider? compressionProvider = null)
         {
             var serverCancellation = new CancellationTokenSource();
             var services = new ServiceCollection();
@@ -400,16 +402,22 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 services.AddSingleton(TimeProvider.System);
             var serviceProvider = services.BuildServiceProvider();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseServiceProvider(serviceProvider);
+            if (control is not null)
+                serverBuilder.ReplaceService(control);
+            if (compressionProvider is not null)
+                serverBuilder.UseRuntime(options => options.Compression.Providers.Add(compressionProvider));
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
-            var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
-                .Build();
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+            if (compressionProvider is not null)
+                clientBuilder.UseRuntime(options => options.Compression.Providers.Add(compressionProvider));
+            var client = clientBuilder.Build();
             await client.ConnectAsync();
             return new DynamicHarness(server, client, port, serverCancellation, serverTask, serviceProvider);
         }

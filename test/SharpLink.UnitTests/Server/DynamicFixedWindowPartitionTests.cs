@@ -143,7 +143,7 @@ public sealed class DynamicFixedWindowPartitionTests
 
     private static SharpLinkServer CreateServer()
         => (SharpLinkServer)SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .Build();
 
     private static AdmissionProgram Current(SharpLinkServer server)

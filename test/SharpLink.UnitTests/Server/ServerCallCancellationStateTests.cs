@@ -529,11 +529,12 @@ public class ServerCallCancellationStateTests
 
             var streams = new StreamManager();
             var dispatcher = new CountingDispatcher();
-            streams.Register(requestId, dispatcher);
-            streams.CompleteStream(requestId, exception: null);
-            streams.CompleteStream(requestId, exception: null);
+            streams.Register(requestId, 0, dispatcher);
+            streams.CompleteStream(requestId, 0, exception: null);
+            streams.CompleteStream(requestId, 0, exception: null);
             await streams.DispatchChunkAsync(
                 requestId,
+                0,
                 new ReadOnlySequence<byte>(new byte[] { checked((byte)iteration) }));
             Ensure(dispatcher.CompleteCount == 1 && dispatcher.DispatchCount == 0,
                 $"P2-T08 iteration {iteration}: a dispatcher must complete once and never be recreated");

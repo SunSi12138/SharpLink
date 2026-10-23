@@ -71,6 +71,47 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
             ? ValueTask.CompletedTask
             : ConnectAsync(cancellationToken);
 
+    /// <summary>Waits for the exact wire contract on every Ready connection of one configured cluster.</summary>
+    /// <remarks>
+    /// Delegates to the selected child client's remote contract barrier. It does not wait for
+    /// other clusters, acquire a proxy, or change contract routing. The observation is not a lease;
+    /// removal stops the selected child and terminates its pending waits. A later cluster added
+    /// under the same key is a different lifetime and is not joined by this wait.
+    /// </remarks>
+    /// <param name="cluster">The configured cluster to observe.</param>
+    /// <param name="contractId">The generated wire contract identifier.</param>
+    /// <param name="rpcAssemblyHash">The exact nonempty generated RPC assembly identity.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <exception cref="NotSupportedException">The implementation does not expose this barrier.</exception>
+    ValueTask WaitForRemoteContractAsync(
+        SharpLinkClusterKey cluster,
+        long contractId,
+        RpcHash128 rpcAssemblyHash,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException(new NotSupportedException(
+            "This ISharpLinkMultiClusterClient implementation does not support remote contract readiness waits."));
+
+    /// <summary>Waits for an explicitly declared wire identity replacement in one configured cluster.</summary>
+    /// <remarks>
+    /// The selected child permits only the exact previous identity to wait for propagation and
+    /// rejects any third identity. A successful observation does not acknowledge implementation
+    /// generation or lease future availability. Cluster removal terminates that child's waits.
+    /// </remarks>
+    /// <param name="cluster">The configured cluster to observe.</param>
+    /// <param name="contractId">The nonzero generated wire contract identifier.</param>
+    /// <param name="rpcAssemblyHash">The exact nonempty target assembly identity.</param>
+    /// <param name="previousRpcAssemblyHash">The exact nonempty identity being replaced.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait.</param>
+    /// <exception cref="NotSupportedException">The implementation does not expose this barrier.</exception>
+    ValueTask WaitForRemoteContractAsync(
+        SharpLinkClusterKey cluster,
+        long contractId,
+        RpcHash128 rpcAssemblyHash,
+        RpcHash128 previousRpcAssemblyHash,
+        CancellationToken cancellationToken = default)
+        => ValueTask.FromException(new NotSupportedException(
+            "This ISharpLinkMultiClusterClient implementation does not support remote contract replacement waits."));
+
     /// <summary>Waits for independently requested coordinator shutdown without initiating it.</summary>
     /// <remarks>
     /// Legacy custom implementations must override this member to expose a termination signal while running.

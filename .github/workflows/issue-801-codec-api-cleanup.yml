@@ -1,0 +1,89 @@
+name: Issue 801 - 3.0 Codec Surface Cleanup Verification
+
+on:
+  push:
+    branches:
+      - cleanup/issue-801-3x-codec-api-retirement
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-801-codec-cleanup-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codec-cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout 3.0 Codec cleanup
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up .NET 10
+        uses: ./.github/actions/setup-dotnet
+      - name: Restore full solution
+        run: dotnet restore Sharplink.slnx -v minimal
+      - name: Complete Release build and reported compile diagnostics
+        run: |
+          mkdir -p artifacts/issue-801-codec-cleanup
+          dotnet build Sharplink.slnx -c Release --no-restore -v minimal \
+            > artifacts/issue-801-codec-cleanup/build.log 2>&1 || {
+              grep -E 'error CS|error :|error MSB|error NU' artifacts/issue-801-codec-cleanup/build.log | head -n 180 || true
+              tail -n 90 artifacts/issue-801-codec-cleanup/build.log
+              exit 1
+            }
+          tail -n 35 artifacts/issue-801-codec-cleanup/build.log
+      - name: UnitTests
+        run: |
+          dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build \
+            > artifacts/issue-801-codec-cleanup/unit.log 2>&1 || {
+              tail -n 120 artifacts/issue-801-codec-cleanup/unit.log
+              exit 1
+            }
+          tail -n 28 artifacts/issue-801-codec-cleanup/unit.log
+      - name: Generator Tests
+        run: |
+          dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build \
+            > artifacts/issue-801-codec-cleanup/generator.log 2>&1 || {
+              tail -n 120 artifacts/issue-801-codec-cleanup/generator.log
+              exit 1
+            }
+          tail -n 28 artifacts/issue-801-codec-cleanup/generator.log
+      - name: Integration Tests
+        run: |
+          dotnet run --project test/SharpLink.IntegrationTests -c Release --no-build --no-restore -- \
+            --maximum-parallel-tests 1 --timeout 120s \
+            > artifacts/issue-801-codec-cleanup/integration.log 2>&1 || {
+              tail -n 120 artifacts/issue-801-codec-cleanup/integration.log
+              exit 1
+            }
+          tail -n 30 artifacts/issue-801-codec-cleanup/integration.log
+      - name: Pack all nine 3.0 NuGet modules
+        run: |
+          dotnet pack Sharplink.slnx -c Release --no-build --no-restore -o artifacts/nuget -v minimal \
+            > artifacts/issue-801-codec-cleanup/pack.log 2>&1 || {
+              tail -n 80 artifacts/issue-801-codec-cleanup/pack.log
+              exit 1
+            }
+          tail -n 16 artifacts/issue-801-codec-cleanup/pack.log
+      - name: Compare complete public and protected API against reviewed 3.0 baseline
+        run: |
+          bash eng/verify-public-api.sh artifacts/nuget 3.0.0 \
+            > artifacts/issue-801-codec-cleanup/public-api.log 2>&1 || {
+              tail -n 110 artifacts/issue-801-codec-cleanup/public-api.log
+              exit 1
+            }
+          tail -n 18 artifacts/issue-801-codec-cleanup/public-api.log
+      - name: Attach full validation logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: issue-801-codec-cleanup-compile-tests
+          path: artifacts/issue-801-codec-cleanup
+          retention-days: 30
+          if-no-files-found: warn

@@ -351,39 +351,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var contract = module.Manifest.Contracts.Single(candidate =>
             ReferenceEquals(candidate.ContractType, contractType));
         var expectedHash = module.Manifest.RpcAssemblyHash;
-        var snapshotField = typeof(SharpLinkClient).GetField(
-            "_remoteContractManifestSnapshot",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Remote contract manifest snapshot field was not found.");
-        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * 3d);
-
-        while (true)
-        {
-            var bindings = snapshotField.GetValue(client) as Array
-                ?? throw new InvalidOperationException("Remote contract manifest snapshot was unavailable.");
-            for (var index = 0; index < bindings.Length; index++)
-            {
-                var binding = bindings.GetValue(index)!;
-                var manifestProperty = binding.GetType().GetProperty(
-                    "Manifest",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    ?? throw new InvalidOperationException("Remote contract manifest binding was malformed.");
-                var manifest = (ProtocolV2ContractManifest)manifestProperty.GetValue(binding)!;
-                if (manifest.Contracts.TryGetValue(contract.ContractId, out var remoteHash) &&
-                    remoteHash == expectedHash)
-                {
-                    return;
-                }
-            }
-
-            if (Stopwatch.GetTimestamp() >= deadline)
-            {
-                throw new TimeoutException(
-                    $"Remote contract manifest did not publish '{contract.ContractName}' " +
-                    $"({contract.ContractId}) with RpcAssemblyHash '{expectedHash}'.");
-            }
-            await Task.Delay(10);
-        }
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await client.WaitForRemoteContractAsync(contract.ContractId, expectedHash, timeout.Token);
     }
 
     private static bool HasLocalProxyDescriptor(ISharpLinkClient client, Type contractType)

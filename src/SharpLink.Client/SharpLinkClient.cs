@@ -243,11 +243,6 @@ internal sealed partial class SharpLinkClient :
         ThrowStopCleanupFailures(cleanupFailures);
     }
 
-    internal static int[] GetShutdownDependencyOrder(
-        string[] identities,
-        string[][] dependencies)
-        => ClientAssemblyRegistry.GetShutdownDependencyOrder(identities, dependencies);
-
     private static void ThrowStopCleanupFailures(List<Exception> failures)
     {
         if (failures.Count == 0)
@@ -270,8 +265,7 @@ internal sealed partial class SharpLinkClient :
     internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
         => _frameworkTasks.CaptureSnapshot();
 
-    private static SharpLinkException CreateAuthenticationRejectedException(string message)
-        => new(SharpLinkErrorCode.AuthenticationRejected, message);
+
 
     private static SharpLinkException CreateConnectionClosedException(string message, Exception? innerException = null)
         => new(SharpLinkErrorCode.ConnectionClosed, message, innerException);
@@ -282,7 +276,7 @@ internal sealed partial class SharpLinkClient :
     private static SharpLinkException CreateProtocolViolationException(string message)
         => new(SharpLinkErrorCode.ProtocolViolation, message);
 
-    private void TransitionTo(SharpLinkConnectionState state)
+    internal void TransitionTo(SharpLinkConnectionState state)
     {
         TaskCompletionSource? changed;
         lock (_readinessGate)
@@ -308,6 +302,7 @@ internal sealed partial class SharpLinkClient :
             UpdateReadySignalLevelLocked();
         }
         changed?.TrySetResult();
+        PulseRemoteContractWaiters();
     }
 
     private static SharpLinkConnectionState NormalizeAvailabilityState(

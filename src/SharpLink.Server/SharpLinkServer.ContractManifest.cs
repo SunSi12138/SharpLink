@@ -4,6 +4,10 @@ internal sealed partial class SharpLinkServer
 {
     private int _contractManifestPublishScheduled;
 
+    // Instance-scoped test barrier: delay only asynchronous broadcasts, never the handshake or
+    // the independent control RPC response. Tests release it in finally before stopping the server.
+    internal Func<Task>? ContractManifestPublishBarrierForTesting { get; set; }
+
     private ProtocolV2ContractManifest CreateContractManifestSnapshot()
     {
         lock (_registryGate)
@@ -46,6 +50,8 @@ internal sealed partial class SharpLinkServer
         {
             while (CurrentState == ServerState.Running)
             {
+                if (ContractManifestPublishBarrierForTesting is { } barrier)
+                    await barrier().ConfigureAwait(false);
                 var snapshot = CreateContractManifestSnapshot();
                 publishedGeneration = snapshot.Generation;
                 foreach (var connection in _connectionRegistry.SnapshotActive())

@@ -119,8 +119,11 @@ public interface IPaymentContract : SharpLink.Sdk.IService
         var generated = string.Join("\n", RunGeneratorAndGetSources(nested));
         Ensure(generated.Contains("IRpcCodec<global::IPayment>", StringComparison.Ordinal),
             "nested DTO/collection graph must bind the native union Codec");
-        Ensure(generated.Contains("IRpcCodec<global::IPayment?>", StringComparison.Ordinal),
-            "nullable union DTO members must preserve nullable reference annotations in emitted child Codec types");
+        Ensure(generated.Contains("IRpcSizedCodec<global::IPayment?>", StringComparison.Ordinal),
+            "nullable union DTO members must preserve nullable reference annotations in generated sizing paths");
+        Ensure(generated.Contains("GetCodec<global::IPayment>()", StringComparison.Ordinal) &&
+               !generated.Contains("GetCodec<global::IPayment?>()", StringComparison.Ordinal),
+            "concrete nullable union bindings must resolve through the canonical non-nullable union payload type");
 
         var ambiguous = BuildSource("""
 [SharpLink.Sdk.RpcUnionCase(1, typeof(BaseCase))]

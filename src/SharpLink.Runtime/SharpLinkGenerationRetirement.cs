@@ -13,11 +13,6 @@ internal readonly struct SharpLinkRetirementHandle
 
     internal Task Completion => _completion;
 
-    internal ValueTask WaitAsync(CancellationToken cancellationToken = default)
-        => cancellationToken.CanBeCanceled
-            ? new ValueTask(_completion.WaitAsync(cancellationToken))
-            : new ValueTask(_completion);
-
     internal ValueTask<bool> WaitAsync(
         TimeSpan timeout,
         TimeProvider timeProvider,

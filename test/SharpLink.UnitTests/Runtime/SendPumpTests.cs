@@ -139,50 +139,89 @@ public class SendPumpTests
     }
 
     [Test]
-    public async Task TimedBatchShouldExtendBatchForFrameArrivingBeforeDeadline()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TimedBatchShouldExtendBatchForFrameArrivingBeforeDeadline(
+        bool deferReadContinuation,
+        CancellationToken cancellationToken)
     {
         var clock = new ManualTimeProvider();
         var maxLatency = TimeSpan.FromMilliseconds(100);
         var provider = new TimerArmRecordingTimeProvider(clock);
         var input = new Pipe();
-        var output = new Pipe();
+        var readerScheduler = new DeferredPipeScheduler();
+        var output = new Pipe(new PipeOptions(
+            readerScheduler: deferReadContinuation ? readerScheduler : PipeScheduler.ThreadPool,
+            useSynchronizationContext: false));
+        var countingWriter = new CountingFlushPipeWriter(output.Writer);
         using var context = new SharpLinkRuntimeContextBuilder()
             .UseTimeProvider(provider)
             .Build(includeGeneratedAssemblyCatalog: false);
         var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "timed-batch-extension",
             input.Reader,
-            output.Writer,
+            countingWriter,
             RpcSessionTestFixture.ClientOptions(
                 context,
                 new RpcSessionFlushOptions(1024 * 1024, maxLatency)));
         var first = CreateFrame(session, 32, requestId: 1);
-        var second = CreateFrame(session, 32, requestId: 2);
         try
         {
+            var flushedBytes = output.Reader.ReadAsync().AsTask();
             session.SendPacket(first);
-            await WaitUntilAsync(() => provider.WasArmed(maxLatency));
+            await provider.WaitForArmAsync(maxLatency).WaitAsync(cancellationToken);
+            Ensure(clock.EarliestTimerTimestamp == maxLatency.Ticks,
+                "the first frame must establish the original batch deadline");
             clock.Advance(TimeSpan.FromMilliseconds(50));
 
+            var second = CreateFrame(session, 32, requestId: 2);
             session.SendPacket(second);
-            // The arriving frame wins the deadline race. The pump then re-arms one timer for
-            // the remaining latency, which is the durable observation point (the transient
-            // dispose-then-rearm handoff is too short to poll for).
-            await WaitUntilAsync(() => provider.WasArmed(TimeSpan.FromMilliseconds(50)));
+            // Observe Change after the remaining-latency timer is installed, without polling
+            // either the short dispose/rearm handoff or wall-clock scheduler progress.
+            await provider.WaitForArmAsync(TimeSpan.FromMilliseconds(50)).WaitAsync(cancellationToken);
+            Ensure(clock.EarliestTimerTimestamp == maxLatency.Ticks,
+                "adding the second frame must not extend the first frame's deadline");
 
-            clock.Advance(TimeSpan.FromMilliseconds(50));
-            var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            clock.Advance(TimeSpan.FromMilliseconds(50).Subtract(TimeSpan.FromTicks(1)));
+            Ensure(countingWriter.FlushCount == 0 && !flushedBytes.IsCompleted,
+                "neither frame may flush before the original deadline");
+            clock.Advance(TimeSpan.FromTicks(1));
+            if (deferReadContinuation)
+            {
+                await readerScheduler.Scheduled.WaitAsync(cancellationToken);
+                Ensure(!flushedBytes.IsCompleted && countingWriter.FlushCount == 1,
+                    "the provider deadline may flush before the asynchronous reader can resume");
+                readerScheduler.Release();
+            }
+
+            // The provider clock determines the flush boundary; the assembly-level timeout
+            // bounds liveness without imposing a second wall-clock deadline on the reader.
+            // Observe test cancellation so a timeout also unwinds the session cleanup.
+            var read = await flushedBytes.WaitAsync(cancellationToken);
             var expectedBytes = 2 * (ProtocolV2Constants.HeaderBytes + 32);
-            Ensure(read.Buffer.Length >= expectedBytes,
+            Ensure(read.Buffer.Length == expectedBytes && countingWriter.FlushCount == 1,
                 "both frames must share one flush at the first frame's deadline");
+            var remaining = read.Buffer;
+            Ensure(ProtocolV2FrameParser.TryReadFrame(ref remaining, context.Protocol, out var firstHeader, out _)
+                && firstHeader.RequestId == 1,
+                "the first frame must retain its order in the batch");
+            Ensure(ProtocolV2FrameParser.TryReadFrame(ref remaining, context.Protocol, out var secondHeader, out _)
+                && secondHeader.RequestId == 2 && remaining.IsEmpty,
+                "the second frame must finish the batch without extra frames");
             output.Reader.AdvanceTo(read.Buffer.End);
 
-            await WaitUntilAsync(() => session.QueuedSendBytes == 0);
+            // This empty marker is a cleanup barrier, issued only after observing the timed
+            // flush. It must not be allowed to cause the flush being tested.
+            await session.FlushSendQueueAsync(cancellationToken);
+            await clock.WaitForTimersDrainedAsync().WaitAsync(cancellationToken);
             EnsureReturned(first, "the extended batch must return the first frame owner");
             EnsureReturned(second, "the extended batch must return the second frame owner");
+            Ensure(session.QueuedSendBytes == 0 && clock.ActiveTimerCount == 0,
+                "the completed batch must release its queued bytes and deadline timer");
         }
         finally
         {
+            readerScheduler.Release();
             await session.DisposeAsync();
             await output.Reader.CompleteAsync();
             await input.Writer.CompleteAsync();
@@ -622,7 +661,7 @@ public class SendPumpTests
     private sealed class TimerArmRecordingTimeProvider(ManualTimeProvider inner) : TimeProvider
     {
         private readonly Lock _gate = new();
-        private readonly List<TimeSpan> _armedDueTimes = [];
+        private readonly Dictionary<TimeSpan, TaskCompletionSource> _arms = [];
 
         public override long TimestampFrequency => inner.TimestampFrequency;
 
@@ -645,14 +684,94 @@ public class SendPumpTests
                 // the arm is only observable on the Change hook, after the timer is installed
                 // relative to the current clock position.
                 lock (_gate)
-                    _armedDueTimes.Add(changedDueTime);
+                    GetArmSignal(changedDueTime).TrySetResult();
             });
         }
 
         internal bool WasArmed(TimeSpan dueTime)
         {
             lock (_gate)
-                return _armedDueTimes.Contains(dueTime);
+                return _arms.TryGetValue(dueTime, out var signal) && signal.Task.IsCompleted;
+        }
+
+        internal Task WaitForArmAsync(TimeSpan dueTime)
+        {
+            lock (_gate)
+                return GetArmSignal(dueTime).Task;
+        }
+
+        private TaskCompletionSource GetArmSignal(TimeSpan dueTime)
+        {
+            if (!_arms.TryGetValue(dueTime, out var signal))
+            {
+                signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _arms.Add(dueTime, signal);
+            }
+            return signal;
+        }
+    }
+
+    private sealed class CountingFlushPipeWriter(PipeWriter inner) : PipeWriter
+    {
+        private int _flushCount;
+
+        internal int FlushCount => Volatile.Read(ref _flushCount);
+
+        public override void Advance(int bytes) => inner.Advance(bytes);
+        public override void CancelPendingFlush() => inner.CancelPendingFlush();
+        public override void Complete(Exception? exception = null) => inner.Complete(exception);
+        public override ValueTask CompleteAsync(Exception? exception = null) => inner.CompleteAsync(exception);
+        public override Memory<byte> GetMemory(int sizeHint = 0) => inner.GetMemory(sizeHint);
+        public override Span<byte> GetSpan(int sizeHint = 0) => inner.GetSpan(sizeHint);
+
+        public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _flushCount);
+            return inner.FlushAsync(cancellationToken);
+        }
+    }
+
+    private sealed class DeferredPipeScheduler : PipeScheduler
+    {
+        private readonly Lock _gate = new();
+        private readonly TaskCompletionSource _scheduled =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private Action<object?>? _continuation;
+        private object? _state;
+        private bool _released;
+
+        internal Task Scheduled => _scheduled.Task;
+
+        public override void Schedule(Action<object?> action, object? state)
+        {
+            lock (_gate)
+            {
+                if (!_released)
+                {
+                    Ensure(_continuation is null, "the test must have only one deferred reader continuation");
+                    _continuation = action;
+                    _state = state;
+                    _scheduled.TrySetResult();
+                    return;
+                }
+            }
+            PipeScheduler.ThreadPool.Schedule(action, state);
+        }
+
+        internal void Release()
+        {
+            Action<object?>? continuation;
+            object? state;
+            lock (_gate)
+            {
+                _released = true;
+                continuation = _continuation;
+                state = _state;
+                _continuation = null;
+                _state = null;
+            }
+            if (continuation is not null)
+                PipeScheduler.ThreadPool.Schedule(continuation, state);
         }
     }
 

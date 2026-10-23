@@ -47,6 +47,19 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>, IThreadPoolWorkItem
     /// </summary>
     internal Action? BeforeLatchWrite { get; set; }
 
+    // A point-in-time observation for the idle/wake benchmark. A continuation can be
+    // published before OnCompleted returns; this does not change the signal protocol.
+    internal bool HasPendingIdleWait
+    {
+        get
+        {
+            var arm = Volatile.Read(ref _state);
+            return arm > Latched && (arm & (Latched | DeadlineBit)) == 0
+                && Volatile.Read(ref _pumpContinuation) is not null
+                && arm == Volatile.Read(ref _state);
+        }
+    }
+
     internal ValueTask<bool> WaitAsync()
     {
         _core.Reset();

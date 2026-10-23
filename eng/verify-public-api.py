@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the API of the actual shipping packages with the reviewed 2.0 surface."""
+"""Compare the API of the actual shipping packages with the reviewed release-line surface."""
 
 import argparse
 import difflib
@@ -25,8 +25,8 @@ def main():
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("packages", type=Path)
-    parser.add_argument("--version", default="2.0.0")
-    parser.add_argument("--baseline", type=Path, default=root / "eng/public-api/2.0.0")
+    parser.add_argument("--version", default="3.0.0")
+    parser.add_argument("--baseline", type=Path, default=root / "eng/public-api/3.0.0")
     parser.add_argument("--output", type=Path, default=root / "artifacts/public-api/current")
     parser.add_argument("--update", action="store_true", help="Write a candidate baseline for explicit review")
     options = parser.parse_args()
@@ -52,11 +52,19 @@ def main():
     actual_files = {path.name for path in options.output.glob("*.api.txt")}
     if actual_files != expected_files:
         raise ValueError(f"Generated API inventory mismatch: {actual_files ^ expected_files}")
+    # Keep SDK forwarding identities independent of the textual type-shape API.
+    # Only the stable target assembly *simple name* is locked: assembly version,
+    # culture and public key token are intentionally not part of this baseline.
+    forwarders_name = "SharpLink.Sdk.forwarders.txt"
+    current_forwarders = options.output / forwarders_name
+    if not current_forwarders.is_file():
+        raise ValueError(f"Missing SDK ExportedType forwarding inventory: {current_forwarders}")
+
     if options.update:
         options.baseline.mkdir(parents=True, exist_ok=True)
-        for name in sorted(expected_files):
+        for name in sorted(expected_files | {forwarders_name}):
             (options.baseline / name).write_bytes((options.output / name).read_bytes())
-        print("Wrote eight candidate API baselines; review the diff before committing.")
+        print("Wrote nine candidate API baselines and SDK forwarder inventory; review the diff before committing.")
         return
 
     baseline_files = {path.name for path in options.baseline.glob("*.api.txt")}
@@ -70,11 +78,22 @@ def main():
             differences.extend(difflib.unified_diff(
                 expected.splitlines(keepends=True), actual.splitlines(keepends=True),
                 fromfile=f"reviewed/{name}", tofile=f"packed/{name}"))
+    baseline_forwarders = options.baseline / forwarders_name
+    if not baseline_forwarders.is_file():
+        raise ValueError(f"Missing reviewed SDK forwarding inventory: {baseline_forwarders}")
+    expected_forwarding = baseline_forwarders.read_text(encoding="utf-8")
+    actual_forwarding = current_forwarders.read_text(encoding="utf-8")
+    if expected_forwarding != actual_forwarding:
+        differences.extend(difflib.unified_diff(
+            expected_forwarding.splitlines(keepends=True),
+            actual_forwarding.splitlines(keepends=True),
+            fromfile=f"reviewed/{forwarders_name}",
+            tofile=f"packed/{forwarders_name}"))
     if differences:
         diff = options.output / "public-api.diff"
         diff.write_text("".join(differences), encoding="utf-8")
-        raise ValueError(f"Unreviewed public API changes; inspect {diff}")
-    print("Verified the complete public/protected API, including SDK type forwards, of all nine packages.")
+        raise ValueError(f"Unreviewed public API or type-forwarding identity changes; inspect {diff}")
+    print("Verified nine package public/protected APIs and the exact SDK ExportedType forwarding inventory.")
 
 
 if __name__ == "__main__":

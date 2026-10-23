@@ -13,7 +13,7 @@ public class ServerInterceptorDeadlineReentryTests
         var second = new CountingServerInterceptor();
         using var serverCancellation = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
             .AddInterceptor(first)
             .AddInterceptor(second);

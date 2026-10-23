@@ -66,24 +66,6 @@ public partial class RpcGenerator
 
     private sealed partial class DtoAnalysisState
     {
-        private void Report(
-            DtoDiagnosticKind kind,
-            ISymbol symbol,
-            string detail,
-            Location? location = null)
-        {
-            switch (symbol)
-            {
-                case ITypeSymbol type:
-                    Report(kind, type, detail, location);
-                    break;
-                case IAssemblySymbol assembly:
-                    Report(kind, assembly, detail, location);
-                    break;
-                default:
-                    throw new InvalidOperationException(
-                        $"Unsupported Codec policy diagnostic owner '{symbol.Kind}'.");
-            }
-        }
+
     }
 }

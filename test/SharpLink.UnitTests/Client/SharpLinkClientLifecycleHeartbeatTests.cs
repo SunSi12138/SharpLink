@@ -18,18 +18,28 @@ public sealed class SharpLinkClientLifecycleHeartbeatTests
     [Test]
     public async Task FutureWallClockActivityShouldNotSuppressHeartbeatTimeout()
     {
+        var provider = new ManualTimeProvider();
         var transport = new TestClientTransportFactory();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseHeartbeat(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(30)));
+            builder =>
+            {
+                builder.UseTimeProvider(provider);
+                builder.UseHeartbeat(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10));
+                builder.UseReconnectJitterForTesting(new FixedReconnectJitter(TimeSpan.FromSeconds(100)));
+            });
         await client.ConnectAsync();
-        var readyConnectionsField = typeof(SharpLinkClient).GetField(
-            "_readyConnections",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find ready connection field");
-        var connection = ((ClientConnection[])readyConnectionsField.GetValue(client)!)[0];
+        var connection = GetOnlyReadyConnection(client);
 
         connection.Session.LastActive = DateTime.UtcNow.AddDays(1);
+        _ = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Ping);
+        await YieldUntilAsync(
+            () => provider.EarliestTimerTimestamp == TimeSpan.FromSeconds(5).Ticks,
+            "the heartbeat did not arm its provider interval");
+
+        var sessionStopped = GetSessionStoppedTask(connection.Session);
+        provider.Advance(TimeSpan.FromSeconds(15));
+        await sessionStopped.WaitAsync(TimeSpan.FromSeconds(5));
 
         await WaitUntilAsync(
             () => connection.State == ClientConnectionState.Closed,

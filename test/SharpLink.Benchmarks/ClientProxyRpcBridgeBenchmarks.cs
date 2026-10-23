@@ -48,7 +48,7 @@ public class ClientProxyRpcBridgeBenchmarks
     public async Task Setup()
     {
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         _server = serverBuilder.Build();
 

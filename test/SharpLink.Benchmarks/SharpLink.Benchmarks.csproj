@@ -29,6 +29,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="../SharpLink.UnitTests/TestOnlyCodecBuilderExtensions.cs" Link="TestOnlyCodecBuilderExtensions.cs" />
+    <Compile Include="../SharpLink.UnitTests/TestOnlyRpcSessionSendExtensions.cs" Link="TestOnlyRpcSessionSendExtensions.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />

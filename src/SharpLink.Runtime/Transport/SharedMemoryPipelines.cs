@@ -21,6 +21,9 @@ internal sealed class SharedMemoryPipeReader : PipeReader
     private int _readOperationPending;
     private int _completed;
 
+    internal bool HasPendingDataWait => Volatile.Read(ref _completed) == 0 &&
+        Volatile.Read(ref _cancelPending) == 0 && _control.HasPendingDataWait;
+
     public SharedMemoryPipeReader(
         SharedMemoryRingDirection direction,
         SharedMemoryControlChannel control,

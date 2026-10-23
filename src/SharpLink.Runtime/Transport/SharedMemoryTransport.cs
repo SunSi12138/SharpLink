@@ -130,6 +130,8 @@ public sealed class SharedMemoryClientTransportFactory : IClientTransportFactory
 /// <summary>Accepts independent same-user, same-machine shared-memory connections.</summary>
 public sealed class SharedMemoryServerTransportListener : IServerTransportListener, IPerformanceProfileAwareTransport
 {
+    internal Action? AcceptIterationStartedForTesting { get; set; }
+
     private readonly string _pipeName;
     private readonly SharedMemoryTransportOptions _options;
     private readonly CancellationTokenSource _disposeCts = new();
@@ -194,6 +196,7 @@ public sealed class SharedMemoryServerTransportListener : IServerTransportListen
             _disposeCts.Token);
         try
         {
+            AcceptIterationStartedForTesting?.Invoke();
             await pipe.WaitForConnectionAsync(acceptCts.Token).ConfigureAwait(false);
             RemovePending(pipe);
             handshakeStage = HandshakeStage.ClientHello;

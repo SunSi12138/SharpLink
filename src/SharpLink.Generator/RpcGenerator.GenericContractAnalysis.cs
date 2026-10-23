@@ -55,7 +55,8 @@ public partial class RpcGenerator
             IArrayTypeSymbol arrayType => HasTypeParameter(arrayType.ElementType),
             IPointerTypeSymbol pointerType => HasTypeParameter(pointerType.PointedAtType),
             INamedTypeSymbol namedType => namedType.IsUnboundGenericType ||
-                                         namedType.TypeArguments.Any(HasTypeParameter),
+                                         namedType.TypeArguments.Any(HasTypeParameter) ||
+                                         (namedType.ContainingType is { } containing && HasTypeParameter(containing)),
             _ => false
         };
     }

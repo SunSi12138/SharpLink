@@ -374,7 +374,6 @@ public partial class IntegrationBehaviorTests
 
         public static async Task<TestHarness> CreateAsync(
             TimeSpan? requestTimeout = null,
-            Func<Type, IRpcCodec?>? codecResolver = null,
             Action<SharpLinkRuntimeOptions>? runtimeConfigure = null,
             Action<SharpLinkConnectionPoolOptions>? poolConfigure = null,
             bool disableRequestTimeout = false,
@@ -387,8 +386,6 @@ public partial class IntegrationBehaviorTests
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
-            if (codecResolver is not null)
-                serverBuilder.UseSerializer(codecResolver);
             if (runtimeConfigure is not null)
                 serverBuilder.UseRuntime(runtimeConfigure);
             if (serverRuntimeConfigure is not null)
@@ -401,7 +398,7 @@ public partial class IntegrationBehaviorTests
                 serverBuilder.UseSharedMemory(sharedMemoryName);
             else
             {
-                serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+                serverBuilder.UseTcp(0, IPAddress.Loopback);
                 port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             }
             var server = serverBuilder.Build();
@@ -428,8 +425,6 @@ public partial class IntegrationBehaviorTests
 
             var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
-            if (codecResolver is not null)
-                clientBuilder.UseSerializer(codecResolver);
             if (useSharedMemory)
                 clientBuilder.UseSharedMemory(sharedMemoryName);
             else

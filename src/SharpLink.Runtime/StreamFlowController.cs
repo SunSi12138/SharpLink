@@ -125,6 +125,7 @@ internal sealed class StreamFlowController
 
         var key = new StreamKey(requestId, streamId);
         SendState? state;
+        long expectedLease;
         lock (_gate)
         {
             ThrowIfTerminated();
@@ -151,14 +152,11 @@ internal sealed class StreamFlowController
                     return ValueTask.CompletedTask;
                 }
             }
+            expectedLease = state?.Lease ?? 0L;
         }
 
         return AcquireContendedSendCreditAsync(
-            key,
-            state,
-            state?.Lease ?? 0L,
-            encodedBytes,
-            cancellationToken);
+            key, state, expectedLease, encodedBytes, cancellationToken);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -242,14 +240,13 @@ internal sealed class StreamFlowController
                 return;
             }
 
-            // A benign double return can overshoot a window: the peer may
-            // release credit at stream detach and then return it again as it
-            // drains the frames that arrive afterwards. Clamp the excess
-            // instead of treating it as a violation; the credit beyond the
-            // negotiated window is obsolete.
+            // A late/duplicate WindowUpdate can exceed this stream's outstanding
+            // debt after abort/retirement refunded its send credit. Discard the
+            // excess instead of granting phantom connection credit to other streams.
             var updatedStreamCredit = Math.Min(checked(state.Credit + credit), _streamWindow);
+            var returnedCredit = updatedStreamCredit - state.Credit;
             var updatedConnectionCredit = Math.Min(
-                checked(_sendConnectionCredit + credit), _connectionWindow);
+                checked(_sendConnectionCredit + returnedCredit), _connectionWindow);
 
             state.Credit = updatedStreamCredit;
             _sendConnectionCredit = updatedConnectionCredit;
@@ -270,7 +267,7 @@ internal sealed class StreamFlowController
             if (_terminalException is not null)
                 return;
             var key = new StreamKey(requestId, streamId);
-            if (!_sendStates.TryGetValue(key, out var state) || state.AbortException is not null)
+            if (!_sendStates.TryGetValue(key, out var state) || state.CreditRefundedByAbort)
                 return;
 
             var updatedStreamCredit = checked(state.Credit + credit);
@@ -357,6 +354,7 @@ internal sealed class StreamFlowController
                 _sendConnectionCredit = checked(
                     _sendConnectionCredit + (_streamWindow - state.Credit));
                 state.Credit = _streamWindow;
+                state.CreditRefundedByAbort = true;
                 state.AbortException = exception;
                 if (state.Completed)
                     (removedKeys ??= []).Add(pair.Key);
@@ -594,6 +592,7 @@ internal sealed class StreamFlowController
             state.Credit = _streamWindow;
             state.Completed = false;
             state.AbortException = null;
+            state.CreditRefundedByAbort = false;
         }
 
         state.Lease = ++_sendStateLeaseCounter;
@@ -907,6 +906,7 @@ internal sealed class StreamFlowController
         public long Credit = initialCredit;
         public bool Completed;
         public Exception? AbortException;
+        public bool CreditRefundedByAbort;
         public long Lease;
         public SendState? Next;
     }

@@ -52,7 +52,7 @@ for package_id in "${PACKAGES[@]}"; do
   unzip -Z1 "$nupkg" | grep -Fx "lib/net10.0/$package_id.xml" >/dev/null
   unzip -Z1 "$nupkg" | grep -Fx "sharplink-icon.png" >/dev/null
   unzip -Z1 "$snupkg" | grep -Fx "lib/net10.0/$package_id.pdb" >/dev/null
-  unzip -p "$nupkg" "$package_id.nuspec" | grep -F "commit=\"$EXPECTED_COMMIT\"" >/dev/null
+  python3 "$ROOT/eng/verify-package-identities.py" "$nupkg" "$snupkg" "$package_id" "$EXPECTED_VERSION" "$EXPECTED_COMMIT"
 done
 
 unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
@@ -94,9 +94,15 @@ if ! unzip -p "$ARTIFACT_DIR/SharpLink.Hosting.$EXPECTED_VERSION.nupkg" SharpLin
   exit 1
 fi
 
-# Full public/protected signatures are checked by verify-public-api.sh against eng/public-api/2.0.0.
+# Full public/protected signatures are checked by verify-public-api.sh against eng/public-api/3.0.0.
 # Keep this independent packed XML documentation check for the documented Runtime configuration.
 unzip -p "$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg" lib/net10.0/SharpLink.Runtime.xml |
   grep -F '<member name="P:SharpLink.Runtime.SharpLinkFlowControlOptions.MaxPreCreditSerializedBytes">' >/dev/null
+
+runtime_package="$ARTIFACT_DIR/SharpLink.Runtime.$EXPECTED_VERSION.nupkg"
+if unzip -Z1 "$runtime_package" | grep -E '^buildTransitive/SharpLink.Runtime.(targets|TrimSuppressions.xml)$'; then
+  echo "Runtime must not ship the removed UnsafeBlit reflection feature switch or trim suppression." >&2
+  exit 1
+fi
 
 echo "Verified ${#PACKAGES[@]} package and symbol pairs for $EXPECTED_VERSION at $EXPECTED_COMMIT."

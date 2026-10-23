@@ -363,11 +363,15 @@ internal sealed class ClientConnection :
 
         try
         {
+            var exactSizeCodec = codec as IRpcSizedCodec<T>;
+            if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
+                exactSizeCodec = null;
+
             await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!PendingCalls.TryAcceptProducerProgress(requestId))
+                if (!PendingCalls.TryAcceptProducerProgress(requestId, deadline))
                     throw new SharpLinkException(
                         SharpLinkErrorCode.DeadlineExceeded,
                         "RPC deadline exceeded during client stream production.");
@@ -380,13 +384,14 @@ internal sealed class ClientConnection :
                     streamId,
                     enumerator.Current,
                     codec,
+                    exactSizeCodec,
                     deadline,
                     _timeProvider,
                     cancellationToken).ConfigureAwait(false);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (!PendingCalls.TryAcceptProducerProgress(requestId))
+            if (!PendingCalls.TryAcceptProducerProgress(requestId, deadline))
                 throw new SharpLinkException(
                     SharpLinkErrorCode.DeadlineExceeded,
                     "RPC deadline exceeded before client stream completion.");

@@ -76,7 +76,7 @@ internal static class LongRunningTestWorker
         {
             await task.WaitAsync(timeout);
         }
-        catch (TimeoutException)
+        catch (TimeoutException) when (!task.IsCompleted)
         {
             throw;
         }

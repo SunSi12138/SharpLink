@@ -53,7 +53,7 @@ internal static class AllocationGateRunner
             var rpcCases = selected.Where(static item => item.Kind != CaseKind.SendPumpIdleWake).ToArray();
             if (rpcCases.Length > 0)
             {
-                await using var environment = await BenchmarkEnvironment.CreateSharedMemoryAsync().ConfigureAwait(false);
+                await using var environment = await BenchmarkEnvironment.CreateSharedMemoryAsync(observeServerReadWaits: true).ConfigureAwait(false);
                 foreach (var definition in rpcCases)
                 {
                     report.Cases.Add(await RunRpcCaseAsync(
@@ -121,6 +121,10 @@ internal static class AllocationGateRunner
         RuntimeVersion = Environment.Version.ToString(),
         RuntimeMajor = Environment.Version.Major,
         Configuration = IsReleaseBuild ? "Release" : "NonRelease",
+        StopwatchFrequency = Stopwatch.Frequency,
+        ProcessorCount = Environment.ProcessorCount,
+        OperatingSystem = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+        ProcessArchitecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
         BudgetPath = options.BudgetPath,
         Filter = options.Filter,
         InjectedBytesPerOperation = options.InjectedBytesPerOperation,
@@ -143,6 +147,7 @@ internal static class AllocationGateRunner
             var nextPublished = environment.LocalService.PublishedCount;
             operation = async () =>
             {
+                WaitUntilReceiveIsPending(environment);
                 var target = Interlocked.Increment(ref nextPublished);
                 await environment.Rpc.PublishEventAsync(7, 11, "allocation-gate").ConfigureAwait(false);
                 WaitUntilPublished(environment.LocalService, target);
@@ -195,6 +200,18 @@ internal static class AllocationGateRunner
         {
             if (Stopwatch.GetTimestamp() >= deadline)
                 throw new TimeoutException($"OneWay fixture did not publish operation {target} within five seconds.");
+            spin.SpinOnce();
+        }
+    }
+
+    private static void WaitUntilReceiveIsPending(BenchmarkEnvironment environment)
+    {
+        var deadline = Stopwatch.GetTimestamp() + 5L * Stopwatch.Frequency;
+        var spin = new SpinWait();
+        while (!environment.HasPendingServerRead)
+        {
+            if (Stopwatch.GetTimestamp() >= deadline)
+                throw new TimeoutException("OneWay fixture did not reach a pending server read within five seconds.");
             spin.SpinOnce();
         }
     }
@@ -265,10 +282,13 @@ internal static class AllocationGateRunner
             operations, concurrency, start.Task, operation, injectedBytesPerOperation, counter);
         var completion = Task.WhenAll(workers);
 
+        // Capture scheduling context outside the process-wide allocation window.
+        counter.DiagnosticsBefore = AllocationSampleDiagnostics.Capture();
         var before = GC.GetTotalAllocatedBytes(precise: true);
         start.TrySetResult();
         await completion.ConfigureAwait(false);
         var after = GC.GetTotalAllocatedBytes(precise: true);
+        counter.DiagnosticsAfter = AllocationSampleDiagnostics.Capture();
         var completed = Volatile.Read(ref counter.Completed);
         if (completed != operations)
         {
@@ -280,6 +300,9 @@ internal static class AllocationGateRunner
         return new AllocationSampleReport
         {
             Index = sampleIndex,
+            DiagnosticsBefore = counter.DiagnosticsBefore,
+            DiagnosticsAfter = counter.DiagnosticsAfter,
+            ElapsedMilliseconds = Stopwatch.GetElapsedTime(counter.DiagnosticsBefore.Timestamp, counter.DiagnosticsAfter.Timestamp).TotalMilliseconds,
             CompletedOperations = completed,
             AllocatedBytes = allocated,
             BytesPerOperation = ComputeBytesPerOperation(allocated, completed, operations)
@@ -543,7 +566,14 @@ internal static class AllocationGateRunner
         int OperationsPerSample,
         CaseKind Kind);
 
-    private sealed class CompletionCounter { internal int Completed; }
+    private sealed class CompletionCounter
+    {
+        internal int Completed;
+        // The counter already crosses the await. Store snapshots here so diagnostics do
+        // not enlarge the MeasureAsync state-machine box allocated during measurement.
+        internal AllocationSampleDiagnostics DiagnosticsBefore;
+        internal AllocationSampleDiagnostics DiagnosticsAfter;
+    }
 
     private sealed class GateOptions
     {
@@ -619,6 +649,10 @@ internal static class AllocationGateRunner
         public string RuntimeVersion { get; set; } = string.Empty;
         public int RuntimeMajor { get; set; }
         public string Configuration { get; set; } = string.Empty;
+        public long StopwatchFrequency { get; set; }
+        public int ProcessorCount { get; set; }
+        public string OperatingSystem { get; set; } = string.Empty;
+        public string ProcessArchitecture { get; set; } = string.Empty;
         public string BudgetPath { get; set; } = string.Empty;
         public string? Filter { get; set; }
         public int InjectedBytesPerOperation { get; set; }
@@ -649,6 +683,9 @@ internal static class AllocationGateRunner
     private sealed class AllocationSampleReport
     {
         public int Index { get; set; }
+        public AllocationSampleDiagnostics DiagnosticsBefore { get; set; }
+        public AllocationSampleDiagnostics DiagnosticsAfter { get; set; }
+        public double ElapsedMilliseconds { get; set; }
         public int CompletedOperations { get; set; }
         public long AllocatedBytes { get; set; }
         public double BytesPerOperation { get; set; }

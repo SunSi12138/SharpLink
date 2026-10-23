@@ -199,6 +199,21 @@ public class GeneratedServerBridgeTests
         await input.Writer.CompleteAsync();
     }
 
+    [Test]
+    public async Task OutboundPumpShouldReadExactSizeCapabilityOncePerStream()
+    {
+        var codec = new CountingSizedIntCodec();
+
+        var frames = await PumpAndReadFramesAsync(Values(1, 2, 3), codec);
+
+        Ensure(codec.CanExactSizeReadCount == 1,
+            "the generated outbound pump must read CanExactSize once for the whole stream");
+        Ensure(codec.TryGetEncodedSizeCount == 3,
+            "the generated outbound pump must still size every item independently");
+        Ensure(frames.Count == 4,
+            "three sized data items and one success terminal must be emitted");
+    }
+
     private static async Task<List<(ProtocolV2FrameType Type, ProtocolV2FrameFlags Flags)>>
         PumpAndReadFramesAsync(IAsyncEnumerable<int> stream, IRpcCodec<int>? codec = null)
     {
@@ -385,6 +400,62 @@ public class GeneratedServerBridgeTests
         {
             snapshot = null;
             size = sizeof(int);
+            return true;
+        }
+
+        public void SerializeSized(
+            in int value,
+            IBufferWriter<byte> buffer,
+            int size,
+            IRpcSizedCodecSnapshot? snapshot)
+            => Serialize(value, buffer);
+
+        public void ReleaseSnapshot(IRpcSizedCodecSnapshot? snapshot)
+        {
+        }
+    }
+
+    private sealed class CountingSizedIntCodec : IRpcCodec<int>, IRpcSizedCodec<int>
+    {
+        private int _canExactSizeReadCount;
+        private int _tryGetEncodedSizeCount;
+
+        internal int CanExactSizeReadCount => Volatile.Read(ref _canExactSizeReadCount);
+        internal int TryGetEncodedSizeCount => Volatile.Read(ref _tryGetEncodedSizeCount);
+
+        public bool CanExactSize
+        {
+            get
+            {
+                Interlocked.Increment(ref _canExactSizeReadCount);
+                return true;
+            }
+        }
+
+        public void Serialize(in int value, IBufferWriter<byte> buffer)
+        {
+            var span = buffer.GetSpan(sizeof(int));
+            BitConverter.TryWriteBytes(span, value);
+            buffer.Advance(sizeof(int));
+        }
+
+        public int Deserialize(in ReadOnlySequence<byte> buffer)
+            => BitConverter.ToInt32(buffer.FirstSpan);
+
+        public bool TryGetEncodedSize(in int value, out int size)
+        {
+            size = sizeof(int);
+            return true;
+        }
+
+        public bool TryGetEncodedSize(
+            in int value,
+            out int size,
+            out IRpcSizedCodecSnapshot? snapshot)
+        {
+            Interlocked.Increment(ref _tryGetEncodedSizeCount);
+            size = sizeof(int);
+            snapshot = null;
             return true;
         }
 

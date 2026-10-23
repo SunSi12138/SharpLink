@@ -16,6 +16,120 @@ runs:
         NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-smoke
       run: dotnet run -c Release --no-restore --project test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
 
+    - name: Restore packaged trim-only consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-trim-smoke
+      run: >-
+        dotnet restore
+        test/SharpLink.PackageTrimSmoke/SharpLink.PackageTrimSmoke.csproj
+        --force
+        --no-cache
+        --configfile test/SharpLink.PackageSmoke/NuGet.config
+        -r linux-x64
+        /p:SelfContained=true
+
+    - name: Publish packaged trim-only consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-trim-smoke
+      run: >-
+        dotnet publish
+        test/SharpLink.PackageTrimSmoke/SharpLink.PackageTrimSmoke.csproj
+        --no-restore
+        -c Release
+        -r linux-x64
+        --self-contained true
+        -o artifacts/package-trim-smoke
+        /p:TrimmerSingleWarn=false
+
+    - name: Run packaged trim-only consumer
+      shell: bash
+      run: ./artifacts/package-trim-smoke/SharpLink.PackageTrimSmoke
+
+    - name: Restore late-set trimming configuration consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-late-trim-smoke
+      run: >-
+        dotnet restore
+        test/SharpLink.PackageLateTrimSmoke/SharpLink.PackageLateTrimSmoke.csproj
+        --force
+        --no-cache
+        --configfile test/SharpLink.PackageSmoke/NuGet.config
+
+    - name: Verify late-set PackageReference trimming configuration
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-late-trim-smoke
+      run: >-
+        dotnet msbuild
+        test/SharpLink.PackageLateTrimSmoke/SharpLink.PackageLateTrimSmoke.csproj
+        -t:VerifySharpLinkLateTrimConfiguration
+        -v:minimal
+
+    - name: Restore packaged partial-trim consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-partial-trim-smoke
+      run: >-
+        dotnet restore
+        test/SharpLink.PackagePartialTrimSmoke/SharpLink.PackagePartialTrimSmoke.csproj
+        --force
+        --no-cache
+        --configfile test/SharpLink.PackageSmoke/NuGet.config
+        -r linux-x64
+        /p:SelfContained=true
+
+    - name: Publish packaged partial-trim consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-partial-trim-smoke
+      run: >-
+        dotnet publish
+        test/SharpLink.PackagePartialTrimSmoke/SharpLink.PackagePartialTrimSmoke.csproj
+        --no-restore
+        -c Release
+        -r linux-x64
+        --self-contained true
+        -o artifacts/package-partial-trim-smoke
+        /p:TrimmerSingleWarn=false
+
+    - name: Run packaged partial-trim consumer
+      shell: bash
+      run: ./artifacts/package-partial-trim-smoke/SharpLink.PackagePartialTrimSmoke
+
+    - name: Restore packaged NativeAOT consumer
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-aot-smoke
+      run: >-
+        dotnet restore
+        test/SharpLink.PackageAotSmoke/SharpLink.PackageAotSmoke.csproj
+        --force
+        --no-cache
+        --configfile test/SharpLink.PackageSmoke/NuGet.config
+        -r linux-x64
+        /p:SelfContained=true
+
+    - name: Publish packaged NativeAOT consumer with trimming warnings as errors
+      shell: bash
+      env:
+        NUGET_PACKAGES: ${{ github.workspace }}/.nuget-package-aot-smoke
+      run: >-
+        dotnet publish
+        test/SharpLink.PackageAotSmoke/SharpLink.PackageAotSmoke.csproj
+        --no-restore
+        -c Release
+        -r linux-x64
+        --self-contained true
+        -o artifacts/package-aot-smoke
+        /p:TrimmerSingleWarn=false
+
+    - name: Run packaged NativeAOT consumer
+      shell: bash
+      run: ./artifacts/package-aot-smoke/SharpLink.PackageAotSmoke
+
     - name: Run Quick Start Package Smoke
       shell: bash
       run: ./eng/run-quickstart-package-smoke.sh artifacts/nuget

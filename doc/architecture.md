@@ -137,4 +137,4 @@ Streaming 沿用相同边界：Runtime 拥有 frame/stream/flow-control 机制�
 infrastructure 的分类。生成程序集只引用 Abstractions；Catalog 是弱引用 bootstrap，
 `SharpLinkRuntimeContext` 是实例级服务容器，普通应用通过 Client/Server Builder 配置。
 内部 Session/StreamManager 的创建、发布和关闭只能由 owner 完成。九个发布包的实际 public API
-由 [API baseline](../eng/public-api/2.0.0) 和 Release Gate 检查；SharedMemory/Telemetry 本轮不拆包。
+由 [API baseline](../eng/public-api/3.0.0) 和 Release Gate 检查；SharedMemory/Telemetry 本轮不拆包。

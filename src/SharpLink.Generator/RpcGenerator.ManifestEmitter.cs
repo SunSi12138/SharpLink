@@ -2,7 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-2.0-api4-rpcchannel-codec-provider-v1";
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -55,7 +55,7 @@ public partial class RpcGenerator
         }
         if (!codecs.IsDefaultOrEmpty)
             sb.AppendLine();
-        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 4, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
+        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 5, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
@@ -74,7 +74,7 @@ public partial class RpcGenerator
         sb.AppendLine("    public static void Register()");
         sb.AppendLine("        => SharpLinkGeneratedAssemblyCatalog.Register(Instance);");
         sb.AppendLine("    /// <inheritdoc />");
-        sb.AppendLine("    public int ApiVersion => 4;");
+        sb.AppendLine("    public int ApiVersion => 5;");
         sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public int ProtocolVersion => 2;");
         sb.AppendLine("    /// <inheritdoc />");
@@ -257,8 +257,17 @@ public partial class RpcGenerator
     }
 
     private static void AppendIdentifiedCodecFactoryRegistration(StringBuilder sb, GeneratedCodecModel codec)
-        => sb.AppendLine(
+    {
+        // Raw factories already emit this finalized CodecHash. Register that exact instance:
+        // its owner-bound capability must not observe an identity-only decorator instead.
+        if (codec.Kind == GeneratedCodecKind.UnsafeBlit)
+        {
+            sb.AppendLine($"        new {codec.CodecName}.Factory(),");
+            return;
+        }
+        sb.AppendLine(
             $"        new __SharpLinkIdentifiedCodecFactory(new {codec.CodecName}.Factory(), {codec.CodecHashHigh.ToString(InvariantCulture)}UL, {codec.CodecHashLow.ToString(InvariantCulture)}UL),");
+    }
 
     private static string BuildCompileTimeDescriptor(
         RpcInterfaceModel[] contracts,

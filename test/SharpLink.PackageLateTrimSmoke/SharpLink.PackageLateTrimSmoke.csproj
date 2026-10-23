@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TrimMode>partial</TrimMode>
+    <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == '' and '$(VersionSuffix)' == ''">$(VersionPrefix)</SharpLinkPackageVersion>
+    <SharpLinkPackageVersion Condition="'$(SharpLinkPackageVersion)' == '' and '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</SharpLinkPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpLink.Runtime" Version="$(SharpLinkPackageVersion)" />
+  </ItemGroup>
+
+  <!-- Simulates Apple workloads, which compute PublishTrimmed during target execution. -->
+  <Target Name="_ComputePublishTrimmed">
+    <PropertyGroup>
+      <PublishTrimmed>true</PublishTrimmed>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="VerifySharpLinkLateTrimConfiguration"
+          DependsOnTargets="_ComputePublishTrimmed">
+    <ItemGroup>
+      <_SharpLinkUnsafeBlitSwitch Include="@(RuntimeHostConfigurationOption)"
+                                  Condition="'%(Identity)' == 'SharpLink.Runtime.UnsafeBlitReflectionFallback'" />
+    </ItemGroup>
+    <Error Condition="'@(_SharpLinkUnsafeBlitSwitch)' != ''"
+           Text="Removed UnsafeBlit reflection fallback switch must not be injected, including late trimming." />
+    <Error Condition="'@(_ILLinkSuppressions)' != ''"
+           Text="The generated ABI path must not need package partial-trim warning suppression." />
+    <Message Importance="high" Text="PACKAGE_LATE_TRIM_CONFIGURATION_PASS" />
+  </Target>
+</Project>

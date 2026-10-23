@@ -9,7 +9,7 @@ public sealed class ServiceLifetimeIntegrationTests
         BlockingConnectionCleanupProbe.Reset();
         using var serverCancellation = new CancellationTokenSource();
         var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
@@ -44,7 +44,7 @@ public sealed class ServiceLifetimeIntegrationTests
         ConnectionLifetimeProbe.Reset();
         using var serverCancellation = new CancellationTokenSource();
         var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
@@ -79,7 +79,7 @@ public sealed class ServiceLifetimeIntegrationTests
         CallLifetimeProbe.Reset();
         using var serverCancellation = new CancellationTokenSource();
         var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
@@ -128,7 +128,7 @@ public sealed class ServiceLifetimeIntegrationTests
         var builder = SharpLinkServerBuilder.Create()
             .UseAdmissionControl(options =>
                 options.AddContract<ICallLifetimeProbe>(rule => rule.UseConcurrency(1)))
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
@@ -176,7 +176,7 @@ public sealed class ServiceLifetimeIntegrationTests
             .DisableAutomaticServiceRegistration()
             .EnableService<ICallLifetimeProbe>()
             .ExcludeService<IMissingLifetimeProbe>()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
         await using var firstServer = firstBuilder.Build();
         var firstServerTask = firstServer.RunUntilStoppedAsync(firstCancellation.Token).AsTask();
@@ -200,7 +200,7 @@ public sealed class ServiceLifetimeIntegrationTests
 
         using var secondCancellation = new CancellationTokenSource();
         var secondBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var secondPort = ((IPEndPoint)secondBuilder.Transport!.LocalEndPoint!).Port;
         await using var secondServer = secondBuilder.Build();
         var secondServerTask = secondServer.RunUntilStoppedAsync(secondCancellation.Token).AsTask();
@@ -215,7 +215,7 @@ public sealed class ServiceLifetimeIntegrationTests
         var missingBuilder = SharpLinkServerBuilder.Create()
             .DisableAutomaticServiceRegistration()
             .EnableService<IMissingLifetimeProbe>()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         try
         {
             _ = missingBuilder.Build();

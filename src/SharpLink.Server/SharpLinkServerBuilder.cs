@@ -1,7 +1,7 @@
 namespace SharpLink.Server;
 
 /// <summary>Configures transports, services, security, limits, and runtime behavior for a SharpLink server.</summary>
-public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
+public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
 
@@ -153,14 +153,6 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    /// <summary>Sets a fallback codec resolver scoped to servers built by this builder.</summary>
-    /// <param name="codecResolver">Returns a codec for a requested type, or <see langword="null"/> when unresolved.</param>
-    public SharpLinkServerBuilder UseSerializer(Func<Type, IRpcCodec?>? codecResolver)
-    {
-        Configure(() => _runtimeContextBuilder.UseCodecResolver(codecResolver));
-        return this;
-    }
-
     /// <summary>Configures instance-scoped runtime behavior.</summary>
     public SharpLinkServerBuilder UseRuntime(Action<SharpLinkRuntimeOptions> configure)
     {
@@ -262,16 +254,6 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
         return this;
     }
 
-    /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
-    public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
-    {
-        Configure(() =>
-        {
-            ArgumentNullException.ThrowIfNull(loggerFactory);
-            _loggerFactory ??= loggerFactory;
-        });
-    }
-
     /// <summary>Configures the heartbeat inspection interval and peer-inactivity timeout.</summary>
     public SharpLinkServerBuilder UseHeartbeat(TimeSpan checkInterval, TimeSpan timeout)
     {
@@ -332,6 +314,7 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
     }
 
     /// <summary>Uses an application-owned provider for service dependencies and per-call scopes.</summary>
+    /// <remarks>In hosted mode this explicit provider takes precedence over the Host provider.</remarks>
     public SharpLinkServerBuilder UseServiceProvider(IServiceProvider serviceProvider)
     {
         Configure(() =>
@@ -412,11 +395,18 @@ public partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
     /// <inheritdoc />
     public ISharpLinkServer Build() => Materialize(CompileForBuild());
 
-    private ServerBuildPlan CompileForBuild()
+    // Hosting observes the same frozen listener as the build, before ownership transfer or rollback.
+    internal ISharpLinkServer BuildWithTransportCapture(Action<IServerTransportListener?> captureTransport)
+        => Materialize(CompileForBuildCore(captureTransport));
+
+    private ServerBuildPlan CompileForBuild() => CompileForBuildCore(null);
+
+    private ServerBuildPlan CompileForBuildCore(Action<IServerTransportListener?>? captureTransport)
     {
         BeginBuild();
         try
         {
+            captureTransport?.Invoke(_transport);
             var plan = CompilePlan();
             lock (_configurationGate)
                 _pendingResources = plan.Resources;

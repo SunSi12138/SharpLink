@@ -25,6 +25,9 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.Length > 0 && args[0].Equals("--concrete-codec-evidence", StringComparison.Ordinal))
+            return await ConcreteCodecDispatchEvidence.RunAsync(args[1..]).ConfigureAwait(false);
+
         var useSharedMemory = args.Any(static value =>
             value.Equals("sharedmemory", StringComparison.OrdinalIgnoreCase) ||
             value.Equals("shared-memory", StringComparison.OrdinalIgnoreCase) ||
@@ -63,7 +66,7 @@ public static class Program
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
 
         var port = useSharedMemory
             ? 0
