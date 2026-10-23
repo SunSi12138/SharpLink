@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""External consumer compilation gate for 3.0's Server-only typed IPAddress TCP API.
+"""External consumer compilation gate for 3.0's TCP and sealed Builder APIs.
 
 This compiles a fresh project *outside* the repository against the real production
 projects. The negative compilations must fail for the removed Server overloads;
 the positive compilation must continue to accept Server IPAddress, Client string
-IP and standalone RuntimeContext. No runtime socket or benchmark workload runs.
+IP and standalone RuntimeContext. Both builders must remain publicly constructible
+and fluent, while external subclasses must fail specifically with CS0509.
+No runtime socket or benchmark workload runs.
 """
 
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -44,6 +47,9 @@ POSITIVE = """
         _ = SharpClientBuilder.Create().UseTcp("127.0.0.1", 19090);
         _ = SharpClientBuilder.Create().UseTcp(
             "127.0.0.1", 19090, new SslClientAuthenticationOptions());
+        _ = new SharpClientBuilder().UseRequestTimeout().UseTcp("127.0.0.1", 19090);
+        _ = new SharpLinkServerBuilder().UseTcp(0, IPAddress.Loopback);
+        _ = (ISharpLinkServerBuilder)SharpLinkServerBuilder.Create();
         using var runtime = new SharpLinkRuntimeContextBuilder().Build();
         _ = runtime.Codecs.GetCodec<int>();
 """
@@ -141,17 +147,38 @@ def verify_no_legacy_server_calls_in_checkout() -> None:
                     )
 
 
-def compile_project(code: str, path: Path) -> subprocess.CompletedProcess[str]:
-    (path / "Probe.cs").write_text(PREFIX + code + SUFFIX, encoding="utf-8")
+def compile_project(code: str, path: Path, *, declarations: str = "") -> subprocess.CompletedProcess[str]:
+    (path / "Probe.cs").write_text(PREFIX + code + SUFFIX + declarations, encoding="utf-8")
     return run("dotnet", "build", str(path / "Consumer.csproj"),
                "-c", "Release", "--no-restore", "--verbosity", "minimal", cwd=path)
+
+
+def verify_sealed_builders(folder: Path) -> None:
+    for builder in ("SharpClientBuilder", "SharpLinkServerBuilder"):
+        rejected = compile_project(
+            "", folder, declarations=f"\npublic class ExternalSubclass : {builder} {{ }}\n"
+        )
+        details = rejected.stdout + rejected.stderr
+        errors = re.findall(r"(?m)^.*\berror\s+[A-Z]+\d+.*$", details)
+        if rejected.returncode == 0 or not errors or any(
+            not re.search(r"Probe\.cs\(\d+,\d+\): error CS0509:", error)
+            or "ExternalSubclass" not in error
+            or builder not in error
+            for error in errors
+        ):
+            raise RuntimeError(
+                f"Expected external inheritance of {builder} to fail only with CS0509:\n"
+                + details
+            )
+        print(f"PASS: external {builder} inheritance rejected with CS0509")
 
 
 def main() -> None:
     verify_static_contract()
     verify_no_legacy_server_calls_in_checkout()
     with tempfile.TemporaryDirectory(prefix="sharplink-external-tcp-") as location:
-        folder = Path(location)
+        folder = Path(location).resolve()
+        (folder / "global.json").write_bytes((ROOT / "global.json").read_bytes())
         (folder / "Consumer.csproj").write_text(
             '<Project Sdk="Microsoft.NET.Sdk">\n'
             '  <PropertyGroup>\n'
@@ -189,7 +216,8 @@ def main() -> None:
                     + details
                 )
             print(f"PASS: Server {name} string IP rejected by C# compiler")
-    print("PASS: 3.0 Server TCP external-API contract")
+        verify_sealed_builders(folder)
+    print("PASS: 3.0 TCP and Builder external-API contracts")
 
 
 if __name__ == "__main__":
