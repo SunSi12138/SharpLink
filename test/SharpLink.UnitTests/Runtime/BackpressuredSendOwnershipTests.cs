@@ -174,7 +174,8 @@ public sealed class BackpressuredSendOwnershipTests
             started.Set();
             try { submitted.TrySetResult(fixture.Session.SendPacketWithBackpressureAsync(packet).AsTask()); }
             catch (Exception exception) { submitted.TrySetException(exception); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         try
         {
             using (gate.EnterScope())
