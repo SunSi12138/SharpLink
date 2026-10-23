@@ -143,6 +143,7 @@ public static class Program
 
     public static async Task Main()
     {
+        ExternalApiBoundaryProbe.Run();
         GenerationControlSerializationProbe.Run();
         AssertGenerationControlPackageSurface();
         AssertEnginePublicApiBoundary();
