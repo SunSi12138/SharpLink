@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/GeneratedStreamSnapshotOwnershipTests.c
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/GeneratedStreamSnapshotOwnershipTests/*"
 FOCUSED_COUNT = 2
-FULL_COUNT = 2167  # 2154 dev cases plus 13 registration-retirement cases; retry-timer witness already included.
+FULL_COUNT = 2169  # 2156 dev cases plus 13 registration-retirement cases; retry-timer witness already included.
 
 
 def digest(path):

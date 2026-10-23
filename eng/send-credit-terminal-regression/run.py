@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/SendCreditTerminalAccountingTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/SendCreditTerminalAccountingTests/*"
 FOCUSED_COUNT = 1
-FULL_COUNT = 2167  # 2154 dev cases plus 13 registration-retirement cases; retry-timer witness already included.
+FULL_COUNT = 2169  # 2156 dev cases plus 13 registration-retirement cases; retry-timer witness already included.
 
 
 def digest(path):

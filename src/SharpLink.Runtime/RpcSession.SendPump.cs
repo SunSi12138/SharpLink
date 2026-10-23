@@ -299,6 +299,12 @@ internal sealed partial class RpcSession
             }
             finally
             {
+                // A concurrent Stop can publish its flag before closing either
+                // writer. Seal publication here before the final drain, so a
+                // producer that already reserved cannot enqueue behind it.
+                Interlocked.Exchange(ref _stopped, 1);
+                _progressQueue.Writer.TryComplete();
+                _normalQueue.Writer.TryComplete();
                 _flushPolicyState.UnregisterChanged(_flushPolicyChanged);
                 ReleaseBatch(pending, terminalException);
                 DrainQueuedFrames(terminalException);
