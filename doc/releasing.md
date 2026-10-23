@@ -27,12 +27,17 @@
 实际执行入口是 [`eng/run-performance-matrix.sh`](../eng/run-performance-matrix.sh)。其默认 tier 为 `smoke`、默认 runtime 为 `jit`，不能省略配置后把结果称为完整 JIT/NativeAOT 矩阵。完整候选在支持的平台使用：
 
 ```bash
+performance_root="$PWD/artifacts/performance/3.0/$(git rev-parse HEAD)"
+mkdir -p "$performance_root"
+performance_attempt="$(mktemp -d "$performance_root/attempt.XXXXXX")"
 SHARPLINK_MATRIX_TIER=full \
 SHARPLINK_MATRIX_RUNTIMES=jit,aot \
 SHARPLINK_MATRIX_REPETITIONS=5 \
-SHARPLINK_MATRIX_OUTPUT="$PWD/artifacts/performance/3.0/$(git rev-parse HEAD)" \
+SHARPLINK_MATRIX_OUTPUT="$performance_attempt" \
 bash eng/run-performance-matrix.sh
 ```
+
+每次尝试均创建新的 attempt 目录，分片也使用各自独立的新目录。脚本会删除同名旧报告并复用 AOT 输出，不能通过复用旧路径补跑来覆盖先前失败或样本。
 
 `full` 当前包含五种传输（Windows 默认排除 UDS）、三种 profile、六种 Unary payload、五轮重复及 pool 1/1、1/4（AnonymousPipe 仅 1/1）。默认并发为 1/8/32/128/256/512，64 KiB payload 降至 1/8/32/128、1 MiB 降至 1/8/32；固定队列 OneWay 为 c1，多生产者背压单列且仅在 JIT 执行。另有 yield/delay 和 `streams --operation all --stream-size 256`。预热 5 秒、测量 20 秒；以脚本的实际参数和报告内容为准，报告文件数不等于测试 cell 数。
 
