@@ -17,6 +17,7 @@ PACKAGES=(
   SharpLink.Abstractions
   SharpLink.Client
   SharpLink.Compression.Zstd
+  SharpLink.GenerationControl
   SharpLink.Hosting
   SharpLink.Runtime
   SharpLink.Sdk
@@ -61,6 +62,17 @@ unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nus
 if unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
    grep -F '<dependency id="SharpLink.Runtime"' >/dev/null; then
   echo "SharpLink.Sdk must not depend on SharpLink.Runtime." >&2
+  exit 1
+fi
+
+if ! unzip -p "$ARTIFACT_DIR/SharpLink.GenerationControl.$EXPECTED_VERSION.nupkg" SharpLink.GenerationControl.nuspec |
+   grep -F "<dependency id=\"SharpLink.Abstractions\" version=\"$EXPECTED_VERSION\"" >/dev/null; then
+  echo "SharpLink.GenerationControl must directly depend on SharpLink.Abstractions $EXPECTED_VERSION." >&2
+  exit 1
+fi
+if unzip -p "$ARTIFACT_DIR/SharpLink.GenerationControl.$EXPECTED_VERSION.nupkg" SharpLink.GenerationControl.nuspec |
+   grep -E '<dependency id="SharpLink\.(Runtime|Sdk|Generator)"' >/dev/null; then
+  echo "SharpLink.GenerationControl must keep Runtime/Sdk/Generator out of its runtime package dependency graph." >&2
   exit 1
 fi
 

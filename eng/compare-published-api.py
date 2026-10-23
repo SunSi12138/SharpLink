@@ -18,6 +18,11 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGES = runpy.run_path(str(ROOT / "eng/verify-public-api.py"))["PACKAGES"]
+# This is the released 2.0.3 inventory, not the evolving candidate package list.
+PUBLISHED_PACKAGES = (
+    "SharpLink.Abstractions", "SharpLink.Runtime", "SharpLink.Client", "SharpLink.Server",
+    "SharpLink.Hosting", "SharpLink.Sdk", "SharpLink.Serializer.SharpPack", "SharpLink.Compression.Zstd",
+)
 PUBLISHED_VERSION = "2.0.3"
 NUGET_SOURCE = "https://api.nuget.org/v3-flatcontainer"
 
@@ -62,9 +67,9 @@ def extract_package(path, package, version, assemblies, source, expected_commit=
     }
 
 
-def generate_inventory(assemblies, output, records, version, tool, expected_commit=None):
+def generate_inventory(assemblies, output, records, version, tool, expected_commit=None, packages=PACKAGES):
     subprocess.run(["dotnet", str(tool), str(assemblies), str(output)], check=True)
-    expected_names = {f"{package}.{suffix}" for package in PACKAGES
+    expected_names = {f"{package}.{suffix}" for package in packages
                       for suffix in ("api.txt", "forwarders.txt", "assembly.json")}
     actual_names = {path.name for path in output.iterdir() if path.is_file()}
     if actual_names != expected_names:
@@ -91,30 +96,34 @@ def write_differences(output, current_version):
              "These are textual public/protected API and ExportedType forwarding differences,",
              "not a semantic compatibility verdict or approval of breaking changes.",
              "The reviewed 3.0 baseline is neither read nor modified.", "",
-             "| Assembly | API removed / added lines | Forwarders removed / added lines |",
-             "| --- | ---: | ---: |"]
-    for package in PACKAGES:
+             "| Assembly | Package status | API removed / added lines | Forwarders removed / added lines |",
+             "| --- | --- | ---: | ---: |"]
+    for package in sorted(set(PUBLISHED_PACKAGES) | set(PACKAGES)):
+        added_package = package not in PUBLISHED_PACKAGES
+        removed_package = package not in PACKAGES
+        status = "Added package (no 2.0.3 release)" if added_package else "Removed package" if removed_package else "Existing package"
         counts = []
         for suffix in ("api.txt", "forwarders.txt"):
             name = f"{package}.{suffix}"
-            old = (output / "published" / name).read_text(encoding="utf-8")
-            new = (output / "candidate" / name).read_text(encoding="utf-8")
+            old = "" if added_package else (output / "published" / name).read_text(encoding="utf-8")
+            new = "" if removed_package else (output / "candidate" / name).read_text(encoding="utf-8")
             diff = list(difflib.unified_diff(old.splitlines(keepends=True), new.splitlines(keepends=True),
-                                            fromfile=f"published/{name}", tofile=f"candidate/{name}"))
+                                            fromfile="/dev/null" if added_package else f"published/{name}",
+                                            tofile="/dev/null" if removed_package else f"candidate/{name}"))
             (differences / f"{name}.diff").write_text("".join(diff), encoding="utf-8")
             removed = sum(line.startswith("-") and not line.startswith("---") for line in diff)
             added = sum(line.startswith("+") and not line.startswith("+++") for line in diff)
             counts.append(f"[{removed} / {added}](diffs/{name}.diff)")
-        lines.append(f"| {package} | {' | '.join(counts)} |")
+        lines.append(f"| {package} | {status} | {' | '.join(counts)} |")
     lines.extend(["", "Package sources, SHA-256 hashes, repository commits, assembly identities/MVIDs,",
                   "and inventory hashes are recorded in [provenance.json](provenance.json).",
-                  "Both releases' inventories are retained beside this report.", "",
-                  "Scope: eight net10.0 shipping assemblies. The SDK's analyzer implementation,",
+                  "Each release's actual inventories are retained beside this report; no historical",
+                  "inventory is fabricated for an added package. Its complete API and forwarders",
+                  "are retained in candidate/ and represented as additions from /dev/null.", "",
+                  f"Scope: {len(PUBLISHED_PACKAGES)} published and {len(PACKAGES)} candidate net10.0 shipping assemblies.",
+                  "The SDK's analyzer implementation,",
                   "generated consumer compatibility, behavioral/wire compatibility, symbol classification,",
                   "and human approval of each breaking change remain separate release checks.", ""])
-    lines.extend(["New optional packages are outside this fixed eight-package comparison. A release adding",
-                  "a package must list it separately as an added package and extend candidate inventory",
-                  "validation; this report must not be used as evidence that the new package was checked.", ""])
     (output / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -136,12 +145,17 @@ def compare(packages, output, current_version, current_commit, tool):
         provenance = {"schema_version": 1, "published_version": PUBLISHED_VERSION,
                       "candidate_version": current_version, "candidate_source_commit": current_commit,
                       "generator": "eng/SharpLink.PublicApi (PublicApiGenerator)",
-                      "generator_sha256": sha256(tool.read_bytes()), "packages": {}}
+                      "generator_sha256": sha256(tool.read_bytes()),
+                      "package_sets": {"published": list(PUBLISHED_PACKAGES), "candidate": list(PACKAGES),
+                                       "added": sorted(set(PACKAGES) - set(PUBLISHED_PACKAGES)),
+                                       "removed": sorted(set(PUBLISHED_PACKAGES) - set(PACKAGES))},
+                      "packages": {}}
         for label, version in (("candidate", current_version), ("published", PUBLISHED_VERSION)):
             assemblies = staging / f"{label}-assemblies"
             assemblies.mkdir()
             records = []
-            for package in PACKAGES:
+            package_set = PUBLISHED_PACKAGES if label == "published" else PACKAGES
+            for package in package_set:
                 if label == "published":
                     filename = f"{package.lower()}.{version}.nupkg"
                     source = f"{NUGET_SOURCE}/{package.lower()}/{version}/{filename}"
@@ -157,18 +171,18 @@ def compare(packages, output, current_version, current_commit, tool):
                                          current_commit if label == "candidate" else None)
                 records.append(record)
             generate_inventory(assemblies, report / label, records, version, tool,
-                               current_commit if label == "candidate" else None)
+                               current_commit if label == "candidate" else None, packages=package_set)
             provenance["packages"][label] = records
         write_differences(report, current_version)
         provenance["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
         (report / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
         report.rename(output)
-    print(f"Recorded eight package API/forwarder comparisons in {output}. Differences require human review.")
+    print(f"Recorded {len(PUBLISHED_PACKAGES)} published and {len(PACKAGES)} candidate package API/forwarder inventories in {output}. Differences require human review.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("packages", type=Path, help="Directory containing the eight candidate nupkg files")
+    parser.add_argument("packages", type=Path, help="Directory containing every candidate nupkg from the reviewed package inventory")
     parser.add_argument("--version", default=ET.parse(ROOT / "Directory.Build.props").findtext(".//VersionPrefix"))
     parser.add_argument("--current-commit", required=True, help="Full source SHA embedded in candidate nuspecs")
     parser.add_argument("--output", type=Path, required=True, help="New report directory (must not exist)")

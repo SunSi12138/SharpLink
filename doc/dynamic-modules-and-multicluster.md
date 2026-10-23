@@ -162,6 +162,12 @@ await clusters.WaitForRemoteContractAsync(cluster, contractId, expectedHash, can
 包括哈希相同的替换；它不证明业务实现或 Artifact generation 已发布。`Get` 继续保持同步，
 不会偷偷发起网络调用。自定义客户端默认明确抛出 `NotSupportedException`，不会伪装成已支持。
 
+## 跨端 generation synchronization
+
+当调用侧 generated proxy/codec/contract generation 与服务侧 implementation generation 可能独立变化时，单端的 `ISharpLinkAssemblyRegistry` 不负责驱动另一个 endpoint 升级。可选包 [`SharpLink.GenerationControl`](generation-control.md) 提供静态 RPC 声明面。由于 SharpLink v2 只允许 Client 发起 RPC，Client 可用 `GetInventoryAsync` 查询 Server snapshot，并通过一个 Client 发起的 `SynchronizeAsync` duplex stream 双向交换双方完整 generation inventory。每份 inventory 携带 `EndpointEpoch` 和 epoch-local `Revision`；revision 可能重置或 endpoint 实例/authority 切换时必须更换 epoch，接收方看到新 epoch 时不能用旧 revision 判 stale。
+
+任一端收到 peer 的新 snapshot 后，都只在本地比较 local/peer generation，再由自己的 provider 决定是否 stage/validate/activate/drain。远端没有 Stage/Activate RPC，也不能直接改变本端状态。该扩展不改变 Protocol v2，也不传输 artifact bytes；JIT 可在本地映射到 collectible ALC + assembly registry，NativeAOT 则由本地 provider 返回 process replacement required。
+
 ## AssemblyLoadContext 所有权
 
 要真正卸载插件，插件及其依赖必须位于 collectible `AssemblyLoadContext`，且应用不能保留：

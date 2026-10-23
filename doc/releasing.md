@@ -15,7 +15,7 @@
 
 1. 强制还原并执行非增量 Release 构建，要求零警告、零错误。
 2. 执行 Generator、Unit、Integration 全套测试；Integration 必须覆盖真实传输、TLS/mTLS、认证授权、取消、deadline、流式背压、接入控制、优雅排空和故障恢复。
-3. 打包全部八个 NuGet 包并确认：版本一致、依赖版本正确、仓库提交正确、主程序集具有 XML 文档、符号包具有 portable PDB、SDK 包具有 Generator。
+3. 打包全部九个 NuGet 包并确认：版本一致、依赖版本正确、仓库提交正确、主程序集具有 XML 文档、符号包具有 portable PDB、SDK 包具有 Generator。
 4. 使用空 NuGet 缓存执行 `SharpLink.PackageSmoke`，避免项目引用或开发机缓存掩盖缺包。
 5. 在支持的平台执行独立进程 SharedMemory NativeAOT smoke；其余平台由 Release Gate 矩阵完成。
 6. 在 GitHub Actions 上启动 10 分钟 release soak（TCP / SharedMemory 并行）；本地不运行长稳。2026-10-03 发布负责人明确要求约 10 分钟：release soak 默认由 5 小时改为 10 分钟，同次发布验收的 Generated ABI Dynamic-module Churn 由 2 小时改为 10 分钟；日常定时 ABI 长稳仍为 2 小时。release soak 检查点由每 30 分钟改为每 2 分钟，以覆盖缩短后的窗口；并发、重启间隔、故障注入、恢复与资源归零检查保持。最终报告必须记录实际时长与精确 SHA；ABI 每轮完整执行，末轮可能使实际时长超过 10 分钟，额外时间取决于完整末轮。缩短观察窗口不代表已验证 5 小时稳定性。发布前等待当前必需长稳正常结束并通过，已经观察到的非注入错误、崩溃、恢复超时或资源泄漏仍须先处理。2.0.0 当时获批的 5 小时异步验收例外只属于该历史版本，不自动沿用到后续发布。
@@ -51,13 +51,13 @@
 这一步由仓库和 NuGet.org 管理员在首次发布前完成一次，不能由本地提交代替：
 
 1. 在 GitHub 仓库 `Settings → Environments` 创建 `release` Environment；建议配置 Required reviewers，并添加环境 secret `NUGET_USER`，值为 NuGet.org profile username（不是邮箱，也不是 API key）。
-2. 在 [NuGet.org Trusted Publishing](https://www.nuget.org/account/trustedpublishing) 创建 policy：Repository Owner=`SunSi12138`、Repository=`SharpLink`、Workflow File=`release-gate.yml`、Environment=`release`。Policy 的个人或组织所有权必须与八个 SharpLink 包的实际 NuGet.org owner 一致。
+2. 在 [NuGet.org Trusted Publishing](https://www.nuget.org/account/trustedpublishing) 创建 policy：Repository Owner=`SunSi12138`、Repository=`SharpLink`、Workflow File=`release-gate.yml`、Environment=`release`。Policy 的个人或组织所有权必须与九个 SharpLink 包的实际 NuGet.org owner 一致。
 3. 启用 GitHub Private vulnerability reporting、Dependabot alerts 与 dependency graph；首次合并 CodeQL workflow 后确认 Security 页面产生 C# 分析结果。把 `release-gate.yml` 设为标签发布前的必需检查。私有仓库的新 policy 需在其临时有效期内完成第一次成功发布。
 4. 在首次正式标签前先用本地 `dotnet pack Sharplink.slnx -c Release -o artifacts/nuget` 和 `./eng/verify-packages.sh artifacts/nuget` 检查包；只有 policy 与 Environment 都就绪后才推送发布标签。
 
 ## 发布与回滚
 
-`release-gate.yml` 只在 `v*` 标签触发、全部三平台测试/AOT/包安装/Chaos 门禁通过后进入受保护的 `release` Environment。发布 job 下载同一次运行产出的 `.nupkg` 和 `.snupkg`，使用 NuGet.org OIDC Trusted Publishing，不保存长期 API key；手工触发 Release Gate 只验证，不发布。推送前再次校验每个包的 ID、版本、SHA 和符号包配对关系，并按 `Abstractions → Runtime → Sdk/Serializer → Client/Server → Hosting` 顺序发布。
+`release-gate.yml` 只在 `v*` 标签触发、全部三平台测试/AOT/包安装/Chaos 门禁通过后进入受保护的 `release` Environment。发布 job 下载同一次运行产出的 `.nupkg` 和 `.snupkg`，使用 NuGet.org OIDC Trusted Publishing，不保存长期 API key；手工触发 Release Gate 只验证，不发布。推送前再次校验每个包的 ID、版本、SHA 和符号包配对关系，并按 `Abstractions → GenerationControl → Runtime → Sdk/Serializer → Client/Server → Hosting` 顺序发布。
 
 NuGet 包不可覆盖或删除来替代修复。若发布内容有缺陷：
 
