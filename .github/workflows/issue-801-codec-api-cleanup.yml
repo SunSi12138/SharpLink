@@ -63,7 +63,7 @@ jobs:
               exit 1
             }
           tail -n 30 artifacts/issue-801-codec-cleanup/integration.log
-      - name: Pack all eight 3.0 NuGet modules
+      - name: Pack all nine 3.0 NuGet modules
         run: |
           dotnet pack Sharplink.slnx -c Release --no-build --no-restore -o artifacts/nuget -v minimal \
             > artifacts/issue-801-codec-cleanup/pack.log 2>&1 || {

@@ -1,6 +1,6 @@
 # SDK type forwarding identity gate
 
-The eight *.api.txt baselines preserve public declaration shapes, but a same-shaped
+The nine *.api.txt baselines preserve public declaration shapes, but a same-shaped
 local type does not have the CLR identity of a type forwarded to another assembly.
 
 The packed-DLL extractor now reads ECMA-335 ExportedType/AssemblyRef metadata via

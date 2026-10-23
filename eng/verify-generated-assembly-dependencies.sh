@@ -7,6 +7,7 @@ TARGET_FRAMEWORK="${SHARPLINK_TARGET_FRAMEWORK:-net10.0}"
 SCANNER="$ROOT/test/SharpLink.GeneratedAssemblyScanner/SharpLink.GeneratedAssemblyScanner.csproj"
 
 assemblies=(
+  "$ROOT/src/SharpLink.GenerationControl/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SharpLink.GenerationControl.dll"
   "$ROOT/demo/MultiCluster.Orders.Contracts/bin/$CONFIGURATION/$TARGET_FRAMEWORK/MultiCluster.Orders.Contracts.dll"
   "$ROOT/demo/MultiCluster.Payments.Contracts/bin/$CONFIGURATION/$TARGET_FRAMEWORK/MultiCluster.Payments.Contracts.dll"
   "$ROOT/demo/SeparatedContracts/bin/$CONFIGURATION/$TARGET_FRAMEWORK/SeparatedContracts.dll"
