@@ -7,6 +7,7 @@ using System.Reflection.PortableExecutable;
 using System.Collections.Generic;
 using System.Runtime.Loader;
 using System.Text;
+using System.Text.Json;
 using PublicApiGenerator;
 
 if (args.Length != 2)
@@ -50,6 +51,18 @@ foreach (var path in assemblies)
     var forwarders = GetTypeForwarders(path);
     var forwardingOutput = Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(path) + ".forwarders.txt");
     File.WriteAllText(forwardingOutput, string.Join("\n", forwarders) + (forwarders.Count > 0 ? "\n" : ""), new UTF8Encoding(false));
+    // Bind the textual inventories to the actual assembly inspected, including
+    // its build identity. Cross-release evidence also records the DLL/package hashes.
+    var identity = new
+    {
+        Name = assembly.GetName().Name,
+        Version = assembly.GetName().Version?.ToString(),
+        FullName = assembly.FullName,
+        ModuleVersionId = assembly.ManifestModule.ModuleVersionId.ToString(),
+        InformationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
+    };
+    File.WriteAllText(Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(path) + ".assembly.json"),
+        JsonSerializer.Serialize(identity, new JsonSerializerOptions { WriteIndented = true }) + "\n", new UTF8Encoding(false));
     Console.WriteLine($"{assembly.GetName().Name}: {output}; forwarded types: {forwarders.Count}");
 }
 
