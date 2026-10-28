@@ -1,0 +1,58 @@
+[
+  {
+    "path": "code-scanning-open-dev.json",
+    "bytes": 3
+  },
+  {
+    "path": "dependabot-codeql-init-failure.log",
+    "bytes": 76693
+  },
+  {
+    "path": "dependabot-open.json",
+    "bytes": 3
+  },
+  {
+    "path": "dependency-deprecations.json",
+    "bytes": 8167
+  },
+  {
+    "path": "dependency-deprecations.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "dependency-vulnerabilities.json",
+    "bytes": 8167
+  },
+  {
+    "path": "dependency-vulnerabilities.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "pr933-before-integration.json",
+    "bytes": 18746
+  },
+  {
+    "path": "pr933-job-122643594285.log",
+    "bytes": 106306
+  },
+  {
+    "path": "pr933-job-122643594317.log",
+    "bytes": 60592
+  },
+  {
+    "path": "pr943-ios-arm64-failure.log",
+    "bytes": 129819
+  },
+  {
+    "path": "progress.json",
+    "bytes": 5036
+  },
+  {
+    "path": "reader-workload-focused.log",
+    "bytes": 891
+  },
+  {
+    "path": "reader-workload-full.log",
+    "bytes": 2229
+  }
+]

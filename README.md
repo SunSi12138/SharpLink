@@ -503,3 +503,8 @@ Credential-pattern and nested-archive scans are recorded in [scan-review.json](s
 - `931-r1-loop-exit/scalar-obj/probe.csproj.nuget.g.targets` — Build/package/runtime cache; not raw measurement evidence
 - `931-r1-loop-exit/scalar-obj/project.assets.json` — Build/package/runtime cache; not raw measurement evidence
 - `931-r1-loop-exit/scalar-obj/project.nuget.cache` — Build/package/runtime cache; not raw measurement evidence
+
+## Published source branches
+
+- R1 loop-exit source: [codex/931-loop-exit-experiment](https://github.com/SunSi12138/SharpLink/tree/codex/931-loop-exit-experiment).
+- `index.json` lists original identity files and their declared commit/SHA fields without reinterpreting them as this mirror commit.
