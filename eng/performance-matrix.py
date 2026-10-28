@@ -245,7 +245,9 @@ def number(value, label, positive=False):
 def validate_result(result, plan):
     require(result["RecorderMode"] == "formal" and result["FormalComparable"] is True, "not formal-comparable")
     require(result["RecorderVersion"] == plan["recorderVersion"], "recorder version mismatch")
-    for field in ("Failure", "ValidationFailure", "Cancelled", "TailObserverFailure"):
+    require("Failure" in result, "missing mandatory Failure")
+    require(type(result["Failure"]) is int and result["Failure"] == 0, "nonzero/invalid Failure; no failure waiver")
+    for field in ("ValidationFailure", "Cancelled", "TailObserverFailure"):
         require(type(result.get(field, 0)) is int and result.get(field, 0) == 0, f"nonzero/invalid {field}; no failure waiver")
     counts = [result[field] for field in ("OperationsStartedDuringMeasurement", "OperationsCompleted", "Success", "SampleCount")]
     require(all(type(n) is int and n > 0 for n in counts) and len(set(counts)) == 1, "incomplete operation/sample counts")
@@ -331,6 +333,7 @@ def validate(plan, evidence, root, selected=None):
         shards = [s for s in shards if s["id"] == selected]
         require(len(shards) == 1, "unknown shard")
     errors, reports, cells = [], 0, 0
+    report_contents = {}
     evidence = Path(evidence).resolve()
     expected_dirs = {s["id"] for s in shards}
     if not selected and evidence.exists():
@@ -354,7 +357,13 @@ def validate(plan, evidence, root, selected=None):
             require(actual_files == expected_files, f"report inventory differs: missing={sorted(expected_files-actual_files)}, extra={sorted(actual_files-expected_files)}")
             for report in shard["reports"]:
                 try:
-                    validate_report(read_json(directory / report["file"]), report, plan, provenance)
+                    data = read_json(directory / report["file"])
+                    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False)
+                    identity = f"{shard['id']}/{report['file']}"
+                    require(canonical not in report_contents,
+                            f"duplicate report content; first seen at {report_contents.get(canonical)}")
+                    report_contents[canonical] = identity
+                    validate_report(data, report, plan, provenance)
                     reports += 1
                     cells += len(report["cells"])
                 except (KeyError, TypeError, ValueError, OSError) as exc:

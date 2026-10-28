@@ -1,5 +1,6 @@
 """Offline full plan and real-schema negative controls; never runs a benchmark."""
 import copy
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -30,9 +31,11 @@ def fixture(expected, plan, provenance):
                   StopwatchFrequency=10000000, MeasurementDurationSeconds=20, WarmupDurationSeconds=5,
                   DrainDurationSeconds=0, RecorderMode="formal", RecorderVersion=plan["recorderVersion"],
                   FormalComparable=True, P50Us=1.0, P95Us=2.0, P99Us=3.0, P999Us=4.0)
+    report_index = [r["file"] for shard in plan["shards"] for r in shard["reports"]].index(expected["file"])
+    timestamp = (datetime.datetime(2026, 10, 28, tzinfo=datetime.timezone.utc) + datetime.timedelta(seconds=report_index)).isoformat()
     return dict(SchemaVersion=plan["reportSchemaVersion"], SourceCommit=SHA,
                 Workload=expected["project"], Runtime=".NET 10.0.11", OperatingSystem="Linux fixture",
-                OsArchitecture="X64", ProcessArchitecture="X64", TimestampUtc="2026-10-28T00:00:00Z",
+                OsArchitecture="X64", ProcessArchitecture="X64", TimestampUtc=timestamp,
                 ProcessorCount=2, Configuration=config,
                 Results=[dict(result, Operation=op, Concurrency=c, WorkerCount=c) for op, c in expected["cells"]])
 
@@ -132,6 +135,25 @@ class FullMatrixPlanTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, error):
                     matrix.validate_result(row, self.plan)
 
+    def test_failure_is_mandatory_strict_integer_zero_but_optional_counts_may_be_absent(self):
+        data = fixture(self.expected, self.plan, self.provenance)
+        # Real LoadTest records do not have ValidationFailure/Cancelled. The
+        # original optional-field semantics must remain valid.
+        for result in data["Results"]:
+            for field in ("ValidationFailure", "Cancelled", "TailObserverFailure"):
+                result.pop(field, None)
+        matrix.validate_report(data, self.expected, self.plan, self.provenance)
+        for result in data["Results"]:
+            del result["Failure"]
+        with self.assertRaisesRegex(ValueError, "missing mandatory Failure"):
+            matrix.validate_report(data, self.expected, self.plan, self.provenance)
+        for value in (False, 0.0, "0", None):
+            with self.subTest(value=value):
+                row = fixture(self.expected, self.plan, self.provenance)["Results"][0]
+                row["Failure"] = value
+                with self.assertRaisesRegex(ValueError, "invalid Failure"):
+                    matrix.validate_result(row, self.plan)
+
     def evidence(self, directory):
         shard_dir = directory / self.shard["id"]
         binary = shard_dir / "binaries" / "SharpLink.LoadTest.dll"
@@ -188,6 +210,24 @@ class FullMatrixPlanTests(unittest.TestCase):
             self.assertFalse(full["coverageAndCorrectnessPassed"])
             self.assertEqual("full", full["scope"])
             self.assertEqual(134, len(full["failures"]))
+
+    def test_copying_one_round_to_another_is_rejected_even_with_all_filenames(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(matrix, "git", return_value=SHA), \
+                patch.object(matrix, "make_plan", return_value=self.plan):
+            directory = Path(temp)
+            shard_dir = self.evidence(directory)
+            first = shard_dir / "jit-r1-tcp-balanced-p1-1-unary-0.json"
+            second = shard_dir / "jit-r2-tcp-balanced-p1-1-unary-0.json"
+            self.assertNotEqual(matrix.read_json(first)["TimestampUtc"], matrix.read_json(second)["TimestampUtc"])
+            # Different whitespace/key order must not evade duplicate detection.
+            copied = matrix.read_json(first)
+            second.write_text(json.dumps(dict(reversed(list(copied.items()))), separators=(",", ":")))
+            result = matrix.validate(self.plan, directory, ROOT, self.shard["id"])
+            self.assertFalse(result["coverageAndCorrectnessPassed"])
+            self.assertEqual(1, len(result["failures"]))
+            self.assertIn("duplicate report content", result["failures"][0])
+            self.assertIn(first.name, result["failures"][0])
+            self.assertIn(second.name, result["failures"][0])
 
     def test_missing_provenance_and_runtime_binary_substitution_fail(self):
         with tempfile.TemporaryDirectory() as temp:
