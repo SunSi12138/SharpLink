@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "format": "ordered binary slices of the exact independently reviewable gzip tar archive; concatenate in listed order, not separate compressed archives",
+  "archiveId": "phase-rewrite-performance-20261028",
+  "reassembledArchive": "archives/phase-rewrite-performance-20261028.tar.gz",
+  "archiveBytes": 93087850,
+  "archiveSha256": "8c1cd1ff0f165eba1d0912d5fbe75604030c8ce895cf359f15b38b260dab6454",
+  "partBytesMaximum": 3145728,
+  "parts": [
+    {
+      "order": 1,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-001",
+      "bytes": 3145728,
+      "sha256": "2068ab6520b48d1a1aa4de991fffef52fd1b14000df9aee4f1c1df77019a2e9b"
+    },
+    {
+      "order": 2,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-002",
+      "bytes": 3145728,
+      "sha256": "05ffcbfa6ae7a8f27caa17e21280842f5118967c082922dbd8791efca19a9576"
+    },
+    {
+      "order": 3,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-003",
+      "bytes": 3145728,
+      "sha256": "4008c2af83235264e11ede315a71dde878b24358554344add3e899feca42741d"
+    },
+    {
+      "order": 4,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-004",
+      "bytes": 3145728,
+      "sha256": "b16b5a6b36c644239a0933b7dc6a655fced19a78581eb70b5ced8270ded57cc6"
+    },
+    {
+      "order": 5,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-005",
+      "bytes": 3145728,
+      "sha256": "3c0885109a974e40eb2a28832df5cf2e0317a2f8ee1c2f25a4a93751dd554644"
+    },
+    {
+      "order": 6,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-006",
+      "bytes": 3145728,
+      "sha256": "bc279435f0db5ac5032296f80d42a5c9b7e4a0ae81792f0c6261be3315f449ab"
+    },
+    {
+      "order": 7,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-007",
+      "bytes": 3145728,
+      "sha256": "9a79caff6154f367d9ddadf75586fcfd883aa4e4b89b31f924442d5dc1b609cd"
+    },
+    {
+      "order": 8,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-008",
+      "bytes": 3145728,
+      "sha256": "79b5c3a761d7273d8558c3de543205bb7fef772ce9605808399d3993062c5e71"
+    },
+    {
+      "order": 9,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-009",
+      "bytes": 3145728,
+      "sha256": "e3fa4a43416a27cdf0b117aea2d8a7e077c49af732e01a166fb18be0e4db966f"
+    },
+    {
+      "order": 10,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-010",
+      "bytes": 3145728,
+      "sha256": "f7a250960fb6207831dde252f674abad86be1bceea027f1fed4e5785a2a6c829"
+    },
+    {
+      "order": 11,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-011",
+      "bytes": 3145728,
+      "sha256": "431a4c549c1b87baf98b557bbfe555e01b1167a3cb2d321e1a6d815524265a42"
+    },
+    {
+      "order": 12,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-012",
+      "bytes": 3145728,
+      "sha256": "eeb0cee9490e911b5718015c4b3f59ab927ccecb0d20d0859783789454d2283a"
+    },
+    {
+      "order": 13,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-013",
+      "bytes": 3145728,
+      "sha256": "c1436ad050ddfcf76838ab218b0f25086a53f0a6d25628467dbce6adf1fda879"
+    },
+    {
+      "order": 14,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-014",
+      "bytes": 3145728,
+      "sha256": "6dda6921a5da378fb488aa4c560e6d58003195b4b832bbe26436d179564f611d"
+    },
+    {
+      "order": 15,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-015",
+      "bytes": 3145728,
+      "sha256": "ea0de167b552991960e9f7b98fe30e3d872f763b567de1303eb35df55bd0ca21"
+    },
+    {
+      "order": 16,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-016",
+      "bytes": 3145728,
+      "sha256": "b2e31528b8bd07b37c05f74b19793ce11d25d242f988da45eb13b94b3d518ec0"
+    },
+    {
+      "order": 17,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-017",
+      "bytes": 3145728,
+      "sha256": "199b9bf14101a5d18e9a92065a26762dd09d841a20772cc0366e2e1a55c507e9"
+    },
+    {
+      "order": 18,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-018",
+      "bytes": 3145728,
+      "sha256": "607fa9cded707674954ab86833cb29b4238ff79a764d1180f21d58fa08084916"
+    },
+    {
+      "order": 19,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-019",
+      "bytes": 3145728,
+      "sha256": "924ff698b04d671484fdb8a44a0b28c2fef18d568d71dc6c75c7e6542355acc7"
+    },
+    {
+      "order": 20,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-020",
+      "bytes": 3145728,
+      "sha256": "003c9f6f54ef2218ee853b4d27e381dd2cad0a1108996c714626fae54d4edff4"
+    },
+    {
+      "order": 21,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-021",
+      "bytes": 3145728,
+      "sha256": "eb83213bc1d05f8ebab5d6de7927f16013ee0b7faba22519adba94bde22a623e"
+    },
+    {
+      "order": 22,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-022",
+      "bytes": 3145728,
+      "sha256": "23057396ec7dfa0db5b40ce01b68a670045c0007cbe2f9f277a1d4ed09310464"
+    },
+    {
+      "order": 23,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-023",
+      "bytes": 3145728,
+      "sha256": "fb5c88b4861774c90bb44d3509ea9c1418513358150e3e6d5387d8391c41d838"
+    },
+    {
+      "order": 24,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-024",
+      "bytes": 3145728,
+      "sha256": "6ccd98c1fcf7376a53a2454d51cf657f1adbad0e0abae9dcd02b428060505102"
+    },
+    {
+      "order": 25,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-025",
+      "bytes": 3145728,
+      "sha256": "d982bb30f3d2b55252920d67503ef7979bb1ddfbe3acd877ab4d2631f098dd19"
+    },
+    {
+      "order": 26,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-026",
+      "bytes": 3145728,
+      "sha256": "7cc48e0860a8ce0197e7e1c8064ae1e4fa66fb929d850cb1c63af6b841c24478"
+    },
+    {
+      "order": 27,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-027",
+      "bytes": 3145728,
+      "sha256": "b8eb78f7bfd8b90a8327c717b2de7e9a2f5e6db6d27692857c4c79e5f386072b"
+    },
+    {
+      "order": 28,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-028",
+      "bytes": 3145728,
+      "sha256": "aa24ed07fd989d9810b1ef98e9a1ef18d8add35f8fc15377244ad3c28c76f6aa"
+    },
+    {
+      "order": 29,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-029",
+      "bytes": 3145728,
+      "sha256": "6b1d5bd6da6204f63bb89d057c3cdb1c2dc59d1f9d9bd7d0ae69b9cc09f6b88f"
+    },
+    {
+      "order": 30,
+      "path": "archives/phase-rewrite-performance-20261028.parts/part-030",
+      "bytes": 1861738,
+      "sha256": "cbbc6d16b96fbd542e90898f35f42fc21de440103c060e347010ddf608af4f08"
+    }
+  ],
+  "filesInArchive": 5072,
+  "uncompressedBytes": 207809550,
+  "reason": "Conservative3MiB binary parts preserve all included bytes while fitting previously reviewed connector payload limits. No monolithic upload attempted.",
+  "evidenceScope": "Independent valid local+hosted diagnostics, no demonstrated throughput/CPU benefit; adverse descriptive hostedstatic1 tail risk.607 not promoted. No performanceGo/equivalence/significance claim; raw environments remain separate."
+}

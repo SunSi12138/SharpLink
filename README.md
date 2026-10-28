@@ -6,33 +6,72 @@ This dedicated evidence branch preserves raw task artifacts beyond Actions reten
 set -euo pipefail
 git clone --single-branch --branch codex/3-release-evidence https://github.com/SunSi12138/SharpLink.git SharpLink-release-evidence
 cd SharpLink-release-evidence
-# Reassemble and verify the split R1 diagnostic archive before extraction.
-python3 - <<'PY_REASSEMBLE'
-import hashlib, json
+# A fresh directory prevents overwriting tracked archives or previous extractions.
+verified_dir=$(mktemp -d "$PWD/verified-evidence.XXXXXX")
+# Verify ALL indexed archives, including BOTH split R1 and phase archives.
+# Explicit failure handling prevents any extraction after any verification failure.
+if ! python3 - "$verified_dir" <<'PY_REASSEMBLE'
+import hashlib, json, sys
 from pathlib import Path
-manifest = json.loads(Path('archives/r1-full-product-40687272444.parts/manifest.json').read_text())
-chunks = []
-for order, part in enumerate(manifest['parts'], 1):
-    data = Path(part['path']).read_bytes()
-    if part['order'] != order or len(data) != part['bytes'] or hashlib.sha256(data).hexdigest() != part['sha256']:
-        raise SystemExit('Invalid or reordered part: ' + part['path'])
-    chunks.append(data)
-data = b''.join(chunks)
-if len(data) != manifest['archiveBytes'] or hashlib.sha256(data).hexdigest() != manifest['archiveSha256']:
-    raise SystemExit('Reassembled archive failed integrity check')
-target = Path(manifest['reassembledArchive'])
-if target.exists():
-    if target.read_bytes() != data:
-        raise SystemExit('Existing archive differs; refusing overwrite')
-else:
-    target.write_bytes(data)
-print('Verified:', target, len(data), manifest['archiveSha256'])
+root = Path.cwd().resolve()
+out = Path(sys.argv[1]).resolve()
+def source(name):
+    path = (root / name).resolve(strict=True)
+    if not path.is_relative_to(root) or not path.is_file():
+        raise SystemExit('Invalid input path: ' + name)
+    return path
+def check(data, size, digest, label):
+    if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+        raise SystemExit('Integrity failure: ' + label)
+entries = json.loads(source('index.json').read_text())['archives']
+if not entries:
+    raise SystemExit('Empty archive index')
+(out / 'archives').mkdir()
+for entry in entries:
+    name = Path(entry['archive']).name
+    if entry['archive'] != 'archives/' + name or not name.endswith('.tar.gz'):
+        raise SystemExit('Invalid archive path')
+    if entry.get('storage') == 'ordered-binary-parts':
+        manifest = json.loads(source(entry['partsManifest']).read_text())
+        if (manifest['reassembledArchive'] != entry['archive'] or
+            manifest['archiveBytes'] != entry['archiveBytes'] or
+            manifest['archiveSha256'] != entry['sha256'] or
+            len(manifest['parts']) != entry['partCount']):
+            raise SystemExit('Manifest/index mismatch: ' + name)
+        chunks, seen = [], set()
+        for order, part in enumerate(manifest['parts'], 1):
+            if part['order'] != order or part['path'] in seen:
+                raise SystemExit('Invalid/repeated/reordered part: ' + part['path'])
+            seen.add(part['path'])
+            chunk = source(part['path']).read_bytes()
+            check(chunk, part['bytes'], part['sha256'], part['path'])
+            chunks.append(chunk)
+        data = b''.join(chunks)
+    elif entry.get('storage') is None:
+        data = source(entry['archive']).read_bytes()
+    else:
+        raise SystemExit('Unsupported storage: ' + name)
+    check(data, entry['archiveBytes'], entry['sha256'], name)
+    with (out / 'archives' / name).open('xb') as target:
+        target.write(data)
+    print('Verified:', name, len(data), entry['sha256'])
 PY_REASSEMBLE
-mkdir -p extracted
-for archive in archives/*.tar.gz; do tar -xzf "$archive" -C extracted; done
+then
+    echo "Verification failed; no extraction performed. Partial output retained: $verified_dir" >&2
+    exit 1
+fi
+# Only reached after EVERY indexed archive has passed verification.
+# Each archive gets its own fresh extraction directory, avoiding cross-archive collisions.
+mkdir "$verified_dir/extracted"
+for archive in "$verified_dir"/archives/*.tar.gz; do
+    name=$(basename "$archive" .tar.gz)
+    mkdir "$verified_dir/extracted/$name"
+    tar -xzf "$archive" -C "$verified_dir/extracted/$name"
+done
+printf 'Verified archives and separate extractions: %s\n' "$verified_dir"
 ```
 
-The machine inventory is [index.json](index.json). It currently contains **13 logical archives, 136,417,489 bytes total**; all prior twelve archives remain unchanged. The new full-product archive is stored as11 ordered binary parts; its logical `.tar.gz` path exists only after verified local reassembly. Totals count the original archive bytes once, not metadata or a duplicate monolithic file. Each archive has a file inventory and transfer-integrity identity. Source commit/arm/binary identities inside the original evidence remain authoritative; this mirror commit is not their source SHA. Every archive is under 50 MiB.
+The machine inventory is [index.json](index.json). It currently contains **14 logical archives, 229,505,339 bytes total**; all prior thirteen archive entries and stored bytes remain unchanged. R1 full-product and phase-rewrite archives are stored as 11 and 30 ordered binary parts respectively; their logical `.tar.gz` paths are reconstructed under the fresh verification directory above, never over tracked originals. Totals count each logical compressed archive once, not metadata or duplicate monolithic files. The phase archive is **88.78 MiB** (93,087,850 bytes), so logical archives are not all below 50 MiB. Each stored binary part is at most **3 MiB**; unsplit tracked archives remain below 50 MiB. Each archive has a file inventory and transfer-integrity identity. Source commit/arm/binary identities inside the original evidence remain authoritative; this mirror commit is not their source SHA.
 
 | Archive | MiB | Files | Status |
 |---|---:|---:|---|
@@ -49,6 +88,7 @@ The machine inventory is [index.json](index.json). It currently contains **13 lo
 | [r1-cloud-native-20261028](archives/r1-cloud-native-20261028.tar.gz) | 3.17 | 97 | Failed four-target Tier1 gate in both cloud arms; preparation failures retained; no timing or acceptance |
 | [r1-hosted-native-40681832353](archives/r1-hosted-native-40681832353.tar.gz) | 3.21 | 98 | Valid non-timed mechanism and8focused tests only; not performance Go; cloud failures retained |
 | [r1-full-product-40687272444](archives/r1-full-product-40687272444.parts/manifest.json) | 32.76 | 611 | Valid48+14diagnostic; adverse dynamic1tails, mixed other cells; NoGo unchanged.11lossless parts |
+| [phase-rewrite-performance-20261028](archives/phase-rewrite-performance-20261028.parts/manifest.json) | 88.78 | 5072 | Separate local and hosted 48 TCP + 14 scalar diagnostics; no demonstrated throughput/CPU gain, descriptive tail risk; candidate not promoted. 30 lossless parts |
 
 The new R1 cloud archive contains attempts001/002/003. Executed native tool is
 `17038d5014d1d4a76407fa13c451d6a0606968ff`; product R1 remains `94adeae8`.
@@ -595,3 +635,16 @@ ZIP members with no credential findings. None of the included raw evidence is sa
 
 - R1 loop-exit source: [codex/931-loop-exit-experiment](https://github.com/SunSi12138/SharpLink/tree/codex/931-loop-exit-experiment).
 - `index.json` lists original identity files and their declared commit/SHA fields without reinterpreting them as this mirror commit.
+
+
+## Phase rewrite607: actual local + hosted measurements (2026-10-28)
+
+Candidate is **not promoted / not merged**: actual bounded measurements do not establish throughput/CPU benefit and preserve descriptive tail risk, not because native code is larger. Both independent raw-evidence reviews PASS, which is evidence validity rather than performanceGo. [Hosted independent review](phase-rewrite-performance-20261028-hosted-review.md) and [separate local independent review](phase-rewrite-performance-20261028-local-review.md).
+
+- [Draft PR963](https://github.com/SunSi12138/SharpLink/pull/963), [hosted run40712925050/attempt1](https://github.com/SunSi12138/SharpLink/actions/runs/40712925050). Baselineac17 vs actual built2153/exact607tree, NOT official2.0.3.
+- Each environment separately completed48TCP processes/24pairs+14scalar. Hosted3,551,642RPCs; local4,137,425RPCs. No statistical pooling, discarded pair, timed retry or added sample.
+- Hosted QPS pairedmean changes static1/static100/dynamic1/dynamic100:−0.01/−0.35/−1.42/−0.51%; all QPS/CPU/P99 descriptive95% intervals cross zero. Hostedstatic1P99.9+24.28%[+2.80,+52.72]% is an adverse descriptive signal, not multiplicity-adjusted formal proof. All6ratios retained. Local performance mixed/inconclusive. Scalar allocation12cells×5pairs identical in each environment.
+- Hosted first2logicalCPUs are same-coreSMTsiblings; local sysfs/cgroup/physical isolation unknown, gueststeal1.474–6.854%. Sixpairs/cell, fixed nonrandom order, defaulttiering and one-worker loopback shape limit inference. No equivalence/release acceptance or code-size gate.
+- [Ordered-parts manifest](archives/phase-rewrite-performance-20261028.parts/manifest.json):30 binary slices≤3MiB; logical archive93,087,850bytes, SHA256`8c1cd1ff0f165eba1d0912d5fbe75604030c8ce895cf359f15b38b260dab6454`;5072members/207,809,550uncompressed bytes. The fail-closed procedure at the top explicitly processes every index entry, including this phase manifest; it reconstructs this archive under the fresh `verified-evidence.XXXXXX/archives/` directory and extracts it separately only after all archive checks pass.
+- [Complete member/privacy/exclusion inventory](phase-rewrite-performance-20261028-files.json). All594included hostedZIP members exactly preserved,2official runtime installers separately hashed/excluded; originalZIP transport hash/member map retained. Local raw, all prepare-only failures, prior8-process mechanism evidence including4nativecompleteness failures, quiet receipts, complete product source trees, tool sources and both independent reports included without redaction. Earlier STOP/no-timing text is historical and superseded by user-requested measurements, not a current performance premise.
+- No previous archive bytes or entries were replaced. This is diagnostic evidence only; it does not authorize merging or releasing product code.

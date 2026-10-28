@@ -489,6 +489,38 @@
       ],
       "privacyReview": "r1-full-product-40687272444-files.json",
       "sanitization": "None of included raw evidence.594/596officialZIPmembers byte-identical; exactly2official runtime installers excluded with hashes/size/URLs retained. Independent archive privacy review covers all611members,23decompressedbinlogs and240packageZIPmembers; prior12archives unchanged."
+    },
+    {
+      "id": "phase-rewrite-performance-20261028",
+      "archive": "archives/phase-rewrite-performance-20261028.tar.gz",
+      "storage": "ordered-binary-parts",
+      "partsManifest": "archives/phase-rewrite-performance-20261028.parts/manifest.json",
+      "partCount": 30,
+      "archivePathMeaning": "Logical locally reassembled path; monolithic archive is not stored in Git. Verify every part and whole hash before extracting.",
+      "archiveBytes": 93087850,
+      "sha256": "8c1cd1ff0f165eba1d0912d5fbe75604030c8ce895cf359f15b38b260dab6454",
+      "files": 5072,
+      "uncompressedBytes": 207809550,
+      "inventory": "phase-rewrite-performance-20261028-files.json",
+      "source": "Official artifact12827506989/run40712925050 attempt1 plus separate local76b8de5 attempt1, all original preparation failures, prior phase mechanism failures, source captures and both independent reviews.",
+      "runId": "40712925050",
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/40712925050",
+      "sourceIdentity": "Coherent baselineac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c versus2153cd9228c1de25e89a4bb68f0e3da4dc19f867/tree02a2824f344c3614fff8de1d8a10ed7a5be87c21 (exact reviewed607 tree). Hosted tool90d98e3; localtool76b8de5. NOT official2.0.3.",
+      "status": "VALID separate48TCP/24pairs+14scalar campaigns.607notpromoted: no demonstrated QPS/CPU benefit; hostedstatic1P99.9 pairedmean+24.28%, descriptiveinterval+2.80..+52.72%. Small6-pair cells/no multiplicity correction: not formal significance/equivalence or performanceGo; judgment not based on code size.",
+      "unpack": "Reassemble and verify ordered parts using fail-closed README instructions, then tar -xzf archives/phase-rewrite-performance-20261028.tar.gz",
+      "identityFiles": [
+        "official-artifact-members.json",
+        "source-captures.json",
+        "hosted/evidence/experiment.json",
+        "hosted/evidence/tcp/sample-validation.json",
+        "local/evidence/experiment.json",
+        "local/quiet-window.json",
+        "reports/hosted-independent/REPORT.md",
+        "reports/local-independent/REPORT.md",
+        "exclusions.json"
+      ],
+      "privacyReview": "phase-rewrite-performance-20261028-files.json",
+      "sanitization": "No included raw bytes redacted/changed.594/596 hosted ZIP members preserved; exactly2 reacquirable official runtime installers omitted with SHA256/SHA512/URL. Redundant outer ZIP and4CLI-cache markers omitted with hashes; all measured/failure samples, binaries/logs and prior mechanism failures retained. Author scan5072files+50expandedbinlogs+480ZIPmembers finds0patterns; independent review required. All13prior archives/parts remain unchanged."
     }
   ],
   "exclusions": "excluded-files.json",
@@ -499,7 +531,7 @@
   "localOriginalsUnmodified": true,
   "privacyReview": "scan-review.json",
   "integrity": "Archive SHA-256 is for upload/download transfer verification; timing files remain original bytes.",
-  "updatedAtUtc": "2026-10-28T13:05:00Z",
-  "archiveCount": 13,
-  "archiveBytes": 136417489
+  "updatedAtUtc": "2026-10-28T15:38:00Z",
+  "archiveCount": 14,
+  "archiveBytes": 229505339
 }
