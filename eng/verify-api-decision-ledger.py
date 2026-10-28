@@ -76,6 +76,8 @@ def validate(ledger, identities, coverage, provenance, symbols, decisions, relat
     require(not source['status'] and not source['untrackedFilesSha256'], 'Inventory source is dirty')
     for field in ('hostOs', 'hostArchitecture', 'configuration'):
         require(coverage[field] == bound[field], f'Inventory profile differs: {field}')
+    sdk_version = bound.get('sdkVersion')
+    require(isinstance(sdk_version, str) and sdk_version.strip(), 'Missing bound SDK version')
 
     targets = ledger['targets']
     expected = unique(targets.values(), lambda x: (x['project'], x['framework']), 'ledger target')
@@ -84,6 +86,10 @@ def validate(ledger, identities, coverage, provenance, symbols, decisions, relat
         same_ids(actual, expected, label + ' target coverage')
         if label == 'actual':
             require(all(x['complete'] for x in rows), 'A target is incomplete')
+            for target in rows:
+                require(target.get('sdkVersion') == sdk_version,
+                        f"Inventory SDK differs or is missing for {target['project']}@{target['framework']}: "
+                        f"expected {sdk_version}, got {target.get('sdkVersion')!r}")
 
     by_id = unique(symbols, lambda x: x['id'], 'inventory symbol ID')
     require(len(by_id) == bound['declarations'], 'Declaration count differs from bound inventory')
@@ -170,7 +176,8 @@ def validate(ledger, identities, coverage, provenance, symbols, decisions, relat
             require(exception['decision'] == 'keep-public', 'Unexpected exception decision')
             exception_count += 1
     same_ids(expanded, required, 'Expanded decision ID coverage')
-    return {'status': ledger['status'], 'targets': len(expected), 'declarations': len(by_id),
+    return {'status': ledger['status'], 'sdkVersion': sdk_version,
+            'targets': len(expected), 'declarations': len(by_id),
             'types': len(typed), 'decisionIds': len(expanded), 'memberExceptions': exception_count,
             'decisions': dict(sorted(Counter(expanded.values()).items()))}
 

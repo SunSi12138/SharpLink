@@ -11,6 +11,7 @@
     "hostOs": "linux",
     "hostArchitecture": "x86_64",
     "configuration": "Release",
+    "sdkVersion": "10.0.113",
     "declarations": 18713,
     "decisionIds": 3397
   },

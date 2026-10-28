@@ -48,7 +48,7 @@ class DecisionLedgerTests(unittest.TestCase):
             'complete': True, 'failures': [], 'scope': 'production-declarations',
             'hostOs': 'linux', 'hostArchitecture': 'x86_64', 'configuration': 'Release',
             'expectedTargets': list(self.targets.values()),
-            'actualTargets': [{**t, 'complete': True} for t in self.targets.values()],
+            'actualTargets': [{**t, 'complete': True, 'sdkVersion': '10.0.113'} for t in self.targets.values()],
             'symbolCountByTarget': {'src/P/P.csproj@net10.0': 8, 'src/G/G.csproj@netstandard2.0': 2},
         }
         self.provenance = {'source': {'commit': 'source-commit', 'tree': 'source-tree',
@@ -77,6 +77,7 @@ class DecisionLedgerTests(unittest.TestCase):
         self.ledger = {'schemaVersion': 1, 'status': 'proposal-not-approved', 'targets': self.targets,
                        'inventory': {'sourceCommit': 'source-commit', 'sourceTree': 'source-tree',
                                      'hostOs': 'linux', 'hostArchitecture': 'x86_64', 'configuration': 'Release',
+                                     'sdkVersion': '10.0.113',
                                      'declarations': 10, 'decisionIds': 7},
                        'roles': {'spi': 'Preserve public SPI and actual implementation inheritance'},
                        'types': [base, internal, row('G', 'N.Generated', 'keep-public')]}
@@ -92,7 +93,8 @@ class DecisionLedgerTests(unittest.TestCase):
 
     def test_exact_member_accessor_generated_and_internal_base_coverage(self):
         self.assertEqual(self.validate(), {
-            'status': 'proposal-not-approved', 'targets': 2, 'declarations': 10, 'types': 3,
+            'status': 'proposal-not-approved', 'sdkVersion': '10.0.113',
+            'targets': 2, 'declarations': 10, 'types': 3,
             'decisionIds': 7, 'memberExceptions': 1,
             'decisions': {'keep-inheritable': 2, 'keep-public': 5},
         })
@@ -192,6 +194,32 @@ class DecisionLedgerTests(unittest.TestCase):
         self.coverage['hostOs'] = 'darwin'
         with self.assertRaisesRegex(LEDGER.LedgerError, 'profile differs'):
             self.validate()
+
+    def test_missing_sdk_on_any_target_fails(self):
+        for target in self.coverage['actualTargets']:
+            with self.subTest(target=target['project']):
+                del target['sdkVersion']
+                with self.assertRaisesRegex(LEDGER.LedgerError, 'Inventory SDK differs or is missing'):
+                    self.validate()
+                target['sdkVersion'] = '10.0.113'
+
+    def test_changed_or_mixed_target_sdks_fail(self):
+        for versions in (('10.0.102', '10.0.102'), ('10.0.113', '10.0.102'), ('10.0.102', '10.0.113')):
+            with self.subTest(versions=versions):
+                for target, version in zip(self.coverage['actualTargets'], versions):
+                    target['sdkVersion'] = version
+                with self.assertRaisesRegex(LEDGER.LedgerError, 'Inventory SDK differs or is missing'):
+                    self.validate()
+
+    def test_missing_or_empty_ledger_sdk_binding_fails(self):
+        del self.ledger['inventory']['sdkVersion']
+        with self.assertRaisesRegex(LEDGER.LedgerError, 'Missing bound SDK version'):
+            self.validate()
+        for version in (None, '', ' ', 1000113):
+            with self.subTest(version=version):
+                self.ledger['inventory']['sdkVersion'] = version
+                with self.assertRaisesRegex(LEDGER.LedgerError, 'Missing bound SDK version'):
+                    self.validate()
 
     def test_invalid_rationale_evidence_role_or_approval_fails(self):
         row = self.ledger['types'][0]
