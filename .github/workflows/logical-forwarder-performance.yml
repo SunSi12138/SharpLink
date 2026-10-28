@@ -1,0 +1,100 @@
+name: Logical Forwarder Paired Diagnostic
+
+on:
+  push:
+    branches: [codex/logical-forwarder-performance-validation]
+    paths: ['eng/physical-ownership-probes/logical-forwarder/REQUEST.json']
+
+permissions:
+  contents: read
+
+jobs:
+  full-product:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/logical-forwarder-performance-validation' && github.run_attempt == 1 && github.event.head_commit.message == 'run: logical-forwarder paired diagnostic LF1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+    steps:
+      - name: Checkout request commit (parent must be reviewed tool)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Validate single-use bounded request before any build or timing
+        working-directory: tools
+        run: python3 eng/physical-ownership-probes/logical-forwarder/verify_request.py
+      - name: Checkout exact logical-forwarder candidate (exact d17 tree)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 484a5d279a84a3cd9e717c1ec94d3a5a415112df
+          path: sources/logical
+          persist-credentials: false
+      - name: Checkout exact pre-rewrite baseline (not 2.0.3)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c
+          path: sources/baseline
+          persist-credentials: false
+      - name: Configure isolated paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/logical-full-product/runtime-install"
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/logical-sdk"
+            echo "PRIVATE_RUNTIME=$RUNNER_TEMP/logical-runtime"
+            echo "LOGICAL_ROOT=$RUNNER_TEMP/logical-full-product"
+          } >> "$GITHUB_ENV"
+      - name: Install exact build SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.102
+      - name: Install SHA512-verified official private frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$LOGICAL_ROOT/runtime-install"
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json --output releases.json
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz --output dotnet.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.14/aspnetcore-runtime-10.0.14-linux-x64.tar.gz --output aspnetcore.tar.gz
+          {
+            echo '634326028645f38731c8c4e71a68356e4ca0d6b6607139a234ab760687f742063edaf33a1f20dda615742d2dc8300ca2ff857619d51fbb38090383b71334af89  dotnet.tar.gz'
+            echo 'dd024fd2616926a555b75cbf7a836f6dce998199f0596d9d75676dca2b9d59c8ee8673c6ac23473c0f1a4bdd59eb5cd02fe9ab097eeaf2dd8c8bd117c85e7031  aspnetcore.tar.gz'
+          } | sha512sum --check | tee framework-verification.log
+          mkdir "$PRIVATE_RUNTIME"
+          tar -xzf dotnet.tar.gz -C "$PRIVATE_RUNTIME"
+          tar -xzf aspnetcore.tar.gz -C "$PRIVATE_RUNTIME"
+      - name: Fixed paired full-product comparison
+        shell: bash
+        working-directory: tools
+        run: |
+          set -euo pipefail
+          python3 eng/physical-ownership-probes/logical-forwarder/verify_request.py
+          cp eng/physical-ownership-probes/logical-forwarder/REQUEST.json "$LOGICAL_ROOT/request.json"
+          {
+            echo "requestCommit=$GITHUB_SHA"
+            echo "toolParent=$(git rev-parse HEAD^)"
+            echo 'baseline=ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c'
+            echo 'candidate=484a5d279a84a3cd9e717c1ec94d3a5a415112df'
+            echo "run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT"
+            echo "runner=$RUNNER_OS/$RUNNER_ARCH image=${ImageOS:-unknown}/${ImageVersion:-unknown}"
+          } > "$LOGICAL_ROOT/source-identities.txt"
+          python3 eng/physical-ownership-probes/paired_logical_forwarder.py \
+            --baseline "$GITHUB_WORKSPACE/sources/baseline" \
+            --candidate "$GITHUB_WORKSPACE/sources/logical" \
+            --build-dotnet "$DOTNET_INSTALL_DIR/dotnet" \
+            --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --output "$LOGICAL_ROOT/evidence" 2>&1 | tee "$LOGICAL_ROOT/driver.log"
+      - name: Retain all diagnostics and failed attempts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ownership-logical-full-product-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/logical-full-product
+          if-no-files-found: error
+          retention-days: 30
