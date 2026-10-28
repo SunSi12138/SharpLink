@@ -270,7 +270,12 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
     {
         var name = $"ack{Guid.NewGuid():N}"[..20];
         await using var listener = new SharedMemoryServerTransportListener(name);
+        var iterations = Channel.CreateUnbounded<int>();
+        var iteration = 0;
+        listener.AcceptIterationStartedForTesting = () =>
+            iterations.Writer.TryWrite(Interlocked.Increment(ref iteration));
         var accept = listener.AcceptAsync().AsTask();
+        await WaitForAcceptIterationAsync(1);
         await using var pipe = new NamedPipeClientStream(
             ".",
             $"shm-{name}",
@@ -295,20 +300,59 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         var pathBytes = new byte[pathLength];
         await pipe.ReadExactlyAsync(pathBytes);
         var mappingPath = Encoding.UTF8.GetString(pathBytes);
+        Ensure(File.Exists(mappingPath), "the rejected handshake must first own a mapping");
 
         var invalidAck = new byte[40];
         BinaryPrimitives.WriteInt32LittleEndian(invalidAck, 0x53484D31);
         BinaryPrimitives.WriteInt32LittleEndian(invalidAck.AsSpan(4), 3);
-        RandomNumberGenerator.Fill(invalidAck.AsSpan(8));
+        nonce.CopyTo(invalidAck, 8);
+        invalidAck[8] ^= 1; // Exactly one changed nonce byte; never an accidental match.
         await pipe.WriteAsync(invalidAck);
         await pipe.FlushAsync();
-        await pipe.DisposeAsync();
-
+        // Keep the malformed client open so EOF cannot substitute for nonce rejection.
         await WaitUntilAsync(() => !File.Exists(mappingPath), TimeSpan.FromSeconds(2));
+        Ensure(!accept.IsCompleted, "invalid nonce must not complete the original accept");
+        // Mapping deletion occurs before the rejected pipe is disposed. Only the
+        // next iteration proves a new accepting instance exists on Unix as well.
+        await WaitForAcceptIterationAsync(2);
+        await pipe.DisposeAsync();
 
         await using var factory = new SharedMemoryClientTransportFactory(name);
         await using var client = await factory.ConnectAsync();
         await using var server = await accept.WaitAsync(TimeSpan.FromSeconds(2));
+        await ExchangeByteAsync(client, server, 0x31);
+        await ExchangeByteAsync(server, client, 0x72);
+
+        async Task WaitForAcceptIterationAsync(int expected)
+        {
+            var nextIteration = iterations.Reader.ReadAsync().AsTask();
+            try { await Task.WhenAny(nextIteration, accept).WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (TimeoutException exception)
+            {
+                throw new TimeoutException($"expected accept iteration {expected} was not observed", exception);
+            }
+            if (accept.IsCompleted)
+            {
+                await using var unexpected = await accept;
+                throw new InvalidOperationException("the original accept completed before listener rearm");
+            }
+            var observed = await nextIteration;
+            Ensure(observed == expected, $"expected accept iteration {expected}, observed {observed}");
+            Ensure(!accept.IsCompleted, "a rejected handshake must leave the original accept pending");
+        }
+
+        static async Task ExchangeByteAsync(ITransportConnection sender, ITransportConnection receiver, byte expected)
+        {
+            var flush = await sender.Output.WriteAsync(new[] { expected }).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            Ensure(!flush.IsCanceled && !flush.IsCompleted, "recovered connection must accept output");
+            var read = await receiver.Input.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            try
+            {
+                Ensure(!read.IsCanceled && read.Buffer.ToArray().SequenceEqual(new[] { expected }),
+                    "the same recovered connection must transfer the expected byte");
+            }
+            finally { receiver.Input.AdvanceTo(read.Buffer.End); }
+        }
     }
 
     [Test]

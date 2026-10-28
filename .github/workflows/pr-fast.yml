@@ -42,6 +42,9 @@ jobs:
       - name: Performance matrix shell regression tests
         run: python3 -m unittest discover -s eng/tests -p 'test_performance_matrix_*.py' -v
 
+      - name: Exact regression suite census tests
+        run: python3 eng/tests/test_regression_full_suite_counts.py
+
       - name: Generated ABI evidence shell regression tests
         run: python3 -m unittest discover -s eng/tests -p 'test_generated_abi_evidence_batch.py' -v
 

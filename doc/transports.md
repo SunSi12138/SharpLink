@@ -119,6 +119,12 @@ transport 的 `DisposeAsync` 只会启动一次，所有显式 Session disposal 
 结果。EOF 或物理错误应由 transport 完成/fault Input/Output 暴露；不要再维护第二个
 `isConnected` 回调。不要让多个 Client/Server 隐式共享一个可释放 factory/listener。
 
+内置流式 transport（包括 TLS）和 AnonymousPipe 在发送泵已停止且所有输出操作实际结束后，
+若该泵故障赢得 Session 的终止状态，清理会丢弃尚未成功完成的输出缓冲，不会通过 disposal
+再次发送它们。写入失败前可能已有部分字节到达对端，因此调用结果仍可能未知；这不是自动重试。
+正常 `DisposeAsync`、graceful drain、先发生的 shutdown 或其他来源故障，以及自定义 transport
+的既有完成契约保持不变。
+
 ## 可运行矩阵
 
 `demo/TransportMatrix` 在一个进程内依次完成 TCP、NamedPipe、UDS（平台支持时）、SharedMemory 和 AnonymousPipe 请求。跨进程所有权见 `demo/SeparatedServer`/`SeparatedClient`；TLS、断连和平台异常场景由 IntegrationTests 覆盖。
