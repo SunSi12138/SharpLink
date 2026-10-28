@@ -184,6 +184,55 @@ class ClientAblationTests(unittest.TestCase):
                 for affinity in ("0,0", "0", "0,3"):
                     with self.assertRaises(ValueError):
                         ablation.cpu_topology(affinity, sysfs)
+                for name in ("physical_package_id", "core_id"):
+                    path = sysfs / "cpu0/topology" / name
+                    path.write_text("-1")
+                    with self.assertRaisesRegex(ValueError, "unknown package/core topology"):
+                        ablation.cpu_topology("0,1", sysfs)
+                    path.write_text("0")
+
+    def test_exit_zero_missing_ticks_and_wrong_identity_are_excluded_before_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            product_snapshots(root / "products")
+            prepared = root / "prepared"
+            manifest = ablation.compose_client_pair(root / "products", prepared)
+            results = root / "results"
+            (results / "runs").mkdir(parents=True)
+            (results / "ticks").mkdir()
+            for r in range(1, 7):
+                for arm in ("baseline", "candidate"):
+                    name = f"dynamic-intercepted-n100-c1-r{r}-{arm}"
+                    sample = identity(prepared, manifest, arm)
+                    sample.update(operations=3)
+                    for metric in ("operationsPerSecond", "p50Us", "p99Us", "p999Us", "allocatedBytesPerOperation", "cpuUsPerOperation"):
+                        sample[metric] = 1 if arm == "baseline" else 2
+                    if r == 2 and arm == "candidate":
+                        sample["runtimeVersion"] = "10.0.11"
+                    (results / "runs" / (name + ".json")).write_text(json.dumps(sample))
+                    (results / "runs" / (name + ".host.json")).write_text('{"exitCode":0,"status":"success"}')
+                    if not (r == 1 and arm == "candidate"):
+                        (results / "ticks" / (name + ".json")).write_text(json.dumps({
+                            "stopwatchFrequency": 10000000, "operations": 3, "workers": 1,
+                            "samples": [{"worker": 0, "durationTicks": [15, 4, 9]}]}))
+            originals = {p.name: p.read_text() for p in (results / "runs").iterdir()}
+            report = ablation.validate_measurements(results, prepared, manifest, Path("/private-runtime/dotnet"))
+            self.assertEqual("Failed", report["status"])
+            self.assertEqual("Missing evidence: ticks", report["samples"]["dynamic-intercepted-n100-c1-r1-candidate"]["reason"])
+            self.assertIn("Wrong executing runtime", report["samples"]["dynamic-intercepted-n100-c1-r2-candidate"]["reason"])
+            result = subprocess.run([sys.executable, str(Path(ablation.__file__).parent / "tcp/summarize.py"),
+                                     "--input", str(results), "--validation-manifest", str(results / "sample-validation.json")],
+                                    capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            summary = json.loads((results / "summary.json").read_text())
+            integrity = json.loads((results / "summary-integrity.json").read_text())
+            self.assertEqual(4, summary[0]["pairs"])
+            self.assertEqual("Failed", integrity["evidenceValidation"])
+            self.assertEqual(10, integrity["completedRawSamples"])
+            self.assertEqual([1, 2], [row["round"] for row in integrity["incompletePairs"]])
+            self.assertEqual(["invalid-evidence", "invalid-evidence"], [row["status"] for row in integrity["failedSamples"]])
+            self.assertEqual([0, 0], [row["exitCode"] for row in integrity["failedSamples"]])
+            self.assertEqual(originals, {p.name: p.read_text() for p in (results / "runs").iterdir()})
 
     def test_schedule_attempts_twelve_once_with_balanced_order_despite_failures(self):
         with tempfile.TemporaryDirectory() as directory:

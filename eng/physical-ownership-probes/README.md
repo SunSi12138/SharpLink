@@ -86,7 +86,8 @@ The fixed plan is dynamic intercepted TCP, 100 items, one worker and one ready
 connection, FullOpts (`DOTNET_TieredCompilation=0`), private .NET 10.0.13.
 Every process uses the same two allowed logical CPUs. `cpu-topology.json`
 records package/core IDs and thread siblings, explicitly distinguishing
-same-core SMT siblings from distinct reported cores. Affinity and guest topology
+same-core SMT siblings from distinct reported cores. Unknown negative package/core
+IDs on selected CPUs stop the experiment. Affinity and guest topology
 do not establish dedicated physical CPUs.
 
 Before timing, each arm runs one **non-timed**, fixed 256-operation TCP preflight.
@@ -118,6 +119,9 @@ The artifact is `physical-ownership-931-client-ablation-<tool-sha>-<attempt>`:
   DLL identities and origins; only Client may differ between arms.
 - `preflight-gate.json`, `preflight/`: gate result, real-TCP proof, native listings,
   logs and host/exit/timeout records.
+- `client-tcp/sample-validation.json`: per-sample identity/tick checks and inventory
+  errors, written before summary on both successful and failed schedules. Invalid
+  evidence is excluded from successful pairs without changing raw/host records.
 - `client-tcp/runs/`: all process samples and host outcomes;
   `matrix-failures.json` records any schedule failure.
 - `client-tcp/ticks/`: ordered per-request `Stopwatch` durations and frequency,

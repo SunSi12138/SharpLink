@@ -14,6 +14,8 @@ METRICS = ("operationsPerSecond", "p50Us", "p99Us", "p999Us", "allocatedBytesPer
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--validation-manifest", type=Path,
+                        help="Optional pre-summary identity/tick validation; original matrix needs no manifest")
     args = parser.parse_args()
     root = args.input.resolve(strict=True)
     groups = defaultdict(dict)
@@ -23,7 +25,9 @@ def main():
                  if not p.name.endswith(".host.json")}
     host_paths = {p.name.removesuffix(".host.json"): p
                   for p in (root / "runs").glob("*.host.json")}
-    for sample in sorted(raw_paths.keys() | host_paths.keys()):
+    validation = json.loads(args.validation_manifest.read_text()) if args.validation_manifest else None
+    names = validation["samples"].keys() if validation is not None else raw_paths.keys() | host_paths.keys()
+    for sample in sorted(names):
         scenario, repetition = sample.rsplit("-r", 1)
         round_text, variant = repetition.split("-", 1)
         mode, count_workers = scenario.rsplit("-n", 1)
@@ -38,6 +42,8 @@ def main():
         elif host.get("exitCode") != 0 or host.get("status") not in (None, "success"):
             status = host.get("status", "failed")
             reason = host.get("reason", f"Process exited with code {host.get('exitCode')}")
+        elif validation is not None and validation["samples"][sample]["status"] != "Passed":
+            status, reason = "invalid-evidence", validation["samples"][sample]["reason"]
         elif sample not in raw_paths:
             status, reason = "missing-sample", "Successful process did not write a sample"
         else:
@@ -101,6 +107,8 @@ def main():
                   f"descriptive bootstrap95 {interval}")
     (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     (root / "summary-integrity.json").write_text(json.dumps({
+        "evidenceValidation": validation["status"] if validation is not None else None,
+        "inventoryErrors": validation["inventoryErrors"] if validation is not None else [],
         "rawSamples": len(raw_paths),
         "completedRawSamples": sum(len(runs) for runs in groups.values()),
         "failedSamples": failed,

@@ -66,6 +66,8 @@ def cpu_topology(affinity, sysfs=Path("/sys/devices/system/cpu")):
         rows.append({"cpu": cpu, "packageId": int((root / "physical_package_id").read_text()),
                      "coreId": int((root / "core_id").read_text()),
                      "threadSiblingsList": (root / "thread_siblings_list").read_text().strip()})
+    if any(r["packageId"] < 0 or r["coreId"] < 0 for r in rows if r["cpu"] in selected):
+        raise ValueError("Selected CPUs have unknown package/core topology")
     keys = {(r["packageId"], r["coreId"]) for r in rows if r["cpu"] in selected}
     return {"available": rows, "selectedLogicalCpus": selected,
             "reportedTopology": "same-core SMT siblings" if len(keys) == 1 else "distinct reported cores",
@@ -154,6 +156,40 @@ def validate_ticks(path, sample):
         raise ValueError("Raw durations must be nonnegative integer Stopwatch ticks")
 
 
+def validate_measurements(results, prepared, manifest, runtime_dotnet):
+    """Write immutable-input validation evidence before any sample enters a summary."""
+    expected = {f"{SCENE}-n100-c1-r{r}-{arm}" for r in range(1, ROUNDS + 1) for arm in ("baseline", "candidate")}
+    inventories = {
+        "raw": {p.stem: p for p in (results / "runs").glob("*.json") if not p.name.endswith(".host.json")},
+        "host": {p.name.removesuffix(".host.json"): p for p in (results / "runs").glob("*.host.json")},
+        "ticks": {p.stem: p for p in (results / "ticks").glob("*.json")},
+    }
+    report = {"status": "Passed", "inventoryErrors": [], "samples": {}}
+    for kind, paths in inventories.items():
+        if paths.keys() != expected:
+            report["inventoryErrors"].append({"kind": kind, "missing": sorted(expected - paths.keys()),
+                                               "unexpected": sorted(paths.keys() - expected)})
+    for name in sorted(expected):
+        try:
+            missing = [kind for kind, paths in inventories.items() if name not in paths]
+            if missing:
+                raise ValueError(f"Missing evidence: {', '.join(missing)}")
+            sample = json.loads(inventories["raw"][name].read_text())
+            validate_process_identity(sample, name.rsplit("-", 1)[1], prepared, manifest, runtime_dotnet)
+            validate_ticks(inventories["ticks"][name], sample)
+            host = json.loads(inventories["host"][name].read_text())
+            if host.get("exitCode") != 0 or host.get("status") != "success":
+                raise ValueError(f"Process did not complete successfully: {host.get('status')}/{host.get('exitCode')}")
+            report["samples"][name] = {"status": "Passed"}
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            report["samples"][name] = {"status": "Failed", "reason": str(error)}
+    if report["inventoryErrors"] or any(row["status"] != "Passed" for row in report["samples"].values()):
+        report["status"] = "Failed"
+    results.mkdir(exist_ok=True)
+    write(results / "sample-validation.json", report)
+    return report
+
+
 def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet, affinity, tool_sha):
     source = Path(__file__).resolve().parent
     topology = cpu_topology(affinity)
@@ -206,24 +242,21 @@ def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet,
                "--dotnet", runtime_dotnet, "--runtime-mode", "fullopts", "--rounds", str(ROUNDS),
                "--warmup", "3", "--seconds", "6", "--workers", "1", "--items", str(ITEMS),
                "--modes", SCENE, "--affinity", affinity, "--export-ticks", "--keep-going"]
+    execution_error = None
     try:
         run(command, output / "client-tcp-run.log", source.parent.parent, environment)
-    except Exception:
-        if (results / "runs").exists():
-            run([sys.executable, source / "tcp/summarize.py", "--input", results], output / "client-tcp-summary.log", check=False)
-        raise
-    run([sys.executable, source / "tcp/summarize.py", "--input", results], output / "client-tcp-summary.log")
-    expected_names = {f"{SCENE}-n100-c1-r{r}-{arm}" for r in range(1, ROUNDS + 1) for arm in ("baseline", "candidate")}
-    raw = {p.stem: p for p in (results / "runs").glob("*.json") if not p.name.endswith(".host.json")}
-    hosts = {p.name.removesuffix(".host.json") for p in (results / "runs").glob("*.host.json")}
-    ticks = {p.stem: p for p in (results / "ticks").glob("*.json")}
-    if raw.keys() != expected_names or hosts != expected_names or ticks.keys() != expected_names:
-        raise ValueError("Declared 12-process sample/host/tick inventories differ")
-    for name, path in raw.items():
-        arm = name.rsplit("-", 1)[1]
-        sample = json.loads(path.read_text())
-        validate_process_identity(sample, arm, prepared, manifest, runtime_dotnet)
-        validate_ticks(ticks[name], sample)
+    except Exception as error:
+        execution_error = error
+    # Successful and failed schedules use the same evidence gate. Raw files and
+    # original process exit/status remain untouched; rejected samples are explicit.
+    validation = validate_measurements(results, prepared, manifest, runtime_dotnet)
+    run([sys.executable, source / "tcp/summarize.py", "--input", results,
+         "--validation-manifest", results / "sample-validation.json"],
+        output / "client-tcp-summary.log", check=execution_error is None and validation["status"] == "Passed")
+    if execution_error is not None:
+        raise execution_error
+    if validation["status"] != "Passed":
+        raise ValueError("Measured evidence validation failed; inspect client-tcp/sample-validation.json")
     write(output / "complete.json", {"experiment": "client-only", "toolRevision": tool_sha,
                                       "preflightProcesses": 2, "timedProcesses": 12,
                                       "status": "Evidence complete; no performance acceptance threshold applied"})
