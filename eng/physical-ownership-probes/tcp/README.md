@@ -25,7 +25,7 @@ python3 eng/physical-ownership-probes/tcp/summarize.py \
   --input /tmp/physical-tcp-results
 ```
 
-All tools accept `--help`. Preparation and matrix execution require new output directories, preventing accidental overwrites of existing results. `prepare.py` builds copied probe sources in an isolated output tree, then snapshots the supplied dependency DLLs. It records source hashes, binary hashes, generator identity, exact build commands and source library directories. It never builds production projects. Use `--dotnet /absolute/path/to/dotnet` on preparation and execution when a specific installation is required.
+All tools accept `--help`. Preparation and matrix execution require new output directories, preventing accidental overwrites of existing results. `prepare.py` builds copied probe sources in an isolated output tree, then snapshots the supplied dependency DLLs. It records source hashes, binary hashes, generator identity, exact build commands and source library directories. It rejects unequal non-SharpLink dependency binaries between arms. It never builds production projects. Use `--dotnet /absolute/path/to/dotnet` on preparation and execution when a specific installation is required.
 
 Freeze both snapshots before sampling. Coordinate a quiet window: do not build, test, run other benchmarks, overwrite DLLs, or run CPU-heavy summaries during the matrix. Save every outcome, including unfavorable results and failures. Never pool different worker counts, CPU affinities, runtime modes or runtime binaries as if they were repetitions of one workload.
 
@@ -48,15 +48,19 @@ Latency is closed-loop, complete client-observed stream duration. There is no op
 
 `/proc/stat` and `/proc/loadavg` are recorded around each process where available. Affinity does not reserve a CPU; a quiet local build window does not eliminate hypervisor steal or other host activity. The October 22, 2026 matrix had substantial variation and 2.35–4.81% affinity-CPU steal despite local build avoidance.
 
-The summarizer reports all complete paired samples, baseline/candidate medians and ranges, paired ratios and deterministic 20,000-resample descriptive bootstrap intervals. It separately reports incomplete pairs. Six pairs are underpowered for small changes; these intervals are **not** an equivalence test and do not correct host drift/dependence. Do not infer throughput from allocation/JIT size, claim a noisy null result proves no regression, or discard unfavorable samples.
+The summarizer reports throughput, P50/P99/P99.9, CPU/op and B/op for all complete paired samples, baseline/candidate medians and ranges, paired ratios and deterministic 20,000-resample descriptive bootstrap intervals. It separately reports incomplete pairs. Six pairs are underpowered for small changes; these intervals are **not** an equivalence test and do not correct host drift/dependence. Do not infer throughput from allocation/JIT size, claim a noisy null result proves no regression, or discard unfavorable samples.
 
 This is bounded two-core loopback evidence, not production certification. It does not cover separate hosts, multiple clients/connections, large/complex payloads, asynchronous/expensive service producers, server GC, other transports or exceptional behavior.
 
 ## Measured-source provenance
 
-`probe/Program.cs` and `module/Contract.cs` are byte-identical to the isolated sources used for the 48-process comparison of baseline `13928a35` and candidate `520b544b56af4d4b298446b96c3a39446abedfa4`:
+The measured call loop and contract originate from the isolated comparison of
+baseline `13928a35` and candidate `520b544b56af4d4b298446b96c3a39446abedfa4`.
+The current probe additionally records actual framework locations and assembly
+versions after measurement. Each preparation records the current source and
+binary hashes; each run records its frozen source revision.
 
-- Program.cs SHA256: `ff8d440346859f07110f7dcf42c5f425bb7c272f7117852b6e95ea4bd126b684`
-- Contract.cs SHA256: `6bb3353fa8a211f648eb4c6adfeaac2f910abc80dff18e57b66de17232df9082`
-
-Orchestration paths have been generalized for repository use. Rebuilding in a new path may change binary hashes even when source is identical; each newly prepared matrix records its actual hashes. The first bounded matrix was inconclusive for tiny dynamic streams, not proof of performance equivalence. See the separately retained raw evidence for that run.
+The [PR931 same-runner job](../README.md) freezes a separate cc7/ac17 comparison.
+Historical results in `results-520b544b` remain evidence for their original
+revisions, not for PR931. The first bounded matrix was inconclusive for tiny
+dynamic streams, not proof of performance equivalence.

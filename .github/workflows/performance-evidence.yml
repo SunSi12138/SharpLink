@@ -1,8 +1,16 @@
-name: Performance Matrix Smoke
+name: Performance Evidence
 
 on:
   workflow_dispatch:
     inputs:
+      suite:
+        description: Evidence workload (PR931 source revisions are frozen in the tool)
+        type: choice
+        options:
+          - smoke
+          - ownership-931
+        default: smoke
+        required: true
       repetitions:
         description: Independent smoke repetitions
         required: true
@@ -13,6 +21,7 @@ permissions:
 
 jobs:
   performance-smoke:
+    if: inputs.suite == 'smoke'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -43,5 +52,74 @@ jobs:
         with:
           name: sharplink-performance-smoke-${{ github.sha }}
           path: artifacts/performance/smoke/${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 30
+
+  ownership-931:
+    if: inputs.suite == 'ownership-931'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+    steps:
+      - name: Checkout experiment tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tools
+      - name: Checkout frozen baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: cc7c458b559295e0fc61ec0062bb220faf880a76
+          path: sources/baseline
+      - name: Checkout frozen candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c
+          path: sources/candidate
+      - name: Configure isolated installation paths
+        shell: bash
+        run: |
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/ownership-sdk"
+            echo "EVIDENCE_ROOT=$RUNNER_TEMP/ownership-931-evidence"
+            echo "PRIVATE_RUNTIME=$RUNNER_TEMP/ownership-runtime"
+          } >> "$GITHUB_ENV"
+      - name: Install isolated build SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.102
+      - name: Install private execution frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ownership-runtime-install"
+          curl --fail --silent --show-error --location https://dot.net/v1/dotnet-install.sh \
+            --output "$RUNNER_TEMP/ownership-runtime-install/dotnet-install.sh"
+          for framework in dotnet aspnetcore; do
+            bash "$RUNNER_TEMP/ownership-runtime-install/dotnet-install.sh" \
+              --runtime "$framework" --version 10.0.13 --architecture x64 \
+              --install-dir "$PRIVATE_RUNTIME" --no-path \
+              2>&1 | tee "$RUNNER_TEMP/ownership-runtime-install/$framework.log"
+          done
+      - name: Build both arms, freeze snapshots, then measure
+        shell: bash
+        working-directory: tools
+        run: |
+          python3 eng/physical-ownership-probes/paired_931.py \
+            --baseline "$GITHUB_WORKSPACE/sources/baseline" \
+            --candidate "$GITHUB_WORKSPACE/sources/candidate" \
+            --build-dotnet "$DOTNET_INSTALL_DIR/dotnet" \
+            --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --output "$EVIDENCE_ROOT"
+      - name: Upload complete raw evidence, including failed runs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: physical-ownership-931-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.EVIDENCE_ROOT }}
+            ${{ runner.temp }}/ownership-runtime-install
           if-no-files-found: error
           retention-days: 30

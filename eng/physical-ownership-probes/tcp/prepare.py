@@ -39,7 +39,8 @@ def main():
         command = [args.dotnet, "build", str(build / name / f"{name}.csproj"),
                    "-c", "Release", "-m:1", "-nr:false", "-p:UseSharedCompilation=false",
                    f"-p:LibraryRoot={baseline}",
-                   f"-p:GeneratorPath={generator}", "--nologo", "-v", "minimal"]
+                   f"-p:GeneratorPath={generator}", "--nologo", "-v", "minimal",
+                   f"-bl:{output / (name + '-build.binlog')}"]
         commands.append(command)
         with (output / f"{name}-build.log").open("w", encoding="utf-8") as log:
             subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
@@ -58,6 +59,11 @@ def main():
     for name in ("PhysicalTcpProbe.dll", "ScalarStreamModule.dll"):
         if (output / "baseline" / name).read_bytes() != (output / "candidate" / name).read_bytes():
             raise RuntimeError(f"Probe/module binary mismatch: {name}")
+    baseline_hashes = hashes(output / "baseline")
+    candidate_hashes = hashes(output / "candidate")
+    for name in baseline_hashes:
+        if not name.startswith("SharpLink.") and baseline_hashes[name] != candidate_hashes[name]:
+            raise ValueError(f"Non-product binary mismatch: {name}")
     manifest = {
         "baselineLibraryDirectory": str(baseline),
         "candidateLibraryDirectory": str(candidate),
@@ -67,8 +73,8 @@ def main():
         "sourceHashes": {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
                          for folder in ("module", "probe") for p in sorted((source / folder).glob("*"))
                          if p.is_file()},
-        "baselineBinaryHashes": hashes(output / "baseline"),
-        "candidateBinaryHashes": hashes(output / "candidate"),
+        "baselineBinaryHashes": baseline_hashes,
+        "candidateBinaryHashes": candidate_hashes,
     }
     (output / "prepared-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Prepared isolated baseline/candidate snapshots: {output}")

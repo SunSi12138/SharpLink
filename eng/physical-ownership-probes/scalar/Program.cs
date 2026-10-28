@@ -40,6 +40,11 @@ foreach(var dynamic in new[]{false,true}) foreach(var timed in new[]{false,true}
  results.Add(new {dynamic,timed,items,bytesPerCall=(GC.GetAllocatedBytesForCurrentThread()-start)/20000.0});
 }
 File.WriteAllText(Path.Combine(output,"allocations.json"),JsonSerializer.Serialize(results,new JsonSerializerOptions {WriteIndented=true}));
+File.WriteAllText(Path.Combine(output,"environment.json"),JsonSerializer.Serialize(new {
+ runtimeVersion=Environment.Version.ToString(),
+ frameworkLocations=new[]{typeof(object).Assembly.Location,typeof(Microsoft.AspNetCore.Builder.WebApplication).Assembly.Location},
+ assemblies=Directory.GetFiles(AppContext.BaseDirectory,"*.dll").Select(path=>new {name=AssemblyName.GetAssemblyName(path).FullName,fileVersion=System.Diagnostics.FileVersionInfo.GetVersionInfo(path).FileVersion,productVersion=System.Diagnostics.FileVersionInfo.GetVersionInfo(path).ProductVersion})
+},new JsonSerializerOptions {WriteIndented=true}));
 Console.WriteLine(JsonSerializer.Serialize(results));
 static async ValueTask Invoke(IRpcChannel channel,RpcMethodDescriptor method,IRpcCodec<int> codec) {
  var request=default(RpcEmptyRequest);

@@ -5,7 +5,7 @@ and 100 scalar items, both static and dynamic channels, with no deadline and a
 five-minute deadline. The interceptor deliberately short-circuits transport. It is
 an allocation/layout/code-generation diagnostic, **not a network throughput test**.
 
-The two source files preserve the measured harness. The probe uses the existing
+The probe preserves the measured call loop and adds post-measurement runtime and assembly metadata. The probe uses the existing
 `SharpLink.Benchmarks` friend-assembly identity to inspect internal representation;
 it adds no production API or solution project.
 
@@ -24,7 +24,10 @@ python3 eng/physical-ownership-probes/scalar/run.py \
 The runner refuses an existing output directory. It builds the probe once against
 the baseline, uses byte-identical probe binaries for both runtime sets, and copies
 only already-present runtime dependencies. It records SDK/runtime information,
-source and DLL hashes, and relevant environment values. It never rebuilds either
+source and DLL hashes, and relevant environment values. Every repetition has its
+own `run-N` directory; the combined `allocations.json` retains all rows.
+`summary.json` reports FullOpts medians, ranges, paired differences and ratios
+(`null` when the baseline is zero). It never rebuilds either
 production checkout. Revisions are descriptive inputs; verify that the supplied
 DLLs were built from those clean revisions before attributing measurements.
 
@@ -46,3 +49,22 @@ present in a listing was not observed compiling in that process. Compare matchin
 modes and method identities, not unmatched aggregate file sizes. Native bytes and
 allocation counts do not establish throughput, latency, or performance equivalence.
 Use the adjacent real TCP probe for bounded total-path evidence.
+
+## Prepare before the measurement window
+
+Use `--prepare-only` with the existing library/revision arguments to build and
+freeze both arms. Then execute without any build:
+
+```sh
+python3 eng/physical-ownership-probes/scalar/run.py \
+  --prepared /absolute/prepared-directory \
+  --output /absolute/new-results-directory \
+  --runtime-dotnet /absolute/private-runtime/dotnet \
+  --allocation-repeats 5 --affinity 0,1
+```
+
+`--dotnet` selects the build SDK; `--runtime-dotnet` selects the execution host
+and defaults to `--dotnet`. Select two CPUs from the process's allowed affinity
+rather than assuming CPUs 0 and 1 are available. FullOpts repetitions alternate
+baseline/candidate order. The [frozen PR931 job](../README.md) coordinates both
+probes, pins the frameworks and validates every process's actual runtime.

@@ -8,7 +8,7 @@ import random
 import statistics
 
 
-METRICS = ("operationsPerSecond", "p50Us", "p99Us", "allocatedBytesPerOperation", "cpuUsPerOperation")
+METRICS = ("operationsPerSecond", "p50Us", "p99Us", "p999Us", "allocatedBytesPerOperation", "cpuUsPerOperation")
 
 
 def main():
