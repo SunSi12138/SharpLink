@@ -89,6 +89,23 @@ internal sealed class FrameworkTaskSupervisor
         string operation,
         TaskObservationMode observationMode,
         Func<Exception, bool> shutdownExpectedExceptionClassifier)
+        => TrackCore(task, operation, observationMode, shutdownExpectedExceptionClassifier, returnRegistration: true)!;
+
+    // Production wrappers discard the registration. A terminal success needs only the
+    // lifecycle accounting, not a registration object or a task continuation.
+    internal void TrackDetached(
+        Task task,
+        string operation,
+        TaskObservationMode observationMode,
+        Func<Exception, bool> shutdownExpectedExceptionClassifier)
+        => TrackCore(task, operation, observationMode, shutdownExpectedExceptionClassifier, returnRegistration: false);
+
+    private FrameworkTaskRegistration? TrackCore(
+        Task task,
+        string operation,
+        TaskObservationMode observationMode,
+        Func<Exception, bool> shutdownExpectedExceptionClassifier,
+        bool returnRegistration)
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentException.ThrowIfNullOrWhiteSpace(operation);
@@ -111,17 +128,15 @@ internal sealed class FrameworkTaskSupervisor
                 // Async methods that complete synchronously can share Task.CompletedTask. Such
                 // invocations are already terminal and have no fault to observe, so Task object
                 // identity cannot be used to reject another logical registration.
-                registration = new FrameworkTaskRegistration(
-                    this,
-                    task,
-                    operation,
-                    observationMode,
-                    shutdownExpectedExceptionClassifier,
-                    ++_nextSequence);
+                var sequence = ++_nextSequence;
                 _totalTracked++;
                 if (_sealed)
                     _lateRegistrations++;
-                return registration;
+                return returnRegistration
+                    ? new FrameworkTaskRegistration(
+                        this, task, operation, observationMode,
+                        shutdownExpectedExceptionClassifier, sequence)
+                    : null;
             }
             if (_active.ContainsKey(task))
             {

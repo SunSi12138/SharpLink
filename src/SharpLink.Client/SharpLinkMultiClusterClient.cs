@@ -705,7 +705,7 @@ internal sealed partial class SharpLinkMultiClusterClient : ISharpLinkMultiClust
         Task task,
         string operation,
         TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
-        => _frameworkTasks.Track(task, operation, observationMode, IsExpectedStopException);
+        => _frameworkTasks.TrackDetached(task, operation, observationMode, IsExpectedStopException);
 
     private static bool IsExpectedStopException(Exception exception)
         => exception is OperationCanceledException or ObjectDisposedException or IOException or SocketException or

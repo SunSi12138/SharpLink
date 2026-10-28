@@ -260,7 +260,7 @@ internal sealed partial class SharpLinkClient :
         Task task,
         string operation,
         TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
-        => _frameworkTasks.Track(task, operation, observationMode, IsExpectedStopException);
+        => _frameworkTasks.TrackDetached(task, operation, observationMode, IsExpectedStopException);
 
     internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
         => _frameworkTasks.CaptureSnapshot();

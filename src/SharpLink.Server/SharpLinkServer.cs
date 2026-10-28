@@ -122,7 +122,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         Task task,
         string operation,
         TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
-        => _frameworkTasks.Track(task, operation, observationMode, IsExpectedSessionShutdownException);
+        => _frameworkTasks.TrackDetached(task, operation, observationMode, IsExpectedSessionShutdownException);
 
     internal void TrackServerRuntimeTask(Task task, string operation)
     {
