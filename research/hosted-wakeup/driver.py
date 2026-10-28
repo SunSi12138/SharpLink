@@ -8,8 +8,9 @@ NATIVE=REPO/'research/native'
 sys.path.insert(0,str(NATIVE))
 from receipt import digest,tree,validate_receipt,verify_installed
 from collect import validate_environment
-PLAN_SHA='00abc7e4eec6ff0d4c197e83a01c9bef49e69d794136e11ee8b15ec5634de0e4'
-TOOLS_SHA='7610cc632c1def4ca8593b4cce9d199dc409cdb54438fb67087c620573104117'
+from revalidate import BUILD_RUN,BUILD_COMMIT,FAILURE_ARTIFACT,FAILURE_TAR_SHA,OLD_PLAN_SHA,OLD_TOOLS_SHA,check_original_tools
+PLAN_SHA='8419aa18cdffbc4bad85f08089ab5bcb4dada6d8a4b343b31e23ac078a354181'
+TOOLS_SHA='8b190da1b24fea3c1aa4b50912bd27f6022286ef6a9f3051710401ba7650ae35'
 RID=os.environ.get('EVIDENCE_RID','')
 ROOTS={'linux-x64':Path('/tmp/sharplink-wakeup-native-v1'),'osx-arm64':Path('/private/tmp/sharplink-wakeup-native-v1')}
 OUT=REPO/'artifacts/wakeup-output'
@@ -26,15 +27,21 @@ def request():
     if RID not in ROOTS:raise ValueError('Unapproved RID')
     if sys.version_info<(3,11):raise ValueError('Python3.11+ required for reviewed hash/tar APIs')
     r=json.loads((HERE/'REQUEST.json').read_text())
-    if type(r.get('schema')) is not int or r.get('schema')!=1 or r.get('stage') not in ('prepare','collect'):raise ValueError('Invalid request')
+    if type(r.get('schema')) is not int or r.get('schema')!=1 or r.get('stage') not in ('prepare','collect','revalidate'):raise ValueError('Invalid request')
     if os.environ.get('GITHUB_RUN_ATTEMPT')!='1':raise ValueError('Automatic/manual reruns prohibited; amend and review a new plan')
     if os.environ.get('GITHUB_REF_NAME')!='codex/wakeup-native-'+r['stage']+'-v1':raise ValueError('Wrong stage branch')
     if r.get('environmentPolicy')!=ENVIRONMENT_POLICY:raise ValueError('Unreviewed environment policy')
     if r['stage']=='prepare':
         if set(r)!={'schema','stage','environmentPolicy'}:raise ValueError('Unexpected prepare request key')
+    elif r['stage']=='revalidate':
+        if RID!='osx-arm64' or set(r)!={'schema','stage','environmentPolicy','originalBuildRunId','originalBuildCommit','originalFailureArtifactId','originalFailureTarSHA256'}:raise ValueError('Invalid fixed ARM recovery request')
+        if (r['originalBuildRunId'],r['originalBuildCommit'],r['originalFailureArtifactId'],r['originalFailureTarSHA256'])!=(BUILD_RUN,BUILD_COMMIT,FAILURE_ARTIFACT,FAILURE_TAR_SHA):raise ValueError('Unreviewed original failure identity')
     else:
-        if set(r)!={'schema','stage','environmentPolicy','prepareRunId','prepareCommit','architectures'}:raise ValueError('Invalid collect request keys')
+        if set(r)!={'schema','stage','environmentPolicy','prepareRunId','prepareCommit','architectures','revalidation'}:raise ValueError('Invalid collect request keys')
         if type(r['prepareRunId']) is not int or r['prepareRunId']<=0 or not re.fullmatch('[0-9a-f]{40}',r['prepareCommit']):raise ValueError('Invalid prepared run identity')
+        if r['prepareRunId']!=BUILD_RUN or r['prepareCommit']!=BUILD_COMMIT:raise ValueError('Unreviewed original prepare identity')
+        rv=r['revalidation']
+        if type(rv) is not dict or set(rv)!={'runId','toolCommit'} or type(rv['runId']) is not int or rv['runId']<=0 or rv['runId']==BUILD_RUN or type(rv['toolCommit']) is not str or not re.fullmatch('[0-9a-f]{40}',rv['toolCommit']):raise ValueError('Invalid distinct revalidation identity')
         if set(r['architectures'])!=set(ROOTS):raise ValueError('Both frozen architectures required')
         for rid,a in r['architectures'].items():
             if set(a)!={'bundleSha256','DReceiptSha256','CReceiptSha256'} or not all(sha_valid(x) for x in a.values()):raise ValueError('Invalid reviewed digests')
@@ -207,21 +214,30 @@ def collect(root,r):
     a=r['architectures'][RID];restore_bundle(REPO/'artifacts/wakeup-input/prepared.tar.gz',root,a['bundleSha256'])
     index=json.loads((root/'prepared-index.json').read_text())
     if index['runId']!=r['prepareRunId'] or index['prepareCommit']!=r['prepareCommit'] or index['rid']!=RID:raise ValueError('Wrong prepared run/binary identity')
-    if digest(HERE/'driver.py')!=digest(root/'tools/hosted/driver.py') or digest(REPO/'.github/workflows/wakeup-native-hosted.yml')!=digest(root/'tools/workflow.yml'):raise ValueError('Collect wrapper/workflow differs from prepared reviewed version')
+    # Original binaries, receipts and tools retain the true build identity.
+    check_original_tools(sys.modules[__name__],root)
+    if index['planSha256']!=OLD_PLAN_SHA or index['toolsSha256']!=OLD_TOOLS_SHA:raise ValueError('Original plan/tool identity differs')
+    if RID=='osx-arm64':
+        if index.get('revalidationRunId')!=r['revalidation']['runId'] or index.get('validationToolCommit')!=r['revalidation']['toolCommit'] or index.get('revalidationPlanSha256')!=PLAN_SHA or index.get('revalidationToolsSha256')!=TOOLS_SHA:raise ValueError('ARM revalidation identity differs')
+        for original,restored in [(HERE/'driver.py',root/'revalidation/tools/hosted/driver.py'),(HERE/'revalidate.py',root/'revalidation/tools/hosted/revalidate.py'),(REPO/'.github/workflows/wakeup-native-hosted.yml',root/'revalidation/tools/workflow.yml')]:
+            if digest(original)!=digest(restored):raise ValueError('Collect wrapper differs from reviewed revalidation tools')
+        if index.get('receiptFiles')!={'D':'receipts/revalidated-D.json','C':'receipts/revalidated-C.json'}:raise ValueError('Unexpected revalidated receipt filenames')
+    elif any(k in index for k in ('revalidationRunId','validationToolCommit','receiptFiles')):raise ValueError('Linux original bundle must remain unchanged')
+    receipt_files={arm:root/('receipts/revalidated-'+arm+'.json' if RID=='osx-arm64' else 'receipts/'+arm+'.json') for arm in ('D','C')}
     host(root/'collect-host')
     for name in ('environment-original-collect.json','environment-policy-collect.json'):shutil.copy2(OUT/name,root/'collect-host/evidence'/name)
     download_archives(root) # Exact approved archive bytes; no SDK extraction/build here.
     plan=json.loads((NATIVE/'plan.json').read_text());lock=json.loads((NATIVE/'artifact-lock.json').read_text())
     for arm in ('D','C'):
         if index['receipts'][arm]!=a[arm+'ReceiptSha256']:raise ValueError('Receipt approval mismatch')
-        validate_receipt(root/'receipts'/(arm+'.json'),a[arm+'ReceiptSha256'],plan,lock)
+        validate_receipt(receipt_files[arm],a[arm+'ReceiptSha256'],plan,lock)
     run([str(root/'dotnet/dotnet'),'--info'],root/'collect-host/evidence/dotnet-info.log',inherited_env)
     check_runtime_info(root/'collect-host/evidence/dotnet-info.log')
     env=inherited_env
     for cell in plan['cells']:
         for arm in plan['armOrder']:
             result=root/'results'/(cell+'-'+arm)
-            cmd=[sys.executable,str(root/'tools/native/collect.py'),'--reviewed-plan-sha256',PLAN_SHA,'--reviewed-tools-sha256',TOOLS_SHA,'--reviewed-receipt-sha256',a[arm+'ReceiptSha256'],'--receipt',str(root/'receipts'/(arm+'.json')),'--cell',cell,'--output',str(result)]
+            cmd=[sys.executable,str(NATIVE/'collect.py'),'--reviewed-plan-sha256',PLAN_SHA,'--reviewed-tools-sha256',TOOLS_SHA,'--reviewed-receipt-sha256',a[arm+'ReceiptSha256'],'--receipt',str(receipt_files[arm]),'--cell',cell,'--output',str(result)]
             # Nonzero aborts remaining cells; no retry/replacement, no adaptive warming.
             run(cmd,root/'collection-launches'/(cell+'-'+arm+'.log'),env,timeout=210)
             run([str(root/'dotnet/dotnet'),str(root/'decoder/bin/Release/net10.0/TraceDecoder.dll'),str(result/'trace.nettrace'),str(result/'decoded')],root/'collection-launches'/(cell+'-'+arm+'-decode.log'),env,timeout=30)
@@ -233,13 +249,20 @@ def main():
         if mode=='request':
             with open(os.environ['GITHUB_OUTPUT'],'a') as f:
                 f.write('stage='+r['stage']+'\n')
-                if r['stage']=='collect':f.write('prepare_run_id='+str(r['prepareRunId'])+'\nprepare_artifact=wakeup-prepare-'+RID+'-'+str(r['prepareRunId'])+'\n')
+                if r['stage']=='revalidate':f.write('prepare_run_id='+str(BUILD_RUN)+'\nprepare_artifact=wakeup-prepare-osx-arm64-'+str(BUILD_RUN)+'\n')
+                elif r['stage']=='collect':
+                    run_id=r['revalidation']['runId'] if RID=='osx-arm64' else r['prepareRunId']
+                    kind='revalidate' if RID=='osx-arm64' else 'prepare'
+                    f.write('prepare_run_id='+str(run_id)+'\nprepare_artifact=wakeup-'+kind+'-'+RID+'-'+str(run_id)+'\n')
         elif mode==r['stage']:
             root=ROOTS[RID]
             if root.exists():raise ValueError('Reserved restored root already exists; do not inspect or overwrite it')
             failed=True
             try:
                 if mode=='prepare':prepare(root)
+                elif mode=='revalidate':
+                    from revalidate import recover
+                    recover(sys.modules[__name__],root,r)
                 else:collect(root,r)
                 failed=False
             finally:
@@ -249,7 +272,7 @@ def main():
                     with tarfile.open(OUT/'failed-stage-files.tar.gz','w:gz') as tar:
                         for path in sorted(root.rglob('*')):
                             if path.is_file() and not path.is_symlink() and not any(part in excluded for part in path.relative_to(root).parts):tar.add(path,arcname=str(path.relative_to(root)),recursive=False)
-                for name in ('evidence','results','collection-launches','collect-host'):
+                for name in ('evidence','results','collection-launches','collect-host','revalidation'):
                     if (root/name).exists():shutil.copytree(root/name,OUT/name)
         else:raise ValueError('Stage/mode mismatch')
     except BaseException as error:

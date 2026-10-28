@@ -312,3 +312,29 @@ Old local88-test/Tier0/prepared-only DLLs and receipts keep their original ident
 and must never be relabeled as builds of the new remote commit. Runtime, workload
 and per-cell protocol remain unchanged. This amendment must pass narrow review
 before the validation branch is created and prepare CI is triggered.
+
+## Pre-collection amendment04: ordered official runtime composition
+
+Actual hosted prepare40716132624 has an independently accepted Linux bundle and
+an ARM receipt failure. The reviewed installer already used Core14→ASP14 for the
+runtime-only tree and SDK102→Core14→ASP14 for the build SDK. Official ARM archives
+have13 differing overlapping dylibs, and all336 installed runtime files exactly
+match that predeclared final composition. Original failure remains FAILED.
+
+`plan.json.runtimeArchiveOrder` is now explicitly exactly
+`[runtime, aspnetcore-runtime]`; validator rejects another/undeclared order.
+Full regular-file AND directory closure is derived from the last writer in that
+fixed pair, not whichever archive happens to match an installed file. Both
+archives retain official SHA512 verification. Duplicate/alias/path traversal,
+link/special/type-collision members and unknown/missing/modified installed entries
+fail. A conflict replaced by the earlier official Core bytes still fails.
+
+`runtime-final-members.json` records each final path's owner component, archive
+SHA512 and member SHA256; native collector retains it before starting the probe.
+This is prelaunch identity work, not ordinary-RPC instrumentation. Probe/decoder
+sources, cell schedule, provider mask, natural-tier settings and limits are
+unchanged. Original Linux bundle and schema2 receipt bytes remain unchanged.
+
+The fixed byte-only ARM revalidation and honest original-build/new-validator
+identity transition are specified in `research/hosted-wakeup/AMENDMENT-04.md`.
+This amendment does not itself approve a recovered receipt or collection.

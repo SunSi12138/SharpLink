@@ -2,9 +2,10 @@
 The externally supplied digest binds the review decision; this is not a build attestation.
 """
 import hashlib,json,re,tarfile
-from pathlib import Path
+from pathlib import Path,PurePosixPath
 
 PRODUCTS={'SharpLink.Runtime.dll','SharpLink.Client.dll','SharpLink.Server.dll','SharpLink.Abstractions.dll','SharpLink.Sdk.dll'}
+RUNTIME_OVERLAY_ORDER=('runtime','aspnetcore-runtime')
 SOURCE_ANCHORS=('Directory.Build.props','Directory.Packages.props','src/SharpLink.Runtime/WakeupSignal.cs','src/SharpLink.Runtime/RpcSession.SendPump.cs')
 ROOT_KEYS={'schema','arm','rid','sourceCommit','sdkVersion','runtimeVersion','dotnet','probeDll','sourceRoot','generatedRoot','buildLog','buildSucceeded','productDiffReviewed','archiveVerification','files'}
 
@@ -60,9 +61,60 @@ def verify_installed(archive,root,required):
             remaining.remove(path)
     if remaining:raise ValueError('Required installed files absent from archive: '+str(sorted(map(str,remaining))))
 
-def validate_receipt(path,reviewed_digest,plan,lock):
+def runtime_overlay_manifest(archives):
+    """Deterministic final writers, never choose a source by installed-byte match.
+
+    check_archives must first bind these paths to the official SHA512 lock.
+    No caller-supplied order: this exactly models the already executed installer.
+    """
+    if set(archives)!={'runtime','aspnetcore-runtime','sdk'}:raise ValueError('Unknown/missing archive component')
+    final={};types={}
+    for component in RUNTIME_OVERLAY_ORDER:
+        archive=archives[component];archive_hash=digest(archive,'sha512');seen=set()
+        with tarfile.open(archive,'r:gz') as tar:
+            for member in tar:
+                name=member.name.removeprefix('./')
+                if name in ('','.'): # One explicit archive root directory is allowed.
+                    if not member.isdir() or '.' in seen:raise ValueError('Ambiguous archive root')
+                    seen.add('.');continue
+                canonical=name.rstrip('/') if member.isdir() else name
+                path=PurePosixPath(canonical)
+                if path.is_absolute() or '..' in path.parts or str(path)!=canonical or '\\' in canonical:
+                    raise ValueError('Noncanonical official archive member')
+                if canonical in seen:raise ValueError('Duplicate/ambiguous official archive member')
+                seen.add(canonical)
+                if not (member.isfile() or member.isdir()):raise ValueError('Link/special official archive member')
+                kind='file' if member.isfile() else 'directory'
+                if canonical in types and types[canonical]!=kind:raise ValueError('Conflicting archive member types')
+                for parent in path.parents:
+                    if types.get(str(parent))=='file':raise ValueError('Archive file/directory collision')
+                    if str(parent)!='.':types[str(parent)]='directory'
+                types[canonical]=kind
+                if member.isdir():continue
+                stream=tar.extractfile(member)
+                if stream is None:raise ValueError('Missing official archive member bytes')
+                with stream:member_hash=hashlib.file_digest(stream,'sha256').hexdigest()
+                final[canonical]={'component':component,'archiveSHA512':archive_hash,'memberSHA256':member_hash}
+    if not final:raise ValueError('Empty official runtime composition')
+    return {'schema':1,'archiveOrder':list(RUNTIME_OVERLAY_ORDER),'directories':sorted(name for name,kind in types.items() if kind=='directory'),'files':{name:final[name] for name in sorted(final)}}
+
+def verify_runtime_overlay(archives,root):
+    manifest=runtime_overlay_manifest(archives)
+    actual={str(p.relative_to(root)):p for p in tree(root)}
+    expected=manifest['files']
+    directories={str(p.relative_to(root)) for p in root.rglob('*') if p.is_dir()}
+    if directories!=set(manifest['directories']):raise ValueError('Installed official runtime directory closure differs')
+    if set(actual)!=set(expected):
+        raise ValueError('Installed official runtime closure differs: missing='+str(sorted(set(expected)-set(actual)))+' unknown='+str(sorted(set(actual)-set(expected))))
+    for name,path in actual.items():
+        if digest(path)!=expected[name]['memberSHA256']:raise ValueError('Installed official member differs: '+str(path))
+    return manifest
+
+
+def validate_receipt(path,reviewed_digest,plan,lock,runtime_manifest=None):
     if not re.fullmatch('[0-9a-f]{64}',reviewed_digest) or digest(path)!=reviewed_digest:
         raise ValueError('Independently reviewed receipt digest mismatch')
+    if plan.get('runtimeArchiveOrder')!=list(RUNTIME_OVERLAY_ORDER):raise ValueError('Undeclared/reversed runtime archive order')
     r=json.loads(path.read_text());exact_keys(r,ROOT_KEYS,'receipt')
     if type(r['schema']) is not int or r['schema']!=2:raise ValueError('Receipt schema must be integer 2')
     if r['buildSucceeded'] is not True or r['productDiffReviewed'] is not True:raise ValueError('Approval flags must be boolean true')
@@ -89,7 +141,7 @@ def validate_receipt(path,reviewed_digest,plan,lock):
     required={dotnet,dll,build,core/('libcoreclr'+extension),core/('libclrjit'+extension),core/'System.Private.CoreLib.dll',core/('libhostpolicy'+extension),fxr/('libhostfxr'+extension)}
     required|={output/name for name in PRODUCTS}
     config=dll.with_suffix('.runtimeconfig.json');deps=dll.with_suffix('.deps.json');required|={config,deps}
-    required|=tree(output)|tree(core)|tree(asp)|tree(fxr)|tree(generated)|tree(source/'src',skip=('bin','obj'))
+    required|=tree(output)|tree(root)|tree(generated)|tree(source/'src',skip=('bin','obj'))
     required|={source/name for name in SOURCE_ANCHORS}
     required|={p for p in source.iterdir() if p.is_file() and (p.suffix in {'.props','.targets'} or p.name.lower() in {'global.json','nuget.config'})}
     if not any(p.suffix=='.cs' for p in tree(generated)):raise ValueError('Missing generated C# sources')
@@ -111,6 +163,6 @@ def validate_receipt(path,reviewed_digest,plan,lock):
             for asset in package.get('runtime',{}):
                 if asset.endswith('.dll') and not (output/Path(asset).name).is_file():raise ValueError('Unresolved runtime dependency: '+asset)
     archives=check_archives(r['archiveVerification'],lock,r['rid'])
-    verify_installed(archives['runtime'],root,tree(core)|tree(fxr)|{dotnet})
-    verify_installed(archives['aspnetcore-runtime'],root,tree(asp))
+    manifest=verify_runtime_overlay(archives,root)
+    if runtime_manifest is not None:runtime_manifest.update(manifest)
     return r

@@ -1,3 +1,10 @@
+**Current action: review byte-only ARM recovery, not another prepare.**
+Linux run40716132624 bundle/receipts independently PASS and remain unchanged.
+ARM original receipt remains FAILED; fixed official Core→ASP composition is
+independently proven. [AMENDMENT-04.md](AMENDMENT-04.md) and `revalidate.py` define
+the one fixed recovery and explicit original-build/new-validator identities.
+Current REQUEST is revalidate-only; collect still requires both approved arches.
+
 # Minimal staged hosted wakeup mechanism protocol
 
 **Environment repair proposed for review.** First hosted prepare run40710903027

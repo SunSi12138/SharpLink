@@ -4,7 +4,7 @@ import copy,hashlib,io,json,os,subprocess,sys,tarfile,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
 import collect
-from receipt import PRODUCTS,SOURCE_ANCHORS,validate_receipt,digest
+from receipt import PRODUCTS,SOURCE_ANCHORS,validate_receipt,digest,verify_runtime_overlay,runtime_overlay_manifest
 
 PLAN=json.loads(Path(__file__).with_name('plan.json').read_text())
 class ReceiptTests(unittest.TestCase):
@@ -30,6 +30,63 @@ class ReceiptTests(unittest.TestCase):
     def write(self,receipt=None):
         self.path.write_text(json.dumps(self.receipt if receipt is None else receipt));return digest(self.path)
     def validate(self,receipt=None):return validate_receipt(self.path,self.write(receipt),PLAN,self.lock)
+    def rewrite_archive(self,component,entries):
+        row=next(r for r in self.receipt['archiveVerification'] if r['component']==component);p=Path(row['path'])
+        with tarfile.open(p,'w:gz') as tar:
+            for name,data,kind in entries:
+                member=tarfile.TarInfo(name);member.type=kind
+                if kind==tarfile.REGTYPE:member.size=len(data);tar.addfile(member,io.BytesIO(data))
+                else:member.linkname='target';tar.addfile(member)
+        row['sha512']=digest(p,'sha512');next(r for r in self.lock['artifacts'] if r['component']==component)['hash']=row['sha512']
+    def rehash_runtime(self):
+        old={x['path']:x for x in self.receipt['files']}
+        for p in self.runtime.rglob('*'):
+            if p.is_file():old[str(p)]={'path':str(p),'sha256':digest(p)}
+        self.receipt['files']=list(old.values())
+    def overlapping_fixture(self):
+        p=self.core/'libcoreclr.so';earlier=p.read_bytes();later=b'official final ASP CoreCLR bytes'
+        entries=[(str(x.relative_to(self.runtime)),x.read_bytes(),tarfile.REGTYPE) for x in self.asp.rglob('*') if x.is_file()]
+        self.rewrite_archive('aspnetcore-runtime',entries+[(str(p.relative_to(self.runtime)),later,tarfile.REGTYPE)])
+        p.write_bytes(later);self.rehash_runtime();return p,earlier,later
+    def test_fixed_overlay_accepts_only_final_official_conflict(self):
+        p,earlier,later=self.overlapping_fixture();self.validate()
+        manifest={};validate_receipt(self.path,digest(self.path),PLAN,self.lock,runtime_manifest=manifest)
+        row=manifest['files'][str(p.relative_to(self.runtime))]
+        self.assertEqual(row['component'],'aspnetcore-runtime');self.assertEqual(row['memberSHA256'],hashlib.sha256(later).hexdigest())
+        p.write_bytes(earlier);self.rehash_runtime()
+        with self.assertRaisesRegex(ValueError,'Installed official member differs'):self.validate()
+    def test_overlay_rejects_missing_unknown_and_modified_final_files(self):
+        p,_,later=self.overlapping_fixture();p.write_bytes(b'unknown modified final');self.rehash_runtime()
+        with self.assertRaises(ValueError):self.validate()
+        p.write_bytes(later);p.unlink();self.receipt['files']=[x for x in self.receipt['files'] if x['path']!=str(p)]
+        with self.assertRaises(ValueError):self.validate()
+        p.write_bytes(later);(self.runtime/'unknown.bin').write_bytes(b'extra');self.rehash_runtime()
+        with self.assertRaisesRegex(ValueError,'runtime closure differs'):self.validate()
+    def test_overlay_rejects_undeclared_or_reversed_order(self):
+        for order in [None,['aspnetcore-runtime','runtime'],['sdk','runtime','aspnetcore-runtime']]:
+            plan={**PLAN,'runtimeArchiveOrder':order}
+            with self.assertRaisesRegex(ValueError,'archive order'):validate_receipt(self.path,self.write(),plan,self.lock)
+    def test_overlay_rejects_duplicate_alias_link_special_and_type_collision(self):
+        bads=[ [('a',b'1',tarfile.REGTYPE),('./a',b'2',tarfile.REGTYPE)],
+            [('../a',b'1',tarfile.REGTYPE)],[('/a',b'1',tarfile.REGTYPE)],[('a//b',b'1',tarfile.REGTYPE)],
+            [('a',b'',tarfile.SYMTYPE)],[('a',b'',tarfile.LNKTYPE)],[('a',b'',tarfile.FIFOTYPE)],
+            [('a/b',b'1',tarfile.REGTYPE),('a',b'2',tarfile.REGTYPE)],
+            [('a',b'1',tarfile.REGTYPE),('a/b',b'2',tarfile.REGTYPE)] ]
+        for entries in bads:
+            with self.subTest(entries=entries):
+                self.rewrite_archive('aspnetcore-runtime',entries)
+                archives={r['component']:Path(r['path']) for r in self.receipt['archiveVerification']}
+                with self.assertRaises(ValueError):runtime_overlay_manifest(archives)
+    def test_overlay_rejects_unknown_empty_directory(self):
+        (self.runtime/'unknown-empty-directory').mkdir()
+        with self.assertRaisesRegex(ValueError,'directory closure differs'):self.validate()
+    def test_overlay_missing_official_file_rejected_even_if_receipt_rehashed(self):
+        p=self.runtime/'LICENSE.txt';p.write_bytes(b'original')
+        # A newly declared official required member cannot be absent from installation.
+        entries=[(str(x.relative_to(self.runtime)),x.read_bytes(),tarfile.REGTYPE) for x in self.asp.rglob('*') if x.is_file()]
+        self.rewrite_archive('aspnetcore-runtime',entries+[('LICENSE.txt',b'original',tarfile.REGTYPE)])
+        p.unlink()
+        with self.assertRaisesRegex(ValueError,'runtime closure differs'):self.validate()
     def test_source_anchors_exist_in_both_frozen_real_git_trees(self):
         # Read actual committed trees, not synthetic fixture files. Git only; no CLR.
         repository=Path(__file__).resolve().parents[2]

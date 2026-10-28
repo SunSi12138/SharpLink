@@ -86,7 +86,7 @@ class ProtocolTests(unittest.TestCase):
     def test_collect_all_launches_receive_normalized_environment(self):
         root,r=self.setup_collect();env=self.known_linux();calls=[]
         def run(cmd,log,env=None,**kwargs):calls.append((cmd,env))
-        with self.python_identity(),patch.dict(os.environ,env,clear=True),patch.object(driver,'stage_environment',return_value=driver.normalize_environment(env)),patch.object(driver,'restore_bundle'),patch.object(driver,'host'),patch.object(driver,'download_archives'),patch.object(driver,'check_runtime_info'),patch.object(driver,'validate_receipt'),patch.object(driver,'run',side_effect=run):
+        with self.python_identity(),patch.dict(os.environ,env,clear=True),patch.object(driver,'stage_environment',return_value=driver.normalize_environment(env)),patch.object(driver,'restore_bundle'),patch.object(driver,'check_original_tools'),patch.object(driver,'host'),patch.object(driver,'download_archives'),patch.object(driver,'check_runtime_info'),patch.object(driver,'validate_receipt'),patch.object(driver,'run',side_effect=run):
             driver.collect(root,r)
         self.assertEqual(len(calls),17)
         for cmd,actual in calls:
@@ -102,10 +102,41 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.request(r,branch,attempt)
     def test_collect_requires_both_architectures_and_three_digests(self):
         a={rid:{'bundleSha256':'a'*64,'DReceiptSha256':'b'*64,'CReceiptSha256':'c'*64} for rid in driver.ROOTS}
-        r={'schema':1,'stage':'collect','prepareRunId':123,'prepareCommit':'d'*40,'architectures':a}
-        self.assertEqual(self.request(r,'codex/wakeup-native-collect-v1')['prepareRunId'],123)
+        r={'schema':1,'stage':'collect','prepareRunId':driver.BUILD_RUN,'prepareCommit':driver.BUILD_COMMIT,'architectures':a,'revalidation':{'runId':456,'toolCommit':'e'*40}}
+        self.assertEqual(self.request(r,'codex/wakeup-native-collect-v1')['prepareRunId'],driver.BUILD_RUN)
         del a['osx-arm64']
         with self.assertRaises(ValueError):self.request(r,'codex/wakeup-native-collect-v1')
+    def test_fixed_revalidation_request_and_both_architecture_gate(self):
+        import revalidate
+        r={'schema':1,'stage':'revalidate','environmentPolicy':driver.ENVIRONMENT_POLICY,'originalBuildRunId':driver.BUILD_RUN,'originalBuildCommit':driver.BUILD_COMMIT,'originalFailureArtifactId':driver.FAILURE_ARTIFACT,'originalFailureTarSHA256':driver.FAILURE_TAR_SHA}
+        (self.root/'REQUEST.json').write_text(json.dumps(r))
+        with patch.object(driver,'HERE',self.root),patch.object(driver,'RID','osx-arm64'),patch.dict(os.environ,{'GITHUB_REF_NAME':'codex/wakeup-native-revalidate-v1','GITHUB_RUN_ATTEMPT':'1'},clear=True):
+            self.assertEqual(driver.request()['stage'],'revalidate')
+            for key in ('originalBuildRunId','originalFailureArtifactId','originalFailureTarSHA256'):
+                bad={**r,key:'unknown'};(self.root/'REQUEST.json').write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):driver.request()
+        with patch.object(driver,'RID','linux-x64'),self.assertRaises(ValueError):self.request(r,'codex/wakeup-native-revalidate-v1')
+    def test_arm_collect_uses_new_receipts_but_original_decoder_and_no_build(self):
+        root,r=self.setup_collect();r['architectures']['osx-arm64']=r['architectures']['linux-x64'];r['revalidation']={'runId':456,'toolCommit':'e'*40}
+        idx=json.loads((root/'prepared-index.json').read_text());idx.update(rid='osx-arm64',receiptFiles={'D':'receipts/revalidated-D.json','C':'receipts/revalidated-C.json'},revalidationRunId=456,validationToolCommit='e'*40,revalidationPlanSha256=driver.PLAN_SHA,revalidationToolsSha256=driver.TOOLS_SHA);(root/'prepared-index.json').write_text(json.dumps(idx))
+        (root/'revalidation/tools/hosted').mkdir(parents=True)
+        shutil.copy2(driver.HERE/'driver.py',root/'revalidation/tools/hosted/driver.py');shutil.copy2(driver.HERE/'revalidate.py',root/'revalidation/tools/hosted/revalidate.py');shutil.copy2(driver.REPO/'.github/workflows/wakeup-native-hosted.yml',root/'revalidation/tools/workflow.yml')
+        calls=[]
+        with patch.object(driver,'RID','osx-arm64'),patch.object(driver,'stage_environment',return_value={}),patch.object(driver,'restore_bundle'),patch.object(driver,'check_original_tools'),patch.object(driver,'host'),patch.object(driver,'download_archives'),patch.object(driver,'check_runtime_info'),patch.object(driver,'validate_receipt'),patch.object(driver,'run',side_effect=lambda cmd,*a,**k:calls.append(cmd)):
+            driver.collect(root,r)
+            idx['revalidationRunId']=999;(root/'prepared-index.json').write_text(json.dumps(idx));calls.clear()
+            with self.assertRaisesRegex(ValueError,'revalidation identity'):driver.collect(root,r)
+            self.assertEqual(calls,[])
+        # Positive launch record checked separately because negative clears calls.
+        idx['revalidationRunId']=456;(root/'prepared-index.json').write_text(json.dumps(idx))
+        with patch.object(driver,'RID','osx-arm64'),patch.object(driver,'stage_environment',return_value={}),patch.object(driver,'restore_bundle'),patch.object(driver,'check_original_tools'),patch.object(driver,'host'),patch.object(driver,'download_archives'),patch.object(driver,'check_runtime_info'),patch.object(driver,'validate_receipt'),patch.object(driver,'run',side_effect=lambda cmd,*a,**k:calls.append(cmd)):
+            driver.collect(root,r)
+        self.assertEqual(len(calls),17)
+        for cmd in calls:
+            self.assertNotIn('build',cmd);self.assertNotIn('restore',cmd)
+            if '--receipt' in cmd:
+                self.assertIn('revalidated-',cmd[cmd.index('--receipt')+1]);self.assertEqual(cmd[1],str(driver.NATIVE/'collect.py'))
+            elif len(cmd)>1 and cmd[1].endswith('TraceDecoder.dll'):self.assertEqual(cmd[1],str(root/'decoder/bin/Release/net10.0/TraceDecoder.dll'))
     def tar(self,members):
         path=self.root/'bundle.tar.gz'
         with tarfile.open(path,'w:gz') as t:
@@ -125,12 +156,12 @@ class ProtocolTests(unittest.TestCase):
         driver.OUT.mkdir()
         for name in ('environment-original-collect.json','environment-policy-collect.json'):(driver.OUT/name).write_text('{}')
         shutil.copy2(driver.HERE/'driver.py',root/'tools/hosted/driver.py');shutil.copy2(driver.REPO/'.github/workflows/wakeup-native-hosted.yml',root/'tools/workflow.yml')
-        (root/'prepared-index.json').write_text(json.dumps({'runId':123,'prepareCommit':'d'*40,'rid':'linux-x64','receipts':{'D':'b'*64,'C':'c'*64}}))
-        request={'prepareRunId':123,'prepareCommit':'d'*40,'architectures':{'linux-x64':{'bundleSha256':'a'*64,'DReceiptSha256':'b'*64,'CReceiptSha256':'c'*64}}}
+        (root/'prepared-index.json').write_text(json.dumps({'runId':driver.BUILD_RUN,'prepareCommit':driver.BUILD_COMMIT,'rid':'linux-x64','planSha256':driver.OLD_PLAN_SHA,'toolsSha256':driver.OLD_TOOLS_SHA,'receipts':{'D':'b'*64,'C':'c'*64}}))
+        request={'prepareRunId':driver.BUILD_RUN,'prepareCommit':driver.BUILD_COMMIT,'architectures':{'linux-x64':{'bundleSha256':'a'*64,'DReceiptSha256':'b'*64,'CReceiptSha256':'c'*64}}}
         return root,request
     def test_collect_reuses_exact_binaries_and_frozen_order_without_build(self):
         root,r=self.setup_collect();calls=[]
-        with patch.object(driver,'RID','linux-x64'),patch.object(driver,'restore_bundle'),patch.object(driver,'host'),patch.object(driver,'download_archives'),patch.object(driver,'check_runtime_info'),patch.object(driver,'validate_receipt'),patch.object(driver,'stage_environment',return_value={}),patch.object(driver,'run',side_effect=lambda cmd,*a,**k:calls.append(cmd)):
+        with patch.object(driver,'RID','linux-x64'),patch.object(driver,'restore_bundle'),patch.object(driver,'check_original_tools'),patch.object(driver,'host'),patch.object(driver,'download_archives'),patch.object(driver,'check_runtime_info'),patch.object(driver,'validate_receipt'),patch.object(driver,'stage_environment',return_value={}),patch.object(driver,'run',side_effect=lambda cmd,*a,**k:calls.append(cmd)):
             driver.collect(root,r)
         self.assertEqual(len(calls),17) # info + eight real-cell commands + eight decode commands
         for cmd in calls:self.assertNotIn('build',cmd);self.assertNotIn('restore',cmd)
@@ -142,7 +173,7 @@ class ProtocolTests(unittest.TestCase):
         def run(cmd,*args,**kwargs):
             calls.append(cmd)
             if '--cell' in cmd:raise RuntimeError('offline injected failure')
-        with patch.object(driver,'RID','linux-x64'),patch.object(driver,'restore_bundle'),patch.object(driver,'host'),patch.object(driver,'download_archives'),patch.object(driver,'check_runtime_info'),patch.object(driver,'validate_receipt'),patch.object(driver,'stage_environment',return_value={}),patch.object(driver,'run',side_effect=run):
+        with patch.object(driver,'RID','linux-x64'),patch.object(driver,'restore_bundle'),patch.object(driver,'check_original_tools'),patch.object(driver,'host'),patch.object(driver,'download_archives'),patch.object(driver,'check_runtime_info'),patch.object(driver,'validate_receipt'),patch.object(driver,'stage_environment',return_value={}),patch.object(driver,'run',side_effect=run):
             with self.assertRaises(RuntimeError):driver.collect(root,r)
         self.assertEqual(len(calls),2)
     def test_request_then_prepare_preserves_separate_artifact_manifests(self):

@@ -27,13 +27,15 @@ def main():
     plan=json.loads((ROOT/'plan.json').read_text())
     if args.cell not in plan['cells']:raise ValueError('Unknown cell')
     validate_environment(os.environ)
-    r=validate_receipt(args.receipt,args.reviewed_receipt_sha256,plan,json.loads((ROOT/'artifact-lock.json').read_text()))
+    runtime_manifest={}
+    r=validate_receipt(args.receipt,args.reviewed_receipt_sha256,plan,json.loads((ROOT/'artifact-lock.json').read_text()),runtime_manifest=runtime_manifest)
     rid=r['rid'];machine=plan['rids'][rid]['machine']
     if platform.machine()!=machine:raise ValueError('Host machine mismatch')
     if (rid=='linux-x64' and platform.system()!='Linux') or (rid=='osx-arm64' and platform.system()!='Darwin'):raise ValueError('Host OS mismatch')
     dotnet=Path(r['dotnet']);dll=Path(r['probeDll'])
     out=args.output.resolve();out.mkdir(parents=True,exist_ok=False)
     (out/'build-receipt.json').write_text(json.dumps(r,indent=2))
+    (out/'runtime-final-members.json').write_text(json.dumps(runtime_manifest,indent=2))
     env=os.environ.copy();env.update({'DOTNET_ROOT':str(dotnet.parent),'DOTNET_JitDisasm':plan['nativeFilter'],'DOTNET_JitStdOutFile':str(out/'jit.txt'),
         'DOTNET_EnableEventPipe':'1','DOTNET_EventPipeOutputPath':str(out/'trace.nettrace'),
         'DOTNET_EventPipeConfig':plan['providers'],'DOTNET_EventPipeCircularMB':'64','DOTNET_EventPipeOutputStreaming':'1'})

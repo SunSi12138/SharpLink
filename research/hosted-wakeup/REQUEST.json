@@ -1,5 +1,9 @@
 {
   "schema": 1,
-  "stage": "prepare",
-  "environmentPolicy": "hosted-known-env-v1"
+  "stage": "revalidate",
+  "environmentPolicy": "hosted-known-env-v1",
+  "originalBuildRunId": 40716132624,
+  "originalBuildCommit": "2b59e359bff99ec8f7d5b1de158179d6eb9fa4f0",
+  "originalFailureArtifactId": 12828441906,
+  "originalFailureTarSHA256": "8fbd4fb3cf24c7859aa184fbd5c65718aa5bbf58c0f4f73f4d96db7f2dfffd70"
 }
