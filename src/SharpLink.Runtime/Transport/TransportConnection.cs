@@ -1,6 +1,15 @@
 namespace SharpLink.Runtime;
 
-internal class StreamTransportConnection : ITransportConnection
+/// <summary>
+/// Built-in cleanup for a quiescent pump failure: the sole output producer has stopped
+/// and all of its output operations have physically terminated. This is not a general abort API.
+/// </summary>
+internal interface IQuiescentPumpFaultDisposal
+{
+    ValueTask DisposeAfterPumpFaultAsync(Exception exception);
+}
+
+internal class StreamTransportConnection : ITransportConnection, IQuiescentPumpFaultDisposal
 {
     internal const int ReadBufferBytes = 16 * 1024;
 
@@ -29,15 +38,22 @@ internal class StreamTransportConnection : ITransportConnection
     public ValueTask DisposeAsync()
     {
         lock (_disposeGate)
-            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync(outputException: null));
     }
 
-    private async Task DisposeCoreAsync()
+    ValueTask IQuiescentPumpFaultDisposal.DisposeAfterPumpFaultAsync(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync(exception));
+    }
+
+    private async Task DisposeCoreAsync(Exception? outputException)
     {
         Exception? cleanupException = null;
         try
         {
-            await CompleteWriterAsync(Output).ConfigureAwait(false);
+            await CompleteWriterAsync(Output, outputException).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -67,11 +83,11 @@ internal class StreamTransportConnection : ITransportConnection
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
     }
 
-    internal static async ValueTask CompleteWriterAsync(PipeWriter writer)
+    internal static async ValueTask CompleteWriterAsync(PipeWriter writer, Exception? exception = null)
     {
         try
         {
-            await writer.CompleteAsync().ConfigureAwait(false);
+            await writer.CompleteAsync(exception).ConfigureAwait(false);
         }
         catch (Exception ex) when (IsExpectedDisposeException(ex))
         {
@@ -259,7 +275,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
     }
 }
 
-internal sealed class AnonymousPipeTransportConnection : ITransportConnection
+internal sealed class AnonymousPipeTransportConnection : ITransportConnection, IQuiescentPumpFaultDisposal
 {
     private readonly PipeStream _inputStream;
     private readonly PipeStream _outputStream;
@@ -285,15 +301,22 @@ internal sealed class AnonymousPipeTransportConnection : ITransportConnection
     public ValueTask DisposeAsync()
     {
         lock (_disposeGate)
-            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync(outputException: null));
     }
 
-    private async Task DisposeCoreAsync()
+    ValueTask IQuiescentPumpFaultDisposal.DisposeAfterPumpFaultAsync(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync(exception));
+    }
+
+    private async Task DisposeCoreAsync(Exception? outputException)
     {
         Exception? cleanupException = null;
         try
         {
-            await StreamTransportConnection.CompleteWriterAsync(Output).ConfigureAwait(false);
+            await StreamTransportConnection.CompleteWriterAsync(Output, outputException).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
