@@ -47,8 +47,12 @@ internal sealed partial class SharpLinkServer : ISharpLinkTelemetryDetailRuntime
         return Interlocked.CompareExchange(ref _telemetryDetailGeneration, initial, null) ?? initial;
     }
 
+    /// <summary>
+    /// Starts server telemetry from the facts the RPC already resolved, so an enabled listener never
+    /// forces a descriptor projection onto the dispatch path.
+    /// </summary>
     private SharpLinkTelemetry.CallScope StartServerTelemetryCall(
-        RpcMethodDescriptor method,
+        RpcMethodFacts method,
         long requestId)
     {
         var detail = CaptureTelemetryDetailGeneration().Mode;

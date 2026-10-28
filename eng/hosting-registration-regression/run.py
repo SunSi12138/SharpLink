@@ -24,7 +24,7 @@ BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 CORE_FILTER = "/*/*/HostingBuilderRegistrationTests/Repeated*"
 HEALTH_FILTER = "/*/*/HostingBuilderRegistrationTests/PreRegistered*"
 ALL_FILTER = "/*/*/HostingBuilderRegistrationTests/*"
-FULL_COUNT = 2169  # Current complete unit inventory; the unchanged Hosting fixture has 11 cases.
+FULL_COUNT = 2201  # 2169 base cases plus 32 complete-method-facts cases.
 
 
 def digest(path):

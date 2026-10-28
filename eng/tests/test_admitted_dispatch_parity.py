@@ -30,6 +30,9 @@ def expected_admitted(source: str, name: str) -> str:
     body = body.replace(
         'Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo)',
         'serviceSelection.TryGetService(out var serviceInfo)', 1)
+    body = body.replace(
+        'var resolved = ResolveMethodCall(serviceInfo, request.MethodHash);',
+        'var resolved = new ResolvedMethodCall(serviceInfo, retainedAdmissionPayload!.SelectedMethod);', 1)
     if name == 'DispatchRpcAsync':
         body = body.replace(
             'SharpLinkErrorCode.Unimplemented,\n                            $"Service {request.InterfaceHash} is not implemented."',
@@ -43,9 +46,9 @@ class AdmittedDispatchParityTests(unittest.TestCase):
         expected = method(source, 'TryCopyAdmissionPayload').replace(
             'TryCopyAdmissionPayload(', 'TryCopySelectedAdmissionPayload(', 1).replace(
             '        ProtocolV2FrameFlags flags,\n',
-            '        ProtocolV2FrameFlags flags,\n        ServiceRegistration service,\n', 1).replace(
+            '        ProtocolV2FrameFlags flags,\n        ServiceRegistration service,\n        RpcMethodFacts method,\n', 1).replace(
             '            owner = null;',
-            '            retainedPayload.CaptureSelectedService(service);\n            owner = null;', 1)
+            '            retainedPayload.CaptureSelectedService(service, method);\n            owner = null;', 1)
         self.assertEqual(expected, method(source, 'TryCopySelectedAdmissionPayload'))
         self.assertIn('[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]\n'
                       '    private bool TryCopySelectedAdmissionPayload(', source)

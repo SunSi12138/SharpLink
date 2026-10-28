@@ -71,6 +71,7 @@ public static class Program
 
     public static async Task Main()
     {
+        MethodFactsContractSmoke.Run();
         AssertEnginePublicApiBoundary();
         AssertStandaloneUnsafeBlitRequiresRegistration();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));

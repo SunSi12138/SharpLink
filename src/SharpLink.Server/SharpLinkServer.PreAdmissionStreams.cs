@@ -12,6 +12,7 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
         ServiceRegistration service,
+        RpcMethodFacts method,
         out ServerRetainedAdmissionPayload? retainedPayload)
     {
         retainedPayload = null;
@@ -33,7 +34,7 @@ internal sealed partial class SharpLinkServer
                 _runtimeContext.Buffers,
                 owner,
                 retainedPermit);
-            retainedPayload.CaptureSelectedService(service);
+            retainedPayload.CaptureSelectedService(service, method);
             owner = null;
             retainedPermit = null;
             return true;
@@ -240,13 +241,13 @@ internal sealed partial class SharpLinkServer
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out long contractId) ||
             !reader.TryReadLittleEndian(out long methodId) ||
-            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration) ||
-            !registration.Stub.TryGetMethodDescriptor(methodId, out var descriptor))
+            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration))
         {
             return UnresolvedClientStreamCount;
         }
 
-        return descriptor.ClientStreamCount;
+        var method = ResolveMethodCall(registration, methodId).Method;
+        return method.IsKnown ? method.ClientStreamCount : UnresolvedClientStreamCount;
     }
 
     private static void CompleteFailedRequestStreams(
@@ -272,10 +273,14 @@ internal sealed partial class SharpLinkServer
 internal sealed class ServerRetainedAdmissionPayload : IDisposable
 {
     internal SharpLinkServer.QueuedServiceSelection SelectedService { get; private set; }
+    internal RpcMethodFacts SelectedMethod { get; private set; } = RpcMethodFacts.UnknownMethod;
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    internal void CaptureSelectedService(ServiceRegistration service)
-        => SelectedService = new SharpLinkServer.QueuedServiceSelection(service);
+    internal void CaptureSelectedService(ServiceRegistration service, RpcMethodFacts method)
+    {
+        SelectedService = new SharpLinkServer.QueuedServiceSelection(service);
+        SelectedMethod = method;
+    }
 
     private readonly SharpLinkBufferWriterPool _pool;
     private readonly IRpcByteBufferWriter _owner;

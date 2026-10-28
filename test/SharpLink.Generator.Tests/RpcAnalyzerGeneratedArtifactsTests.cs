@@ -57,7 +57,7 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal API 5 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 5, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-3.0-api5-owner-bound-unsafe-blit-v1", StringComparison.Ordinal),
+               manifest.Contains("sharplink-3.0-api5-complete-method-facts-v1", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
@@ -199,8 +199,10 @@ public sealed class HelloService : IHelloService
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
-        Ensure(allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
-            "streaming stubs must publish framework cancellation support");
+        Ensure(allGenerated.Contains("public RpcMethodFacts ResolveMethodFacts(long methodHash)"),
+            "stubs must resolve complete cancellation and timeout facts in one lookup");
+        Ensure(!allGenerated.Contains("SupportsCancellation(long") && !allGenerated.Contains("TryGetMethodDescriptor(long"),
+            "separate metadata switches must not be generated");
         Ensure(allGenerated.Contains(
                 "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1, false)",
                 StringComparison.Ordinal),
@@ -209,9 +211,9 @@ public sealed class HelloService : IHelloService
                 "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2, false)",
                 StringComparison.Ordinal),
             "multiple client-stream count must be generated deterministically");
-        var supportsCancellationCases = allGenerated.Split("=> true", StringSplitOptions.None).Length - 1;
-        Ensure(supportsCancellationCases >= 3,
-            "client, server, and duplex streaming methods must all support framework cancellation");
+        Ensure(allGenerated.Split("private static readonly RpcMethodFacts __facts_", StringSplitOptions.None).Length - 1 == 6,
+            "the six real methods each own one cold immutable facts object");
+        Ensure(!allGenerated.Contains("DescribeMethod("), "observer projection cannot perform a second timeout lookup");
         return Task.CompletedTask;
     }
 

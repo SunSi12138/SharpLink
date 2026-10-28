@@ -181,7 +181,7 @@ public sealed class SharpLinkRuntimeTelemetryDetailPolicyTests
             "StartServerTelemetryCall",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find Server telemetry detail boundary");
-        var boxedScope = start.Invoke(server, [method, requestId])
+        var boxedScope = start.Invoke(server, [MethodFactsTestHelper.FromDescriptor(method), requestId])
             ?? throw new Exception("Server telemetry detail boundary returned no scope");
         var activity = Activity.Current
             ?? throw new Exception("Server telemetry detail boundary did not start an Activity");

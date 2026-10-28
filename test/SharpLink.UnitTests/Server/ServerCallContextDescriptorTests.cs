@@ -56,16 +56,12 @@ public partial class SharpLinkServerInvocationTests
             Ensure(context.InterceptorGeneration is not null,
                 "interceptor context must retain its captured generation");
 
-            // An unresolved custom stub still produces the established conservative
-            // Unary descriptor; the refactor must not turn that into a second lookup.
             var missing = new CallContextCountingStub(descriptor, found: false);
-            var fallback = CreateInterceptedContext(server, connection, missing, requestId: 43);
-            Ensure(missing.LookupCount == 1,
-                "missing-descriptor fallback must query the stub exactly once");
-            Ensure(fallback.Method.Kind == RpcMethodKind.Unary &&
-                fallback.Method.ContractId == missing.InterfaceHash &&
-                fallback.Method.MethodId == descriptor.MethodId,
-                "missing-descriptor fallback must preserve method identity and Unary kind");
+            var unknown = missing.ResolveMethodFacts(descriptor.MethodId);
+            Ensure(missing.LookupCount == 1 && ReferenceEquals(unknown, RpcMethodFacts.UnknownMethod),
+                "an absent method must be explicit rather than a fabricated Unary descriptor");
+            await Assert.That(() => unknown.ToDescriptor()).Throws<InvalidOperationException>();
+
         }
         finally
         {
@@ -74,7 +70,7 @@ public partial class SharpLinkServerInvocationTests
     }
 
     [Test]
-    public async Task UninterceptedCallContextShouldKeepZeroDescriptorLookups()
+    public async Task UninterceptedCallContextShouldNotRepeatResolvedFactsLookup()
     {
         await using var server = (SharpLinkServer)SharpLinkServerBuilder.Create()
             .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
@@ -105,16 +101,15 @@ public partial class SharpLinkServerInvocationTests
                 server,
                 [
                     connection,
-                    stub,
-                    17L,
+                    CreateResolvedContextMethod(stub),
                     44L,
                     default(RpcDeadline),
                     null,
                     CancellationToken.None
                 ]) ?? throw new Exception("CreateCallContext returned null"));
 
-            Ensure(stub.LookupCount == 0,
-                "no-interceptor fast path must not query method metadata");
+            Ensure(stub.LookupCount == 1,
+                "no-interceptor context must not repeat the initial facts lookup");
             Ensure(ReferenceEquals(context, connection.DefaultCallContext),
                 "no-interceptor fast path must still reuse the default call context");
         }
@@ -133,13 +128,16 @@ public partial class SharpLinkServerInvocationTests
             server,
             [
                 connection,
-                stub,
-                17L,
+                CreateResolvedContextMethod(stub),
                 requestId,
                 default(RpcDeadline),
                 null,
                 CancellationToken.None
             ]) ?? throw new Exception("CreateCallContext returned null"));
+
+    private static ResolvedMethodCall CreateResolvedContextMethod(IRpcStub stub)
+        => new(ServiceRegistration.CreateSingleton(typeof(object), stub, new object(), ownsService: false),
+            stub.ResolveMethodFacts(17));
 
     private sealed class CallContextTestInterceptor : ISharpLinkServerInterceptor
     {
@@ -151,6 +149,11 @@ public partial class SharpLinkServerInvocationTests
 
     private sealed class CallContextCountingStub(RpcMethodDescriptor descriptor, bool found) : IRpcStub
     {
+        public RpcMethodFacts ResolveMethodFacts(long methodHash)
+            => TryGetMethodDescriptor(methodHash, out var descriptor)
+                ? MethodFactsTestHelper.FromDescriptor(descriptor)
+                : RpcMethodFacts.UnknownMethod;
+
         private int _lookupCount;
 
         internal int LookupCount => Volatile.Read(ref _lookupCount);
@@ -171,7 +174,7 @@ public partial class SharpLinkServerInvocationTests
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args)
             => ValueTask.CompletedTask;
@@ -179,7 +182,7 @@ public partial class SharpLinkServerInvocationTests
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken)
@@ -188,7 +191,7 @@ public partial class SharpLinkServerInvocationTests
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output)
@@ -197,7 +200,7 @@ public partial class SharpLinkServerInvocationTests
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,
