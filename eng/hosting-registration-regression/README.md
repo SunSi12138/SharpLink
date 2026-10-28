@@ -5,7 +5,8 @@ current checkout. The historical arms must reproduce their original three and
 four failures. The current arm must pass the focused checks and every case in the
 complete unit suite, with zero failures or skips and unchanged binary hashes.
 
-The expected complete-suite inventory is **2,169**. The previous 2,123-case count
+The expected complete-suite inventory is **2,171**, including the two queued-reader
+workload controls added after the 2,169-case baseline. The previous 2,123-case count
 predated subsequent unit additions: [run 39962583418](https://github.com/SunSi12138/SharpLink/actions/runs/39962583418)
 executed 2,169 cases with zero failures/skips, then correctly rejected the stale
 inventory expectation. This count correction preserves the eleven-case fixture,
