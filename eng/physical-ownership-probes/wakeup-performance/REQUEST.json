@@ -1,4 +1,9 @@
 {
-  "state": "review-required",
-  "campaign": "fenced-wakeup-48tcp-v1"
+  "state": "authorized",
+  "campaign": "fenced-wakeup-48tcp-v1",
+  "reviewedToolCommit": "bff83aafa307c7e8c955a407c84c08075cdd4ea0",
+  "reviewedToolTree": "0c89b4a31914f3703c2d496566f7581eba9383bd",
+  "baseline": "f724c7aaabdeb5e02bec23f32f6b3c709860e97c",
+  "candidate": "e5a35b9bf63d162c3077aec389d402e28bd2fb53",
+  "candidateTree": "ea401a81c4b5a52966f4281acc348f838b9fc935"
 }
