@@ -7,10 +7,18 @@ TIER="${SHARPLINK_MATRIX_TIER:-smoke}"
 RUNTIMES="${SHARPLINK_MATRIX_RUNTIMES:-jit}"
 REPETITIONS="${SHARPLINK_MATRIX_REPETITIONS:-}"
 OUTPUT_ROOT="${SHARPLINK_MATRIX_OUTPUT:-$ROOT/artifacts/performance/current/matrix}"
+PLAN_ONLY="${SHARPLINK_MATRIX_PLAN_ONLY:-0}"
+if [[ "$PLAN_ONLY" != 0 && "$PLAN_ONLY" != 1 ]]; then
+  echo "SHARPLINK_MATRIX_PLAN_ONLY must be 0 or 1." >&2; exit 2
+fi
+HOST_SYSTEM="$(uname -s)"
+if [[ "$PLAN_ONLY" == 1 ]]; then
+  HOST_SYSTEM="${SHARPLINK_MATRIX_PLAN_PLATFORM:-$HOST_SYSTEM}"
+fi
 
 if [[ "$TIER" == "full" ]]; then
   DEFAULT_TRANSPORTS="tcp,uds,namedpipe,anonymous,sharedmemory"
-  case "$(uname -s)" in
+  case "$HOST_SYSTEM" in
     MINGW*|MSYS*|CYGWIN*) DEFAULT_TRANSPORTS="tcp,namedpipe,anonymous,sharedmemory" ;;
   esac
   DEFAULT_PROFILES="balanced,lowlatency,throughput"
@@ -108,10 +116,12 @@ if [[ ! -d "$ROOT/test/SharpLink.LoadTest" || ! -d "$ROOT/test/SharpLink.StreamL
   exit 2
 fi
 
-mkdir -p "$OUTPUT_ROOT"
 cd "$ROOT"
-dotnet build test/SharpLink.LoadTest/SharpLink.LoadTest.csproj -c Release -v minimal
-dotnet build test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj -c Release -v minimal
+if [[ "$PLAN_ONLY" == 0 ]]; then
+  mkdir -p "$OUTPUT_ROOT"
+  dotnet build test/SharpLink.LoadTest/SharpLink.LoadTest.csproj -c Release -v minimal
+  dotnet build test/SharpLink.StreamLoadTest/SharpLink.StreamLoadTest.csproj -c Release -v minimal
+fi
 
 RID=""
 case "$(uname -s)-$(uname -m)" in
@@ -126,6 +136,18 @@ esac
 # the system /bin/bash on macOS is Bash 3.2 (no associative arrays).
 AOT_LOADTEST_PUBLISHED=0
 AOT_STREAMLOADTEST_PUBLISHED=0
+RECORDED_BINARIES=","
+
+record_binary() {
+  local runtime="$1" project="$2" binary="$3"
+  local key="$runtime-$(basename "$project")"
+  if [[ -n "${SHARPLINK_MATRIX_PROVENANCE:-}" && "$RECORDED_BINARIES" != *",$key,"* ]]; then
+    python3 "$SCRIPT_ROOT/eng/performance-matrix.py" capture \
+      --output "$SHARPLINK_MATRIX_PROVENANCE" --runtime "$runtime" \
+      --project "$(basename "$project")" --binary "$binary" --root "$ROOT"
+    RECORDED_BINARIES="$RECORDED_BINARIES$key,"
+  fi
+}
 
 run_project() {
   local runtime="$1"
@@ -133,6 +155,7 @@ run_project() {
   shift 2
   set -- "$@" --maximum-recorded-operations "$MAXIMUM_RECORDED_OPERATIONS"
   if [[ "$runtime" == "jit" ]]; then
+    record_binary "$runtime" "$project" "$ROOT/$project/bin/Release/net10.0/$(basename "$project").dll"
     dotnet run -c Release --no-build --project "$project" -- "$@"
     return
   fi
@@ -170,11 +193,18 @@ run_project() {
       SharpLink.StreamLoadTest) AOT_STREAMLOADTEST_PUBLISHED=1 ;;
     esac
   fi
+  record_binary "$runtime" "$project" "$executable"
   "$executable" "$@"
 }
 
 COMPLETED_WORKLOAD_COUNT=0
 invoke_matrix_workload() {
+  if [[ "$PLAN_ONLY" == 1 ]]; then
+    printf '%s\0' "$@" --maximum-recorded-operations "$MAXIMUM_RECORDED_OPERATIONS"
+    printf '\0'
+    COMPLETED_WORKLOAD_COUNT=$((COMPLETED_WORKLOAD_COUNT + 1))
+    return
+  fi
   local report_path=""
   local previous=""
   for argument in "$@"; do
@@ -288,4 +318,6 @@ if (( COMPLETED_WORKLOAD_COUNT != EXPECTED_WORKLOAD_COUNT )); then
   echo "Performance matrix report coverage mismatch: expected $EXPECTED_WORKLOAD_COUNT, completed $COMPLETED_WORKLOAD_COUNT." >&2
   exit 1
 fi
-echo "SharpLink performance matrix complete: $OUTPUT_ROOT (reports=$COMPLETED_WORKLOAD_COUNT)"
+if [[ "$PLAN_ONLY" == 0 ]]; then
+  echo "SharpLink performance matrix complete: $OUTPUT_ROOT (reports=$COMPLETED_WORKLOAD_COUNT)"
+fi
