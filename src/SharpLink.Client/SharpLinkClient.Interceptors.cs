@@ -594,130 +594,156 @@ internal sealed partial class SharpLinkClient
         CancellationToken invocationCancellation) : IAsyncEnumerable<T>
     {
         private int _enumerated;
+        private CompletionOwnedLogicalInvocationAsyncEnumerable<T>? _logicalCompletionOwner;
+
+        internal void AttachLogicalCompletion(CompletionOwnedLogicalInvocationAsyncEnumerable<T> owner)
+        {
+            // Single assignment before this private enumerable is published.
+            if (_logicalCompletionOwner is not null)
+                throw new InvalidOperationException("Logical completion is already attached.");
+            _logicalCompletionOwner = owner;
+        }
+
+        internal void DetachLogicalCompletion(CompletionOwnedLogicalInvocationAsyncEnumerable<T> owner)
+            => Interlocked.CompareExchange(ref _logicalCompletionOwner, null, owner);
+
+        private void NotifyLogicalCompletion()
+        {
+            // Synchronous local only: do not hoist the owner into the async iterator.
+            var owner = Volatile.Read(ref _logicalCompletionOwner);
+            owner?.Complete();
+        }
 
         public async IAsyncEnumerator<T> GetAsyncEnumerator(
             CancellationToken cancellationToken = default)
         {
-            if (Interlocked.Exchange(ref _enumerated, 1) != 0)
-                throw new InvalidOperationException("An intercepted RPC stream can only be enumerated once.");
+            try
+            {
+                if (Interlocked.Exchange(ref _enumerated, 1) != 0)
+                    throw new InvalidOperationException("An intercepted RPC stream can only be enumerated once.");
 
-            // InvokeAsync already owns the frozen-deadline wait. A second waiter can abandon that
-            // wrapper rather than the underlying user task and obscures the physical parent.
-            var invocationResult = await invocation.ConfigureAwait(false);
-            ThrowIfDeadlineExpired();
-            var stream = invocationResult.GetValue<IAsyncEnumerable<T>>();
-            var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                invocationCancellation, cancellationToken);
-            IAsyncEnumerator<T> enumerator;
-            try
-            {
-                enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
-            }
-            catch (Exception exception)
-            {
-                if (SharpLinkPhysicalWork.TransferLifetime(exception, lifetimeCancellation) is { } terminal)
-                    throw terminal;
-                lifetimeCancellation.Dispose();
-                throw;
-            }
-            var ownershipTransferred = false;
-            try
-            {
-                while (true)
+                // InvokeAsync already owns the frozen-deadline wait. A second waiter can abandon that
+                // wrapper rather than the underlying user task and obscures the physical parent.
+                var invocationResult = await invocation.ConfigureAwait(false);
+                ThrowIfDeadlineExpired();
+                var stream = invocationResult.GetValue<IAsyncEnumerable<T>>();
+                var lifetimeCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    invocationCancellation, cancellationToken);
+                IAsyncEnumerator<T> enumerator;
+                try
                 {
-                    bool hasNext;
-                    T item;
-                    try
+                    enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
+                }
+                catch (Exception exception)
+                {
+                    if (SharpLinkPhysicalWork.TransferLifetime(exception, lifetimeCancellation) is { } terminal)
+                        throw terminal;
+                    lifetimeCancellation.Dispose();
+                    throw;
+                }
+                var ownershipTransferred = false;
+                try
+                {
+                    while (true)
                     {
-                        ThrowIfDeadlineExpired();
-                        var moveNext = enumerator.MoveNextAsync();
-                        if (!deadline.HasValue)
+                        bool hasNext;
+                        T item;
+                        try
                         {
-                            hasNext = await moveNext.ConfigureAwait(false);
-                        }
-                        else if (moveNext.IsCompletedSuccessfully)
-                        {
-                            hasNext = moveNext.Result;
                             ThrowIfDeadlineExpired();
+                            var moveNext = enumerator.MoveNextAsync();
+                            if (!deadline.HasValue)
+                            {
+                                hasNext = await moveNext.ConfigureAwait(false);
+                            }
+                            else if (moveNext.IsCompletedSuccessfully)
+                            {
+                                hasNext = moveNext.Result;
+                                ThrowIfDeadlineExpired();
+                            }
+                            else
+                            {
+                                var moveNextTask = moveNext.AsTask();
+                                bool completed;
+                                try
+                                {
+                                    completed = await SharpLinkTimer.WaitAsync(
+                                        moveNextTask, deadline, timeProvider,
+                                        lifetimeCancellation.Token).ConfigureAwait(false);
+                                }
+                                catch (OperationCanceledException exception) when (lifetimeCancellation.IsCancellationRequested)
+                                {
+                                    ownershipTransferred = true;
+                                    var failure = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
+                                    var physical = SharpLinkPhysicalWork.CreateCarrierOwner(failure, exception, lifetimeCancellation);
+                                    physical.Track(CompleteAbandonedStreamAsync(moveNextTask, enumerator, lifetimeCancellation, physical));
+                                    throw failure;
+                                }
+                                if (!completed)
+                                {
+                                    logicalCall?.TryClaimDeadline();
+                                    ownershipTransferred = true;
+                                    var failure = CreateDeadlineExceededException();
+                                    var physical = SharpLinkPhysicalWork.CreateOwner(failure, lifetimeCancellation);
+                                    physical.Track(CompleteAbandonedStreamAsync(moveNextTask, enumerator, lifetimeCancellation, physical));
+                                    throw failure;
+                                }
+                                hasNext = await moveNextTask.ConfigureAwait(false);
+                            }
+                            item = hasNext ? enumerator.Current : default!;
+                            if (hasNext && !responseNullable && default(T) is null && item is null)
+                                throw new InvalidCastException("A non-nullable intercepted RPC stream response was null.");
                         }
-                        else
+                        catch (OperationCanceledException exception) when (!ownershipTransferred &&
+                            (lifetimeCancellation.IsCancellationRequested || SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is not null))
                         {
-                            var moveNextTask = moveNext.AsTask();
-                            bool completed;
-                            try
-                            {
-                                completed = await SharpLinkTimer.WaitAsync(
-                                    moveNextTask, deadline, timeProvider,
-                                    lifetimeCancellation.Token).ConfigureAwait(false);
-                            }
-                            catch (OperationCanceledException exception) when (lifetimeCancellation.IsCancellationRequested)
-                            {
-                                ownershipTransferred = true;
-                                var failure = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
-                                var physical = SharpLinkPhysicalWork.CreateCarrierOwner(failure, exception, lifetimeCancellation);
-                                physical.Track(CompleteAbandonedStreamAsync(moveNextTask, enumerator, lifetimeCancellation, physical));
-                                throw failure;
-                            }
-                            if (!completed)
-                            {
-                                logicalCall?.TryClaimDeadline();
-                                ownershipTransferred = true;
-                                var failure = CreateDeadlineExceededException();
-                                var physical = SharpLinkPhysicalWork.CreateOwner(failure, lifetimeCancellation);
-                                physical.Track(CompleteAbandonedStreamAsync(moveNextTask, enumerator, lifetimeCancellation, physical));
-                                throw failure;
-                            }
-                            hasNext = await moveNextTask.ConfigureAwait(false);
+                            ownershipTransferred = true;
+                            var failure = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
+                            var physical = SharpLinkPhysicalWork.CreateCarrierOwner(failure, exception, lifetimeCancellation);
+                            physical.Track(CompleteAbandonedStreamAsync(
+                                Task.FromException(exception), enumerator, lifetimeCancellation, physical));
+                            throw failure;
                         }
-                        item = hasNext ? enumerator.Current : default!;
-                        if (hasNext && !responseNullable && default(T) is null && item is null)
-                            throw new InvalidCastException("A non-nullable intercepted RPC stream response was null.");
-                    }
-                    catch (OperationCanceledException exception) when (!ownershipTransferred &&
-                        (lifetimeCancellation.IsCancellationRequested || SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is not null))
-                    {
-                        ownershipTransferred = true;
-                        var failure = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
-                        var physical = SharpLinkPhysicalWork.CreateCarrierOwner(failure, exception, lifetimeCancellation);
-                        physical.Track(CompleteAbandonedStreamAsync(
-                            Task.FromException(exception), enumerator, lifetimeCancellation, physical));
-                        throw failure;
-                    }
-                    catch (SharpLinkException exception) when (
-                        !ownershipTransferred && exception.Code == SharpLinkErrorCode.DeadlineExceeded &&
-                        (deadline.IsExpired(timeProvider) || SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is not null))
-                    {
-                        ownershipTransferred = true;
-                        var failure = new SharpLinkException(exception.Code, exception.DetailCode, exception.Message, exception);
-                        var physical = SharpLinkPhysicalWork.CreateCarrierOwner(failure, exception, lifetimeCancellation);
-                        physical.Track(CompleteAbandonedStreamAsync(
-                            Task.FromException(exception), enumerator, lifetimeCancellation, physical));
-                        throw failure;
-                    }
+                        catch (SharpLinkException exception) when (
+                            !ownershipTransferred && exception.Code == SharpLinkErrorCode.DeadlineExceeded &&
+                            (deadline.IsExpired(timeProvider) || SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is not null))
+                        {
+                            ownershipTransferred = true;
+                            var failure = new SharpLinkException(exception.Code, exception.DetailCode, exception.Message, exception);
+                            var physical = SharpLinkPhysicalWork.CreateCarrierOwner(failure, exception, lifetimeCancellation);
+                            physical.Track(CompleteAbandonedStreamAsync(
+                                Task.FromException(exception), enumerator, lifetimeCancellation, physical));
+                            throw failure;
+                        }
 
-                    if (!hasNext)
-                        yield break;
-                    yield return item;
+                        if (!hasNext)
+                            yield break;
+                        yield return item;
+                    }
+                }
+                finally
+                {
+                    if (!ownershipTransferred)
+                    {
+                        try
+                        {
+                            TryCancelLifetime(lifetimeCancellation);
+                            await enumerator.DisposeAsync().ConfigureAwait(false);
+                        }
+                        catch (Exception exception)
+                        {
+                            if (SharpLinkPhysicalWork.TransferLifetime(exception, lifetimeCancellation) is { } terminal)
+                                throw terminal;
+                            lifetimeCancellation.Dispose();
+                            throw;
+                        }
+                        lifetimeCancellation.Dispose();
+                    }
                 }
             }
             finally
             {
-                if (!ownershipTransferred)
-                {
-                    try
-                    {
-                        TryCancelLifetime(lifetimeCancellation);
-                        await enumerator.DisposeAsync().ConfigureAwait(false);
-                    }
-                    catch (Exception exception)
-                    {
-                        if (SharpLinkPhysicalWork.TransferLifetime(exception, lifetimeCancellation) is { } terminal)
-                            throw terminal;
-                        lifetimeCancellation.Dispose();
-                        throw;
-                    }
-                    lifetimeCancellation.Dispose();
-                }
+                NotifyLogicalCompletion();
             }
         }
 

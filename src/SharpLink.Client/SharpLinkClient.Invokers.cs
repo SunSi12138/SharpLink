@@ -249,7 +249,86 @@ internal sealed partial class SharpLinkClient
     }
 
     private IAsyncEnumerable<T> CompleteLogicalInvocation<T>(IAsyncEnumerable<T> invocation)
-        => new LogicalInvocationAsyncEnumerable<T>(this, invocation);
+    {
+        if (invocation is InterceptedAsyncEnumerable<T> intercepted)
+        {
+            var owner = new CompletionOwnedLogicalInvocationAsyncEnumerable<T>(this, intercepted);
+            intercepted.AttachLogicalCompletion(owner);
+            return owner;
+        }
+        return new LogicalInvocationAsyncEnumerable<T>(this, invocation);
+    }
+
+    // Only the framework iterator can own terminal accounting. Arbitrary source and
+    // telemetry wrappers retain the general awaiting wrapper below.
+    private sealed class CompletionOwnedLogicalInvocationAsyncEnumerable<T>(
+        SharpLinkClient client,
+        InterceptedAsyncEnumerable<T> invocation) : IAsyncEnumerable<T>, IAsyncEnumerator<T>
+    {
+        private int _enumerated;
+        private int _completed;
+        private IAsyncEnumerator<T>? _enumerator;
+
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Exchange(ref _enumerated, 1) != 0)
+                throw new InvalidOperationException("A logical RPC stream can only be enumerated once.");
+            try
+            {
+                _enumerator = invocation.GetAsyncEnumerator(cancellationToken);
+                return this;
+            }
+            catch
+            {
+                Complete();
+                throw;
+            }
+        }
+
+        public T Current => (_enumerator ?? throw new InvalidOperationException(
+            "The logical RPC stream has not been enumerated.")).Current;
+
+        public ValueTask<bool> MoveNextAsync()
+        {
+            try
+            {
+                return (_enumerator ?? throw new InvalidOperationException(
+                    "The logical RPC stream has not been enumerated.")).MoveNextAsync();
+            }
+            catch
+            {
+                Complete();
+                throw;
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            try
+            {
+                var dispose = _enumerator?.DisposeAsync() ?? ValueTask.CompletedTask;
+                // An unstarted compiler iterator may never execute its finally.
+                if (dispose.IsCompleted)
+                    Complete();
+                return dispose;
+            }
+            catch
+            {
+                Complete();
+                throw;
+            }
+        }
+
+        internal void Complete()
+        {
+            if (Interlocked.Exchange(ref _completed, 1) != 0)
+                return;
+            // A retained source continuation/completed ValueTask must not keep the
+            // completion-only owner/client alive through the iterator's added edge.
+            invocation.DetachLogicalCompletion(this);
+            Interlocked.Decrement(ref client._activeLogicalInvocations);
+        }
+    }
 
     private sealed class LogicalInvocationAsyncEnumerable<T>(
         SharpLinkClient client,
