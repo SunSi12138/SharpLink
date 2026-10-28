@@ -1,0 +1,77 @@
+name: Bootstrap Supervision Full Unit Correctness
+
+on:
+  push:
+    branches: [codex/bootstrap-correctness-validation]
+    paths: ['eng/bootstrap-correctness/REQUEST.json']
+
+permissions:
+  contents: read
+
+jobs:
+  full-unit:
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/codex/bootstrap-correctness-validation' && github.run_attempt == 1 && github.event.head_commit.message == 'run: bootstrap supervision full correctness C1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+      MSBUILDDISABLENODEREUSE: '1'
+      DOTNET_CLI_UI_LANGUAGE: en-US
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Initialize failure evidence before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bootstrap-correctness" "$RUNNER_TEMP/bootstrap-cli-home"
+          {
+            echo "DOTNET_CLI_HOME=$RUNNER_TEMP/bootstrap-cli-home"
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/bootstrap-sdk"
+          } >> "$GITHUB_ENV"
+          printf 'run=%s attempt=%s request=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" > "$RUNNER_TEMP/bootstrap-correctness/attempt.txt"
+      - name: Checkout request and reviewed tool parent
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Validate bounded first-attempt request before product build
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/bootstrap-correctness/verify_request.py 2>&1 | tee "$RUNNER_TEMP/bootstrap-correctness/request-guard.log"
+      - name: Checkout exact frozen product independently from tool additions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 13e75f15f16cb98960c97f9500e17d26ba81f43b
+          path: product
+          persist-credentials: false
+      - name: Install exact SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.102
+      - name: Build and run complete unfiltered ordinary unit suite
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/bootstrap-correctness/verify_request.py
+          python3 eng/bootstrap-correctness/run.py \
+            --product "$GITHUB_WORKSPACE/product" \
+            --output "$RUNNER_TEMP/bootstrap-correctness/evidence" \
+            2>&1 | tee "$RUNNER_TEMP/bootstrap-correctness/driver.log"
+      - name: Preserve successful and failed build/discovery/test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bootstrap-correctness-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bootstrap-correctness
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true
