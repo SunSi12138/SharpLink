@@ -154,7 +154,8 @@ public partial class SharpLinkRuntimeContextTests
             try { context.ReleaseGeneratedManifest(retired); }
             catch (Exception exception) { retirementFailure = exception; }
             finally { finished.Set(); }
-        }) { IsBackground = true };
+        })
+        { IsBackground = true };
         trigger.BeforeDependenciesRead = () =>
         {
             trigger.BeforeDependenciesRead = null;
