@@ -146,3 +146,31 @@ warmup/measurement seconds. A local smoke on a different OS, runtime version or
 CPU arrangement validates only compilation and path/native capture. The hosted
 private-runtime identity, Linux affinity and complete gate must still pass on
 the actual runner before its timing begins.
+
+### Separate default-tiering/PGO profile
+
+Choose `suite=ownership-931-client-ablation-pgo` for the follow-up profile.
+The existing `ownership-931-client-ablation` remains FullOpts. Both use the same
+legal Client-only DLL composition, fixed dynamic100 scene, private 10.0.13,
+two recorded logical CPUs, and six alternating pairs (12 fresh processes,
+3 s warmup + 6 s measurement). The PGO profile removes tiering/PGO overrides
+and records `default` for both settings; it does not force tiering thresholds.
+
+Each PGO preflight has exactly 4352 completed RPCs including the first traced
+call, with a fixed 250 ms pause after completed calls 1024, 2048, 3072 and 4096.
+Both arms get the same bounded plan. No timing statistics are collected and
+there is no polling/retry/extra warmup until native code appears. All four real
+TCP closed-generic targets must have positive-size `Tier1` or `Tier1-OSR` native
+listings. Tier0 and instrumented listings remain in the evidence and are marked
+unaccepted; FullOpts does not satisfy this profile either. Missing optimized
+Tier1 ends the experiment before timing.
+
+The preflight proves optimized code in its own processes, not the tier of every
+call in the separate measured processes. Measured processes retain the original
+3-second warmup and default adaptive tiering, with disassembly disabled.
+Use the per-process runtime/profile records and all six pairs when interpreting
+this profile. A null Client-only result does not clear the original full-product
+performance NoGo.
+
+Artifact: `physical-ownership-931-client-ablation-pgo-<tool-sha>-<attempt>`.
+The plan, gate, raw/tick validation and completion locations are unchanged.

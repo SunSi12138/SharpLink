@@ -114,6 +114,61 @@ class ClientAblationTests(unittest.TestCase):
                 with self.subTest(change=change), self.assertRaises(ValueError):
                     ablation.validate_process_identity(dict(data, **change), "baseline", prepared, manifest, Path("/private-runtime/dotnet"))
 
+    def test_pgo_gate_records_early_tiers_but_requires_optimized_tier1_for_each_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "native.txt"
+            early = native(tier="Tier0") + "\n" + native(tier="Instrumented Tier0")
+            path.write_text(early)
+            with self.assertRaisesRegex(ValueError, "Missing real-path native targets"):
+                ablation.validate_native(path, REQUEST, "default-pgo")
+            path.write_text(early + "\n" + native(tier="Instrumented Tier1"))
+            with self.assertRaises(ValueError):
+                ablation.validate_native(path, REQUEST, "default-pgo")
+            path.write_text(early + "\n" + native(tier="Tier1"))
+            rows = ablation.validate_native(path, REQUEST, "default-pgo")
+            self.assertEqual(12, len(rows))
+            self.assertEqual([False] * 8 + [True] * 4, [r["acceptedOptimizedTier"] for r in rows])
+            path.write_text(native(tier="FullOpts"))
+            with self.assertRaises(ValueError):
+                ablation.validate_native(path, REQUEST, "default-pgo")
+
+    def test_pgo_profile_clears_overrides_and_validates_default_runtime_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            product_snapshots(root / "products")
+            manifest = ablation.compose_client_pair(root / "products", root / "prepared")
+            data = identity(root / "prepared", manifest)
+            data.update(tieredCompilation="default", tieredPgo="default")
+            self.assertEqual(REQUEST, ablation.validate_process_identity(data, "baseline", root / "prepared", manifest, Path("/private-runtime/dotnet"), "default-pgo"))
+            data["tieredPgo"] = "0"
+            with self.assertRaisesRegex(ValueError, "default PGO"):
+                ablation.validate_process_identity(data, "baseline", root / "prepared", manifest, Path("/private-runtime/dotnet"), "default-pgo")
+            with patch.dict(ablation.os.environ, {"DOTNET_TieredCompilation": "0", "DOTNET_TieredPGO": "0", "COMPlus_TC_QuickJit": "0"}):
+                env = ablation.clean_runtime_environment(Path("/private-runtime/dotnet"), "default-pgo")
+                self.assertNotIn("DOTNET_TieredCompilation", env)
+                self.assertNotIn("DOTNET_TieredPGO", env)
+                self.assertNotIn("COMPlus_TC_QuickJit", env)
+
+    def test_pgo_plan_is_fixed_and_failed_preflight_is_not_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            product_snapshots(root / "products")
+            output = root / "output"
+            output.mkdir()
+            with patch.object(ablation, "cpu_topology", return_value={"reportedTopology": "fixture"}), \
+                 patch.object(ablation, "run") as run, \
+                 patch.object(ablation, "execute_sample", return_value=7) as execute:
+                with self.assertRaises(RuntimeError):
+                    ablation.run_client_ablation(root / "products", output, Path("/private-runtime/dotnet"), Path("/sdk/dotnet"), "0,1", "fixture-tool", "default-pgo")
+            plan = json.loads((output / "client-ablation-plan.json").read_text())
+            self.assertEqual((4352, [1024, 2048, 3072, 4096], 250),
+                             (plan["preflightOperationsPerProcess"], plan["preflightFixedPauseAfterOperations"], plan["preflightPauseMilliseconds"]))
+            self.assertEqual((12, 6, 3, 6), tuple(plan[key] for key in ("timedProcesses", "rounds", "warmupSeconds", "measurementSeconds")))
+            self.assertEqual(["preflight", "default-pgo"], execute.call_args.args[0][-2:])
+            self.assertEqual(1, execute.call_count)
+            self.assertEqual(1, run.call_count)
+            self.assertFalse((output / "measurement-start.json").exists())
+
     def test_ticks_preserve_counts_units_and_integer_durations(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "ticks.json"
@@ -154,7 +209,7 @@ class ClientAblationTests(unittest.TestCase):
             output = root / "output"
             output.mkdir()
             def preflight(command, log, host, arm, round_number, environment, timeout):
-                Path(command[-2]).write_text(json.dumps({"kind": "non-timed-preflight", "operations": 256}))
+                Path(command[-3]).write_text(json.dumps({"kind": "non-timed-preflight", "operations": 256}))
                 Path(environment["DOTNET_JitStdOutFile"]).write_text(native(METHODS[:-1]))
                 return 0
             with patch.object(ablation, "cpu_topology", return_value={"reportedTopology": "fixture"}), \

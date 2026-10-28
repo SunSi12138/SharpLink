@@ -97,6 +97,7 @@ def main():
     parser.add_argument("--runtime-dotnet", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--experiment", choices=("full", "client-only"), default="full")
+    parser.add_argument("--client-runtime-profile", choices=("fullopts", "default-pgo"), default="fullopts")
     args = parser.parse_args()
     source = Path(__file__).resolve().parent
     tools_root = source.parent.parent
@@ -120,7 +121,7 @@ def main():
     write(output / "experiment.json", {
         "baselineRevision": BASELINE, "candidateRevision": CANDIDATE, "toolRevision": tool_sha,
         "sdk": actual_sdk, "runtimes": runtimes, "availableCpus": available, "affinity": affinity,
-        "experiment": args.experiment,
+        "experiment": args.experiment, "clientRuntimeProfile": args.client_runtime_profile,
         "runner": {k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")},
         "scope": ("Client-only binary ablation; common candidate runtime/server; not product acceptance."
                   if args.experiment == "client-only" else
@@ -153,7 +154,7 @@ def main():
          "--output", tcp], output / "tcp-prepare.log", tools_root)
     if args.experiment == "client-only":
         from client_ablation import run_client_ablation
-        run_client_ablation(tcp, output, runtime_dotnet, build_dotnet, affinity, tool_sha)
+        run_client_ablation(tcp, output, runtime_dotnet, build_dotnet, affinity, tool_sha, args.client_runtime_profile)
         return
     revisions = ["--baseline-revision", BASELINE, "--candidate-revision", CANDIDATE]
     run([sys.executable, source / "scalar/run.py", *shared_args, *revisions,

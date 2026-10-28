@@ -15,6 +15,7 @@ SCENE = "dynamic-intercepted"
 ITEMS = 100
 ROUNDS = 6
 PREFLIGHT_OPERATIONS = 256
+PGO_PREFLIGHT_OPERATIONS = 4352
 JIT_METHODS = ("*InterceptedAsyncEnumerable*:* *SharpLinkModuleRpcChannel*:* "
                "*PumpGeneratedOutboundStreamAsync*:* *PumpOutboundStreamAsync*:*")
 
@@ -74,21 +75,25 @@ def cpu_topology(affinity, sysfs=Path("/sys/devices/system/cpu")):
             "meaning": "Guest/runner-reported topology, not a guarantee of dedicated physical hardware."}
 
 
-def clean_runtime_environment(runtime_dotnet):
+def clean_runtime_environment(runtime_dotnet, profile="fullopts"):
     environment = dict(os.environ, DOTNET_ROOT=str(runtime_dotnet.parent), DOTNET_MULTILEVEL_LOOKUP="0")
     for key in list(environment):
         if key.startswith(("DOTNET_Tiered", "COMPlus_Tiered", "DOTNET_Jit", "COMPlus_Jit",
                            "DOTNET_TC_", "COMPlus_TC_", "DOTNET_ReadyToRun", "COMPlus_ReadyToRun",
                            "DOTNET_ZapDisable", "COMPlus_ZapDisable")):
             del environment[key]
-    environment["DOTNET_TieredCompilation"] = "0"
+    if profile == "fullopts":
+        environment["DOTNET_TieredCompilation"] = "0"
     return environment
 
 
-def validate_process_identity(data, arm, prepared, manifest, runtime_dotnet):
+def validate_process_identity(data, arm, prepared, manifest, runtime_dotnet, profile="fullopts"):
     verify_process(data, runtime_dotnet.parent)
-    if data["processorCount"] != 2 or data["tieredCompilation"] != "0":
-        raise ValueError("Process did not execute on two CPUs with tiering disabled")
+    tiering = "0" if profile == "fullopts" else "default"
+    if data["processorCount"] != 2 or data["tieredCompilation"] != tiering:
+        raise ValueError("Process CPU count or tiering differs from the selected profile")
+    if profile == "default-pgo" and data["tieredPgo"] != "default":
+        raise ValueError("Process did not use default PGO")
     if (data["mode"], data["itemCount"], data["workers"], data["readyConnections"]) != (SCENE, ITEMS, 1, 1):
         raise ValueError("Process changed the fixed scene or connection count")
     expected = manifest[arm + "BinaryHashes"]
@@ -118,7 +123,7 @@ def validate_process_identity(data, arm, prepared, manifest, runtime_dotnet):
     return request[0]
 
 
-def validate_native(path, request_type):
+def validate_native(path, request_type, profile="fullopts"):
     listing = path.read_text()
     targets = {
         "intercepted-iterator": lambda name: "InterceptedAsyncEnumerable`1+<GetAsyncEnumerator>" in name and "[int]" in name,
@@ -135,11 +140,13 @@ def validate_native(path, request_type):
         for target, predicate in targets.items():
             if not predicate(method):
                 continue
-            if tier != "FullOpts" or int(size) <= 0:
-                raise ValueError(f"Required target was not positive-size FullOpts native: {method}/{tier}/{size}")
-            observed.add(target)
+            accepted = tier == "FullOpts" if profile == "fullopts" else tier in ("Tier1", "Tier1-OSR")
+            if int(size) <= 0 or (profile == "fullopts" and not accepted):
+                raise ValueError(f"Required target was not positive-size optimized native: {method}/{tier}/{size}")
+            if accepted:
+                observed.add(target)
             rows.append({"target": target, "method": method, "tier": tier, "bytes": int(size),
-                         "listingLine": listing.count("\n", 0, match.start()) + 1})
+                         "acceptedOptimizedTier": accepted, "listingLine": listing.count("\n", 0, match.start()) + 1})
     if observed != set(targets):
         raise ValueError(f"Missing real-path native targets (never treated as zero): {sorted(set(targets) - observed)}")
     return rows
@@ -156,7 +163,7 @@ def validate_ticks(path, sample):
         raise ValueError("Raw durations must be nonnegative integer Stopwatch ticks")
 
 
-def validate_measurements(results, prepared, manifest, runtime_dotnet):
+def validate_measurements(results, prepared, manifest, runtime_dotnet, profile="fullopts"):
     """Write immutable-input validation evidence before any sample enters a summary."""
     expected = {f"{SCENE}-n100-c1-r{r}-{arm}" for r in range(1, ROUNDS + 1) for arm in ("baseline", "candidate")}
     inventories = {
@@ -175,7 +182,7 @@ def validate_measurements(results, prepared, manifest, runtime_dotnet):
             if missing:
                 raise ValueError(f"Missing evidence: {', '.join(missing)}")
             sample = json.loads(inventories["raw"][name].read_text())
-            validate_process_identity(sample, name.rsplit("-", 1)[1], prepared, manifest, runtime_dotnet)
+            validate_process_identity(sample, name.rsplit("-", 1)[1], prepared, manifest, runtime_dotnet, profile)
             validate_ticks(inventories["ticks"][name], sample)
             host = json.loads(inventories["host"][name].read_text())
             if host.get("exitCode") != 0 or host.get("status") != "success":
@@ -200,14 +207,20 @@ def validate_summary(results):
         raise ValueError("Summary does not contain exactly the fixed scene and six pairs")
 
 
-def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet, affinity, tool_sha):
+def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet, affinity, tool_sha, profile="fullopts"):
+    if profile not in ("fullopts", "default-pgo"):
+        raise ValueError(f"Unknown client runtime profile: {profile}")
+    preflight_operations = PREFLIGHT_OPERATIONS if profile == "fullopts" else PGO_PREFLIGHT_OPERATIONS
     source = Path(__file__).resolve().parent
     topology = cpu_topology(affinity)
     write(output / "cpu-topology.json", topology)
     plan = {"toolRevision": tool_sha, "scope": "Client-only increment diagnosis; not complete PR931 acceptance",
             "commonProductRevision": CANDIDATE, "oldClientRevision": BASELINE, "newClientRevision": CANDIDATE,
-            "mode": SCENE, "items": ITEMS, "workers": 1, "pool": [1, 1], "runtimeMode": "FullOpts",
-            "preflightProcesses": 2, "preflightOperationsPerProcess": PREFLIGHT_OPERATIONS,
+            "mode": SCENE, "items": ITEMS, "workers": 1, "pool": [1, 1], "runtimeMode": profile,
+            "preflightProcesses": 2, "preflightOperationsPerProcess": preflight_operations,
+            "preflightFixedPauseAfterOperations": [] if profile == "fullopts" else [1024, 2048, 3072, 4096],
+            "preflightPauseMilliseconds": 0 if profile == "fullopts" else 250,
+            "nativeRequirement": "FullOpts" if profile == "fullopts" else "Tier1 or Tier1-OSR for all four targets; lower/instrumented tiers retained but not accepted",
             "rounds": ROUNDS, "timedProcesses": 12, "warmupSeconds": 3, "measurementSeconds": 6,
             "armOrderByRound": [["baseline", "candidate"] if r % 2 else ["candidate", "baseline"] for r in range(1, ROUNDS + 1)],
             "affinity": affinity, "reportedCpuTopology": topology["reportedTopology"],
@@ -216,7 +229,7 @@ def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet,
     prepared = output / "client-prepared"
     manifest = compose_client_pair(product_snapshots, prepared)
     run([build_dotnet, "build-server", "shutdown"], output / "build-server-shutdown.log", source.parent.parent)
-    environment = clean_runtime_environment(runtime_dotnet)
+    environment = clean_runtime_environment(runtime_dotnet, profile)
     preflight = output / "preflight"
     preflight.mkdir()
     gate = {"status": "Started", "arms": {}}
@@ -227,15 +240,15 @@ def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet,
             listing = preflight / (arm + "-jit.txt")
             current = dict(environment, DOTNET_JitDisasm=JIT_METHODS, DOTNET_JitStdOutFile=str(listing))
             command = ["taskset", "-c", affinity, str(runtime_dotnet), str(prepared / arm / "PhysicalTcpProbe.dll"),
-                       SCENE, str(ITEMS), "1", "0", "0", str(destination), "preflight"]
+                       SCENE, str(ITEMS), "1", "0", "0", str(destination), "preflight", profile]
             exit_code = execute_sample(command, preflight / (arm + ".log"), preflight / (arm + ".host.json"), arm, 0, current, 90)
             if exit_code:
                 raise RuntimeError(f"Native preflight {arm} failed with exit {exit_code}")
             data = json.loads(destination.read_text())
-            if data["kind"] != "non-timed-preflight" or data["operations"] != PREFLIGHT_OPERATIONS:
+            if data["kind"] != "non-timed-preflight" or data["operations"] != preflight_operations:
                 raise ValueError("Preflight did not complete its fixed non-timed workload")
-            request_type = validate_process_identity(data, arm, prepared, manifest, runtime_dotnet)
-            rows = validate_native(listing, request_type)
+            request_type = validate_process_identity(data, arm, prepared, manifest, runtime_dotnet, profile)
+            rows = validate_native(listing, request_type, profile)
             gate["arms"][arm] = {"exitCode": exit_code, "requestType": request_type, "native": rows}
             write(output / "preflight-gate.json", gate)
     except Exception as error:
@@ -249,7 +262,7 @@ def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet,
     command = [sys.executable, source / "tcp/run_matrix.py", "--prepared", prepared, "--output", results,
                "--baseline-revision", f"client={BASELINE};common={CANDIDATE}",
                "--candidate-revision", f"client={CANDIDATE};common={CANDIDATE}",
-               "--dotnet", runtime_dotnet, "--runtime-mode", "fullopts", "--rounds", str(ROUNDS),
+               "--dotnet", runtime_dotnet, "--runtime-mode", "fullopts" if profile == "fullopts" else "default", "--rounds", str(ROUNDS),
                "--warmup", "3", "--seconds", "6", "--workers", "1", "--items", str(ITEMS),
                "--modes", SCENE, "--affinity", affinity, "--export-ticks", "--keep-going"]
     execution_error = None
@@ -259,7 +272,7 @@ def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet,
         execution_error = error
     # Successful and failed schedules use the same evidence gate. Raw files and
     # original process exit/status remain untouched; rejected samples are explicit.
-    validation = validate_measurements(results, prepared, manifest, runtime_dotnet)
+    validation = validate_measurements(results, prepared, manifest, runtime_dotnet, profile)
     run([sys.executable, source / "tcp/summarize.py", "--input", results,
          "--validation-manifest", results / "sample-validation.json"],
         output / "client-tcp-summary.log", check=execution_error is None and validation["status"] == "Passed")
@@ -268,6 +281,6 @@ def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet,
     if validation["status"] != "Passed":
         raise ValueError("Measured evidence validation failed; inspect client-tcp/sample-validation.json")
     validate_summary(results)
-    write(output / "complete.json", {"experiment": "client-only", "toolRevision": tool_sha,
+    write(output / "complete.json", {"experiment": "client-only", "runtimeProfile": profile, "toolRevision": tool_sha,
                                       "preflightProcesses": 2, "timedProcesses": 12,
                                       "status": "Evidence complete; no performance acceptance threshold applied"})

@@ -10,6 +10,7 @@ on:
           - smoke
           - ownership-931
           - ownership-931-client-ablation
+          - ownership-931-client-ablation-pgo
         default: smoke
         required: true
       repetitions:
@@ -57,7 +58,7 @@ jobs:
           retention-days: 30
 
   ownership-931:
-    if: inputs.suite == 'ownership-931' || inputs.suite == 'ownership-931-client-ablation'
+    if: inputs.suite == 'ownership-931' || inputs.suite == 'ownership-931-client-ablation' || inputs.suite == 'ownership-931-client-ablation-pgo'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -111,13 +112,15 @@ jobs:
           EVIDENCE_SUITE: ${{ inputs.suite }}
         run: |
           experiment=full
+          profile=fullopts
           if [[ "$EVIDENCE_SUITE" == ownership-931-client-ablation ]]; then experiment=client-only; fi
+          if [[ "$EVIDENCE_SUITE" == ownership-931-client-ablation-pgo ]]; then experiment=client-only; profile=default-pgo; fi
           python3 eng/physical-ownership-probes/paired_931.py \
             --baseline "$GITHUB_WORKSPACE/sources/baseline" \
             --candidate "$GITHUB_WORKSPACE/sources/candidate" \
             --build-dotnet "$DOTNET_INSTALL_DIR/dotnet" \
             --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
-            --output "$EVIDENCE_ROOT" --experiment "$experiment"
+            --output "$EVIDENCE_ROOT" --experiment "$experiment" --client-runtime-profile "$profile"
       - name: Upload complete raw evidence, including failed runs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

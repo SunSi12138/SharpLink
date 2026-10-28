@@ -75,12 +75,19 @@ object[] LoadedAssemblies() => AppDomain.CurrentDomain.GetAssemblies()
 if (preflight)
 {
     // Fixed work only. No elapsed-time, throughput or latency observation is produced.
-    for (var i = 1; i < 256; i++) await Operation();
+    var profile = args.Length > 7 ? args[7] : "fullopts";
+    if (profile is not ("fullopts" or "default-pgo")) throw new ArgumentException("Unknown preflight profile");
+    var operations = profile == "default-pgo" ? 4352 : 256;
+    for (var completed = 1; completed < operations; completed++) {
+        if (profile == "default-pgo" && completed % 1024 == 0) await Task.Delay(250);
+        await Operation();
+    }
     if ((int)readyCountProperty.GetValue(client)! != 1) throw new InvalidOperationException("Preflight changed connection count");
-    var proof = new { kind="non-timed-preflight", operations=256, mode,itemCount,workers,
+    var proof = new { kind="non-timed-preflight", operations, profile, mode,itemCount,workers,
         runtimeVersion=Environment.Version.ToString(),
         frameworkLocations=new[]{typeof(object).Assembly.Location,typeof(Microsoft.AspNetCore.Builder.WebApplication).Assembly.Location},
-        processorCount=Environment.ProcessorCount, tieredCompilation=Environment.GetEnvironmentVariable("DOTNET_TieredCompilation"),
+        processorCount=Environment.ProcessorCount, tieredCompilation=Environment.GetEnvironmentVariable("DOTNET_TieredCompilation")??"default",
+        tieredPgo=Environment.GetEnvironmentVariable("DOTNET_TieredPGO")??"default",
         readyConnections,streamType,wrapperTypes,interceptorObserved=interceptor.Observed,
         loadedAssemblies=LoadedAssemblies(),
         binaryHashes=Directory.GetFiles(AppContext.BaseDirectory,"*.dll").ToDictionary(x=>Path.GetFileName(x)!,Hash) };
