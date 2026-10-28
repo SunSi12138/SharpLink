@@ -1,0 +1,7 @@
+<Project>
+  <Target Name="ValidateComparisonArm" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(Arm)' != 'OFFICIAL' and '$(Arm)' != 'DEV'" Text="Arm must explicitly be OFFICIAL or DEV." />
+    <Error Condition="'$(LibraryRoot)' == ''" Text="LibraryRoot must be the independently materialized package arm." />
+    <Error Condition="!Exists('$(LibraryRoot)/SharpLink.Abstractions.dll')" Text="Arm libraries missing." />
+  </Target>
+</Project>
