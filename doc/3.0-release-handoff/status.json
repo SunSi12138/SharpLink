@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-10-28T19:00:07+08:00",
+  "updatedAt": "2026-10-28T19:02:59+08:00",
   "goal": "Release SharpLink 3.0 after independent review and complete release acceptance",
   "goalStatus": "active",
   "releaseReady": false,
@@ -83,13 +83,20 @@
       "pullRequest": 954,
       "head": "2422d3b40d9a64380c5f75cb6bcd87a67db9c17f",
       "worktree": "/Users/sunsi/.codex/worktrees/release-full-matrix-tools/SharpLink",
-      "branch": "codex/release-full-matrix-tools",
+      "branch": "dev (original review branch deleted after merge)",
       "independentCodeReview": "approved",
       "state": "PR954 merged as80965d5 after independent review and all hosted checks",
       "entry": "eng/performance-matrix.py and eng/performance-matrix-acceptance.md on tool branch",
-      "nextAction": "After CI success merge reviewed head; use plan/run-shard/validate only on frozen candidate with required resources. Coverage success never means performance equivalence."
+      "nextAction": "Use merged dev80965d5 tools to plan/run-shard/validate frozen candidate; shard scheduler/resources and performance acceptance remain pending"
     }
   },
   "cloudResources": "cloud-resources.md",
-  "localPathsAreHistorical": true
+  "localPathsAreHistorical": true,
+  "cloudEvidence": {
+    "branch": "codex/3-release-evidence",
+    "commit": "5a6cf6c490b43c083fb772e2c6f2663fa94bbe16",
+    "index": "https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/index.json",
+    "archives": 10,
+    "compressedBytes": 95369648
+  }
 }

@@ -18,7 +18,7 @@
 | #732 M1 输入 | `codex/732-evidence-m1` | `2756e8810772cf956ee70ed380925ecc86e86a32`；产品表示改动在 `652ffca7` |
 | #732 三臂工具及固定分析方法 | `codex/732-controlled-performance-tools` | `47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f` |
 | #933 已审核修复，性能仍待接受 | `feat/cooperative-maintenance-20261022` | `10b1bf03881337c0801d6ff24318bb479747ca6c` |
-| full 矩阵计划/覆盖工具原审查分支 | `codex/release-full-matrix-tools` | `2422d3b40d9a64380c5f75cb6bcd87a67db9c17f`，已由 #954 合入 dev |
+| full 矩阵计划/覆盖工具 | `dev`（原审查分支已在合并后删除） | 原 review commit `2422d3b40d9a64380c5f75cb6bcd87a67db9c17f`；实际入口在 dev `80965d5`，审查记录见 [#954](https://github.com/SunSi12138/SharpLink/pull/954) |
 
 例如，在现有 repo 中隔离查看 #933：
 
@@ -31,7 +31,7 @@ git worktree add --detach ../maintenance-933 10b1bf03881337c0801d6ff24318bb47974
 
 ## 持久证据不依赖 Actions 过期时间
 
-[证据分支 README](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/README.md) 和 [机器索引 index.json](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/index.json) 列出每个归档的来源、内容、排除项及解包方式。归档位于该分支 `archives/`，与 dev 代码分开保存。
+[证据分支 README](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/README.md) 和 [机器索引 index.json](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/index.json) 列出每个归档的来源、内容、排除项及解包方式。归档位于该分支 `archives/`，与 dev 代码分开保存。已核实证据提交为 `5a6cf6c490b43c083fb772e2c6f2663fa94bbe16`：10 个归档，共 95,369,648 字节。
 
 ```sh
 git clone --depth 1 --single-branch --branch codex/3-release-evidence \
