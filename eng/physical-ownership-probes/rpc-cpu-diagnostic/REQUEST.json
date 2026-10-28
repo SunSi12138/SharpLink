@@ -1,0 +1,8 @@
+{
+  "state": "not-authorized",
+  "campaign": "baseline-user-cpu-three-cases-v1",
+  "reviewedToolCommit": null,
+  "reviewedToolTree": null,
+  "sources": {"dev": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab"},
+  "trees": {"dev": "e5b72625377ffdcf5f5470e2ddd69be12a449d8e"}
+}
