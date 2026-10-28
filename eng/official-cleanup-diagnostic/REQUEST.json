@@ -1,4 +1,12 @@
 {
-  "state": "review-required",
-  "campaign": "official203-cleanup6-O203C1"
+  "state": "authorized",
+  "campaign": "official203-cleanup6-O203C1",
+  "reviewedToolCommit": "c1b4d73b922183364065a4460c6b7bce8829e9a7",
+  "reviewedToolTree": "1838fa607cb66271ece908221b99cce41eec4f84",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "officialSource": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+  "officialVersion": "2.0.3",
+  "devSource": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+  "devTree": "e5b72625377ffdcf5f5470e2ddd69be12a449d8e"
 }
