@@ -1,4 +1,12 @@
 {
-  "state": "review-required",
-  "campaign": "official203-57f06f1-48tcp-O203D1"
+  "state": "authorized",
+  "campaign": "official203-57f06f1-48tcp-O203D1",
+  "reviewedToolCommit": "f52df7cd3c97fe92fe05ea45f8f2004d83ae5f0e",
+  "reviewedToolTree": "5d0bd8904c6483908a96df13d6f561a62cfe5466",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "officialSource": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+  "officialVersion": "2.0.3",
+  "devSource": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+  "devTree": "e5b72625377ffdcf5f5470e2ddd69be12a449d8e"
 }
