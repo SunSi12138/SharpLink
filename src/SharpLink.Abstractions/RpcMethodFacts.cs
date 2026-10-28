@@ -12,16 +12,10 @@ public sealed class RpcMethodFacts
     /// <summary>Maximum number of client-stream parameters in a generated method.</summary>
     public const int MaxClientStreamCount = 127;
 
-    private const uint Known = 1u << 16;
-    private const uint Cancellable = 1u << 3;
-    private const uint ResponsePayload = 1u << 4;
-    private const uint NullableResponse = 1u << 5;
-    private const uint DeclaredTimeout = 1u << 6;
-    private const uint TimeoutValue = 1u << 7;
-    private const uint Idempotent = 1u << 8;
-    private const int StreamCountShift = 9;
-    private readonly long _timeoutTicks;
-    private readonly uint _flags;
+    private const byte Known = 1 << 0;
+    private const byte Cancellable = 1 << 1;
+    private readonly RpcMethodDescriptor _descriptor;
+    private readonly byte _flags;
 
     private RpcMethodFacts() { }
 
@@ -70,50 +64,42 @@ public sealed class RpcMethodFacts
         if (methodTimeout.HasValue && !hasMethodTimeout)
             throw new ArgumentException("A timeout value requires a declared timeout.", nameof(methodTimeout));
 
-        ContractId = contractId;
-        MethodId = methodId;
-        _timeoutTicks = methodTimeout.GetValueOrDefault().Ticks;
-        _flags = Known | (uint)kind | ((uint)clientStreamCount << StreamCountShift)
-            | (supportsCancellation ? Cancellable : 0)
-            | (hasResponsePayload ? ResponsePayload : 0)
-            | (responseNullable ? NullableResponse : 0)
-            | (hasMethodTimeout ? DeclaredTimeout : 0)
-            | (methodTimeout.HasValue ? TimeoutValue : 0)
-            | (isIdempotent ? Idempotent : 0);
+        _descriptor = new RpcMethodDescriptor(contractId, methodId, kind, hasResponsePayload,
+            clientStreamCount != 0, hasMethodTimeout, methodTimeout, isIdempotent,
+            clientStreamCount, responseNullable);
+        _flags = (byte)(Known | (supportsCancellation ? Cancellable : 0));
     }
 
     /// <summary>Gets whether this result describes a known method.</summary>
     public bool IsKnown => (_flags & Known) != 0;
     /// <summary>Gets the original contract identifier.</summary>
-    public long ContractId { get; }
+    public long ContractId => _descriptor.ContractId;
     /// <summary>Gets the original method identifier.</summary>
-    public long MethodId { get; }
+    public long MethodId => _descriptor.MethodId;
     /// <summary>Gets the invocation shape.</summary>
-    public RpcMethodKind Kind => (RpcMethodKind)(_flags & 7);
+    public RpcMethodKind Kind => _descriptor.Kind;
     /// <summary>Gets the exact client-stream parameter count.</summary>
-    public int ClientStreamCount => (int)((_flags >> StreamCountShift) & 127);
+    public int ClientStreamCount => _descriptor.ClientStreamCount;
     /// <summary>Gets whether the method owns client streams.</summary>
-    public bool HasClientStreams => ClientStreamCount != 0;
+    public bool HasClientStreams => _descriptor.HasClientStreams;
     /// <summary>Gets whether the method consumes cancellation or owns streams.</summary>
     public bool SupportsCancellation => (_flags & Cancellable) != 0;
     /// <summary>Gets whether a successful response carries a payload.</summary>
-    public bool HasResponsePayload => (_flags & ResponsePayload) != 0;
+    public bool HasResponsePayload => _descriptor.HasResponsePayload;
     /// <summary>Gets whether the response payload can be null.</summary>
-    public bool ResponseNullable => (_flags & NullableResponse) != 0;
+    public bool ResponseNullable => _descriptor.ResponseNullable;
     /// <summary>Gets whether the method declares a timeout policy.</summary>
-    public bool HasMethodTimeout => (_flags & DeclaredTimeout) != 0;
+    public bool HasMethodTimeout => _descriptor.HasMethodTimeout;
     /// <summary>Gets the complete declared timeout without another method lookup.</summary>
-    public TimeSpan? MethodTimeout => (_flags & TimeoutValue) != 0 ? TimeSpan.FromTicks(_timeoutTicks) : null;
+    public TimeSpan? MethodTimeout => _descriptor.MethodTimeout;
     /// <summary>Gets whether the method declares idempotency.</summary>
-    public bool IsIdempotent => (_flags & Idempotent) != 0;
+    public bool IsIdempotent => _descriptor.IsIdempotent;
 
     /// <summary>Projects the already-resolved scalar facts into the public observer descriptor.</summary>
     public RpcMethodDescriptor ToDescriptor()
     {
         if (!IsKnown)
             throw new InvalidOperationException("An unknown method has no descriptor.");
-        return new RpcMethodDescriptor(ContractId, MethodId, Kind, HasResponsePayload,
-            HasClientStreams, HasMethodTimeout, MethodTimeout, IsIdempotent,
-            ClientStreamCount, ResponseNullable);
+        return _descriptor;
     }
 }
