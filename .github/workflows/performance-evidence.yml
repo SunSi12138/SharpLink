@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: Evidence workload (PR931 source revisions are frozen in the tool)
+        description: Evidence workload (experiment source revisions are frozen in the tools)
         type: choice
         options:
           - smoke
           - ownership-931
+          - method-facts-732
         default: smoke
         required: true
       repetitions:
@@ -121,5 +122,90 @@ jobs:
           path: |
             ${{ env.EVIDENCE_ROOT }}
             ${{ runner.temp }}/ownership-runtime-install
+          if-no-files-found: error
+          retention-days: 30
+
+  method-facts-732:
+    if: inputs.suite == 'method-facts-732'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout reviewed experiment tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tools
+      - name: Checkout frozen pre-M (O)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: a6bd0352a931d5c2816e42778055e90efb01144b
+          path: sources/pre-m
+      - name: Checkout frozen M0 (A)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 37548b7a35d50803212d2b0a637306636cc0a1d3
+          path: sources/m0
+      - name: Checkout frozen M1 (B)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 2756e8810772cf956ee70ed380925ecc86e86a32
+          path: sources/m1
+      - name: Configure isolated installation paths
+        shell: bash
+        run: |
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/method-facts-sdk"
+            echo "EVIDENCE_ROOT=$RUNNER_TEMP/method-facts-732-evidence"
+            echo "PRIVATE_RUNTIME=$RUNNER_TEMP/method-facts-runtime"
+          } >> "$GITHUB_ENV"
+      - name: Install isolated build SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.102
+      - name: Install private execution frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/method-facts-runtime-install"
+          curl --fail --silent --show-error --location https://dot.net/v1/dotnet-install.sh \
+            --output "$RUNNER_TEMP/method-facts-runtime-install/dotnet-install.sh"
+          for framework in dotnet aspnetcore; do
+            bash "$RUNNER_TEMP/method-facts-runtime-install/dotnet-install.sh" \
+              --runtime "$framework" --version 10.0.11 --architecture x64 \
+              --install-dir "$PRIVATE_RUNTIME" --no-path \
+              2>&1 | tee "$RUNNER_TEMP/method-facts-runtime-install/$framework.log"
+          done
+      - name: Check experiment-tool fixtures (no RPC timing)
+        working-directory: tools
+        run: python3 eng/method-facts-causal/test_tools.py
+      - name: Build all arms, freeze snapshots, and run untimed preflights
+        working-directory: tools
+        shell: bash
+        run: |
+          python3 eng/method-facts-causal/prepare_controlled.py \
+            --pre-m "$GITHUB_WORKSPACE/sources/pre-m" \
+            --m0 "$GITHUB_WORKSPACE/sources/m0" \
+            --m1 "$GITHUB_WORKSPACE/sources/m1" \
+            --build-dotnet "$DOTNET_INSTALL_DIR/dotnet" \
+            --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --output "$EVIDENCE_ROOT"
+      - name: Execute the fixed 18 pairs once (no builds or replacement samples)
+        working-directory: tools
+        run: python3 eng/method-facts-causal/run.py "$EVIDENCE_ROOT"
+      - name: Calculate all three contrasts independently
+        working-directory: tools
+        run: python3 eng/method-facts-causal/analyze.py "$EVIDENCE_ROOT"
+      - name: Upload all evidence, including preparation and process failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: method-facts-732-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.EVIDENCE_ROOT }}
+            ${{ runner.temp }}/method-facts-runtime-install
           if-no-files-found: error
           retention-days: 30
