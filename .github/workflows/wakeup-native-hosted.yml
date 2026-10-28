@@ -21,8 +21,10 @@ jobs:
         include:
           - rid: linux-x64
             runner: ubuntu-24.04
+            python: 3.12.15
           - rid: osx-arm64
             runner: macos-14
+            python: 3.12.10
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -32,7 +34,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
       - name: Validate immutable request and stage
         id: request
         env:

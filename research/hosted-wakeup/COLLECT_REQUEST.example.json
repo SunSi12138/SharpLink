@@ -14,5 +14,6 @@
       "DReceiptSha256": "REPLACE_WITH_REVIEWED_D_RECEIPT_SHA256",
       "CReceiptSha256": "REPLACE_WITH_REVIEWED_C_RECEIPT_SHA256"
     }
-  }
+  },
+  "environmentPolicy": "hosted-known-env-v1"
 }

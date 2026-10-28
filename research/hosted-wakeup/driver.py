@@ -13,6 +13,8 @@ TOOLS_SHA='7610cc632c1def4ca8593b4cce9d199dc409cdb54438fb67087c620573104117'
 RID=os.environ.get('EVIDENCE_RID','')
 ROOTS={'linux-x64':Path('/tmp/sharplink-wakeup-native-v1'),'osx-arm64':Path('/private/tmp/sharplink-wakeup-native-v1')}
 OUT=REPO/'artifacts/wakeup-output'
+ENVIRONMENT_POLICY='hosted-known-env-v1'
+PYTHON_LINUX='/opt/hostedtoolcache/Python/3.12.15/x64'
 
 def write(path,value):
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -27,10 +29,11 @@ def request():
     if type(r.get('schema')) is not int or r.get('schema')!=1 or r.get('stage') not in ('prepare','collect'):raise ValueError('Invalid request')
     if os.environ.get('GITHUB_RUN_ATTEMPT')!='1':raise ValueError('Automatic/manual reruns prohibited; amend and review a new plan')
     if os.environ.get('GITHUB_REF_NAME')!='codex/wakeup-native-'+r['stage']+'-v1':raise ValueError('Wrong stage branch')
+    if r.get('environmentPolicy')!=ENVIRONMENT_POLICY:raise ValueError('Unreviewed environment policy')
     if r['stage']=='prepare':
-        if set(r)!={'schema','stage'}:raise ValueError('Unexpected prepare request key')
+        if set(r)!={'schema','stage','environmentPolicy'}:raise ValueError('Unexpected prepare request key')
     else:
-        if set(r)!={'schema','stage','prepareRunId','prepareCommit','architectures'}:raise ValueError('Invalid collect request keys')
+        if set(r)!={'schema','stage','environmentPolicy','prepareRunId','prepareCommit','architectures'}:raise ValueError('Invalid collect request keys')
         if type(r['prepareRunId']) is not int or r['prepareRunId']<=0 or not re.fullmatch('[0-9a-f]{40}',r['prepareCommit']):raise ValueError('Invalid prepared run identity')
         if set(r['architectures'])!=set(ROOTS):raise ValueError('Both frozen architectures required')
         for rid,a in r['architectures'].items():
@@ -39,6 +42,37 @@ def request():
     for file,h in json.loads((NATIVE/'tool-lock.json').read_text()).items():
         if digest(NATIVE/file)!=h:raise ValueError('Native tool content mismatch')
     return r
+
+def environment_snapshot(env):
+    # Record relevant original values, not unrelated runner tokens/secrets.
+    return {k:v for k,v in sorted(env.items()) if k.upper().startswith(('DOTNET_','COMPLUS_','CORECLR_','COREHOST_','COR_','MONO_','LD_','DYLD_')) or k in ('PATH','pythonLocation','RUNNER_TOOL_CACHE')}
+
+def normalize_environment(env):
+    result=env.copy()
+    if 'DOTNET_MULTILEVEL_LOOKUP' in result:
+        if result['DOTNET_MULTILEVEL_LOOKUP']!='0':raise ValueError('Unexpected DOTNET_MULTILEVEL_LOOKUP value')
+        del result['DOTNET_MULTILEVEL_LOOKUP']
+    if 'LD_LIBRARY_PATH' in result:
+        if (RID!='linux-x64' or result['LD_LIBRARY_PATH']!=PYTHON_LINUX+'/lib'
+            or result.get('pythonLocation')!=PYTHON_LINUX
+            or result.get('RUNNER_TOOL_CACHE')!='/opt/hostedtoolcache'
+            or sys.version_info[:3]!=(3,12,15) or sys.prefix!=PYTHON_LINUX
+            or str(Path(sys.executable).parent)!=PYTHON_LINUX+'/bin'):
+            raise ValueError('Unexpected LD_LIBRARY_PATH/Python toolcache identity')
+        del result['LD_LIBRARY_PATH']
+    # No prefix/wildcard deletion. Unknown overrides still hit the original gate.
+    validate_environment(result)
+    return result
+
+def stage_environment(stage):
+    original=os.environ.copy()
+    write(OUT/('environment-original-'+stage+'.json'),environment_snapshot(original))
+    normalized=normalize_environment(original)
+    write(OUT/('environment-policy-'+stage+'.json'),{'policy':ENVIRONMENT_POLICY,
+        'removed':{k:original[k] for k in original.keys()-normalized.keys()},
+        'normalized':environment_snapshot(normalized),'originalProcessEnvironmentUnchanged':dict(os.environ)==original})
+    return normalized
+
 
 def host(root):
     expected={'linux-x64':('Linux','x86_64'),'osx-arm64':('Darwin','arm64')}[RID]
@@ -83,6 +117,7 @@ def extract(archive,target):
     with tarfile.open(archive,'r:gz') as tar:tar.extractall(target,filter='data')
 
 def run(command,log,env=None,cwd=None,timeout=300):
+    if env is None:raise ValueError('Every launched command requires explicit validated environment')
     write(log.with_suffix('.command.json'),command)
     timed_out=False
     with log.open('xb') as output:
@@ -107,8 +142,12 @@ def check_runtime_info(log):
     if not re.search(r'Host:\s+Version:\s+10\.0\.14\s+Architecture:\s+'+arch+r'\b',text):raise ValueError('Actual dotnet host version/architecture mismatch')
 
 def prepare(root):
-    inherited_env=os.environ.copy();validate_environment(inherited_env)
+    inherited_env=stage_environment('prepare')
     root.mkdir(exist_ok=False);host(root)
+    for name in ('environment-original-prepare.json','environment-policy-prepare.json'):shutil.copy2(OUT/name,root/'evidence'/name)
+    # Official toolcache Python has an embedded lib rpath; verify normalized launch
+    # before downloads/builds, without CLR or probe execution. Failure is terminal.
+    run([sys.executable,'-c','import json,sys; print(json.dumps({"version":sys.version,"executable":sys.executable}))'],root/'evidence/python-normalized-launch.log',inherited_env)
     plan=json.loads((NATIVE/'plan.json').read_text());lock=json.loads((NATIVE/'artifact-lock.json').read_text())
     archives=download_archives(root);by={row['component']:Path(row['path']) for row in archives}
     sdk=root/'build-sdk';runtime=root/'dotnet';sdk.mkdir();runtime.mkdir()
@@ -128,11 +167,11 @@ def prepare(root):
     check_runtime_info(root/'evidence/dotnet-info.log')
     for arm,revision in [('D',plan['baseline']),('C',plan['candidate'])]:
         source=root/('source-'+arm);probe=root/('build-'+arm)/'probe'
-        run(['git','clone','--local','--no-hardlinks','--no-checkout',str(REPO),str(source)],root/'evidence'/('clone-'+arm+'.log'))
-        run(['git','-C',str(source),'checkout','--detach',revision],root/'evidence'/('checkout-'+arm+'.log'))
+        run(['git','clone','--local','--no-hardlinks','--no-checkout',str(REPO),str(source)],root/'evidence'/('clone-'+arm+'.log'),env)
+        run(['git','-C',str(source),'checkout','--detach',revision],root/'evidence'/('checkout-'+arm+'.log'),env)
         shutil.copytree(NATIVE/'probe',probe)
         run([str(sdk/'dotnet'),'build',str(probe/'WakeupNativeProbe.csproj'),'-c','Release','-m:1','-nr:false','-p:UseSharedCompilation=false','-p:EvidenceSourceRoot='+str(source)],root/'evidence'/('build-'+arm+'.log'),env,root)
-        run(['git','-C',str(source),'diff','--exit-code'],root/'evidence'/('source-clean-'+arm+'.log'))
+        run(['git','-C',str(source),'diff','--exit-code'],root/'evidence'/('source-clean-'+arm+'.log'),env)
     shutil.copytree(NATIVE/'decoder',root/'decoder')
     run([str(sdk/'dotnet'),'build',str(root/'decoder/TraceDecoder.csproj'),'-c','Release','-m:1','-nr:false','-p:UseSharedCompilation=false'],root/'evidence/build-decoder.log',env,root)
     # Build/package identities retained without transferring the SDK/package caches.
@@ -164,18 +203,19 @@ def restore_bundle(bundle,root,expected):
             target.chmod(m.mode&0o777)
 
 def collect(root,r):
-    inherited_env=os.environ.copy();validate_environment(inherited_env)
+    inherited_env=stage_environment('collect')
     a=r['architectures'][RID];restore_bundle(REPO/'artifacts/wakeup-input/prepared.tar.gz',root,a['bundleSha256'])
     index=json.loads((root/'prepared-index.json').read_text())
     if index['runId']!=r['prepareRunId'] or index['prepareCommit']!=r['prepareCommit'] or index['rid']!=RID:raise ValueError('Wrong prepared run/binary identity')
     if digest(HERE/'driver.py')!=digest(root/'tools/hosted/driver.py') or digest(REPO/'.github/workflows/wakeup-native-hosted.yml')!=digest(root/'tools/workflow.yml'):raise ValueError('Collect wrapper/workflow differs from prepared reviewed version')
     host(root/'collect-host')
+    for name in ('environment-original-collect.json','environment-policy-collect.json'):shutil.copy2(OUT/name,root/'collect-host/evidence'/name)
     download_archives(root) # Exact approved archive bytes; no SDK extraction/build here.
     plan=json.loads((NATIVE/'plan.json').read_text());lock=json.loads((NATIVE/'artifact-lock.json').read_text())
     for arm in ('D','C'):
         if index['receipts'][arm]!=a[arm+'ReceiptSha256']:raise ValueError('Receipt approval mismatch')
         validate_receipt(root/'receipts'/(arm+'.json'),a[arm+'ReceiptSha256'],plan,lock)
-    run([str(root/'dotnet/dotnet'),'--info'],root/'collect-host/evidence/dotnet-info.log')
+    run([str(root/'dotnet/dotnet'),'--info'],root/'collect-host/evidence/dotnet-info.log',inherited_env)
     check_runtime_info(root/'collect-host/evidence/dotnet-info.log')
     env=inherited_env
     for cell in plan['cells']:

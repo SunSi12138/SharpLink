@@ -1,6 +1,10 @@
 # Minimal staged hosted wakeup mechanism protocol
 
-**Review proposal only. No push, hosted run, native probe or timing performed.**
+**Environment repair proposed for review.** First hosted prepare run40710903027
+failed both inherited-environment preflights before any .NET download/build/probe.
+Original artifacts remain retained; no native collection or timing has run.
+[AMENDMENT-03.md](AMENDMENT-03.md) defines the exact known-value normalization,
+original-environment evidence, pinned Python versions and new request identity.
 This adds a transportable preparation/collection wrapper around native tools
 originally reviewed at `410c7a71e178385b5eaddf4b525af9e54dd78b4f`. The necessary
 source-binding amendment02 in native PLAN.md now targets published remote
@@ -20,7 +24,7 @@ or a substitute for either required hosted architecture.
 
 1. **Prepare-only push:** after this wrapper's independent review, push the exact
    reviewed commit to `codex/wakeup-native-prepare-v1`. `REQUEST.json` contains
-   only `schema:1, stage:prepare`. A push path filter watches only this file;
+   only `schema:1, stage:prepare, environmentPolicy:hosted-known-env-v1`. A push path filter watches only this file;
    no merge/default-branch change or repository security/permission setting is
    necessary. New workflow_dispatch files need default-branch presence, so this
    deliberately uses constrained validation-branch pushes instead.
