@@ -9,7 +9,7 @@ mkdir extracted
 for archive in archives/*.tar.gz; do tar -xzf "$archive" -C extracted; done
 ```
 
-The machine inventory is [index.json](index.json). It currently contains **11 archives, 98,694,834 bytes total**; all prior ten archives remain unchanged. Each archive has a file inventory and transfer-integrity identity. Source commit/arm/binary identities inside the original evidence remain authoritative; this mirror commit is not their source SHA. Every archive is under 50 MiB.
+The machine inventory is [index.json](index.json). It currently contains **12 archives, 102,064,356 bytes total**; all prior eleven archives remain unchanged. Each archive has a file inventory and transfer-integrity identity. Source commit/arm/binary identities inside the original evidence remain authoritative; this mirror commit is not their source SHA. Every archive is under 50 MiB.
 
 | Archive | MiB | Files | Status |
 |---|---:|---:|---|
@@ -24,6 +24,7 @@ The machine inventory is [index.json](index.json). It currently contains **11 ar
 | [workflow-logs](archives/workflow-logs.tar.gz) | 0.04 | 8 | Unmodified hosted run logs; failures retained |
 | [release-status-logs](archives/release-status-logs.tar.gz) | 0.06 | 14 | Historical status and diagnostic logs; current root handoff and precise candidate gates prevail |
 | [r1-cloud-native-20261028](archives/r1-cloud-native-20261028.tar.gz) | 3.17 | 97 | Failed four-target Tier1 gate in both cloud arms; preparation failures retained; no timing or acceptance |
+| [r1-hosted-native-40681832353](archives/r1-hosted-native-40681832353.tar.gz) | 3.21 | 98 | Valid non-timed mechanism and8focused tests only; not performance Go; cloud failures retained |
 
 The new R1 cloud archive contains attempts001/002/003. Executed native tool is
 `17038d5014d1d4a76407fa13c451d6a0606968ff`; product R1 remains `94adeae8`.
@@ -517,6 +518,25 @@ Credential-pattern and nested-archive scans are recorded in [scan-review.json](s
 - `931-r1-loop-exit/scalar-obj/probe.csproj.nuget.g.targets` — Build/package/runtime cache; not raw measurement evidence
 - `931-r1-loop-exit/scalar-obj/project.assets.json` — Build/package/runtime cache; not raw measurement evidence
 - `931-r1-loop-exit/scalar-obj/project.nuget.cache` — Build/package/runtime cache; not raw measurement evidence
+
+## Hosted R1 native and boundary-test archive
+
+[r1-hosted-native-40681832353](archives/r1-hosted-native-40681832353.tar.gz) retains the independently validated
+[run40681832353](https://github.com/SunSi12138/SharpLink/actions/runs/40681832353),
+exact tool `9c0cf9e682deb38c4c321e93db0f11d1338bc7bd`, plus8focused boundary-test
+results at test-only `c4cb5771dff994f9cd3db8252582d3c0256f7c09` (src identical to94).
+Both4352-operation non-timed processes satisfy4Tier1/source/runtime gates. The
+success-path duplicate test is removed; long jump remains and native body grows.
+This is **not** a performance result, no-regression proof or full candidate CI.
+#931NoGo and all earlier failed cloud attempts remain unchanged.
+
+SHA256 `03e8e6f4bb7479f1df0943a08d3072e7a91164c76856d5d0834594e8faa66a27`,3,369,522 bytes/98 files. Its
+[file/privacy inventory](r1-hosted-native-40681832353-files.json) and embedded
+`official-artifact-members.json` enumerate every included member plus EXACTLY2
+excluded official runtime installer tarballs (both hashes/URLs pinned and retained).
+No raw native/host/identity/proof/test evidence is sanitized or omitted. The original
+89,150,325-byte officialZIP digest is retained; it is not duplicated as a container.
+Independent report/verifier and8 extracted target bodies are included unchanged.
 
 ## Published source branches
 

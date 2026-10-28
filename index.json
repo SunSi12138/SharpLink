@@ -435,6 +435,31 @@
       ],
       "privacyReview": "r1-cloud-native-20261028-files.json",
       "sanitization": "None of included raw evidence; excluded SDK/runtime/package caches documented in inventory. Prior ten archives and their privacy records unchanged."
+    },
+    {
+      "id": "r1-hosted-native-40681832353",
+      "archive": "archives/r1-hosted-native-40681832353.tar.gz",
+      "archiveBytes": 3369522,
+      "sha256": "03e8e6f4bb7479f1df0943a08d3072e7a91164c76856d5d0834594e8faa66a27",
+      "files": 98,
+      "uncompressedBytes": 11437879,
+      "inventory": "r1-hosted-native-40681832353-files.json",
+      "source": "Official GitHub artifact12813460614/run40681832353 attempt1 plus independently reviewed local8-test evidence.",
+      "runId": "40681832353",
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/40681832353",
+      "sourceIdentity": "Executed remote tool9c0cf9e682deb38c4c321e93db0f11d1338bc7bd (tree-equivalent reviewed local760a6d7); common/baselineac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c, R1Client94adeae886c4ddfd0c02ec2dcb700cd97e9cad80;8tests c4cb5771dff994f9cd3db8252582d3c0256f7c09 same src as94.",
+      "status": "VALID narrow non-timed mechanism: both4352-operation processes pass4Tier1 targets; duplicate conditional removed, long jump remains and body grows.8focused tests pass. Not performance acceptance; historical/cloud failures and #931NoGo unchanged.",
+      "unpack": "tar -xzf archives/r1-hosted-native-40681832353.tar.gz",
+      "identityFiles": [
+        "official-artifact-members.json",
+        "hosted/extracted/native/plan.json",
+        "hosted/extracted/native/prepared/prepared-manifest.json",
+        "hosted/extracted/native/preflight/gate.json",
+        "current-boundary-tests/provenance.json",
+        "independent-review/REVIEW.md"
+      ],
+      "privacyReview": "r1-hosted-native-40681832353-files.json",
+      "sanitization": "None. All raw included ZIP members byte-identical. Only2official runtime installer tarballs excluded with exact memberSHA256/SHA512/size and reviewed download pins retained. Prior11archives unchanged."
     }
   ],
   "exclusions": "excluded-files.json",
@@ -445,7 +470,7 @@
   "localOriginalsUnmodified": true,
   "privacyReview": "scan-review.json",
   "integrity": "Archive SHA-256 is for upload/download transfer verification; timing files remain original bytes.",
-  "updatedAtUtc": "2026-10-28T11:41:00Z",
-  "archiveCount": 11,
-  "archiveBytes": 98694834
+  "updatedAtUtc": "2026-10-28T12:15:00Z",
+  "archiveCount": 12,
+  "archiveBytes": 102064356
 }
