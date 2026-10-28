@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/GeneratedStreamSnapshotOwnershipTests.c
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/GeneratedStreamSnapshotOwnershipTests/*"
 FOCUSED_COUNT = 2
-FULL_COUNT = 2412  # Exact inventory includes 18 absolute Stop-budget controls; historical focused/negative counts unchanged.
+FULL_COUNT = 2440  # Combined dev/physical/maintenance discovery: 2440 regular cases; lease overlay adds eight.
 
 
 def digest(path):

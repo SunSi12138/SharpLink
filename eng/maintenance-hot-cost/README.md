@@ -4,7 +4,28 @@ This standalone probe uses real TLS, application authentication, exactly two per
 
 This is functional, layout, IL, and native evidence. It has no throughput score, latency threshold, or whole-RPC allocation claim. The separate parser allocation microprobe uses a prepared Ready session, not the enrolled TLS cohort. Native output spans the whole process, not separately timed pre/post phases. Read actual emitted tier labels rather than assuming promotion from a launch name. Preserve every listing, failure, and residual difference. A larger frame or code body is not a throughput measurement. Native stack extraction currently recognizes x64 `rsp`; an empty extraction on another architecture is not a zero-byte frame.
 
-## Reproduce on a hosted Linux x64 runner
+## Integrated source profiles
+
+The current workflow uses `--profile integrated-prerequisites`: immutable `ac17c8d8`
+(dev plus physical ownership) versus the exact combined candidate. For the other
+feature-acceptance arm, use `--profile integrated-dev` against `cc7c458b` in a
+separate fresh probe checkout. Together these retain the three-arm comparison
+**dev / prerequisites / candidate**; the two pairwise campaigns must not be
+combined across different environments as if they were one paired experiment.
+`eng/maintenance-integration-sources.json` pins the full commits and source trees.
+Both integrated profiles retain #930 and require identical invocation dispatch.
+`published-prerequisites` is the existing baseline directory label; the profile
+and exact baseline identity in `source-provenance.json` determine its meaning.
+
+```sh
+python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA" --profile integrated-prerequisites
+```
+
+Preparation archives source only. It does not run performance samples. Historical
+results are unchanged. The default `historical` profile below retains the original
+#928/#931/#932 reconstruction and its independent source manifest.
+
+## Reproduce the historical profile on a hosted Linux x64 runner
 
 Prerequisites: Python 3.12+, Git, the selected .NET 10 SDK, and the intended official runtime hosts. Build both arms with one SDK, then run the identical assemblies with each runtime host. The local reference campaign uses SDK 10.0.102 and runtimes 10.0.2/10.0.13. Provisioning the official runtime hosts belongs to the caller's workflow; this probe does not install software or change the SDK.
 

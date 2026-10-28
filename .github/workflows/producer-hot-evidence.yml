@@ -37,8 +37,8 @@ jobs:
               assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
           PY
           python3 -m unittest test_prepare_arms.py -v
-          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin c60393508cecd20886e798a474f189f4faf52c62
-          python3 prepare_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin 92a8936eb6656d6bf427ec4fbf807dde5903434a
+          python3 prepare_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA" --profile integrated
       - name: Build both source arms with the same SDK 10.0.102
         working-directory: eng/producer-hot-cost
         run: |

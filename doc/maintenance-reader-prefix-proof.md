@@ -85,8 +85,42 @@ resource transfer in that region and rerun the relevant semantic tests. Do not
 update a digest merely to silence CI. In particular, a new await before an
 existing owner is acquired invalidates this capability's admission proof.
 
-The entire InvocationDispatch, AdmissionDispatch, ServiceRegistration and
-PreAdmissionStreams files are pinned byte-identical to dev commit
-`13928a35df4bff3cd99b14bd1df131aa3eb3bcdb`. This independently guards the
-exclusion of the separate queued-registration correction and queued rejection
-handoff change. It is not a claim that their unsupported-path oracle ran.
+## Current-dev integration of queued identity and intrinsic sends
+
+The integrated tree includes #930. The no-waiting argument is about reachable
+branches, not exclusion of that correction from the repository:
+
+- `DispatchRpcAsync` changes only the incomplete-admission branch to call
+  `TryCopySelectedAdmissionPayload`. `DispatchOneWayRpc` makes the same change;
+  its queued continuation methods move to `QueuedAdmission`. Neither immediate
+  prefix adds an await, offload, weak-identity lookup, or maintenance lookup.
+- With all current, retained and physically reclaiming waiting-capable programs
+  excluded at opt-in, `AcquireAsync` returns a completed successful ValueTask for
+  immediate acquisition and rejection; no asynchronous cancellation wait is entered.
+  A partition-selector throw
+  is caught synchronously; reply rejection enters the existing physical sender
+  before the reader can consume another frame. The queued-only payload copy and
+  admitted dispatch continuations are therefore unreachable for enrolled calls.
+- `ServiceRegistration` allocates a weak identity when a dynamic registration is
+  constructed. It adds no call lease and does not root its target. The changed
+  disposed-registration error classifier executes synchronously; it does not
+  postpone rejection or acquire a different registration. Existing dynamic
+  acquire/release and request-permit ownership remain in place.
+- `PreAdmissionStreams` adds selected-service capture to the queued-only copy.
+  Immediate rejection still uses the original bounded discard/termination paths;
+  it does not re-enter queued dispatch or borrow a replacement registration.
+- Intrinsic send ownership now preserves synchronous telemetry reentrancy.
+  The final reserve recheck reloads a queue published by its callback before
+  updating the wake slot. Resume claims a node before reservation telemetry,
+  restores waiting only on a failed reserve, and follows its live successor
+  after callbacks. The claimed node remains physically owned through return and
+  cancellation deregistration. The whole backpressure-owner file is pinned,
+  including resume/retirement, rather than only the enqueue prefix.
+
+`AdmissionMaintenancePrefixTests` exercises inline grant and rejection for all
+non-waiting policy forms. The retained-generation opt-in tests cover the seal;
+`BackpressuredSendOwnershipTests` covers cancellation, Stop, sibling mutation and
+new-waiter publication from reservation callbacks. Queued replacement and
+retirement tests continue to validate #930 outside maintenance. The existing
+admitted-dispatch parity guard is retained; passing it does not certify queued
+admission as eligible for this maintenance capability.

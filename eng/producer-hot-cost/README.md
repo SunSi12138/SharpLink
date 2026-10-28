@@ -1,8 +1,27 @@
 # Producer ownership cost evidence
 
-This authored kit replays the final producer-reservation correction. It does not import local build outputs or old research archives.
+This authored kit retains the producer-reservation replay and adds an explicitly separate integration comparison. It does not import local build outputs or old research archives.
 
-## Immutable source binding
+## Integrated profile
+
+The current workflow passes `--profile integrated`. Its baseline is the previous
+maintenance head `92a8936eb6656d6bf427ec4fbf807dde5903434a` and its candidate is the
+exact invoking commit with the combined source tree pinned in
+`eng/maintenance-integration-sources.json`. Both arms already retain outgoing
+producer reservations. This comparison answers only the incremental effect of
+integrating current dev and physical ownership into that maintenance head.
+
+Feature acceptance instead requires **cc7 dev / ac17 prerequisites / combined
+candidate**. The maintenance kits expose the two corresponding integrated profiles;
+this producer comparison cannot replace either feature-cost comparison. The original
+c603 producer-fix campaign remains available through the default `historical` profile,
+with its original expected source trees and results unchanged.
+
+```sh
+python3 prepare_arms.py --repo "$REPOSITORY" --candidate "$CANDIDATE_FULL_SHA" --profile integrated
+```
+
+## Historical immutable source binding
 
 - Public baseline: `c60393508cecd20886e798a474f189f4faf52c62`, production `src` tree `c242f33f0041439b176c43460864a888237b79d9`.
 - Candidate: the exact invoking workflow `GITHUB_SHA`; its production `src` tree must be `3bf0a1eb6b162016d07f9d9329b1b3ca560f68a3`.

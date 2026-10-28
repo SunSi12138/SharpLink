@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import json,subprocess,sys,tempfile,unittest
 from pathlib import Path
-from prepare_arms import prepare_snapshot,git
+from prepare_arms import prepare_snapshot,git,profile_settings,EXPECTED,PUBLIC_BASELINE
 class ReconstructionTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.repo=Path(self.temp.name)/'repo';self.repo.mkdir()
@@ -24,4 +24,12 @@ class ReconstructionTests(unittest.TestCase):
         self.assertNotEqual(run.returncode,0)
         proof=json.loads((output/'source-provenance.json').read_text())
         self.assertEqual(proof['Status'],'Failed');self.assertIn('Source tree mismatch',proof['Error'])
+    def test_profiles_preserve_historical_and_bind_integration(self):
+        self.assertEqual((PUBLIC_BASELINE,EXPECTED),profile_settings('historical'))
+        config=json.loads((Path(__file__).resolve().parent.parent/'maintenance-integration-sources.json').read_text())
+        baseline,expected=profile_settings('integrated')
+        self.assertEqual(config['arms']['previous-maintenance']['commit'],baseline)
+        self.assertEqual(config['arms']['previous-maintenance']['source_tree'],expected['baseline'])
+        self.assertEqual(config['candidate_source_tree'],expected['candidate-final'])
+        self.assertNotEqual(EXPECTED,expected)
 if __name__=='__main__':unittest.main()

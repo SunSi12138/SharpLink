@@ -5,6 +5,12 @@ from pathlib import Path, PurePosixPath
 PUBLIC_BASELINE = 'c60393508cecd20886e798a474f189f4faf52c62'
 EXPECTED = {'baseline':'c242f33f0041439b176c43460864a888237b79d9', 'candidate-final':'3bf0a1eb6b162016d07f9d9329b1b3ca560f68a3'}
 INPUTS = ['src', 'Directory.Build.props', 'Directory.Packages.props', 'global.json']
+def profile_settings(profile):
+    if profile == 'historical': return PUBLIC_BASELINE, EXPECTED
+    config=json.loads((Path(__file__).resolve().parent.parent/'maintenance-integration-sources.json').read_text())
+    baseline=config['arms']['previous-maintenance']
+    return baseline['commit'], {'baseline':baseline['source_tree'], 'candidate-final':config['candidate_source_tree']}
+
 def git(repo, *args):
     env={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
     return subprocess.check_output(['git','-C',str(repo.resolve()),*args],env=env)
@@ -25,16 +31,18 @@ def prepare_snapshot(repo, commit, expected, destination):
     assert all(hashlib.sha256((destination/name).read_bytes()).hexdigest()==sha for name,sha in hashes.items())
     return {'Commit':commit,'SourceTree':actual,'Files':hashes}
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--repo',required=True,type=Path);p.add_argument('--root',type=Path,default=Path(__file__).resolve().parent);p.add_argument('--baseline',default=PUBLIC_BASELINE);p.add_argument('--candidate',required=True);a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--repo',required=True,type=Path);p.add_argument('--root',type=Path,default=Path(__file__).resolve().parent);p.add_argument('--baseline');p.add_argument('--profile',choices=['historical','integrated'],default='historical');p.add_argument('--candidate',required=True);a=p.parse_args()
+    baseline,expected=profile_settings(a.profile)
+    baseline=a.baseline or baseline
     root=a.root.resolve();root.mkdir(parents=True,exist_ok=True);report=root/'source-provenance.json'
-    result={'Status':'Started','ExpectedSourceTrees':EXPECTED,'RequestedCommits':{'baseline':a.baseline,'candidate-final':a.candidate},'Arms':{}}
+    result={'Status':'Started','Profile':a.profile,'ExpectedSourceTrees':expected,'RequestedCommits':{'baseline':baseline,'candidate-final':a.candidate},'Arms':{}}
     def save(): report.write_text(json.dumps(result,indent=2)+'\n')
     save()
     try:
         for kind in ['shapes','retry']:
             result['Arms'][kind]={}
             for arm,commit in result['RequestedCommits'].items():
-                result['Arms'][kind][arm]=prepare_snapshot(a.repo,commit,EXPECTED[arm],root/kind/'arms'/arm);save()
+                result['Arms'][kind][arm]=prepare_snapshot(a.repo,commit,expected[arm],root/kind/'arms'/arm);save()
         result['Status']='SourceSnapshotsVerified';save()
     except Exception as exc:
         result['Status']='Failed';result['Error']=str(exc);save();raise

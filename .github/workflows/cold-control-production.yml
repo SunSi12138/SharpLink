@@ -333,13 +333,13 @@ jobs:
           import hashlib,json,pathlib
           root=pathlib.Path('.')
           manifest=json.loads((root/'authored-files.sha256.json').read_text())
-          assert len(manifest)==21
+          assert len(manifest)==22
           for name,expected in manifest.items():
               assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
           PY
           python3 test_native_evidence.py
-          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin 37b92f20e20ce8a7b751660d56d636a0ce1660e7 b488fe43aec90962adb2e5a6bcca04153d142092 f4be372ae4b013c767eb7f5eb0e43aad1cdb41fe
-          python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA"
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c
+          python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA" --profile integrated-prerequisites
           test "$(dotnet --version)" = "10.0.102"
           python3 capture_build_toolchain.py
           bash build_arms.sh published-prerequisites candidate
@@ -350,11 +350,11 @@ jobs:
           import hashlib,json,pathlib
           root=pathlib.Path('.')
           manifest=json.loads((root/'authored-files.json').read_text())
-          assert len(manifest)==19
+          assert len(manifest)==20
           for name,expected in manifest.items():
               assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
           PYTHON
-          python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA"
+          python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA" --profile integrated-prerequisites
           test "$(dotnet --version)" = "10.0.102"
           python3 capture_build_toolchain.py
           bash build_arms.sh published-prerequisites candidate

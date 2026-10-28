@@ -5,6 +5,7 @@ from pathlib import Path
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--repo',type=Path,required=True)
 p.add_argument('--candidate',required=True)
+p.add_argument('--profile',choices=['historical','integrated-dev','integrated-prerequisites'],default='historical')
 p.add_argument('--physical',default='b488fe43aec90962adb2e5a6bcca04153d142092')
 p.add_argument('--pump',default='f4be372ae4b013c767eb7f5eb0e43aad1cdb41fe')
 p.add_argument('--parent',default='37b92f20e20ce8a7b751660d56d636a0ce1660e7')
@@ -17,6 +18,29 @@ def snapshot(sha,target):
  data=git('archive',sha,'src','Directory.Build.props','Directory.Packages.props','global.json')
  with tarfile.open(fileobj=io.BytesIO(data)) as archive:archive.extractall(target,filter='data')
 def hashes(folder):return {str(p.relative_to(folder)):hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.rglob('*') if p.is_file()}
+if a.profile != 'historical':
+ config=json.loads((root.parent/'maintenance-integration-sources.json').read_text())
+ selected=config['arms'][a.profile.removeprefix('integrated-')]
+ candidate=commit(a.candidate)
+ result={'Status':'Started','Profile':a.profile,'Comparison':config['comparison'],
+         'RequestedCandidate':candidate,'ExpectedCandidateSourceTree':config['candidate_source_tree']}
+ def save(): (root/'source-provenance.json').write_text(json.dumps(result,indent=2)+'\n')
+ save()
+ try:
+  for label,sha,expected in [('published-prerequisites',selected['commit'],selected['source_tree']),
+                             ('candidate',candidate,config['candidate_source_tree'])]:
+   actual=git('rev-parse',sha+':src').decode().strip()
+   if actual!=expected: raise RuntimeError('Integrated source tree mismatch: '+label)
+   target=root/'arms'/label;snapshot(sha,target)
+   result[label]={'Base':sha,'SourceTree':actual,'Files':hashes(target)};save()
+  dispatch='src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs'
+  if (root/'arms/candidate'/dispatch).read_bytes()!=(root/'arms/published-prerequisites'/dispatch).read_bytes():
+   raise RuntimeError('Integrated candidate changed reviewed immediate/queued dispatch.')
+  result['Status']='SourceSnapshotsVerified';save()
+ except Exception as exc:
+  result['Status']='Failed';result['Error']=str(exc);save();raise
+ print('Integrated production-only source snapshots verified: '+a.profile)
+ raise SystemExit(0)
 physical,pump,parent,candidate=map(commit,[a.physical,a.pump,a.parent,a.candidate])
 baseline=root/'arms/published-prerequisites';snapshot(physical,baseline)
 patch=git('diff','--binary',parent,pump,'--','src')

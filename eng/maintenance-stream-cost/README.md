@@ -6,7 +6,19 @@ The timer and process-managed-allocation window starts when the producer is rele
 
 The candidate has populated maintenance enrollment and negotiated capability but does not perform an update in this streaming workload. A separate enabled-TLS ordinary-call probe validates held-proxy pre/post update behavior. All samples verify unchanged physical/session objects, pool cardinality two, authentication count two and TLS. The healthy callback-owner table must remain unallocated.
 
-## Reproduce
+## Integrated source profiles
+
+Use `--profile integrated-prerequisites` to compare `ac17c8d8` with the combined
+candidate, or `--profile integrated-dev` for `cc7c458b` versus that same candidate.
+Use separate fresh probe directories and preserve each profile's provenance. The
+three immutable source identities are in `eng/maintenance-integration-sources.json`.
+The existing baseline directory name remains `published-prerequisites`; its actual
+commit and profile are recorded in `source-provenance.json`. These profiles do not
+reuse the historical numerical results below. Source preparation alone executes
+no timing workload. Formal acceptance still requires the dev/prerequisite/candidate
+comparison; a favorable pair cannot stand in for the other arm.
+
+## Reproduce the historical profile
 
 Use Linux x64, Python 3 and official SDK10.0.102. The included global.json rejects SDK roll-forward. Provision runtimes separately; these scripts do not install software. Build both arms with the same SDK. The existing prerequisite preparation script fetches nothing and uses immutable #928/#931/#932 commits already available in the supplied checkout, validating the complete prerequisite production manifest. It copies no repository test project.
 

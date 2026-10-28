@@ -2,14 +2,14 @@
   ".gitignore": "bdd73d4a20aca4dba6b5cabc7b6276751a5324e116061347d0131215b8684ff2",
   "Directory.Build.props": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
   "Directory.Packages.props": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
-  "README.md": "12f562aab74ae9a2ad629a3061facb5c2040f6bcb515c40048f5e0a26054782e",
+  "README.md": "fbff1993cfc2d144f294b52b46136e79ba380954fcdfb09f43096c0d41623384",
   "build_arms.sh": "63f7bd47bde0c147a7172b26e535e309ee9457182728c8115dfa5ab08cbf1da2",
   "capture_build_toolchain.py": "56c694bf8897188be931c454ebed8f5df659c21392db07345b3533e38ba19751",
   "contracts/Contract.cs": "7441f9736e8243bcf5c5326ff6a5c2ec8cf8ed839637077426d46e806e662a4a",
   "contracts/HotCostDynamic.Contracts.csproj": "4866a6afe2137e1c22daca55443d0556c2659d237dfdc0c1543739b2ee7a5ca4",
   "expected-prerequisite-sources.json": "c5208abfa59e95e632527cba9e104a8f67f359589e4e1f93133caa44ba11ce5a",
   "global.json": "a97385ba41542256aadfcc3a7f6ba18689347abc45e61d1a19980583f8c502a2",
-  "prepare_public_arms.py": "cc9d340134f7a10b287703c59347221a8a7fea726333fc087665b9666d4dd5f0",
+  "prepare_public_arms.py": "c3d8b19f3a7ebab7fad74827ace9121847defd03f0da25e9cf45eec479cd80fa",
   "probe/HotCostProbe.csproj": "f584aa0cd6f561a38a897f5e55aa201d562a8aa1ef817178f277be8746bfa66c",
   "probe/Program.cs": "a0ad23f7202e6d1d2e238dad7263d189368b5ce55a95489a856cb253ab72f93b",
   "probe/TlsNetwork.cs": "1e01938f9ea88c93e4f3269a2d560ae0a65cfaa7538cc77e1e7f80df9b5be72e",
@@ -17,5 +17,6 @@
   "run_stream.py": "c7183894af8bfd6d19b6f10c9d862658ea909f2a8986b982d4971d0394256ff9",
   "services/HotCostDynamic.Services.csproj": "9e8be6b0f334b2c27c7fbae840ae53636f04ea43c618026f50a23a26bdb95262",
   "services/Service.cs": "0f4b73494c21ff2b3c493321d84caafd730e42f0bd1749284c38f938c48678d8",
-  "summarize_stream.py": "8b0ac12b663c4299254901501ae6cca53f7fd8eb2813cffe02a1d5860ff6160d"
+  "summarize_stream.py": "8b0ac12b663c4299254901501ae6cca53f7fd8eb2813cffe02a1d5860ff6160d",
+  "../maintenance-integration-sources.json": "e282c45c8de0e77a3732e8c7e5e591658563ed0379211ba451afef83c7514b62"
 }

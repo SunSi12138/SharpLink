@@ -1,0 +1,18 @@
+{
+  "candidate_source_tree": "2bb7adfa59119695e627ab711f26178abc68c485",
+  "arms": {
+    "dev": {
+      "commit": "cc7c458b559295e0fc61ec0062bb220faf880a76",
+      "source_tree": "99aeb2416784e722f2c481d54a294f29020c8720"
+    },
+    "prerequisites": {
+      "commit": "ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c",
+      "source_tree": "ec70662c23c4737b3002e6d267aeabb0ec53e291"
+    },
+    "previous-maintenance": {
+      "commit": "92a8936eb6656d6bf427ec4fbf807dde5903434a",
+      "source_tree": "3bf0a1eb6b162016d07f9d9329b1b3ca560f68a3"
+    }
+  },
+  "comparison": "Feature acceptance compares dev, prerequisites, and candidate. The previous-maintenance producer profile measures integration only; it does not establish feature cost."
+}

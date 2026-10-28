@@ -3,7 +3,7 @@
 import argparse,hashlib,json,re,statistics
 from pathlib import Path
 from prologue_metrics import metrics,normal
-from prepare_arms import EXPECTED
+from prepare_arms import profile_settings
 ARMS=['baseline','candidate-final'];MODES={'fullopts':['FullOpts'],'tier0':['Tier0'],'tier1':['Tier1'],'pgo':['Instrumented Tier0','Tier1']}
 SHAPE_TARGETS=['InvokeUnaryCoreAsync','OnRegistered','ReleaseCallAdmissionReservation','InvokeClientStreamingCoreAsync','RunGeneratedClientStreamsAsync','StartServerStreamingInvokerAsync','StartDuplexStreamingInvokerAsync','InvokeOneWayStreamingCoreAsync','PrepareGeneratedServerStreamAsync','CheckHealthAsync']
 RETRY_TARGETS=['InvokeUnaryRetryAttemptAsync','InvokeUnaryWithRetryAsync']
@@ -30,7 +30,8 @@ def native_rows(campaign,kind):
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--root',type=Path,default=Path(__file__).resolve().parent);p.add_argument('--group',required=True);p.add_argument('--shape-group');p.add_argument('--retry-group');p.add_argument('--extra-native-group',action='append',default=[]);p.add_argument('--source-manifest',type=Path);p.add_argument('--expected-runtime',required=True);p.add_argument('--expected-head',required=True);p.add_argument('--output',type=Path);a=p.parse_args()
     root=a.root.resolve();out=a.output or root/('summary-'+a.group+'.json');source=json.loads((a.source_manifest or root/'source-provenance.json').read_text())
-    report={'Status':'Started','ExpectedCandidateCommit':a.expected_head,'ExpectedSourceTrees':EXPECTED,'ExpectedRuntime':a.expected_runtime,'SourceProvenance':source,'Launches':0,'Checks':[],'NativeRows':[],'NativeCoverage':[],'AllocationWindows':[],'Limits':'No elapsed-time measurements, throughput-equivalence budget or native-equality gate. Whole-process allocations include transport, scheduling and overlapping one-way server work. PGO promotion is accelerated; all samples and native variants are retained.'}
+    _,expected_trees=profile_settings(source.get('Profile','historical'))
+    report={'Status':'Started','ExpectedCandidateCommit':a.expected_head,'ExpectedSourceTrees':expected_trees,'ExpectedRuntime':a.expected_runtime,'SourceProvenance':source,'Launches':0,'Checks':[],'NativeRows':[],'NativeCoverage':[],'AllocationWindows':[],'Limits':'No elapsed-time measurements, throughput-equivalence budget or native-equality gate. Whole-process allocations include transport, scheduling and overlapping one-way server work. PGO promotion is accelerated; all samples and native variants are retained.'}
     def save():out.parent.mkdir(parents=True,exist_ok=True);out.write_text(json.dumps(report,indent=2)+'\n')
     save()
     try:
@@ -42,7 +43,7 @@ def main():
             sdk=json.loads((root/kind/'evidence/build-toolchain.json').read_text());assert sdk['SDK']==sdk['MSBuildProperties']['NETCoreSdkVersion']=='10.0.102'
             for path,item in sdk['Files'].items():assert digest(Path(path))==item['Sha256'],path
             for arm in ARMS:
-                expected=source['Arms'][kind][arm];assert expected['SourceTree']==EXPECTED[arm]
+                expected=source['Arms'][kind][arm];assert expected['SourceTree']==expected_trees[arm]
                 if arm=='candidate-final':assert expected['Commit']==a.expected_head
                 binding=proof['Arms'][arm];assert binding['Sources']=={k:v for k,v in expected['Files'].items() if k.startswith('src/')}
                 assert set(binding['Exits'])==set(MODES)|{'metadata'} and all(code==0 for code in binding['Exits'].values())

@@ -1,9 +1,9 @@
 {
   "EXECUTIVE.md": "2dccf74d6e1758d8b9cfeb5ac86eaaf7412338c33109b32d559c1afc3039aea4",
-  "README.md": "96c1a926d72f9eb2112f8fd434e305b7563fafbda046f5a01840877ff4e71567",
+  "README.md": "52a3a5ebbc3a224ab21e7aa6d096180ac74a086d74fd2fee3b75844570d615e4",
   "RESULTS.md": "33a7018c97c96092bf023cff0c7a1fb09014a57d29d9470929c761da0779f31b",
   "global.json": "a97385ba41542256aadfcc3a7f6ba18689347abc45e61d1a19980583f8c502a2",
-  "prepare_arms.py": "6a72dd117df8214901c2517b49b77443bdeea7a9b2621e411cc75fc189551497",
+  "prepare_arms.py": "aa51ee56e6877c3eb8ffc318ffd5a5bfef0d998aaeb88bc2767d44c3485a57c5",
   "prologue_metrics.py": "c0aec40a916368dbb93c50471fa6bad28b29429fb46b746a720a4a967455954a",
   "retry/Directory.Build.props": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
   "retry/Directory.Packages.props": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
@@ -31,6 +31,7 @@
   "shapes/run_probe.py": "c2358437be43fb6bc5fc3e82d68f73bcfcdc3bbb617e3ddbbf1eea05e4cbd4f2",
   "shapes/services/HotCostDynamic.Services.csproj": "9e8be6b0f334b2c27c7fbae840ae53636f04ea43c618026f50a23a26bdb95262",
   "shapes/services/Service.cs": "a5733cb5ee10490f650400141a749be96a353eac9b688d2b929735a5e18ecef2",
-  "summarize.py": "a98b92a573ce51cdf640ce20c228ee2f0f369ff31ca0988812cc547c5712d62f",
-  "test_prepare_arms.py": "8fb88de6daa62a22b485b739e94f62147a8a04aaa313d697c9667014e80fe687"
+  "summarize.py": "69a6ad9c34da357d4ae99b9b5fe0d1f063de506aadcfccc4f77e96db2b8aa537",
+  "test_prepare_arms.py": "5b8d849b22dc30448ded26e23890961f5ca02610fa5944f5fda2eceeb2508635",
+  "../maintenance-integration-sources.json": "e282c45c8de0e77a3732e8c7e5e591658563ed0379211ba451afef83c7514b62"
 }

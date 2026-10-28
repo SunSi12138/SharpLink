@@ -91,6 +91,36 @@ class ReconstructionTests(unittest.TestCase):
         other=HERE/'maintenance-stream-cost/prepare_public_arms.py'
         if other.exists():self.assertEqual(PREPARE.read_bytes(),other.read_bytes())
 
+    def run_integrated_case(self,label,wrong_candidate=False):
+        kit=self.repo/'eng'/label;kit.mkdir(parents=True)
+        (kit/'prepare_public_arms.py').write_text(PREPARE.read_text())
+        expected=self.git('rev-parse',self.candidate+':src')
+        config={'candidate_source_tree':'0'*40 if wrong_candidate else expected,
+                'arms':{'prerequisites':{'commit':self.physical,'source_tree':self.git('rev-parse',self.physical+':src')}},
+                'comparison':'fixture integrated comparison'}
+        (kit.parent/'maintenance-integration-sources.json').write_text(json.dumps(config))
+        result=subprocess.run(['python3',str(kit/'prepare_public_arms.py'),'--repo',str(self.repo),
+                               '--candidate',self.candidate,'--profile','integrated-prerequisites'],
+                              text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        return kit,result
+    def test_integrated_profile_archives_exact_source_arms(self):
+        kit,result=self.run_integrated_case('integrated-positive')
+        self.assertEqual(0,result.returncode,result.stdout)
+        proof=json.loads((kit/'source-provenance.json').read_text())
+        self.assertEqual('SourceSnapshotsVerified',proof['Status'])
+        self.assertEqual('integrated-prerequisites',proof['Profile'])
+        self.assertEqual(self.physical,proof['published-prerequisites']['Base'])
+        self.assertEqual(self.candidate,proof['candidate']['Base'])
+        self.assertEqual(self.expected[self.paths[0]],(kit/'arms/candidate'/self.paths[0]).read_text())
+        self.assertEqual(self.outer_before,self.hashes(self.repo/'src'))
+    def test_integrated_profile_rejects_wrong_candidate_source(self):
+        kit,result=self.run_integrated_case('integrated-negative',wrong_candidate=True)
+        self.assertNotEqual(0,result.returncode)
+        proof=json.loads((kit/'source-provenance.json').read_text())
+        self.assertEqual('Failed',proof['Status'])
+        self.assertIn('Integrated source tree mismatch: candidate',proof['Error'])
+        self.assertFalse((kit/'arms/candidate').exists())
+
     @classmethod
     def tearDownClass(cls):
         print('Retained deterministic source fixtures:',cls.scratch)

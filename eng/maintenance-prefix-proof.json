@@ -5,12 +5,12 @@
     {
       "purpose": "selected registration and dispatch resource lifetime",
       "path": "src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs",
-      "sha256": "b6317c83c695dd670c8318064190274501e1bf6eb71a99f8132b4d17bb9b11bc"
+      "sha256": "012eb36ece8efc6a34aa227e0972c0219125cbe833fb48eed7ae335067e26835"
     },
     {
       "purpose": "immediate admission and rejection branches",
       "path": "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
-      "sha256": "ae035e50b9b32b7fd39d45bb8b1e9946c177adc1766199517edfb935eca5224e"
+      "sha256": "c4ed7ce475c9f43e0b417e2c0fb037cac7f4eed9f819a3029d60ee3d6d5ef28c"
     },
     {
       "purpose": "request permit before asynchronous persistent decode",
@@ -69,10 +69,9 @@
       "sha256": "67cd32c591e5412af7a6262993b80200796ca562ca16aaecbe766144a6955d75"
     },
     {
-      "purpose": "intrinsic pending-node publication",
+      "purpose": "intrinsic pending-node publication and reentrant reservation/retirement ownership",
       "path": "src/SharpLink.Runtime/RpcSession.SendPump.BackpressureOwnership.cs",
-      "start": "        private ValueTask<SendEnqueueResult> EnqueueWhenFull(",
-      "sha256": "28a41e8017aa5d3a84c5613751f4bad6104d15e36d7962cdb94d0e517725bf3c"
+      "sha256": "1d447c5ab53f09bd8b19a5d27483cb969aca27284d8009b5513daa3798a900f7"
     },
     {
       "purpose": "admission publication writer seal",
@@ -102,14 +101,14 @@
       "sha256": "64db4f5ca2ec97bcee6b169e05f240b92a5a893e65f76fafc6873955360ecd95"
     },
     {
-      "purpose": "baseline service lease layout; queued-registration correction excluded",
+      "purpose": "registration lease and retirement classification; queued weak identity adds no active lease",
       "path": "src/SharpLink.Server/ServiceRegistration.cs",
-      "sha256": "07e52332895b50bc857c40e4c930359128dd67ba1f27d17deb878c7551b7f8b2"
+      "sha256": "4953426c898556cfeedff88e70594472f7b53e81d2baa9b8fc3991793aa20389"
     },
     {
-      "purpose": "baseline retained admission payload; queued-registration correction excluded",
+      "purpose": "queued selected-payload capture remains outside the no-waiting prefix",
       "path": "src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs",
-      "sha256": "e26677d28acf3b27287c9106a93ee02f0dc181c40f6e12207e615766e3d4539e"
+      "sha256": "e9b5c600234e9469aba01ba758a0f67fefee162b71fb3bd2cc34fff822375b8a"
     },
     {
       "purpose": "six invoker registration exits and one reservation per whole producer group",
