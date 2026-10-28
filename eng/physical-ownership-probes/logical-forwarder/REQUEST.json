@@ -1,4 +1,9 @@
 {
-  "state": "review-required",
-  "campaign": "logical-forwarder-d17-48tcp-v1"
+  "state": "authorized",
+  "campaign": "logical-forwarder-d17-48tcp-v1",
+  "reviewedToolCommit": "cb6c170b38b6f6fa5c93275f94043103732cd502",
+  "reviewedToolTree": "8c3e7e0aaf4f4ea26483c384ab656ee59b096fad",
+  "baseline": "ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c",
+  "candidate": "484a5d279a84a3cd9e717c1ec94d3a5a415112df",
+  "candidateTree": "5c0060b2fbd7ca41deb78022170148992d32eea6"
 }
