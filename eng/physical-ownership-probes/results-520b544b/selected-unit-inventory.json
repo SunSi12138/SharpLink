@@ -1,0 +1,17 @@
+{
+  "commit": "520b544b56af4d4b298446b96c3a39446abedfa4",
+  "filter": "/*/*/Abandoned*/*",
+  "executedPasses": 105,
+  "classCounts": {
+    "AbandonedClientApplicationTerminalTests": 4,
+    "AbandonedClientCodecOwnershipTests": 6,
+    "AbandonedClientNestedOwnershipTests": 13,
+    "AbandonedClientOwnershipTests": 29,
+    "AbandonedClientRetentionTests": 3,
+    "AbandonedGeneratedMapperOwnershipTests": 13,
+    "AbandonedGeneratedStreamOwnershipTests": 29,
+    "AbandonedPhysicalWorkCycleTests": 6,
+    "AbandonedPhysicalWorkTests": 2
+  },
+  "unmapped": []
+}

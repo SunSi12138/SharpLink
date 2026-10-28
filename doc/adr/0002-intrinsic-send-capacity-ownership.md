@@ -109,6 +109,24 @@ synchronous cancellation, cancellation/grant races, head cancellation, throwing 
 blocked return, terminal cleanup, disposal and unrelated-session isolation.
 Existing send-pump/progress/lifecycle tests check protocol and queue behavior.
 
+Synchronous queue-byte telemetry is a reentrancy boundary even while the admission
+gate is held. A waiting node claims completion before reserving capacity, so a
+listener cannot cancel or stop the same node into a second cleanup owner. A failed
+reservation emits no telemetry and restores the waiting state. After a successful
+reservation, traversal reads the claimed node's current successor: listeners may
+cancel siblings or append waiters. This preserves a single forward scan. The final
+reservation recheck also reloads the lifetime queue before updating the wake slot,
+so a listener's newly published waiter remains wakeable.
+
+Four regression cases cover cancellation of the granted node, Stop with a held
+writer return, sibling cancellation plus an appended waiter, and publication during
+the final reservation recheck. The original source fails both granted-node controls;
+the intermediate claim-only repair still fails the final-recheck wake-slot control.
+The repaired source passes all 26 ownership fixture cases in a direct local replay
+against the real runtime. That replay is not a TUnit run; exact-head hosted TUnit and
+historical regression workflows remain the merge gate. These repairs add no work to
+immediate successful send, TryReserve, or ordinary release.
+
 Performance acceptance compares baseline commit
 `13928a35df4bff3cd99b14bd1df131aa3eb3bcdb` with the exact candidate using the same
 .NET 10.0.102 SDK. Required evidence includes resolved IL, real object sizes/offsets,

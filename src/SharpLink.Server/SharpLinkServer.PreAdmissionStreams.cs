@@ -4,6 +4,48 @@ internal sealed partial class SharpLinkServer
 {
     private const int UnresolvedClientStreamCount = -1;
 
+    // Keep this queued-only resource skeleton in exact parity with TryCopyAdmissionPayload.
+    // Combining capture with the existing cold call preserves normal dispatch register lifetimes.
+    // The source-parity test guards the deliberate copy; no lease is acquired here.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool TryCopySelectedAdmissionPayload(
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags,
+        ServiceRegistration service,
+        out ServerRetainedAdmissionPayload? retainedPayload)
+    {
+        retainedPayload = null;
+        ServerRetainedCompressedPermit? retainedPermit = null;
+        var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
+        if (isCompressed &&
+            !ResourceGovernor.TryAcquireRetained(payload.Length, out retainedPermit))
+        {
+            return false;
+        }
+
+        IRpcByteBufferWriter? owner = null;
+        try
+        {
+            owner = _runtimeContext.Buffers.Rent(checked((int)payload.Length));
+            foreach (var segment in payload)
+                owner.Write(segment.Span);
+            retainedPayload = new ServerRetainedAdmissionPayload(
+                _runtimeContext.Buffers,
+                owner,
+                retainedPermit);
+            retainedPayload.CaptureSelectedService(service);
+            owner = null;
+            retainedPermit = null;
+            return true;
+        }
+        finally
+        {
+            if (owner is not null)
+                _runtimeContext.Buffers.Return(owner);
+            retainedPermit?.Dispose();
+        }
+    }
+
     private bool TryCopyAdmissionPayload(
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
@@ -229,6 +271,12 @@ internal sealed partial class SharpLinkServer
 
 internal sealed class ServerRetainedAdmissionPayload : IDisposable
 {
+    internal SharpLinkServer.QueuedServiceSelection SelectedService { get; private set; }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal void CaptureSelectedService(ServiceRegistration service)
+        => SelectedService = new SharpLinkServer.QueuedServiceSelection(service);
+
     private readonly SharpLinkBufferWriterPool _pool;
     private readonly IRpcByteBufferWriter _owner;
     private readonly ServerRetainedCompressedPermit? _retainedPermit;
@@ -320,6 +368,7 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
 
     private void ReleaseCore()
     {
+        SelectedService = default;
         try
         {
             _pool.Return(_owner);

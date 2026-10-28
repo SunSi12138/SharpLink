@@ -34,6 +34,7 @@ public static class Program
 
     public static void Main()
     {
+        SharpLink.PackageSmoke.GenerationControlSerializationProbe.Run();
         // The generated owner-local factory carries and validates the ABI requirement.
         // No process-global Type catalog is needed by generated consumers.
         using var context = new SharpLinkRuntimeContextBuilder().Build();

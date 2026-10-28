@@ -14,6 +14,7 @@ PACKAGES = (
     "SharpLink.Client",
     "SharpLink.Server",
     "SharpLink.Hosting",
+    "SharpLink.GenerationControl",
     "SharpLink.Sdk",
     "SharpLink.Serializer.SharpPack",
     "SharpLink.Compression.Zstd",
@@ -63,7 +64,7 @@ def main():
         options.baseline.mkdir(parents=True, exist_ok=True)
         for name in sorted(expected_files | {forwarders_name}):
             (options.baseline / name).write_bytes((options.output / name).read_bytes())
-        print("Wrote eight candidate API baselines and SDK forwarder inventory; review the diff before committing.")
+        print("Wrote nine candidate API baselines and SDK forwarder inventory; review the diff before committing.")
         return
 
     baseline_files = {path.name for path in options.baseline.glob("*.api.txt")}
@@ -92,7 +93,7 @@ def main():
         diff = options.output / "public-api.diff"
         diff.write_text("".join(differences), encoding="utf-8")
         raise ValueError(f"Unreviewed public API or type-forwarding identity changes; inspect {diff}")
-    print("Verified eight package public/protected APIs and the exact SDK ExportedType forwarding inventory.")
+    print("Verified nine package public/protected APIs and the exact SDK ExportedType forwarding inventory.")
 
 
 if __name__ == "__main__":

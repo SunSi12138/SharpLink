@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics.Metrics;
 using System.IO.Pipelines;
 using System.Reflection;
 
@@ -7,6 +8,308 @@ namespace SharpLink.UnitTests.Runtime;
 public sealed class BackpressuredSendOwnershipTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task TerminalDrainClosesQueueBeforeAReservedProducerPublishes(bool protocolProgress)
+    {
+        await using var fixture = new Fixture();
+        fixture.Session.SendPacket(fixture.Frame(1, 800));
+        await fixture.Output.FirstFlushEntered.Task.WaitAsync(Timeout);
+        var pump = Pump(fixture.Session);
+        var pumpTask = (Task)Field(pump, "_pumpLifetime")!;
+        var packet = new ReturnGateWriter();
+        packet.ReleaseReturn();
+        using (packet.BeginPacketScope(protocolProgress ? ProtocolV2FrameType.Ping : ProtocolV2FrameType.Response,
+                   ProtocolV2FrameFlags.None, 2))
+        {
+        }
+        var scope = new AsyncLocal<bool>();
+        var reserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var submitted = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resumeProducer = new ManualResetEventSlim();
+        Exception? callbackFailure = null;
+        using var listener = ListenForReservation(scope, () =>
+        {
+            reserved.TrySetResult();
+            if (!resumeProducer.Wait(Timeout))
+                callbackFailure = new TimeoutException("the reserved producer was not resumed");
+        });
+        var producer = new Thread(() =>
+        {
+            scope.Value = true;
+            try
+            {
+                fixture.Session.SendPacket(packet);
+                submitted.TrySetResult(null);
+            }
+            catch (Exception exception) { submitted.TrySetResult(exception); }
+        })
+        { IsBackground = true };
+        try
+        {
+            producer.Start();
+            await reserved.Task.WaitAsync(Timeout);
+
+            // Model the reachable Stop interleaving after publishing _stopped,
+            // before either writer is completed. The ordinary producer has
+            // passed its stop check and reserved capacity, but has not TryWritten.
+            // Do not call Stop/Dispose before the assertions: either would hide
+            // the channel-publication window this controlled schedule exercises.
+            pump.GetType().GetField("_stopped", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(pump, 1);
+            fixture.Output.Release();
+            await pumpTask.WaitAsync(Timeout);
+            Ensure(packet.ReturnCount == 0 && fixture.Session.QueuedSendBytes == packet.WrittenCount,
+                "the paused producer must still own its exact reservation after the pump has exited");
+
+            resumeProducer.Set();
+            var failure = await submitted.Task.WaitAsync(Timeout);
+            Ensure(producer.Join(Timeout), "the resumed producer must finish its own cleanup");
+            Ensure(callbackFailure is null, "the reservation callback must stay within its controlled phase");
+            Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed } &&
+                packet.ReturnCount == 1 && fixture.Session.QueuedSendBytes == 0,
+                $"the terminal queue must reject late publication and return it once: failure={failure?.GetType().Name ?? "none"}, returns={packet.ReturnCount}, bytes={fixture.Session.QueuedSendBytes}");
+        }
+        finally
+        {
+            resumeProducer.Set();
+            fixture.Output.Release();
+            if ((producer.ThreadState & ThreadState.Unstarted) == 0)
+                Ensure(producer.Join(Timeout), "the dedicated producer must terminate");
+            await fixture.Session.DisposeAsync().AsTask().WaitAsync(Timeout);
+            // The historical counterexample accepts a frame after its last drain.
+            // Reclaim it only after assertions and after both real owners finish.
+            pump.GetType().GetMethod("DrainQueuedFrames", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(pump, [new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "test cleanup")]);
+        }
+    }
+
+    [Test]
+    public async Task ReservationMetricCancellationCannotStealGrantedFrame()
+    {
+        var scope = new AsyncLocal<bool>();
+        scope.Value = true;
+        await using var fixture = new Fixture();
+        fixture.Session.SendPacket(fixture.Frame(1, 800));
+        scope.Value = false;
+        await fixture.Output.FirstFlushEntered.Task.WaitAsync(Timeout);
+        using var cancellation = new CancellationTokenSource();
+        var packet = new ReturnGateWriter();
+        packet.ReleaseReturn();
+        fixture.WriteFrame(packet, 2, 800);
+        var send = fixture.Session.SendPacketWithBackpressureAsync(packet, cancellation.Token).AsTask();
+        var drain = fixture.Session.CaptureBackpressuredSendDrain();
+        var callbacks = 0;
+        Exception? callbackFailure = null;
+        using var listener = ListenForReservation(scope, () =>
+        {
+            Interlocked.Increment(ref callbacks);
+            try { cancellation.Cancel(); }
+            catch (Exception exception) { callbackFailure = exception; }
+        });
+        fixture.Output.Release();
+        var failure = await FailureAsync(send);
+        await drain.WaitAsync(Timeout);
+        await fixture.Session.FlushSendQueueAsync().AsTask().WaitAsync(Timeout);
+        Ensure(callbacks == 1 && callbackFailure is null && cancellation.IsCancellationRequested,
+            "the exact pump reservation must synchronously run the cancellation callback");
+        Ensure(failure is null, "the already claimed reservation wins over reentrant cancellation");
+        var ids = await fixture.ReadRequestIdsAsync();
+        Ensure(ids.Count == 2 && ids[0] == 1 && ids[1] == 2,
+            "the claimed frame must enter FIFO once and remain readable until the pump returns it");
+        Ensure(packet.ReturnCount == 1 && fixture.Session.QueuedSendBytes == 0,
+            "a telemetry cancellation must not double-return or leak the reservation");
+    }
+
+    [Test]
+    public async Task ReservationMetricStopRetainsCleanupUntilWriterReturns()
+    {
+        var scope = new AsyncLocal<bool>();
+        scope.Value = true;
+        await using var fixture = new Fixture();
+        fixture.Session.SendPacket(fixture.Frame(1, 800));
+        scope.Value = false;
+        await fixture.Output.FirstFlushEntered.Task.WaitAsync(Timeout);
+        var packet = new ReturnGateWriter();
+        fixture.WriteFrame(packet, 2, 800);
+        var send = fixture.Session.SendPacketWithBackpressureAsync(packet).AsTask();
+        var drain = fixture.Session.CaptureBackpressuredSendDrain();
+        var callbacks = 0;
+        Exception? callbackFailure = null;
+        using var listener = ListenForReservation(scope, () =>
+        {
+            Interlocked.Increment(ref callbacks);
+            try { Pump(fixture.Session).GetType().GetMethod("Stop")!.Invoke(Pump(fixture.Session), null); }
+            catch (Exception exception) { callbackFailure = exception; }
+        });
+        try
+        {
+            fixture.Output.Release();
+            await packet.ReturnEntered.Task.WaitAsync(Timeout);
+            Ensure(!drain.IsCompleted && !send.IsCompleted,
+                "stopping inside a reservation callback cannot retire a physically held writer");
+        }
+        finally { packet.ReleaseReturn(); }
+        Ensure(await FailureAsync(send) is SharpLinkException,
+            "a synchronously stopped pump must reject the frame rather than enqueue it");
+        await drain.WaitAsync(Timeout);
+        await fixture.Session.DisposeAsync().AsTask().WaitAsync(Timeout);
+        Ensure(callbacks == 1 && callbackFailure is null && packet.ReturnCount == 1 &&
+            fixture.Session.QueuedSendBytes == 0,
+            "stop reentrancy must preserve exactly one cleanup owner and balanced capacity");
+    }
+
+    [Test]
+    public async Task ReservationMetricSiblingCancellationKeepsLiveSuccessorAndAppendedWaiter()
+    {
+        var scope = new AsyncLocal<bool>();
+        scope.Value = true;
+        await using var fixture = new Fixture();
+        fixture.Session.SendPacket(fixture.Frame(1, 800));
+        scope.Value = false;
+        await fixture.Output.FirstFlushEntered.Task.WaitAsync(Timeout);
+        using var cancellation = new CancellationTokenSource();
+        var grantedPacket = new ReturnGateWriter();
+        var cancelledPacket = new ReturnGateWriter();
+        var successorPacket = new ReturnGateWriter();
+        var appendedPacket = new ReturnGateWriter();
+        cancelledPacket.ReleaseReturn();
+        successorPacket.ReleaseReturn();
+        appendedPacket.ReleaseReturn();
+        fixture.WriteFrame(grantedPacket, 2, 400);
+        fixture.WriteFrame(cancelledPacket, 3, 400);
+        fixture.WriteFrame(successorPacket, 4, 400);
+        fixture.WriteFrame(appendedPacket, 5, 800);
+        var granted = fixture.Session.SendPacketWithBackpressureAsync(grantedPacket).AsTask();
+        var cancelled = fixture.Session.SendPacketWithBackpressureAsync(cancelledPacket, cancellation.Token).AsTask();
+        var successor = fixture.Session.SendPacketWithBackpressureAsync(successorPacket).AsTask();
+        Task? appended = null;
+        Exception? callbackFailure = null;
+        using var listener = ListenForReservation(scope, () =>
+        {
+            try
+            {
+                cancellation.Cancel();
+                appended = fixture.Session.SendPacketWithBackpressureAsync(appendedPacket).AsTask();
+            }
+            catch (Exception exception) { callbackFailure = exception; }
+        });
+        try
+        {
+            fixture.Output.Release();
+            await grantedPacket.ReturnEntered.Task.WaitAsync(Timeout);
+            await granted.WaitAsync(Timeout);
+            await successor.WaitAsync(Timeout);
+            Ensure(callbackFailure is null && appended is { IsCompleted: false },
+                "the observer must append a genuinely waiting frame, without losing the live successor");
+            Ensure(await FailureAsync(cancelled) is OperationCanceledException && cancelledPacket.ReturnCount == 1,
+                "the removed successor retains its own independent cancellation cleanup");
+            Ensure(!fixture.Session.CaptureBackpressuredSendDrain().IsCompleted,
+                "the observer's appended waiter stays owned while capacity is held");
+        }
+        finally { grantedPacket.ReleaseReturn(); }
+        await appended!.WaitAsync(Timeout);
+        await fixture.Session.CaptureBackpressuredSendDrain().WaitAsync(Timeout);
+        await fixture.Session.FlushSendQueueAsync().AsTask().WaitAsync(Timeout);
+        var ids = await fixture.ReadRequestIdsAsync();
+        Ensure(ids.Count == 4 && ids[0] == 1 && ids[1] == 2 && ids[2] == 4 && ids[3] == 5,
+            "live and appended successors enter FIFO once; the cancelled successor never enters it");
+        Ensure(grantedPacket.ReturnCount == 1 && successorPacket.ReturnCount == 1 &&
+            appendedPacket.ReturnCount == 1 && fixture.Session.QueuedSendBytes == 0,
+            "reentrant queue mutation must not leak or duplicate any remaining frame");
+    }
+
+    [Test]
+    public async Task FinalReservationMetricKeepsReentrantlyPublishedWaiterWakeable()
+    {
+        await using var fixture = new Fixture();
+        fixture.Session.SendPacket(fixture.Frame(1, 1000));
+        await fixture.Output.FirstFlushEntered.Task.WaitAsync(Timeout);
+        var pump = Pump(fixture.Session);
+        var gate = (Lock)Field(pump, "_admissionGate")!;
+        var scope = new AsyncLocal<bool>();
+        using var cancellation = new CancellationTokenSource();
+        var packet = new ReturnGateWriter();
+        var appendedPacket = new ReturnGateWriter();
+        appendedPacket.ReleaseReturn();
+        fixture.WriteFrame(packet, 2, 800);
+        fixture.WriteFrame(appendedPacket, 3, 800);
+        Task? appended = null;
+        Exception? callbackFailure = null;
+        using var listener = ListenForReservation(scope, () =>
+        {
+            try { appended = fixture.Session.SendPacketWithBackpressureAsync(appendedPacket, cancellation.Token).AsTask(); }
+            catch (Exception exception) { callbackFailure = exception; }
+        });
+        using var started = new ManualResetEventSlim();
+        var submitted = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var producer = new Thread(() =>
+        {
+            scope.Value = true;
+            started.Set();
+            try { submitted.TrySetResult(fixture.Session.SendPacketWithBackpressureAsync(packet).AsTask()); }
+            catch (Exception exception) { submitted.TrySetException(exception); }
+        })
+        { IsBackground = true };
+        try
+        {
+            using (gate.EnterScope())
+            {
+                producer.Start();
+                Ensure(started.Wait(Timeout) && SpinWait.SpinUntil(
+                    () => (producer.ThreadState & ThreadState.WaitSleepJoin) != 0, Timeout),
+                    "the producer must reach the final recheck's admission gate while full");
+                Ensure(Field(pump, "_capacityChanged") is null, "the first waiter has not published yet");
+                fixture.Output.Release();
+                Ensure(SpinWait.SpinUntil(() => fixture.Session.QueuedSendBytes == 0, Timeout),
+                    "capacity must recover before the final recheck can acquire the gate");
+            }
+            await (await submitted.Task.WaitAsync(Timeout)).WaitAsync(Timeout);
+            await packet.ReturnEntered.Task.WaitAsync(Timeout);
+            Ensure(callbackFailure is null && appended is { IsCompleted: false },
+                "the final recheck's callback must publish a genuinely capacity-blocked send");
+            using (gate.EnterScope())
+                Ensure(Field(pump, "_capacityChanged") is not null,
+                    "the final recheck must not overwrite a queue published by its own metric callback");
+            packet.ReleaseReturn();
+            await appended!.WaitAsync(Timeout);
+            await fixture.Session.CaptureBackpressuredSendDrain().WaitAsync(Timeout);
+            await fixture.Session.FlushSendQueueAsync().AsTask().WaitAsync(Timeout);
+            var ids = await fixture.ReadRequestIdsAsync();
+            Ensure(ids.Count == 3 && ids[0] == 1 && ids[1] == 2 && ids[2] == 3 &&
+                packet.ReturnCount == 1 && appendedPacket.ReturnCount == 1 && fixture.Session.QueuedSendBytes == 0,
+                "both final-recheck and callback sends must drain once without another capacity pulse");
+        }
+        finally
+        {
+            packet.ReleaseReturn();
+            cancellation.Cancel();
+            if ((producer.ThreadState & ThreadState.Unstarted) == 0)
+                Ensure(producer.Join(Timeout), "the dedicated producer must terminate");
+        }
+    }
+
+    private static MeterListener ListenForReservation(AsyncLocal<bool> scope, Action callback)
+    {
+        var listener = new MeterListener();
+        var observed = 0;
+        listener.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter.Name == "SharpLink" && instrument.Name == "sharplink.send.queue.bytes")
+                owner.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, bytes, _, _) =>
+        {
+            // Only the selected fixture operation inherits this context;
+            // unrelated parallel sessions cannot trigger this observer.
+            if (scope.Value && bytes > 0 && Interlocked.Exchange(ref observed, 1) == 0)
+                callback();
+        });
+        listener.Start();
+        return listener;
+    }
 
     [Test]
     public async Task OrdinaryFifoFenceAloneCanOvertakeAPreReserveSend()

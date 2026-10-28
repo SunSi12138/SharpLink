@@ -39,6 +39,10 @@ internal sealed partial class RpcSession
                     pending.RegisterCancellation();
                     return new ValueTask<SendEnqueueResult>(pending.Task);
                 }
+                // A successful final reserve invokes telemetry synchronously;
+                // its listener can publish a new queue while this gate is held.
+                // Do not clear that queue's wake slot using the earlier snapshot.
+                queue = _pumpLifetime as PendingEnqueueQueue;
                 _capacityChanged = queue?.LastWaiting is null ? null : queue;
             }
 
@@ -86,8 +90,14 @@ internal sealed partial class RpcSession
                     else
                     {
                         var frame = pending.Frame;
+                        // TryReserve publishes synchronous telemetry. Claim the
+                        // node before a listener can reenter cancellation/Stop
+                        // and start a second cleanup owner. A failed reserve
+                        // publishes nothing, so it can safely remain waiting.
+                        pending.Completing = true;
                         if (!TryReserve(frame.Length, frame.IsProtocolProgress))
                         {
+                            pending.Completing = false;
                             pending = next;
                             continue;
                         }
@@ -100,6 +110,11 @@ internal sealed partial class RpcSession
                             pending.Frame = default;
                         }
                     }
+                    // This claimed node stays linked across telemetry, but a
+                    // listener may retire its successor or append a waiter.
+                    // Read the live successor before moving this node, without
+                    // rescanning earlier capacity-blocked waiters.
+                    next = pending.Next;
                     queue!.Retire(pending);
                     pending.ReadyNext = ready;
                     ready = pending;

@@ -185,8 +185,11 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
     [Test]
     public async Task LocalAbortCleanupRetentionShouldOutliveEarlyConsumerDispose()
     {
-        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
         var dispatcher = PooledAsyncStreamDispatcher<int>.Rent(default, Int32Codec.Instance);
+        // Observe this lease, not the process-wide int pool that unrelated tests also use.
+        var returnTransitions = 0;
+        dispatcher.SetAfterReturnTransitionForTests(() => Interlocked.Increment(ref returnTransitions));
+        var unrelated = PooledAsyncStreamDispatcher<int>.Rent(default, Int32Codec.Instance);
         var creditedBytes = 0;
         dispatcher.SetBytesConsumedCallback(
             (_, _, bytes) => Interlocked.Add(ref creditedBytes, bytes),
@@ -204,15 +207,21 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
         // perform the one-shot buffer drain, but it must not return the dispatcher to the
         // process-wide pool before the terminal owner releases its cleanup retention.
         await enumerator.DisposeAsync();
+
+        // A different dispatcher may return between disposal and the retention assertion.
+        // Force that interleaving without depending on parallel scheduling or wall-clock waits.
+        unrelated.Complete(exception: null);
+        await unrelated.DisposeAsync();
         Ensure(Volatile.Read(ref creditedBytes) == 4,
             "early disposal must preserve receive credit while sharing local-abort retirement");
-        Ensure(PooledAsyncStreamDispatcher<int>.RetainedCountForTests == 0,
+        Ensure(Volatile.Read(ref returnTransitions) == 0,
             "the terminal cleanup retention must keep a disposed dispatcher out of the pool");
 
         localAbort.RetireLocalAbortBuffer();
-        Ensure(PooledAsyncStreamDispatcher<int>.RetainedCountForTests == 1,
-            "releasing terminal cleanup ownership must make the finalized dispatcher reusable");
-        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+        Ensure(Volatile.Read(ref returnTransitions) == 1,
+            "releasing terminal cleanup ownership must return the finalized dispatcher exactly once");
+        Ensure(Volatile.Read(ref creditedBytes) == 4,
+            "terminal cleanup must not return credit twice after early disposal");
     }
 
     [Test]

@@ -19,7 +19,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="SharpLink.GenerationControl" Version="$(SharpLinkPackageVersion)" />
     <PackageReference Include="SharpLink.Runtime" Version="$(SharpLinkPackageVersion)" />
     <PackageReference Include="SharpLink.Sdk" Version="$(SharpLinkPackageVersion)" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../SharpLink.PackageSmoke/GenerationControlSerializationProbe.cs" Link="GenerationControlSerializationProbe.cs" />
   </ItemGroup>
 </Project>

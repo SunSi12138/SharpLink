@@ -7,6 +7,10 @@ on:
   push:
     branches:
       - feat/cooperative-maintenance-20261022
+      - fix/queued-registration-coherence-20261022
+      - fix/physical-work-ownership-20261022
+      - fix/backpressured-send-ownership-20261022
+      - codex/send-pump-terminal-publication
   workflow_dispatch:
 
 concurrency:
@@ -45,6 +49,12 @@ jobs:
 
       - name: Generated ABI evidence shell regression tests
         run: python3 -m unittest discover -s eng/tests -p 'test_generated_abi_evidence_batch.py' -v
+
+      - name: Published API evidence regression tests
+        run: python3 -m unittest discover -s eng/tests -p 'test_compare_published_api.py' -v
+
+      - name: Admitted dispatch source parity guards
+        run: python3 eng/tests/test_admitted_dispatch_parity.py
 
       - name: Maintainability Debt Gate Tests
         run: python3 eng/test-verify-maintainability.py
@@ -87,7 +97,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   external-server-tcp-api:
-    name: Server TCP external consumer compatibility
+    name: TCP, Builder and logger external consumer compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -395,3 +405,38 @@ jobs:
 
   producer-cost-evidence:
     uses: ./.github/workflows/producer-hot-evidence.yml
+  queued-dispatch-evidence:
+    name: Queued dispatch source and native evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate and public baseline history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Verify outlined resource skeleton parity
+        run: python3 eng/tests/test_admitted_dispatch_parity.py
+
+      - name: Capture paired layout and native listings without timing thresholds
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/queued-registration-baseline"
+          git worktree add --detach "$baseline" 13928a35df4bff3cd99b14bd1df131aa3eb3bcdb
+          python3 eng/queued-registration-probes/run.py \
+            --baseline "$baseline" --candidate "$GITHUB_WORKSPACE" \
+            --output "$GITHUB_WORKSPACE/artifacts/queued-dispatch-evidence" \
+            --default-repeats 4
+
+      - name: Upload fresh paired evidence including negative samples
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: queued-dispatch-evidence-${{ github.sha }}
+          path: artifacts/queued-dispatch-evidence
+          if-no-files-found: error
+          retention-days: 30

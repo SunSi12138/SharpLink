@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><Optimize>true</Optimize><EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles><CompilerGeneratedFilesOutputPath>obj/generated</CompilerGeneratedFilesOutputPath></PropertyGroup><ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /><Reference Include="SharpLink.Abstractions"><HintPath>$(LibraryRoot)/SharpLink.Abstractions.dll</HintPath></Reference>
+<Reference Include="SharpLink.Runtime"><HintPath>$(LibraryRoot)/SharpLink.Runtime.dll</HintPath></Reference>
+<Reference Include="SharpLink.Client"><HintPath>$(LibraryRoot)/SharpLink.Client.dll</HintPath></Reference>
+<Reference Include="SharpLink.Server"><HintPath>$(LibraryRoot)/SharpLink.Server.dll</HintPath></Reference>
+<Reference Include="SharpLink.Sdk"><HintPath>$(LibraryRoot)/SharpLink.Sdk.dll</HintPath></Reference>
+<Reference Include="SharpLink.Serializer.SharpPack"><HintPath>$(LibraryRoot)/SharpLink.Serializer.SharpPack.dll</HintPath></Reference>
+<Reference Include="SharpPack.Core"><HintPath>$(LibraryRoot)/SharpPack.Core.dll</HintPath></Reference></ItemGroup><PropertyGroup><OutputType>Exe</OutputType><AssemblyName>PhysicalTcpProbe</AssemblyName></PropertyGroup></Project>
