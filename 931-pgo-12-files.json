@@ -1,0 +1,1166 @@
+[
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/build.log",
+    "bytes": 3980
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Abstractions.log",
+    "bytes": 506
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Client.log",
+    "bytes": 775
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Compression.Zstd.log",
+    "bytes": 825
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-GenerationControl.log",
+    "bytes": 992
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Hosting.log",
+    "bytes": 1058
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Runtime.log",
+    "bytes": 638
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Sdk.log",
+    "bytes": 773
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Serializer.SharpPack.log",
+    "bytes": 703
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Server.log",
+    "bytes": 775
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/package-verification.log",
+    "bytes": 91
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Abstractions.3.0.0.nupkg",
+    "bytes": 160866
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Abstractions.3.0.0.snupkg",
+    "bytes": 28544
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Client.3.0.0.nupkg",
+    "bytes": 391723
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Client.3.0.0.snupkg",
+    "bytes": 229671
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Compression.Zstd.3.0.0.nupkg",
+    "bytes": 54135
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Compression.Zstd.3.0.0.snupkg",
+    "bytes": 10724
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.GenerationControl.3.0.0.nupkg",
+    "bytes": 69939
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.GenerationControl.3.0.0.snupkg",
+    "bytes": 27476
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Hosting.3.0.0.nupkg",
+    "bytes": 63952
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Hosting.3.0.0.snupkg",
+    "bytes": 13036
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Runtime.3.0.0.nupkg",
+    "bytes": 266240
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Runtime.3.0.0.snupkg",
+    "bytes": 75844
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Sdk.3.0.0.nupkg",
+    "bytes": 253594
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Sdk.3.0.0.snupkg",
+    "bytes": 9711
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Serializer.SharpPack.3.0.0.nupkg",
+    "bytes": 53351
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Serializer.SharpPack.3.0.0.snupkg",
+    "bytes": 10003
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Server.3.0.0.nupkg",
+    "bytes": 247606
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/packages/SharpLink.Server.3.0.0.snupkg",
+    "bytes": 70993
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/build-dotnet-info.txt",
+    "bytes": 1668
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/build-server-shutdown.log",
+    "bytes": 156
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/build.log",
+    "bytes": 4369
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Abstractions.log",
+    "bytes": 509
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Client.log",
+    "bytes": 780
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Compression.Zstd.log",
+    "bytes": 830
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-GenerationControl.log",
+    "bytes": 998
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Hosting.log",
+    "bytes": 1065
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Runtime.log",
+    "bytes": 642
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Sdk.log",
+    "bytes": 778
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Serializer.SharpPack.log",
+    "bytes": 707
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Server.log",
+    "bytes": 780
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/package-verification.log",
+    "bytes": 91
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Abstractions.3.0.0.nupkg",
+    "bytes": 160851
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Abstractions.3.0.0.snupkg",
+    "bytes": 28540
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Client.3.0.0.nupkg",
+    "bytes": 392053
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Client.3.0.0.snupkg",
+    "bytes": 230122
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Compression.Zstd.3.0.0.nupkg",
+    "bytes": 54121
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Compression.Zstd.3.0.0.snupkg",
+    "bytes": 10716
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.GenerationControl.3.0.0.nupkg",
+    "bytes": 69940
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.GenerationControl.3.0.0.snupkg",
+    "bytes": 27468
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Hosting.3.0.0.nupkg",
+    "bytes": 63946
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Hosting.3.0.0.snupkg",
+    "bytes": 13027
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Runtime.3.0.0.nupkg",
+    "bytes": 270416
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Runtime.3.0.0.snupkg",
+    "bytes": 77109
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Sdk.3.0.0.nupkg",
+    "bytes": 253579
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Sdk.3.0.0.snupkg",
+    "bytes": 9705
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Serializer.SharpPack.3.0.0.nupkg",
+    "bytes": 53342
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Serializer.SharpPack.3.0.0.snupkg",
+    "bytes": 9996
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Server.3.0.0.nupkg",
+    "bytes": 247970
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/packages/SharpLink.Server.3.0.0.snupkg",
+    "bytes": 71091
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-ablation-plan.json",
+    "bytes": 1442
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/PhysicalTcpProbe",
+    "bytes": 78256
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/PhysicalTcpProbe.deps.json",
+    "bytes": 3033
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/PhysicalTcpProbe.dll",
+    "bytes": 52224
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/PhysicalTcpProbe.pdb",
+    "bytes": 24692
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/PhysicalTcpProbe.runtimeconfig.json",
+    "bytes": 473
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/ScalarStreamModule.dll",
+    "bytes": 25088
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Client.pdb",
+    "bytes": 374320
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Server.dll",
+    "bytes": 488960
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/baseline/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/PhysicalTcpProbe",
+    "bytes": 78256
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/PhysicalTcpProbe.deps.json",
+    "bytes": 3033
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/PhysicalTcpProbe.dll",
+    "bytes": 52224
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/PhysicalTcpProbe.pdb",
+    "bytes": 24692
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/PhysicalTcpProbe.runtimeconfig.json",
+    "bytes": 473
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/ScalarStreamModule.dll",
+    "bytes": 25088
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Client.pdb",
+    "bytes": 374320
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Server.dll",
+    "bytes": 488960
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/candidate/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-prepared/prepared-manifest.json",
+    "bytes": 6744
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/matrix-manifest.json",
+    "bytes": 14079
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r1-baseline.host.json",
+    "bytes": 2411
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r1-baseline.json",
+    "bytes": 7689
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r1-baseline.log",
+    "bytes": 7690
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r1-candidate.host.json",
+    "bytes": 2417
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r1-candidate.json",
+    "bytes": 7490
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r1-candidate.log",
+    "bytes": 7491
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r2-baseline.host.json",
+    "bytes": 2416
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r2-baseline.json",
+    "bytes": 7690
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r2-baseline.log",
+    "bytes": 7691
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r2-candidate.host.json",
+    "bytes": 2417
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r2-candidate.json",
+    "bytes": 7490
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r2-candidate.log",
+    "bytes": 7491
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r3-baseline.host.json",
+    "bytes": 2417
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r3-baseline.json",
+    "bytes": 7690
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r3-baseline.log",
+    "bytes": 7691
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r3-candidate.host.json",
+    "bytes": 2422
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r3-candidate.json",
+    "bytes": 7488
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r3-candidate.log",
+    "bytes": 7489
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r4-baseline.host.json",
+    "bytes": 2414
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r4-baseline.json",
+    "bytes": 7690
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r4-baseline.log",
+    "bytes": 7691
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r4-candidate.host.json",
+    "bytes": 2422
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r4-candidate.json",
+    "bytes": 7488
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r4-candidate.log",
+    "bytes": 7489
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r5-baseline.host.json",
+    "bytes": 2422
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r5-baseline.json",
+    "bytes": 7688
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r5-baseline.log",
+    "bytes": 7689
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r5-candidate.host.json",
+    "bytes": 2428
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r5-candidate.json",
+    "bytes": 7487
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r5-candidate.log",
+    "bytes": 7488
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r6-baseline.host.json",
+    "bytes": 2427
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r6-baseline.json",
+    "bytes": 7688
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r6-baseline.log",
+    "bytes": 7689
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r6-candidate.host.json",
+    "bytes": 2430
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r6-candidate.json",
+    "bytes": 7487
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/runs/dynamic-intercepted-n100-c1-r6-candidate.log",
+    "bytes": 7488
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/sample-validation.json",
+    "bytes": 1047
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/summary-integrity.json",
+    "bytes": 318
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/summary.json",
+    "bytes": 4324
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r1-baseline.json",
+    "bytes": 206420
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r1-candidate.json",
+    "bytes": 212019
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r2-baseline.json",
+    "bytes": 204286
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r2-candidate.json",
+    "bytes": 205420
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r3-baseline.json",
+    "bytes": 218193
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r3-candidate.json",
+    "bytes": 200578
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r4-baseline.json",
+    "bytes": 201509
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r4-candidate.json",
+    "bytes": 205953
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r5-baseline.json",
+    "bytes": 207179
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r5-candidate.json",
+    "bytes": 209363
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r6-baseline.json",
+    "bytes": 203578
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp/ticks/dynamic-intercepted-n100-c1-r6-candidate.json",
+    "bytes": 209886
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp-run.log",
+    "bytes": 1150
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/client-tcp-summary.log",
+    "bytes": 1162
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/complete.json",
+    "bytes": 260
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/cpu-topology.json",
+    "bytes": 629
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/cpu.txt",
+    "bytes": 3189
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/experiment.json",
+    "bytes": 1055
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/measurement-start.json",
+    "bytes": 119
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight/baseline-jit.txt",
+    "bytes": 776010
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight/baseline.host.json",
+    "bytes": 2265
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight/baseline.json",
+    "bytes": 4772
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight/baseline.log",
+    "bytes": 0
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight/candidate-jit.txt",
+    "bytes": 764706
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight/candidate.host.json",
+    "bytes": 2272
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight/candidate.json",
+    "bytes": 4572
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight/candidate.log",
+    "bytes": 0
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/preflight-gate.json",
+    "bytes": 8344
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/runtime-dotnet-info.txt",
+    "bytes": 1018
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepare.log",
+    "bytes": 108
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe",
+    "bytes": 78256
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe.deps.json",
+    "bytes": 3033
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe.dll",
+    "bytes": 52224
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe.pdb",
+    "bytes": 24692
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/ScalarStreamModule.dll",
+    "bytes": 25088
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Client.pdb",
+    "bytes": 374320
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Server.dll",
+    "bytes": 487936
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/baseline/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/Directory.Build.props",
+    "bytes": 12
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/Directory.Build.targets",
+    "bytes": 12
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/Contract.cs",
+    "bytes": 569
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/ScalarStreamModule.deps.json",
+    "bytes": 3039
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/ScalarStreamModule.dll",
+    "bytes": 25088
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/ScalarStreamModule.pdb",
+    "bytes": 29864
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Client.pdb",
+    "bytes": 374320
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Server.dll",
+    "bytes": 487936
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/module.csproj",
+    "bytes": 1350
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/Program.cs",
+    "bytes": 12062
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe",
+    "bytes": 78256
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe.deps.json",
+    "bytes": 3033
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe.dll",
+    "bytes": 52224
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe.pdb",
+    "bytes": 24692
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Client.pdb",
+    "bytes": 374320
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Server.dll",
+    "bytes": 487936
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/probe.csproj",
+    "bytes": 1314
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe",
+    "bytes": 78256
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe.deps.json",
+    "bytes": 3033
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe.dll",
+    "bytes": 52224
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe.pdb",
+    "bytes": 24692
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/ScalarStreamModule.dll",
+    "bytes": 25088
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Client.pdb",
+    "bytes": 374320
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Server.dll",
+    "bytes": 488960
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/candidate/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/module-build.log",
+    "bytes": 351
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/prepared-manifest.json",
+    "bytes": 4297
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/probe-build.log",
+    "bytes": 345
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/uname.txt",
+    "bytes": 113
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-runtime-install/aspnetcore.log",
+    "bytes": 1058
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-runtime-install/dotnet-install.sh",
+    "bytes": 63563
+  },
+  {
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-runtime-install/dotnet.log",
+    "bytes": 1013
+  }
+]

@@ -1,0 +1,610 @@
+[
+  {
+    "path": "PLAN.md",
+    "bytes": 2509
+  },
+  {
+    "path": "TRACKING-ERRATUM.md",
+    "bytes": 2671
+  },
+  {
+    "path": "after-check.json",
+    "bytes": 102
+  },
+  {
+    "path": "allocation-A.json",
+    "bytes": 21082
+  },
+  {
+    "path": "allocation-A.log",
+    "bytes": 595
+  },
+  {
+    "path": "allocation-B.json",
+    "bytes": 21077
+  },
+  {
+    "path": "allocation-B.log",
+    "bytes": 595
+  },
+  {
+    "path": "allocation-negative-B.json",
+    "bytes": 5837
+  },
+  {
+    "path": "allocation-negative-B.log",
+    "bytes": 362
+  },
+  {
+    "path": "allocation-self-test.json",
+    "bytes": 523
+  },
+  {
+    "path": "allocation-self-test.log",
+    "bytes": 166
+  },
+  {
+    "path": "aot-size-A.txt",
+    "bytes": 947
+  },
+  {
+    "path": "aot-size-B.txt",
+    "bytes": 947
+  },
+  {
+    "path": "arm-A/FactsProbe",
+    "bytes": 124712
+  },
+  {
+    "path": "arm-A/FactsProbe.deps.json",
+    "bytes": 5786
+  },
+  {
+    "path": "arm-A/FactsProbe.dll",
+    "bytes": 176640
+  },
+  {
+    "path": "arm-A/FactsProbe.pdb",
+    "bytes": 52388
+  },
+  {
+    "path": "arm-A/FactsProbe.runtimeconfig.json",
+    "bytes": 330
+  },
+  {
+    "path": "arm-A/Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+    "bytes": 65872
+  },
+  {
+    "path": "arm-A/Microsoft.Extensions.DependencyInjection.dll",
+    "bytes": 95528
+  },
+  {
+    "path": "arm-A/Microsoft.Extensions.Logging.Abstractions.dll",
+    "bytes": 66856
+  },
+  {
+    "path": "arm-A/SharpLink.Abstractions.dll",
+    "bytes": 197120
+  },
+  {
+    "path": "arm-A/SharpLink.Abstractions.pdb",
+    "bytes": 54460
+  },
+  {
+    "path": "arm-A/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "arm-A/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "arm-A/SharpLink.Client.pdb",
+    "bytes": 375532
+  },
+  {
+    "path": "arm-A/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "arm-A/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "arm-A/SharpLink.Runtime.pdb",
+    "bytes": 162448
+  },
+  {
+    "path": "arm-A/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "arm-A/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "arm-A/SharpLink.Sdk.pdb",
+    "bytes": 12292
+  },
+  {
+    "path": "arm-A/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "arm-A/SharpLink.Server.dll",
+    "bytes": 487936
+  },
+  {
+    "path": "arm-A/SharpLink.Server.pdb",
+    "bytes": 148220
+  },
+  {
+    "path": "arm-A/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "arm-A/System.Threading.RateLimiting.dll",
+    "bytes": 70992
+  },
+  {
+    "path": "arm-B/FactsProbe",
+    "bytes": 124712
+  },
+  {
+    "path": "arm-B/FactsProbe.deps.json",
+    "bytes": 5786
+  },
+  {
+    "path": "arm-B/FactsProbe.dll",
+    "bytes": 179200
+  },
+  {
+    "path": "arm-B/FactsProbe.pdb",
+    "bytes": 53616
+  },
+  {
+    "path": "arm-B/FactsProbe.runtimeconfig.json",
+    "bytes": 330
+  },
+  {
+    "path": "arm-B/Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+    "bytes": 65872
+  },
+  {
+    "path": "arm-B/Microsoft.Extensions.DependencyInjection.dll",
+    "bytes": 95528
+  },
+  {
+    "path": "arm-B/Microsoft.Extensions.Logging.Abstractions.dll",
+    "bytes": 66856
+  },
+  {
+    "path": "arm-B/SharpLink.Abstractions.dll",
+    "bytes": 200192
+  },
+  {
+    "path": "arm-B/SharpLink.Abstractions.pdb",
+    "bytes": 55300
+  },
+  {
+    "path": "arm-B/SharpLink.Abstractions.xml",
+    "bytes": 279524
+  },
+  {
+    "path": "arm-B/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "arm-B/SharpLink.Client.pdb",
+    "bytes": 375560
+  },
+  {
+    "path": "arm-B/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "arm-B/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "arm-B/SharpLink.Runtime.pdb",
+    "bytes": 162448
+  },
+  {
+    "path": "arm-B/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "arm-B/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "arm-B/SharpLink.Sdk.pdb",
+    "bytes": 12292
+  },
+  {
+    "path": "arm-B/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "arm-B/SharpLink.Server.dll",
+    "bytes": 489984
+  },
+  {
+    "path": "arm-B/SharpLink.Server.pdb",
+    "bytes": 148736
+  },
+  {
+    "path": "arm-B/SharpLink.Server.xml",
+    "bytes": 78272
+  },
+  {
+    "path": "arm-B/System.Threading.RateLimiting.dll",
+    "bytes": 70992
+  },
+  {
+    "path": "arm-hashes.json",
+    "bytes": 4833
+  },
+  {
+    "path": "authored/Directory.Packages.props",
+    "bytes": 76
+  },
+  {
+    "path": "authored/FactsProbe.csproj",
+    "bytes": 921
+  },
+  {
+    "path": "authored/Program.cs",
+    "bytes": 14270
+  },
+  {
+    "path": "authored/global.json",
+    "bytes": 169
+  },
+  {
+    "path": "campaign-complete.txt",
+    "bytes": 33
+  },
+  {
+    "path": "campaign-run.log",
+    "bytes": 23472
+  },
+  {
+    "path": "campaign.json",
+    "bytes": 26319
+  },
+  {
+    "path": "candidate-source-hashes.json",
+    "bytes": 221126
+  },
+  {
+    "path": "candidate-source.tar.gz",
+    "bytes": 2640997
+  },
+  {
+    "path": "candidate-status.txt",
+    "bytes": 4660
+  },
+  {
+    "path": "candidate.patch",
+    "bytes": 177303
+  },
+  {
+    "path": "cold-A-2.json",
+    "bytes": 2947
+  },
+  {
+    "path": "cold-A.json",
+    "bytes": 2883
+  },
+  {
+    "path": "cold-B-2.json",
+    "bytes": 2918
+  },
+  {
+    "path": "cold-B.json",
+    "bytes": 2850
+  },
+  {
+    "path": "feature-00-A-AdmissionImmediate.json",
+    "bytes": 968
+  },
+  {
+    "path": "feature-00-A-AdmissionImmediate.log",
+    "bytes": 969
+  },
+  {
+    "path": "feature-00-A-DynamicServiceActual.json",
+    "bytes": 969
+  },
+  {
+    "path": "feature-00-A-DynamicServiceActual.log",
+    "bytes": 970
+  },
+  {
+    "path": "feature-00-A-MetricsClientAndServer.json",
+    "bytes": 973
+  },
+  {
+    "path": "feature-00-A-MetricsClientAndServer.log",
+    "bytes": 974
+  },
+  {
+    "path": "feature-00-A-ServerInterceptor.json",
+    "bytes": 964
+  },
+  {
+    "path": "feature-00-A-ServerInterceptor.log",
+    "bytes": 965
+  },
+  {
+    "path": "feature-00-A-StaticDefault.json",
+    "bytes": 960
+  },
+  {
+    "path": "feature-00-A-StaticDefault.log",
+    "bytes": 961
+  },
+  {
+    "path": "feature-01-B-AdmissionImmediate.json",
+    "bytes": 968
+  },
+  {
+    "path": "feature-01-B-AdmissionImmediate.log",
+    "bytes": 969
+  },
+  {
+    "path": "feature-01-B-DynamicServiceActual.json",
+    "bytes": 970
+  },
+  {
+    "path": "feature-01-B-DynamicServiceActual.log",
+    "bytes": 971
+  },
+  {
+    "path": "feature-01-B-MetricsClientAndServer.json",
+    "bytes": 971
+  },
+  {
+    "path": "feature-01-B-MetricsClientAndServer.log",
+    "bytes": 972
+  },
+  {
+    "path": "feature-01-B-ServerInterceptor.json",
+    "bytes": 964
+  },
+  {
+    "path": "feature-01-B-ServerInterceptor.log",
+    "bytes": 965
+  },
+  {
+    "path": "feature-01-B-StaticDefault.json",
+    "bytes": 955
+  },
+  {
+    "path": "feature-01-B-StaticDefault.log",
+    "bytes": 956
+  },
+  {
+    "path": "feature-02-B-AdmissionImmediate.json",
+    "bytes": 969
+  },
+  {
+    "path": "feature-02-B-AdmissionImmediate.log",
+    "bytes": 970
+  },
+  {
+    "path": "feature-02-B-DynamicServiceActual.json",
+    "bytes": 971
+  },
+  {
+    "path": "feature-02-B-DynamicServiceActual.log",
+    "bytes": 972
+  },
+  {
+    "path": "feature-02-B-MetricsClientAndServer.json",
+    "bytes": 971
+  },
+  {
+    "path": "feature-02-B-MetricsClientAndServer.log",
+    "bytes": 972
+  },
+  {
+    "path": "feature-02-B-ServerInterceptor.json",
+    "bytes": 964
+  },
+  {
+    "path": "feature-02-B-ServerInterceptor.log",
+    "bytes": 965
+  },
+  {
+    "path": "feature-02-B-StaticDefault.json",
+    "bytes": 961
+  },
+  {
+    "path": "feature-02-B-StaticDefault.log",
+    "bytes": 962
+  },
+  {
+    "path": "feature-03-A-AdmissionImmediate.json",
+    "bytes": 964
+  },
+  {
+    "path": "feature-03-A-AdmissionImmediate.log",
+    "bytes": 965
+  },
+  {
+    "path": "feature-03-A-DynamicServiceActual.json",
+    "bytes": 969
+  },
+  {
+    "path": "feature-03-A-DynamicServiceActual.log",
+    "bytes": 970
+  },
+  {
+    "path": "feature-03-A-MetricsClientAndServer.json",
+    "bytes": 969
+  },
+  {
+    "path": "feature-03-A-MetricsClientAndServer.log",
+    "bytes": 970
+  },
+  {
+    "path": "feature-03-A-ServerInterceptor.json",
+    "bytes": 967
+  },
+  {
+    "path": "feature-03-A-ServerInterceptor.log",
+    "bytes": 968
+  },
+  {
+    "path": "feature-03-A-StaticDefault.json",
+    "bytes": 960
+  },
+  {
+    "path": "feature-03-A-StaticDefault.log",
+    "bytes": 961
+  },
+  {
+    "path": "feature-binary-hashes-before.json",
+    "bytes": 9997
+  },
+  {
+    "path": "feature-summary.json",
+    "bytes": 8182
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IColdFacts1_03629FA6DA20F8AD_ProxyImpl.g.cs",
+    "bytes": 1466
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IColdFacts1_03629FA6DA20F8AD_Stub.g.cs",
+    "bytes": 4614
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IColdFacts64_E1765F84A5F2B034_ProxyImpl.g.cs",
+    "bytes": 43201
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IColdFacts64_E1765F84A5F2B034_Stub.g.cs",
+    "bytes": 50706
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Proxy.g.cs",
+    "bytes": 6263
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_ProxyImpl.g.cs",
+    "bytes": 4022
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Stub.g.cs",
+    "bytes": 9725
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "bytes": 40724
+  },
+  {
+    "path": "generated-A/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "bytes": 34319
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IColdFacts1_03629FA6DA20F8AD_ProxyImpl.g.cs",
+    "bytes": 1466
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IColdFacts1_03629FA6DA20F8AD_Stub.g.cs",
+    "bytes": 4570
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IColdFacts64_E1765F84A5F2B034_ProxyImpl.g.cs",
+    "bytes": 43201
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IColdFacts64_E1765F84A5F2B034_Stub.g.cs",
+    "bytes": 51355
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Proxy.g.cs",
+    "bytes": 6263
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_ProxyImpl.g.cs",
+    "bytes": 4022
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Stub.g.cs",
+    "bytes": 9375
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "bytes": 40724
+  },
+  {
+    "path": "generated-B/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "bytes": 34317
+  },
+  {
+    "path": "network-00-A.json",
+    "bytes": 5187341
+  },
+  {
+    "path": "network-01-B.json",
+    "bytes": 5180197
+  },
+  {
+    "path": "network-02-B.json",
+    "bytes": 5171215
+  },
+  {
+    "path": "network-03-A.json",
+    "bytes": 5171612
+  },
+  {
+    "path": "network-04-B.json",
+    "bytes": 5184997
+  },
+  {
+    "path": "network-05-A.json",
+    "bytes": 5175433
+  },
+  {
+    "path": "network-06-A.json",
+    "bytes": 5171115
+  },
+  {
+    "path": "network-07-B.json",
+    "bytes": 5168742
+  },
+  {
+    "path": "network-summary-output.log",
+    "bytes": 3903
+  },
+  {
+    "path": "network-summary.json",
+    "bytes": 50603
+  },
+  {
+    "path": "network-summary.md",
+    "bytes": 4294
+  },
+  {
+    "path": "probe-version1.cs",
+    "bytes": 11967
+  },
+  {
+    "path": "provenance.json",
+    "bytes": 862
+  },
+  {
+    "path": "run_campaign.py",
+    "bytes": 2614
+  },
+  {
+    "path": "summarize.py",
+    "bytes": 2384
+  }
+]

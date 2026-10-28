@@ -1,0 +1,583 @@
+[
+  {
+    "path": "analysis-selfcheck/SELF-CHECK.txt",
+    "bytes": 225
+  },
+  {
+    "path": "analysis-selfcheck/analysis.json",
+    "bytes": 23116
+  },
+  {
+    "path": "analysis-selfcheck/calculations.md",
+    "bytes": 2955
+  },
+  {
+    "path": "analysis-selfcheck/execution.jsonl",
+    "bytes": 672
+  },
+  {
+    "path": "analysis-selfcheck/initial-failure.txt",
+    "bytes": 188
+  },
+  {
+    "path": "analysis-selfcheck/manifest.json",
+    "bytes": 3338
+  },
+  {
+    "path": "analysis-selfcheck/process-aggregates.csv",
+    "bytes": 3844
+  },
+  {
+    "path": "analysis-selfcheck/selfcheck-output.json",
+    "bytes": 613
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-00-A.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-01-A.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-02-A.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-03-B.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-04-B.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-05-B.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-06-B.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-07-A.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-08-B.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-09-A.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-10-B.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-11-B.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-12-A.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-13-B.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-14-A.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis-selfcheck/synthetic-15-A.jsonl",
+    "bytes": 221680
+  },
+  {
+    "path": "analysis.json",
+    "bytes": 25961
+  },
+  {
+    "path": "authored/OriginalService.cs",
+    "bytes": 1461
+  },
+  {
+    "path": "authored/Program.cs",
+    "bytes": 7436
+  },
+  {
+    "path": "authored/SharpLink.Generator.dll",
+    "bytes": 620032
+  },
+  {
+    "path": "background-identification.txt",
+    "bytes": 664
+  },
+  {
+    "path": "build-A/CausalProbe.csproj",
+    "bytes": 684
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/CausalProbe",
+    "bytes": 124712
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/CausalProbe.deps.json",
+    "bytes": 4132
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/CausalProbe.dll",
+    "bytes": 58368
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/CausalProbe.pdb",
+    "bytes": 28908
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/CausalProbe.runtimeconfig.json",
+    "bytes": 330
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+    "bytes": 65872
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/Microsoft.Extensions.DependencyInjection.dll",
+    "bytes": 95528
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/Microsoft.Extensions.Logging.Abstractions.dll",
+    "bytes": 66856
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/SharpLink.Abstractions.dll",
+    "bytes": 200192
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/SharpLink.Server.dll",
+    "bytes": 489984
+  },
+  {
+    "path": "build-A/bin/Release/net10.0/System.Threading.RateLimiting.dll",
+    "bytes": 70992
+  },
+  {
+    "path": "build-A-final.log",
+    "bytes": 333
+  },
+  {
+    "path": "build-A-metadata.log",
+    "bytes": 249
+  },
+  {
+    "path": "build-A.log",
+    "bytes": 1785
+  },
+  {
+    "path": "build-B/CausalProbe.csproj",
+    "bytes": 684
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/CausalProbe",
+    "bytes": 124712
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/CausalProbe.deps.json",
+    "bytes": 4132
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/CausalProbe.dll",
+    "bytes": 58368
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/CausalProbe.pdb",
+    "bytes": 28908
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/CausalProbe.runtimeconfig.json",
+    "bytes": 330
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+    "bytes": 65872
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/Microsoft.Extensions.DependencyInjection.dll",
+    "bytes": 95528
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/Microsoft.Extensions.Logging.Abstractions.dll",
+    "bytes": 66856
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/SharpLink.Abstractions.dll",
+    "bytes": 199680
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/SharpLink.Server.dll",
+    "bytes": 489984
+  },
+  {
+    "path": "build-B/bin/Release/net10.0/System.Threading.RateLimiting.dll",
+    "bytes": 70992
+  },
+  {
+    "path": "build-B-final.log",
+    "bytes": 457
+  },
+  {
+    "path": "build-B-metadata.log",
+    "bytes": 249
+  },
+  {
+    "path": "calculations.md",
+    "bytes": 2933
+  },
+  {
+    "path": "completion.json",
+    "bytes": 72
+  },
+  {
+    "path": "describe-A-final.json",
+    "bytes": 1393
+  },
+  {
+    "path": "describe-A.json",
+    "bytes": 1402
+  },
+  {
+    "path": "describe-B-final.json",
+    "bytes": 1393
+  },
+  {
+    "path": "describe-B.json",
+    "bytes": 1402
+  },
+  {
+    "path": "execution.jsonl",
+    "bytes": 10907
+  },
+  {
+    "path": "manifest.json",
+    "bytes": 28783
+  },
+  {
+    "path": "process-00-A.samples.jsonl",
+    "bytes": 264618
+  },
+  {
+    "path": "process-00-A.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-00-A.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-01-A.samples.jsonl",
+    "bytes": 276238
+  },
+  {
+    "path": "process-01-A.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-01-A.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-02-A.samples.jsonl",
+    "bytes": 272392
+  },
+  {
+    "path": "process-02-A.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-02-A.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-03-B.samples.jsonl",
+    "bytes": 261925
+  },
+  {
+    "path": "process-03-B.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-03-B.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-04-B.samples.jsonl",
+    "bytes": 269679
+  },
+  {
+    "path": "process-04-B.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-04-B.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-05-B.samples.jsonl",
+    "bytes": 261574
+  },
+  {
+    "path": "process-05-B.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-05-B.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-06-B.samples.jsonl",
+    "bytes": 261454
+  },
+  {
+    "path": "process-06-B.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-06-B.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-07-A.samples.jsonl",
+    "bytes": 266053
+  },
+  {
+    "path": "process-07-A.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-07-A.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-08-B.samples.jsonl",
+    "bytes": 272009
+  },
+  {
+    "path": "process-08-B.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-08-B.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-09-A.samples.jsonl",
+    "bytes": 278381
+  },
+  {
+    "path": "process-09-A.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-09-A.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-10-B.samples.jsonl",
+    "bytes": 272650
+  },
+  {
+    "path": "process-10-B.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-10-B.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-11-B.samples.jsonl",
+    "bytes": 273681
+  },
+  {
+    "path": "process-11-B.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-11-B.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-12-A.samples.jsonl",
+    "bytes": 263135
+  },
+  {
+    "path": "process-12-A.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-12-A.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-13-B.samples.jsonl",
+    "bytes": 274415
+  },
+  {
+    "path": "process-13-B.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-13-B.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-14-A.samples.jsonl",
+    "bytes": 262737
+  },
+  {
+    "path": "process-14-A.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-14-A.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-15-A.samples.jsonl",
+    "bytes": 267782
+  },
+  {
+    "path": "process-15-A.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "process-15-A.stdout",
+    "bytes": 1446
+  },
+  {
+    "path": "process-aggregates.csv",
+    "bytes": 5012
+  },
+  {
+    "path": "runner.stderr",
+    "bytes": 0
+  },
+  {
+    "path": "runner.stdout",
+    "bytes": 1280
+  },
+  {
+    "path": "runtime-A/Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+    "bytes": 65872
+  },
+  {
+    "path": "runtime-A/Microsoft.Extensions.DependencyInjection.dll",
+    "bytes": 95528
+  },
+  {
+    "path": "runtime-A/Microsoft.Extensions.Logging.Abstractions.dll",
+    "bytes": 66856
+  },
+  {
+    "path": "runtime-A/SharpLink.Abstractions.dll",
+    "bytes": 200192
+  },
+  {
+    "path": "runtime-A/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "runtime-A/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "runtime-A/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "runtime-A/SharpLink.Server.dll",
+    "bytes": 489984
+  },
+  {
+    "path": "runtime-A/System.Threading.RateLimiting.dll",
+    "bytes": 70992
+  },
+  {
+    "path": "runtime-B/Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+    "bytes": 65872
+  },
+  {
+    "path": "runtime-B/Microsoft.Extensions.DependencyInjection.dll",
+    "bytes": 95528
+  },
+  {
+    "path": "runtime-B/Microsoft.Extensions.Logging.Abstractions.dll",
+    "bytes": 66856
+  },
+  {
+    "path": "runtime-B/SharpLink.Abstractions.dll",
+    "bytes": 199680
+  },
+  {
+    "path": "runtime-B/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "runtime-B/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "runtime-B/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "runtime-B/SharpLink.Server.dll",
+    "bytes": 489984
+  },
+  {
+    "path": "runtime-B/System.Threading.RateLimiting.dll",
+    "bytes": 70992
+  },
+  {
+    "path": "runtime-consistency-after.json",
+    "bytes": 2722
+  },
+  {
+    "path": "runtime-sources.json",
+    "bytes": 3428
+  },
+  {
+    "path": "source-consistency.json",
+    "bytes": 343
+  },
+  {
+    "path": "environment-numeric-public.json",
+    "bytes": 16633,
+    "derived": true
+  }
+]

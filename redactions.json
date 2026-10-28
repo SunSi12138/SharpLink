@@ -1,0 +1,10 @@
+[
+  {
+    "category": "732-m1-local",
+    "path": "manifest.json",
+    "removedFields": [
+      "environment.processSnapshot"
+    ],
+    "reason": "Unrelated process command lines; all arm identities, settings, process plan and timing inputs retained"
+  }
+]

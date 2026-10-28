@@ -1,0 +1,12 @@
+{
+  "patternsChecked": [
+    "github-token",
+    "private-key",
+    "aws-access-key",
+    "connection-secret"
+  ],
+  "suspectFiles": [],
+  "binaryLogPolicy": "excluded ambient-environment binary logs; retained text logs and compiled artifacts",
+  "nestedArchivesScanned": true,
+  "credentialsPrinted": false
+}

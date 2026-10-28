@@ -1,0 +1,1830 @@
+[
+  {
+    "path": "mechanism-analysis.json",
+    "bytes": 65733
+  },
+  {
+    "path": "ownership-931-evidence/baseline/build.log",
+    "bytes": 3977
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-Abstractions.log",
+    "bytes": 506
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-Client.log",
+    "bytes": 775
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-Compression.Zstd.log",
+    "bytes": 825
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-GenerationControl.log",
+    "bytes": 991
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-Hosting.log",
+    "bytes": 1058
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-Runtime.log",
+    "bytes": 638
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-Sdk.log",
+    "bytes": 773
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-Serializer.SharpPack.log",
+    "bytes": 703
+  },
+  {
+    "path": "ownership-931-evidence/baseline/pack-Server.log",
+    "bytes": 775
+  },
+  {
+    "path": "ownership-931-evidence/baseline/package-verification.log",
+    "bytes": 91
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Abstractions.3.0.0.nupkg",
+    "bytes": 160866
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Abstractions.3.0.0.snupkg",
+    "bytes": 28543
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Client.3.0.0.nupkg",
+    "bytes": 391720
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Client.3.0.0.snupkg",
+    "bytes": 229682
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Compression.Zstd.3.0.0.nupkg",
+    "bytes": 54135
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Compression.Zstd.3.0.0.snupkg",
+    "bytes": 10724
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.GenerationControl.3.0.0.nupkg",
+    "bytes": 69942
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.GenerationControl.3.0.0.snupkg",
+    "bytes": 27475
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Hosting.3.0.0.nupkg",
+    "bytes": 63949
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Hosting.3.0.0.snupkg",
+    "bytes": 13035
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Runtime.3.0.0.nupkg",
+    "bytes": 266236
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Runtime.3.0.0.snupkg",
+    "bytes": 75843
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Sdk.3.0.0.nupkg",
+    "bytes": 253595
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Sdk.3.0.0.snupkg",
+    "bytes": 9709
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Serializer.SharpPack.3.0.0.nupkg",
+    "bytes": 53353
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Serializer.SharpPack.3.0.0.snupkg",
+    "bytes": 10004
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Server.3.0.0.nupkg",
+    "bytes": 247606
+  },
+  {
+    "path": "ownership-931-evidence/baseline/packages/SharpLink.Server.3.0.0.snupkg",
+    "bytes": 70991
+  },
+  {
+    "path": "ownership-931-evidence/build-dotnet-info.txt",
+    "bytes": 1668
+  },
+  {
+    "path": "ownership-931-evidence/build-server-shutdown.log",
+    "bytes": 156
+  },
+  {
+    "path": "ownership-931-evidence/candidate/build.log",
+    "bytes": 4369
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-Abstractions.log",
+    "bytes": 509
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-Client.log",
+    "bytes": 780
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-Compression.Zstd.log",
+    "bytes": 830
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-GenerationControl.log",
+    "bytes": 997
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-Hosting.log",
+    "bytes": 1065
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-Runtime.log",
+    "bytes": 642
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-Sdk.log",
+    "bytes": 778
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-Serializer.SharpPack.log",
+    "bytes": 707
+  },
+  {
+    "path": "ownership-931-evidence/candidate/pack-Server.log",
+    "bytes": 780
+  },
+  {
+    "path": "ownership-931-evidence/candidate/package-verification.log",
+    "bytes": 91
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Abstractions.3.0.0.nupkg",
+    "bytes": 160853
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Abstractions.3.0.0.snupkg",
+    "bytes": 28538
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Client.3.0.0.nupkg",
+    "bytes": 392053
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Client.3.0.0.snupkg",
+    "bytes": 230123
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Compression.Zstd.3.0.0.nupkg",
+    "bytes": 54121
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Compression.Zstd.3.0.0.snupkg",
+    "bytes": 10716
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.GenerationControl.3.0.0.nupkg",
+    "bytes": 69941
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.GenerationControl.3.0.0.snupkg",
+    "bytes": 27468
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Hosting.3.0.0.nupkg",
+    "bytes": 63946
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Hosting.3.0.0.snupkg",
+    "bytes": 13026
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Runtime.3.0.0.nupkg",
+    "bytes": 270417
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Runtime.3.0.0.snupkg",
+    "bytes": 77110
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Sdk.3.0.0.nupkg",
+    "bytes": 253579
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Sdk.3.0.0.snupkg",
+    "bytes": 9704
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Serializer.SharpPack.3.0.0.nupkg",
+    "bytes": 53342
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Serializer.SharpPack.3.0.0.snupkg",
+    "bytes": 9996
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Server.3.0.0.nupkg",
+    "bytes": 247970
+  },
+  {
+    "path": "ownership-931-evidence/candidate/packages/SharpLink.Server.3.0.0.snupkg",
+    "bytes": 71095
+  },
+  {
+    "path": "ownership-931-evidence/complete.json",
+    "bytes": 158
+  },
+  {
+    "path": "ownership-931-evidence/cpu.txt",
+    "bytes": 3339
+  },
+  {
+    "path": "ownership-931-evidence/experiment.json",
+    "bytes": 1035
+  },
+  {
+    "path": "ownership-931-evidence/measurement-start.json",
+    "bytes": 113
+  },
+  {
+    "path": "ownership-931-evidence/runtime-dotnet-info.txt",
+    "bytes": 1018
+  },
+  {
+    "path": "ownership-931-evidence/scalar/allocations.json",
+    "bytes": 30139
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/default-tiered/run-1/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/default-tiered/run-1/dynamic-layout.json",
+    "bytes": 4386
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/default-tiered/run-1/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/default-tiered/run-1/jit.txt",
+    "bytes": 441629
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/default-tiered/run-1/layout.json",
+    "bytes": 3743
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/default-tiered/run-1/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-1/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-1/dynamic-layout.json",
+    "bytes": 4386
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-1/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-1/jit.txt",
+    "bytes": 118958
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-1/layout.json",
+    "bytes": 3743
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-1/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-2/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-2/dynamic-layout.json",
+    "bytes": 4386
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-2/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-2/layout.json",
+    "bytes": 3743
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-2/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-3/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-3/dynamic-layout.json",
+    "bytes": 4386
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-3/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-3/layout.json",
+    "bytes": 3743
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-3/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-4/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-4/dynamic-layout.json",
+    "bytes": 4386
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-4/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-4/layout.json",
+    "bytes": 3743
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-4/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-5/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-5/dynamic-layout.json",
+    "bytes": 4386
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-5/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-5/layout.json",
+    "bytes": 3743
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/fullopts/run-5/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/tiered-pgo-off/run-1/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/tiered-pgo-off/run-1/dynamic-layout.json",
+    "bytes": 4386
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/tiered-pgo-off/run-1/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/tiered-pgo-off/run-1/jit.txt",
+    "bytes": 265725
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/tiered-pgo-off/run-1/layout.json",
+    "bytes": 3743
+  },
+  {
+    "path": "ownership-931-evidence/scalar/baseline/tiered-pgo-off/run-1/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/default-tiered/run-1/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/default-tiered/run-1/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/default-tiered/run-1/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/default-tiered/run-1/jit.txt",
+    "bytes": 415656
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/default-tiered/run-1/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/default-tiered/run-1/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-1/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-1/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-1/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-1/jit.txt",
+    "bytes": 106633
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-1/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-1/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-2/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-2/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-2/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-2/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-2/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-3/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-3/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-3/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-3/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-3/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-4/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-4/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-4/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-4/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-4/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-5/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-5/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-5/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-5/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/fullopts/run-5/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/tiered-pgo-off/run-1/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/tiered-pgo-off/run-1/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/tiered-pgo-off/run-1/environment.json",
+    "bytes": 1125
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/tiered-pgo-off/run-1/jit.txt",
+    "bytes": 247357
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/tiered-pgo-off/run-1/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "ownership-931-evidence/scalar/candidate/tiered-pgo-off/run-1/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "ownership-931-evidence/scalar/manifest.json",
+    "bytes": 2325
+  },
+  {
+    "path": "ownership-931-evidence/scalar/native.json",
+    "bytes": 90064
+  },
+  {
+    "path": "ownership-931-evidence/scalar/summary.json",
+    "bytes": 8765
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepare.log",
+    "bytes": 97
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Benchmarks",
+    "bytes": 78256
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Benchmarks.deps.json",
+    "bytes": 1573
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Benchmarks.dll",
+    "bytes": 24576
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Benchmarks.pdb",
+    "bytes": 23164
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Benchmarks.runtimeconfig.json",
+    "bytes": 473
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Client.pdb",
+    "bytes": 374348
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/baseline/app/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/build/Directory.Build.props",
+    "bytes": 12
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/build/Directory.Build.targets",
+    "bytes": 12
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/build/Program.cs",
+    "bytes": 6811
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/build/probe.csproj",
+    "bytes": 702
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/build-dotnet-info.txt",
+    "bytes": 1668
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/build.log",
+    "bytes": 323
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Benchmarks",
+    "bytes": 78256
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Benchmarks.deps.json",
+    "bytes": 1573
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Benchmarks.dll",
+    "bytes": 24576
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Benchmarks.pdb",
+    "bytes": 23164
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Benchmarks.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Client.pdb",
+    "bytes": 374348
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/built/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Benchmarks",
+    "bytes": 78256
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Benchmarks.deps.json",
+    "bytes": 1573
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Benchmarks.dll",
+    "bytes": 24576
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Benchmarks.pdb",
+    "bytes": 23164
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Benchmarks.runtimeconfig.json",
+    "bytes": 473
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Client.pdb",
+    "bytes": 374348
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/candidate/app/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "ownership-931-evidence/scalar-prepared/prepared-manifest.json",
+    "bytes": 1855
+  },
+  {
+    "path": "ownership-931-evidence/scalar-run.log",
+    "bytes": 87
+  },
+  {
+    "path": "ownership-931-evidence/snapshot-integrity.json",
+    "bytes": 2740
+  },
+  {
+    "path": "ownership-931-evidence/tcp/matrix-manifest.json",
+    "bytes": 11862
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r1-baseline.host.json",
+    "bytes": 2275
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r1-baseline.json",
+    "bytes": 5939
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r1-baseline.log",
+    "bytes": 5940
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r1-candidate.host.json",
+    "bytes": 2280
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r1-candidate.json",
+    "bytes": 5732
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r1-candidate.log",
+    "bytes": 5733
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r2-baseline.host.json",
+    "bytes": 2285
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r2-baseline.json",
+    "bytes": 5939
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r2-baseline.log",
+    "bytes": 5940
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r2-candidate.host.json",
+    "bytes": 2285
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r2-candidate.json",
+    "bytes": 5730
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r2-candidate.log",
+    "bytes": 5731
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r3-baseline.host.json",
+    "bytes": 2290
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r3-baseline.json",
+    "bytes": 5940
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r3-baseline.log",
+    "bytes": 5941
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r3-candidate.host.json",
+    "bytes": 2293
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r3-candidate.json",
+    "bytes": 5734
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r3-candidate.log",
+    "bytes": 5735
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r4-baseline.host.json",
+    "bytes": 2292
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r4-baseline.json",
+    "bytes": 5939
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r4-baseline.log",
+    "bytes": 5940
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r4-candidate.host.json",
+    "bytes": 2293
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r4-candidate.json",
+    "bytes": 5733
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r4-candidate.log",
+    "bytes": 5734
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r5-baseline.host.json",
+    "bytes": 2294
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r5-baseline.json",
+    "bytes": 5942
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r5-baseline.log",
+    "bytes": 5943
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r5-candidate.host.json",
+    "bytes": 2297
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r5-candidate.json",
+    "bytes": 5732
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r5-candidate.log",
+    "bytes": 5733
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r6-baseline.host.json",
+    "bytes": 2294
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r6-baseline.json",
+    "bytes": 5941
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r6-baseline.log",
+    "bytes": 5942
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r6-candidate.host.json",
+    "bytes": 2296
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r6-candidate.json",
+    "bytes": 5733
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n1-c1-r6-candidate.log",
+    "bytes": 5734
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r1-baseline.host.json",
+    "bytes": 2282
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r1-baseline.json",
+    "bytes": 5943
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r1-baseline.log",
+    "bytes": 5944
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r1-candidate.host.json",
+    "bytes": 2286
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r1-candidate.json",
+    "bytes": 5739
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r1-candidate.log",
+    "bytes": 5740
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r2-baseline.host.json",
+    "bytes": 2292
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r2-baseline.json",
+    "bytes": 5943
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r2-baseline.log",
+    "bytes": 5944
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r2-candidate.host.json",
+    "bytes": 2295
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r2-candidate.json",
+    "bytes": 5737
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r2-candidate.log",
+    "bytes": 5738
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r3-baseline.host.json",
+    "bytes": 2293
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r3-baseline.json",
+    "bytes": 5944
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r3-baseline.log",
+    "bytes": 5945
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r3-candidate.host.json",
+    "bytes": 2291
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r3-candidate.json",
+    "bytes": 5737
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r3-candidate.log",
+    "bytes": 5738
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r4-baseline.host.json",
+    "bytes": 2294
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r4-baseline.json",
+    "bytes": 5941
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r4-baseline.log",
+    "bytes": 5942
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r4-candidate.host.json",
+    "bytes": 2297
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r4-candidate.json",
+    "bytes": 5737
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r4-candidate.log",
+    "bytes": 5738
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r5-baseline.host.json",
+    "bytes": 2298
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r5-baseline.json",
+    "bytes": 5943
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r5-baseline.log",
+    "bytes": 5944
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r5-candidate.host.json",
+    "bytes": 2301
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r5-candidate.json",
+    "bytes": 5735
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r5-candidate.log",
+    "bytes": 5736
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r6-baseline.host.json",
+    "bytes": 2297
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r6-baseline.json",
+    "bytes": 5943
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r6-baseline.log",
+    "bytes": 5944
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r6-candidate.host.json",
+    "bytes": 2301
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r6-candidate.json",
+    "bytes": 5738
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/dynamic-intercepted-n100-c1-r6-candidate.log",
+    "bytes": 5739
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r1-baseline.host.json",
+    "bytes": 2265
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r1-baseline.json",
+    "bytes": 5205
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r1-baseline.log",
+    "bytes": 5206
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r1-candidate.host.json",
+    "bytes": 2275
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r1-candidate.json",
+    "bytes": 5204
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r1-candidate.log",
+    "bytes": 5205
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r2-baseline.host.json",
+    "bytes": 2286
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r2-baseline.json",
+    "bytes": 5204
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r2-baseline.log",
+    "bytes": 5205
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r2-candidate.host.json",
+    "bytes": 2282
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r2-candidate.json",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r2-candidate.log",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r3-baseline.host.json",
+    "bytes": 2288
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r3-baseline.json",
+    "bytes": 5202
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r3-baseline.log",
+    "bytes": 5203
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r3-candidate.host.json",
+    "bytes": 2291
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r3-candidate.json",
+    "bytes": 5206
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r3-candidate.log",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r4-baseline.host.json",
+    "bytes": 2288
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r4-baseline.json",
+    "bytes": 5205
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r4-baseline.log",
+    "bytes": 5206
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r4-candidate.host.json",
+    "bytes": 2290
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r4-candidate.json",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r4-candidate.log",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r5-baseline.host.json",
+    "bytes": 2292
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r5-baseline.json",
+    "bytes": 5202
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r5-baseline.log",
+    "bytes": 5203
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r5-candidate.host.json",
+    "bytes": 2295
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r5-candidate.json",
+    "bytes": 5202
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r5-candidate.log",
+    "bytes": 5203
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r6-baseline.host.json",
+    "bytes": 2293
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r6-baseline.json",
+    "bytes": 5206
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r6-baseline.log",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r6-candidate.host.json",
+    "bytes": 2295
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r6-candidate.json",
+    "bytes": 5201
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n1-c1-r6-candidate.log",
+    "bytes": 5202
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r1-baseline.host.json",
+    "bytes": 2280
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r1-baseline.json",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r1-baseline.log",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r1-candidate.host.json",
+    "bytes": 2283
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r1-candidate.json",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r1-candidate.log",
+    "bytes": 5209
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r2-baseline.host.json",
+    "bytes": 2290
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r2-baseline.json",
+    "bytes": 5209
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r2-baseline.log",
+    "bytes": 5210
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r2-candidate.host.json",
+    "bytes": 2292
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r2-candidate.json",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r2-candidate.log",
+    "bytes": 5209
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r3-baseline.host.json",
+    "bytes": 2290
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r3-baseline.json",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r3-baseline.log",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r3-candidate.host.json",
+    "bytes": 2293
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r3-candidate.json",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r3-candidate.log",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r4-baseline.host.json",
+    "bytes": 2296
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r4-baseline.json",
+    "bytes": 5206
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r4-baseline.log",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r4-candidate.host.json",
+    "bytes": 2299
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r4-candidate.json",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r4-candidate.log",
+    "bytes": 5209
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r5-baseline.host.json",
+    "bytes": 2296
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r5-baseline.json",
+    "bytes": 5209
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r5-baseline.log",
+    "bytes": 5210
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r5-candidate.host.json",
+    "bytes": 2299
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r5-candidate.json",
+    "bytes": 5209
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r5-candidate.log",
+    "bytes": 5210
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r6-baseline.host.json",
+    "bytes": 2296
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r6-baseline.json",
+    "bytes": 5207
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r6-baseline.log",
+    "bytes": 5208
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r6-candidate.host.json",
+    "bytes": 2299
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r6-candidate.json",
+    "bytes": 5205
+  },
+  {
+    "path": "ownership-931-evidence/tcp/runs/static-intercepted-n100-c1-r6-candidate.log",
+    "bytes": 5206
+  },
+  {
+    "path": "ownership-931-evidence/tcp/summary-integrity.json",
+    "bytes": 259
+  },
+  {
+    "path": "ownership-931-evidence/tcp/summary.json",
+    "bytes": 17249
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepare.log",
+    "bytes": 108
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe",
+    "bytes": 78256
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe.deps.json",
+    "bytes": 3033
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe.dll",
+    "bytes": 40960
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe.pdb",
+    "bytes": 24132
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/PhysicalTcpProbe.runtimeconfig.json",
+    "bytes": 473
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/ScalarStreamModule.dll",
+    "bytes": 25088
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Client.pdb",
+    "bytes": 374348
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Server.dll",
+    "bytes": 487936
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/baseline/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/Directory.Build.props",
+    "bytes": 12
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/Directory.Build.targets",
+    "bytes": 12
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/Contract.cs",
+    "bytes": 569
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/ScalarStreamModule.deps.json",
+    "bytes": 3039
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/ScalarStreamModule.dll",
+    "bytes": 25088
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/ScalarStreamModule.pdb",
+    "bytes": 29864
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Client.pdb",
+    "bytes": 374348
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Server.dll",
+    "bytes": 487936
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/bin/Release/net10.0/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/module/module.csproj",
+    "bytes": 1350
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/Program.cs",
+    "bytes": 9142
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe",
+    "bytes": 78256
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe.deps.json",
+    "bytes": 3033
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe.dll",
+    "bytes": 40960
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe.pdb",
+    "bytes": 24132
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/PhysicalTcpProbe.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Client.dll",
+    "bytes": 992768
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Client.pdb",
+    "bytes": 374348
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Runtime.dll",
+    "bytes": 532992
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Server.dll",
+    "bytes": 487936
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/bin/Release/net10.0/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/probe.csproj",
+    "bytes": 1314
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe",
+    "bytes": 78256
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe.deps.json",
+    "bytes": 3033
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe.dll",
+    "bytes": 40960
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe.pdb",
+    "bytes": 24132
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/PhysicalTcpProbe.runtimeconfig.json",
+    "bytes": 473
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/ScalarStreamModule.dll",
+    "bytes": 25088
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Abstractions.dll",
+    "bytes": 196608
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Abstractions.pdb",
+    "bytes": 53820
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Client.pdb",
+    "bytes": 374348
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Runtime.pdb",
+    "bytes": 161676
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Sdk.dll",
+    "bytes": 6144
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Sdk.pdb",
+    "bytes": 12112
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Sdk.xml",
+    "bytes": 130
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Serializer.SharpPack.dll",
+    "bytes": 11776
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Serializer.SharpPack.pdb",
+    "bytes": 12792
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Serializer.SharpPack.xml",
+    "bytes": 1824
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Server.dll",
+    "bytes": 488960
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Server.pdb",
+    "bytes": 147604
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpLink.Server.xml",
+    "bytes": 77900
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/candidate/SharpPack.Core.dll",
+    "bytes": 246272
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/module-build.log",
+    "bytes": 351
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/prepared-manifest.json",
+    "bytes": 4175
+  },
+  {
+    "path": "ownership-931-evidence/tcp-prepared/probe-build.log",
+    "bytes": 345
+  },
+  {
+    "path": "ownership-931-evidence/tcp-run.log",
+    "bytes": 4456
+  },
+  {
+    "path": "ownership-931-evidence/tcp-summary.log",
+    "bytes": 4657
+  },
+  {
+    "path": "ownership-931-evidence/uname.txt",
+    "bytes": 128
+  },
+  {
+    "path": "ownership-runtime-install/aspnetcore.log",
+    "bytes": 1058
+  },
+  {
+    "path": "ownership-runtime-install/dotnet-install.sh",
+    "bytes": 63563
+  },
+  {
+    "path": "ownership-runtime-install/dotnet.log",
+    "bytes": 1013
+  }
+]

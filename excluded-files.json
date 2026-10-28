@@ -1,0 +1,2362 @@
+[
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-Abstractions.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-Client.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-Compression.Zstd.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-GenerationControl.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-Hosting.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-Runtime.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-Sdk.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-Serializer.SharpPack.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/baseline/pack-Server.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-Abstractions.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-Client.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-Compression.Zstd.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-GenerationControl.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-Hosting.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-Runtime.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-Sdk.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-Serializer.SharpPack.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/candidate/pack-Server.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/SharpLink.Benchmarks.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/SharpLink.Benchmarks.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/probe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/ref/SharpLink.Benchmarks.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/Release/net10.0/refint/SharpLink.Benchmarks.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/probe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/probe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/probe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/scalar-prepared/build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ScalarStreamModule.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ref/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/refint/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_Proxy.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_ProxyImpl.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_Stub.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/module/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/PhysicalTcpProbe.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/ref/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/refint/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/generated/Microsoft.AspNetCore.App.SourceGenerators/Microsoft.AspNetCore.SourceGenerators.PublicProgramSourceGenerator/PublicTopLevelProgram.Generated.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/build/probe/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/module-build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-original-48",
+    "path": "ownership-931-evidence/tcp-prepared/probe-build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-Abstractions.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-Client.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-Compression.Zstd.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-GenerationControl.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-Hosting.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-Runtime.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-Sdk.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-Serializer.SharpPack.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/baseline/pack-Server.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-Abstractions.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-Client.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-Compression.Zstd.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-GenerationControl.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-Hosting.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-Runtime.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-Sdk.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-Serializer.SharpPack.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/candidate/pack-Server.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ScalarStreamModule.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ref/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/refint/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_Proxy.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_ProxyImpl.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_Stub.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/module/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/PhysicalTcpProbe.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/ref/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/refint/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/generated/Microsoft.AspNetCore.App.SourceGenerators/Microsoft.AspNetCore.SourceGenerators.PublicProgramSourceGenerator/PublicTopLevelProgram.Generated.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/build/probe/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/module-build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-fullopts-12",
+    "path": "physical-ownership-931-client-ablation-dd02ecfc6970cfa3b621d919d48e4d9e48f205aa-1/ownership-931-evidence/tcp-prepared/probe-build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/A-app.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/A-preflight.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/B-app.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/B-preflight.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/O-app.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/O-preflight.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/CausalProbe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/CausalProbe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/CausalProbe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Proxy.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_ProxyImpl.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Stub.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalPr.8D163FC2.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/CausalProbe.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/PublishOutputs.574901d69c.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/ref/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/Release/net10.0/refint/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/app/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Preflight.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Preflight.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Preflight.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/Preflight.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/PublishOutputs.f360ddaca7.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/ref/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/Release/net10.0/refint/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/A/preflight/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/CausalProbe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/CausalProbe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/CausalProbe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Proxy.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_ProxyImpl.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Stub.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalPr.8D163FC2.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/CausalProbe.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/PublishOutputs.09c9cc1a90.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/ref/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/Release/net10.0/refint/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/app/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Preflight.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Preflight.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Preflight.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/Preflight.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/PublishOutputs.1830ad0fbe.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/ref/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/Release/net10.0/refint/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/B/preflight/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/CausalProbe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/CausalProbe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/CausalProbe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Proxy.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_ProxyImpl.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Stub.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalPr.8D163FC2.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/CausalProbe.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/PublishOutputs.84639cf78b.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/ref/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/Release/net10.0/refint/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/app/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Preflight.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Preflight.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Preflight.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/Preflight.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/PublishOutputs.9187c6bee5.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/ref/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/Release/net10.0/refint/Preflight.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-hosted-three-arm-36",
+    "path": "method-facts-732-47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f-1/method-facts-732-evidence/build/O/preflight/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Abstractions.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Client.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Compression.Zstd.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-GenerationControl.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Hosting.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Runtime.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Sdk.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Serializer.SharpPack.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/baseline/pack-Server.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Abstractions.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Client.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Compression.Zstd.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-GenerationControl.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Hosting.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Runtime.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Sdk.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Serializer.SharpPack.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/candidate/pack-Server.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ScalarStreamModule.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/module.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/ref/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/Release/net10.0/refint/ScalarStreamModule.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_Proxy.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_ProxyImpl.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/PhysicalTcp_IScalarStream_74CC6455923B5D5E_Stub.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/module.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/module/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/PhysicalTcpProbe.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/probe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/ref/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/Release/net10.0/refint/PhysicalTcpProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/generated/Microsoft.AspNetCore.App.SourceGenerators/Microsoft.AspNetCore.SourceGenerators.PublicProgramSourceGenerator/PublicTopLevelProgram.Generated.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/probe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/build/probe/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/module-build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "931-pgo-12",
+    "path": "physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence/tcp-prepared/probe-build.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/CausalProbe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/CausalProbe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/CausalProbe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Proxy.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_ProxyImpl.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Stub.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalPr.8D163FC2.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/CausalProbe.sourcelink.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/ref/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/Release/net10.0/refint/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A-20261028-050111--24506--TYj5wV.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A-20261028-050155--24802--a1Nzfc.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-A-20261028-050438--25482--rgganW.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/CausalProbe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/CausalProbe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/CausalProbe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Proxy.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_ProxyImpl.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/MethodFactsExperiment_IFactsRpc_3AEDDF623EF2FF8F_Stub.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.ContractManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Generated/SharpLink.Generator/SharpLink.Generator.RpcGenerator/SharpLink.GeneratedAssemblyManifest.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalPr.8D163FC2.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/CausalProbe.sourcelink.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/ref/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/Release/net10.0/refint/CausalProbe.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B-20261028-050157--24811--DC1ZXb.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "build-B-20261028-050443--25506--qljoeH.binlog",
+    "reason": "MSBuild binary logs can embed ambient environment; corresponding text logs and binary/source provenance retained"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "environment-during.jsonl",
+    "reason": "Original process snapshots contain unrelated command lines; local originals preserved; numeric-only derivative supplied"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "environment-summary.json",
+    "reason": "Original process snapshots contain unrelated command lines; local originals preserved; numeric-only derivative supplied"
+  },
+  {
+    "category": "732-m1-local",
+    "path": "start-state.json",
+    "reason": "Original process snapshots contain unrelated command lines; local originals preserved; numeric-only derivative supplied"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/inspect.sourcelink.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/ref/inspect.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/Release/net10.0/refint/inspect.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/inspect.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/inspect.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/inspect.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "inspect-source/obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/SharpLink.Benchmarks.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/SharpLink.Benchmarks.pdb",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/apphost",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.AssemblyInfo.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.AssemblyInfoInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.GeneratedMSBuildEditorConfig.editorconfig",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.GlobalUsings.g.cs",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.assets.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.csproj.AssemblyReference.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.csproj.CoreCompileInputs.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.csproj.FileListAbsolute.txt",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.csproj.Up2Date",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.genruntimeconfig.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/probe.sourcelink.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/ref/SharpLink.Benchmarks.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/Release/net10.0/refint/SharpLink.Benchmarks.dll",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/probe.csproj.nuget.dgspec.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/probe.csproj.nuget.g.props",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/probe.csproj.nuget.g.targets",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/project.assets.json",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  },
+  {
+    "category": "931-r1-loop-exit",
+    "path": "scalar-obj/project.nuget.cache",
+    "reason": "Build/package/runtime cache; not raw measurement evidence"
+  }
+]

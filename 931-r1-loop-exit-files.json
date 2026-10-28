@@ -1,0 +1,458 @@
+[
+  {
+    "path": "baseline-production-source.diff",
+    "bytes": 0
+  },
+  {
+    "path": "candidate.patch",
+    "bytes": 1655
+  },
+  {
+    "path": "dotnet-info.txt",
+    "bytes": 1364
+  },
+  {
+    "path": "experiment-summary.json",
+    "bytes": 2437
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Abstractions.dll",
+    "bytes": 197120
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Abstractions.pdb",
+    "bytes": 54420
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Client.pdb",
+    "bytes": 376244
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Runtime.pdb",
+    "bytes": 165072
+  },
+  {
+    "path": "inspect/ac17/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "inspect/ac17/inspect",
+    "bytes": 124712
+  },
+  {
+    "path": "inspect/ac17/inspect.deps.json",
+    "bytes": 1534
+  },
+  {
+    "path": "inspect/ac17/inspect.dll",
+    "bytes": 14848
+  },
+  {
+    "path": "inspect/ac17/inspect.pdb",
+    "bytes": 23164
+  },
+  {
+    "path": "inspect/ac17/inspect.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Abstractions.dll",
+    "bytes": 197120
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Abstractions.pdb",
+    "bytes": 54420
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Client.pdb",
+    "bytes": 376244
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Runtime.pdb",
+    "bytes": 165072
+  },
+  {
+    "path": "inspect/loop-exit/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "inspect/loop-exit/inspect",
+    "bytes": 124712
+  },
+  {
+    "path": "inspect/loop-exit/inspect.deps.json",
+    "bytes": 1534
+  },
+  {
+    "path": "inspect/loop-exit/inspect.dll",
+    "bytes": 14848
+  },
+  {
+    "path": "inspect/loop-exit/inspect.pdb",
+    "bytes": 23164
+  },
+  {
+    "path": "inspect/loop-exit/inspect.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "inspect-build.log",
+    "bytes": 407
+  },
+  {
+    "path": "inspect-built/SharpLink.Abstractions.dll",
+    "bytes": 197120
+  },
+  {
+    "path": "inspect-built/SharpLink.Abstractions.pdb",
+    "bytes": 54420
+  },
+  {
+    "path": "inspect-built/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "inspect-built/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "inspect-built/SharpLink.Client.pdb",
+    "bytes": 376244
+  },
+  {
+    "path": "inspect-built/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "inspect-built/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "inspect-built/SharpLink.Runtime.pdb",
+    "bytes": 165072
+  },
+  {
+    "path": "inspect-built/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "inspect-built/inspect",
+    "bytes": 124712
+  },
+  {
+    "path": "inspect-built/inspect.deps.json",
+    "bytes": 1534
+  },
+  {
+    "path": "inspect-built/inspect.dll",
+    "bytes": 14848
+  },
+  {
+    "path": "inspect-built/inspect.pdb",
+    "bytes": 23164
+  },
+  {
+    "path": "inspect-built/inspect.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "inspect-source/Program.cs",
+    "bytes": 1498
+  },
+  {
+    "path": "inspect-source/inspect.csproj",
+    "bytes": 623
+  },
+  {
+    "path": "integration-build.log",
+    "bytes": 5459
+  },
+  {
+    "path": "integration-focused.log",
+    "bytes": 482
+  },
+  {
+    "path": "integration-results/SharpLink.IntegrationTests-macos-net10.0-report.html",
+    "bytes": 153425
+  },
+  {
+    "path": "integration-results/SharpLink.IntegrationTests-macos-net10.0.tunit-report.json",
+    "bytes": 28587
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Abstractions.dll",
+    "bytes": 197120
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Abstractions.pdb",
+    "bytes": 54420
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Benchmarks",
+    "bytes": 124712
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Benchmarks.deps.json",
+    "bytes": 1573
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Benchmarks.dll",
+    "bytes": 22528
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Benchmarks.pdb",
+    "bytes": 24176
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Benchmarks.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Client.pdb",
+    "bytes": 376244
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Runtime.pdb",
+    "bytes": 165072
+  },
+  {
+    "path": "scalar/ac17/app/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "scalar/ac17/evidence/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "scalar/ac17/evidence/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "scalar/ac17/evidence/jit.txt",
+    "bytes": 66606
+  },
+  {
+    "path": "scalar/ac17/evidence/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "scalar/ac17/evidence/metadata.json",
+    "bytes": 5652
+  },
+  {
+    "path": "scalar/ac17/evidence/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "scalar/commands.json",
+    "bytes": 1305
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Abstractions.dll",
+    "bytes": 197120
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Abstractions.pdb",
+    "bytes": 54420
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Benchmarks",
+    "bytes": 124712
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Benchmarks.deps.json",
+    "bytes": 1573
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Benchmarks.dll",
+    "bytes": 22528
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Benchmarks.pdb",
+    "bytes": 24176
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Benchmarks.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Client.pdb",
+    "bytes": 376244
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Runtime.pdb",
+    "bytes": 165072
+  },
+  {
+    "path": "scalar/loop-exit/app/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "scalar/loop-exit/evidence/allocations.json",
+    "bytes": 1156
+  },
+  {
+    "path": "scalar/loop-exit/evidence/dynamic-layout.json",
+    "bytes": 4353
+  },
+  {
+    "path": "scalar/loop-exit/evidence/jit.txt",
+    "bytes": 66132
+  },
+  {
+    "path": "scalar/loop-exit/evidence/layout.json",
+    "bytes": 3752
+  },
+  {
+    "path": "scalar/loop-exit/evidence/metadata.json",
+    "bytes": 5657
+  },
+  {
+    "path": "scalar/loop-exit/evidence/run.log",
+    "bytes": 796
+  },
+  {
+    "path": "scalar/summary.json",
+    "bytes": 8494
+  },
+  {
+    "path": "scalar-build.log",
+    "bytes": 406
+  },
+  {
+    "path": "scalar-built/SharpLink.Abstractions.dll",
+    "bytes": 197120
+  },
+  {
+    "path": "scalar-built/SharpLink.Abstractions.pdb",
+    "bytes": 54420
+  },
+  {
+    "path": "scalar-built/SharpLink.Abstractions.xml",
+    "bytes": 274846
+  },
+  {
+    "path": "scalar-built/SharpLink.Benchmarks",
+    "bytes": 124712
+  },
+  {
+    "path": "scalar-built/SharpLink.Benchmarks.deps.json",
+    "bytes": 1573
+  },
+  {
+    "path": "scalar-built/SharpLink.Benchmarks.dll",
+    "bytes": 22528
+  },
+  {
+    "path": "scalar-built/SharpLink.Benchmarks.pdb",
+    "bytes": 24176
+  },
+  {
+    "path": "scalar-built/SharpLink.Benchmarks.runtimeconfig.json",
+    "bytes": 440
+  },
+  {
+    "path": "scalar-built/SharpLink.Client.dll",
+    "bytes": 992256
+  },
+  {
+    "path": "scalar-built/SharpLink.Client.pdb",
+    "bytes": 376244
+  },
+  {
+    "path": "scalar-built/SharpLink.Client.xml",
+    "bytes": 133749
+  },
+  {
+    "path": "scalar-built/SharpLink.Runtime.dll",
+    "bytes": 541696
+  },
+  {
+    "path": "scalar-built/SharpLink.Runtime.pdb",
+    "bytes": 165072
+  },
+  {
+    "path": "scalar-built/SharpLink.Runtime.xml",
+    "bytes": 95139
+  },
+  {
+    "path": "unit-build.log",
+    "bytes": 4757
+  },
+  {
+    "path": "unit-focused.log",
+    "bytes": 453
+  },
+  {
+    "path": "unit-results/SharpLink.UnitTests-macos-net10.0-report.html",
+    "bytes": 167887
+  },
+  {
+    "path": "unit-results/SharpLink.UnitTests-macos-net10.0.tunit-report.json",
+    "bytes": 229269
+  }
+]
