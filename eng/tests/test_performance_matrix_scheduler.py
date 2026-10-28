@@ -2,6 +2,8 @@
 import copy
 import importlib.util
 import json
+import os
+import subprocess
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -191,6 +193,53 @@ class SchedulerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "already finished"):
                     scheduler.execute(args)
                 self.assertEqual(1, run.call_count)
+
+    def test_windows_checkout_crlf_fails_clean_but_precheckout_lf_preserves_runner(self):
+        # Git's autocrlf behavior is reproducible offline on Linux too. This is
+        # a tiny synthetic repository containing the real shell runner, not a
+        # benchmark. Both clones stay clean; no post-checkout source rewrite.
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            source = directory / "source"
+            (source / "eng").mkdir(parents=True)
+            (source / "eng/run-performance-matrix.sh").write_bytes(
+                (ROOT / "eng/run-performance-matrix.sh").read_bytes())
+            for project in ("SharpLink.LoadTest", "SharpLink.StreamLoadTest"):
+                path = source / "test" / project
+                path.mkdir(parents=True)
+                (path / ".keep").write_text("synthetic checkout fixture\n")
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=str(directory / "global-gitconfig"), GIT_CONFIG_NOSYSTEM="1")
+
+            def git(*args, cwd=None):
+                return subprocess.check_output(["git", *args], cwd=cwd, env=env,
+                    text=True, stderr=subprocess.STDOUT).strip()
+
+            git("init", str(source))
+            git("add", ".", cwd=source)
+            git("-c", "user.name=Synthetic Fixture", "-c", "user.email=fixture@example.invalid",
+                "commit", "-m", "Synthetic shell checkout fixture", cwd=source)
+            git("config", "--global", "core.autocrlf", "true")
+            negative = directory / "crlf"
+            git("clone", "--no-local", str(source), str(negative))
+            self.assertEqual("", git("status", "--porcelain", cwd=negative))
+            self.assertIn(b"\r\n", (negative / "eng/run-performance-matrix.sh").read_bytes())
+            with self.assertRaises(subprocess.CalledProcessError) as failed:
+                scheduler.matrix.runner_records(negative, "windows")
+            self.assertIn(b"pipefail", failed.exception.stderr)
+
+            # These are the workflow's exact commands, before either checkout.
+            git("config", "--global", "core.autocrlf", "false")
+            git("config", "--global", "core.eol", "lf")
+            positive = directory / "lf"
+            git("clone", "--no-local", str(source), str(positive))
+            self.assertEqual("", git("status", "--porcelain", cwd=positive))
+            self.assertNotIn(b"\r\n", (positive / "eng/run-performance-matrix.sh").read_bytes())
+            self.assertEqual(2205, len(scheduler.matrix.runner_records(positive, "windows")))
+            workflow = (ROOT / ".github/workflows/full-performance-shard.yml").read_text()
+            first_checkout = workflow.index("uses: actions/checkout@")
+            self.assertLess(workflow.index("git config --global core.autocrlf false"), first_checkout)
+            self.assertLess(workflow.index("git config --global core.eol lf"), first_checkout)
+            self.assertIn("if: runner.os == 'Windows'", workflow[:first_checkout])
 
     def test_workflow_is_manual_default_safe_and_three_separate_fail_fast_false_groups(self):
         workflow = (ROOT / ".github/workflows/full-performance-matrix.yml").read_text()

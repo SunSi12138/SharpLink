@@ -91,7 +91,11 @@ existing runner invokes its own capture hook. An older or changed contract stops
 before load; do not overlay files, dirty the candidate or relabel its SHA to make
 it pass. Review a compatible tool revision instead. Candidate source constants
 and the complete runner plan are regenerated and checked at planning, execution
-and aggregation. Baseline omission is allowed only because this is explicitly a
+and aggregation. On the isolated Windows runner, Git `core.autocrlf=false` and
+`core.eol=lf` are configured **before both checkouts**. This preserves the
+committed shell runner's LF bytes; a clean Git status alone would not detect
+checkout-generated CRLF, which Bash cannot execute. No candidate files are
+rewritten after checkout. Baseline omission is allowed only because this is explicitly a
 single-candidate **structural** campaign, not a comparative acceptance mode.
 
 Example after publishing the reviewed workflow on a frozen branch (commands are
