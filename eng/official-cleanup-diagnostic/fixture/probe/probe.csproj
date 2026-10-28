@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>PhysicalTcpProbe</AssemblyName></PropertyGroup>
+  <!-- Intentionally no module ProjectReference: dynamic mode must load after both builders. -->
+</Project>

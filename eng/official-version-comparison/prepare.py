@@ -78,11 +78,14 @@ def main():
     p.add_argument('--dependency-cache', type=Path, required=True)
     p.add_argument('--dotnet', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--fixture-purpose', choices=('comparison', 'cleanup-diagnostic'), default='comparison')
     a = p.parse_args()
     tool_sha = capture(['git', 'rev-parse', 'HEAD'], ROOT)
     if capture(['git', 'status', '--porcelain'], ROOT):
         raise ValueError('Tools must be frozen clean commit before preparation')
     tool_inventory = source_inventory(ROOT)
+    fixture_source = ROOT / 'fixture' if a.fixture_purpose == 'comparison' else ROOT.parent / 'official-cleanup-diagnostic/fixture'
+    fixture_inventory = source_inventory(fixture_source)
     source = a.dev_source.resolve(strict=True)
     dotnet = a.dotnet.resolve(strict=True)
     if capture([dotnet, '--version'], ROOT) != CONTRACT['sdk']:
@@ -133,7 +136,7 @@ def main():
             deps[name] = digest(dependency)
         manifests[arm]['dependencies'] = deps
         build = output / f'{arm}-build'
-        shutil.copytree(ROOT / 'fixture', build, ignore=shutil.ignore_patterns('bin', 'obj'))
+        shutil.copytree(fixture_source, build, ignore=shutil.ignore_patterns('bin', 'obj'))
         for filename in ('Directory.Packages.props',):
             (build / filename).write_text('<Project />\n')
         for name in ('module', 'probe'):
@@ -159,10 +162,12 @@ def main():
                 raise ValueError(f'Private dependency snapshot drift {arm}/{name}')
     if capture(['git', 'rev-parse', 'HEAD'], ROOT) != tool_sha or capture(['git', 'status', '--porcelain'], ROOT) or source_inventory(ROOT) != tool_inventory:
         raise ValueError('Tool source changed during preparation')
+    if source_inventory(fixture_source) != fixture_inventory:
+        raise ValueError('Selected fixture source changed during preparation')
     if manifests['official']['dependencies'] != manifests['dev']['dependencies']:
         raise ValueError('Non-product dependency drift')
     write(output / 'prepared.json', dict(schema=1, sdk=CONTRACT['sdk'], contract=CONTRACT, arms=manifests,
-                                        toolRevision=tool_sha, toolSourceHashes=tool_inventory, status='build-only'))
+                                        toolRevision=tool_sha, toolSourceHashes=tool_inventory, fixturePurpose=a.fixture_purpose, fixtureSourceHashes=fixture_inventory, status='build-only'))
     print(f'BUILD_ONLY_PREPARED {output}; cold and timing NOT RUN')
 
 
