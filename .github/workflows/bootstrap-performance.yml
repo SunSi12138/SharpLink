@@ -1,0 +1,111 @@
+name: Bootstrap Supervision Paired TCP Diagnostic
+
+on:
+  push:
+    branches: [codex/bootstrap-performance-validation]
+    paths: ['eng/physical-ownership-probes/bootstrap-performance/REQUEST.json']
+
+permissions:
+  contents: read
+
+jobs:
+  full-product:
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/codex/bootstrap-performance-validation' && github.run_attempt == 1 && github.event.head_commit.message == 'run: bootstrap-supervision paired diagnostic BS1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+    steps:
+      - name: Checkout request commit (parent must be reviewed tool)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Validate single-use bounded request before any build or timing
+        working-directory: tools
+        run: python3 eng/physical-ownership-probes/bootstrap-performance/verify_request.py
+      - name: Checkout exact product dev
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 57f06f172d29fa5cfd4ea8e9b86a23f122df24ab
+          path: sources/dev
+          persist-credentials: false
+      - name: Checkout exact product a
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ed34529fd660484c546f9ac96f73e322b5e04312
+          path: sources/a
+          persist-credentials: false
+      - name: Checkout exact product b
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 13e75f15f16cb98960c97f9500e17d26ba81f43b
+          path: sources/b
+          persist-credentials: false
+      - name: Configure isolated paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bootstrap-full-product/runtime-install" "$RUNNER_TEMP/bootstrap-cli"
+          echo "DOTNET_CLI_HOME=$RUNNER_TEMP/bootstrap-cli" >> "$GITHUB_ENV"
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/bootstrap-sdk"
+            echo "PRIVATE_RUNTIME=$RUNNER_TEMP/bootstrap-runtime"
+            echo "BOOTSTRAP_ROOT=$RUNNER_TEMP/bootstrap-full-product"
+          } >> "$GITHUB_ENV"
+      - name: Install exact build SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.102
+      - name: Install SHA512-verified official private frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$BOOTSTRAP_ROOT/runtime-install"
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json --output releases.json
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz --output dotnet.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.14/aspnetcore-runtime-10.0.14-linux-x64.tar.gz --output aspnetcore.tar.gz
+          {
+            echo '634326028645f38731c8c4e71a68356e4ca0d6b6607139a234ab760687f742063edaf33a1f20dda615742d2dc8300ca2ff857619d51fbb38090383b71334af89  dotnet.tar.gz'
+            echo 'dd024fd2616926a555b75cbf7a836f6dce998199f0596d9d75676dca2b9d59c8ee8673c6ac23473c0f1a4bdd59eb5cd02fe9ab097eeaf2dd8c8bd117c85e7031  aspnetcore.tar.gz'
+          } | sha512sum --check | tee framework-verification.log
+          mkdir "$PRIVATE_RUNTIME"
+          tar -xzf dotnet.tar.gz -C "$PRIVATE_RUNTIME"
+          tar -xzf aspnetcore.tar.gz -C "$PRIVATE_RUNTIME"
+      - name: Fixed paired full-product comparison
+        shell: bash
+        working-directory: tools
+        run: |
+          set -euo pipefail
+          python3 eng/physical-ownership-probes/bootstrap-performance/verify_request.py
+          cp eng/physical-ownership-probes/bootstrap-performance/REQUEST.json "$BOOTSTRAP_ROOT/request.json"
+          {
+            echo "requestCommit=$GITHUB_SHA"
+            echo "toolParent=$(git rev-parse HEAD^)"
+            echo 'dev=57f06f172d29fa5cfd4ea8e9b86a23f122df24ab'
+            echo 'a=ed34529fd660484c546f9ac96f73e322b5e04312'
+            echo 'b=13e75f15f16cb98960c97f9500e17d26ba81f43b'
+            echo "run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT"
+            echo "runner=$RUNNER_OS/$RUNNER_ARCH image=${ImageOS:-unknown}/${ImageVersion:-unknown}"
+          } > "$BOOTSTRAP_ROOT/source-identities.txt"
+          python3 eng/physical-ownership-probes/bootstrap-performance/run.py \
+            --dev "$GITHUB_WORKSPACE/sources/dev" \
+            --a "$GITHUB_WORKSPACE/sources/a" \
+            --b "$GITHUB_WORKSPACE/sources/b" \
+            --build-dotnet "$DOTNET_INSTALL_DIR/dotnet" \
+            --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --output "$BOOTSTRAP_ROOT/evidence" 2>&1 | tee "$BOOTSTRAP_ROOT/driver.log"
+      - name: Retain all diagnostics and failed attempts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ownership-bootstrap-full-product-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/bootstrap-full-product
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true
