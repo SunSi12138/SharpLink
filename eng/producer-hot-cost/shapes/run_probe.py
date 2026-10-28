@@ -14,6 +14,7 @@ p.add_argument('--arms', nargs='+', default=['baseline', 'candidate-final'])
 p.add_argument('--run-name', required=True)
 p.add_argument('--modes', nargs='+', default=['fullopts','tier0','tier1','pgo'])
 p.add_argument('--core-only', action='store_true')
+p.add_argument('--registration-only', action='store_true', help='Predeclared paired PGO companion; only narrow native output, never change the workload.')
 p.add_argument('--iterations', type=int, default=5000)
 args = p.parse_args()
 root = args.root.resolve()
@@ -53,6 +54,10 @@ modes = {
 modes = {name: modes[name] for name in args.modes}
 if args.core_only:
     filters = ' '.join(['SharpLink.Client.SharpLinkClient:' + name for name in ['InvokeUnaryCoreAsync','InvokeUnaryRetryAttemptAsync','PrepareGeneratedServerStreamAsync']] + ['SharpLink.Client.PendingRequestTable:OnRegistered','SharpLink.Client.ClientConnection:ReleaseCallAdmissionReservation'] + ['*' + name + '*:MoveNext' for name in ['InvokeUnaryWithRetryAsync','InvokeClientStreamingCoreAsync','RunGeneratedClientStreamsAsync','StartServerStreamingInvokerAsync','StartDuplexStreamingInvokerAsync','InvokeOneWayStreamingCoreAsync','CheckHealthAsync']])
+if args.registration_only:
+    if args.modes != ['pgo'] or args.arms != ['baseline', 'candidate-final']:
+        p.error('--registration-only requires --modes pgo and both default arms')
+    filters = 'SharpLink.Client.PendingRequestTable:OnRegistered'
 out = root / 'evidence' / args.run_name
 out.mkdir(exist_ok=False)
 
@@ -61,7 +66,7 @@ def run(cmd, output, env=None):
         r = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, env=env, cwd=root, timeout=300)
     return r.returncode
 
-provenance = {'Iterations': args.iterations, 'Filter': filters, 'Modes': modes,
+provenance = {'CaptureKind': 'registration-pgo-companion' if args.registration_only else 'primary', 'Iterations': args.iterations, 'Filter': filters, 'Modes': modes,
               'ProbeFiles': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                              for p in [*sorted((root/'probe').glob('*.cs')), *sorted((root/'probe').glob('*.csproj')), *sorted((root/'contracts').glob('*.cs')), *sorted((root/'contracts').glob('*.csproj')), *sorted((root/'services').glob('*.cs')), *sorted((root/'services').glob('*.csproj')), *sorted(root.glob('*.props')), Path(__file__).resolve()]},
               'Arms': {}}

@@ -56,7 +56,7 @@ The reusable `.github/workflows/producer-hot-evidence.yml` performs these steps 
 
 ## Fresh hosted evidence
 
-Each runtime job launches 16 processes: two arms × four JIT modes × two policy contexts. The shapes context uses real authenticated TLS, two persistent sessions, populated maintenance owners and one successful update in **each** arm. It exercises 30,000 unary calls and 600 calls each for client streaming, server streaming, duplex, one-way client streaming and health. The retry context separately exercises 30,000 idempotent ordinary successes with retries configured and maintenance disabled. It does not test a failed retry.
+Each runtime job launches 16 primary workload processes: two arms × four JIT modes × two policy contexts. The shapes context uses real authenticated TLS, two persistent sessions, populated maintenance owners and one successful update in **each** arm. It exercises 30,000 unary calls and 600 calls each for client streaming, server streaming, duplex, one-way client streaming and health. The retry context separately exercises 30,000 idempotent ordinary successes with retries configured and maintenance disabled. It does not test a failed retry.
 
 The four JIT modes are forced FullOpts, retained Tier0, non-PGO Tier1 and tiered PGO with accelerated promotion (delay 0, threshold 30). Settings and observed tiers are recorded. Summarization requires the requested actual runtime, SDK 10.0.102, exact source/binary hashes, unchanged pool/session identities, successful update semantics, nine ordinary layouts and ten selection IL/local signatures. It requires complete native bodies for 60 paired target/mode/tier rows per runtime. Missing or inlined targets are not treated as zero cost. Native frame/instruction equality is **not** a pass gate.
 
@@ -67,3 +67,29 @@ Shape allocation windows use `GC.GetTotalAllocatedBytes(precise:true)`. All six 
 ## Historical local findings
 
 `RESULTS.md` and `EXECUTIVE.md` describe the completed local c242→8915 campaign. Its 40 launches include eight narrow recaptures beyond the 32-launch hosted recipe. References there to raw campaign folders/JSON name retained **local** measurements, not committed files. Fresh hosted results must be read from their own exact-head artifacts; do not reuse local numeric samples as hosted outcomes. The older coordinator c242 evidence remains historical and separate.
+
+## Fixed registration-native companion
+
+The 16ef integration run on runtime 10.0.2 completed the functional shape workload
+but emitted no standalone Tier1 `OnRegistered` body for the shapes baseline.
+Its Tier0 and Instrumented Tier0 bodies are retained. The artifact does not decide
+whether promotion or inlining explains the absent body. Runtime 10.0.13 and the
+retry context cannot fill that evidence gap.
+
+Each hosted runtime now declares one additional **paired shapes PGO campaign**,
+`registration-runtime-<version>`, before either arm runs. Both arms execute the same
+5,000-iteration phases, TLS update, shape checks and allocation windows using the
+same binaries and JIT settings as the primary shapes campaign. Only the disassembly
+filter narrows to `PendingRequestTable:OnRegistered`. There is no conditional
+retry, repeat-until-complete loop, runtime substitution or product annotation.
+
+The summarizer requires matching source, binaries, authored probe inputs, runtime,
+PGO settings and workload, successful metadata/functional exits, and **both complete
+Tier1 bodies in the companion itself**. An absent or incomplete body still fails,
+even when the primary happened to provide it. `PrimaryNativeGaps` keeps the primary
+absence visible; every native row names its source group. Companion samples remain
+in `RegistrationNativeCompanions`, not pooled into the primary allocation series.
+The original 16 launches and 60 paired tier-coverage requirements remain; the two
+companion launches are recorded separately. Narrowing output is a collection change,
+not proof of performance equivalence. Fresh Linux x64 jobs must establish whether
+this fixed capture actually supplies the required bodies on both official runtimes.

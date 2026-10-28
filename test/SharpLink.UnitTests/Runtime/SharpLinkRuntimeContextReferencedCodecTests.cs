@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -132,6 +133,137 @@ public partial class SharpLinkRuntimeContextTests
             validationTrigger.BeforeDependenciesRead = null;
             context.ReleaseGeneratedManifest(consumer);
         }
+    }
+
+    [Test]
+    public void CodecPublicationMustAllowCompletedUnrelatedManifestRetirement()
+    {
+        var trigger = new ReferencedCodecManifest("publication-retirement-trigger", []);
+        using var context = CreateRuntimeBuilder().Build(
+            new ISharpLinkGeneratedAssemblyManifest[] { trigger });
+        var retired = context.PrepareGeneratedManifest(new ReferencedCodecManifest("retiring-owner", []));
+        context.AdoptGeneratedManifest(retired);
+        var before = context.CreateGeneratedCodecSnapshot();
+        var revision = context.RegistrationRevision;
+        using var started = new ManualResetEventSlim();
+        using var finished = new ManualResetEventSlim();
+        Exception? retirementFailure = null;
+        var retirement = new Thread(() =>
+        {
+            started.Set();
+            try { context.ReleaseGeneratedManifest(retired); }
+            catch (Exception exception) { retirementFailure = exception; }
+            finally { finished.Set(); }
+        }) { IsBackground = true };
+        trigger.BeforeDependenciesRead = () =>
+        {
+            trigger.BeforeDependenciesRead = null;
+            retirement.Start();
+            Ensure(started.Wait(RaceCoordinationTimeout) && finished.Wait(RaceCoordinationTimeout),
+                "metadata validation must not hold a gate needed by independently finishing retirement");
+        };
+        Exception? publicationFailure = null;
+        try
+        {
+            try { context.PublishGeneratedCodecs(before); }
+            catch (Exception exception) { publicationFailure = exception; }
+            Ensure(retirement.Join(RaceCoordinationTimeout), "physical retirement must finish after publication");
+            Ensure(publicationFailure is null,
+                $"concurrent physical retirement must not invalidate an otherwise legal publication: {publicationFailure}");
+            Ensure(retirementFailure is null && finished.IsSet,
+                $"the independently owned retired manifest must finish cleanup: {retirementFailure}");
+            Ensure(context.RegistrationRevision == revision + 2,
+                "publication and retirement each retain their original revision transition");
+            Ensure(ReferenceEquals(before, context.CreateGeneratedCodecSnapshot()),
+                "retirement tolerance must preserve the exact validated codec mapping");
+        }
+        finally
+        {
+            trigger.BeforeDependenciesRead = null;
+            if ((retirement.ThreadState & ThreadState.Unstarted) == 0)
+                Ensure(retirement.Join(RaceCoordinationTimeout), "retirement worker must not escape the fixture");
+            else
+                context.ReleaseGeneratedManifest(retired);
+        }
+    }
+
+    [Test]
+    public void CodecPublicationMustRejectRetiringAReferencedCodecOwnerDuringValidation()
+    {
+        var hash = new RpcHash128(0x1111111111111111UL, 0x2222222222222222UL);
+        var provider = new TestManifest("retiring-referenced-provider",
+            new HashedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(1), hash));
+        var consumer = new ReferencedCodecManifest("remaining-dependent",
+            [new SharpLinkReferencedCodecDependency(typeof(ThirdAdapterValue), hash)]);
+        using var context = CreateRuntimeBuilder().Build(
+            new ISharpLinkGeneratedAssemblyManifest[] { provider, consumer });
+        var before = context.CreateGeneratedCodecSnapshot();
+        var owner = before[typeof(ThirdAdapterValue)].Owner;
+        var revision = context.RegistrationRevision;
+        consumer.BeforeDependenciesRead = () =>
+        {
+            consumer.BeforeDependenciesRead = null;
+            context.ReleaseGeneratedManifest(owner);
+        };
+        var failure = CaptureFailure(() => context.PublishGeneratedCodecs(before.ToDictionary(static pair => pair.Key, static pair => pair.Value)));
+        Ensure(failure is InvalidOperationException && failure.Message.Contains("catalog changed", StringComparison.Ordinal),
+            "a subset of owners cannot authorize publishing a dependent codec map that revives a removed provider");
+        Ensure(context.RegistrationRevision == revision + 1 &&
+               ReferenceEquals(before, context.CreateGeneratedCodecSnapshot()),
+            "only retirement may advance the revision; the invalid candidate must remain unpublished");
+    }
+
+    [Test]
+    public void CodecPublicationMustAllowRetirementWhenAnotherSameAssemblyOwnerSuppliesDependency()
+    {
+        var hash = new RpcHash128(0x1111111111111111UL, 0x2222222222222222UL);
+        var retiredProvider = new TestManifest("retired-same-assembly-provider",
+            new HashedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(1), hash));
+        var remainingProvider = new TestManifest("remaining-same-assembly-provider",
+            new HashedNativeFactory<ThirdAdapterValue>(new TaggedThirdAdapterValueCodec(2), hash));
+        var consumer = new ReferencedCodecManifest("remaining-dependent",
+            [new SharpLinkReferencedCodecDependency(typeof(ThirdAdapterValue), hash)]);
+        using var context = CreateRuntimeBuilder().Build(
+            new ISharpLinkGeneratedAssemblyManifest[] { retiredProvider, remainingProvider, consumer });
+        var retiredOwner = context.FindGeneratedCodec(retiredProvider, typeof(ThirdAdapterValue))!.Owner;
+        var before = context.CreateGeneratedCodecSnapshot();
+        var survivingCodec = before[typeof(ThirdAdapterValue)];
+        Ensure(ReferenceEquals(survivingCodec.Owner.Manifest, remainingProvider),
+            "the exact candidate dependency must be supplied by the surviving registration");
+        var revision = context.RegistrationRevision;
+        consumer.BeforeDependenciesRead = () =>
+        {
+            consumer.BeforeDependenciesRead = null;
+            context.ReleaseGeneratedManifest(retiredOwner);
+        };
+        var candidate = before.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+        context.PublishGeneratedCodecs(candidate);
+        Ensure(ReferenceEquals(candidate, context.CreateGeneratedCodecSnapshot()) &&
+               ReferenceEquals(context.CreateGeneratedCodecSnapshot()[typeof(ThirdAdapterValue)], survivingCodec),
+            "retiring another owner of the same assembly must preserve the validated Type/hash dependency");
+        Ensure(context.RegistrationRevision == revision + 2,
+            "successful retirement and publication must each advance their original revision");
+    }
+
+    [Test]
+    public void CodecPublicationMustRejectACompetingPublicationDuringValidation()
+    {
+        var trigger = new ReferencedCodecManifest("competing-publication-trigger", []);
+        using var context = CreateRuntimeBuilder().Build(
+            new ISharpLinkGeneratedAssemblyManifest[] { trigger });
+        var before = context.CreateGeneratedCodecSnapshot();
+        var revision = context.RegistrationRevision;
+        trigger.BeforeDependenciesRead = () =>
+        {
+            trigger.BeforeDependenciesRead = null;
+            context.PublishGeneratedCodecs(before);
+        };
+        var failure = CaptureFailure(() => context.PublishGeneratedCodecs(before.ToDictionary(static pair => pair.Key, static pair => pair.Value)));
+        Ensure(failure is InvalidOperationException && failure.Message.Contains("catalog changed", StringComparison.Ordinal),
+            "another publication remains a conflict even when its codec dictionary identity is unchanged");
+        Ensure(context.RegistrationRevision == revision + 1 &&
+               ReferenceEquals(before, context.CreateGeneratedCodecSnapshot()),
+            "only the nested publication may commit; the stale outer map must not replace it");
     }
 
     [Test]

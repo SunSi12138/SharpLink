@@ -5,7 +5,7 @@ current checkout. The historical arms must reproduce their original three and
 four failures. The current arm must pass the focused checks and every case in the
 complete unit suite, with zero failures or skips and unchanged binary hashes.
 
-The expected regular complete-suite inventory is **2,435**: 2,440 discovered entries
+The expected regular complete-suite inventory is **2,439**: 2,444 discovered entries
 minus five `[Explicit]` validation workers. Those isolated workers are not part of
 an unfiltered run. The first full execution must confirm this predeclared inventory;
 a mismatch requires investigation, not changing the expectation to match the output.
@@ -32,3 +32,9 @@ DOTNET_CLI_UI_LANGUAGE=en TUNIT_MAX_PARALLEL_TESTS=8 \
 Choose a fresh output directory for each attempt. English CLI output is required
 by the existing summary parser. Successful historical negative controls are
 expected test failures, not product passes.
+
+The #933 repair adds four named Codec-publication cases: unrelated retirement,
+removed referenced provider rejection, same-assembly surviving provider acceptance,
+and competing publication rejection. The 16ef hosted run executed 2,435 regular
+cases; adding exactly these four predeclares 2,439 (2,447 with the eight lease
+controls). Historical negative-control counts are unchanged.

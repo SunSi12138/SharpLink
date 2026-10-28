@@ -144,24 +144,51 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         RpcGeneratedManifestRegistration[] manifests;
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> previousCodecs;
         long revision;
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             manifests = [.. _manifestRegistrations];
+            previousCodecs = CreateGeneratedCodecSnapshot();
             revision = _registrationRevision;
         }
+        // Metadata is a public SPI: do not hold the catalog gate while invoking it.
+        // Every referenced dependency is resolved against this same candidate map.
+        var candidateOwners = registrations.Values.Select(static codec => codec.Owner).Distinct().ToArray();
         ValidateReferencedCodecDependencies(manifests, registrations);
         if (pendingRegistration is not null)
             ValidateReferencedCodecDependencies([pendingRegistration], registrations);
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (revision != _registrationRevision)
+            if (revision != _registrationRevision &&
+                !CanPublishAfterManifestRemoval(manifests, previousCodecs, candidateOwners, revision))
                 throw new InvalidOperationException("The runtime catalog changed during Codec publication validation.");
             ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);
             _registrationRevision++;
         }
+    }
+
+    // The caller holds the catalog gate. This checks only captured identities and internal
+    // collections, never manifest/provider metadata. The remaining owners must be covered
+    // by the validated snapshot, its codec map must still be current, and the candidate must
+    // not revive a removed owner (including through a referenced-codec dependency).
+    private bool CanPublishAfterManifestRemoval(
+        RpcGeneratedManifestRegistration[] validated,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> previousCodecs,
+        RpcGeneratedManifestRegistration[] candidateOwners,
+        long revision)
+    {
+        var removedCount = validated.Length - _manifestRegistrations.Count;
+        if (removedCount <= 0 || _registrationRevision - revision != removedCount ||
+            !_manifestRegistrations.IsSubsetOf(validated) ||
+            !ReferenceEquals(previousCodecs, CreateGeneratedCodecSnapshot()))
+            return false;
+        foreach (var owner in candidateOwners)
+            if (!_manifestRegistrations.Contains(owner) && Array.IndexOf(validated, owner) >= 0)
+                return false;
+        return true;
     }
 
     private static void ValidateReferencedCodecDependencies(

@@ -1,6 +1,6 @@
 {
   "EXECUTIVE.md": "2dccf74d6e1758d8b9cfeb5ac86eaaf7412338c33109b32d559c1afc3039aea4",
-  "README.md": "52a3a5ebbc3a224ab21e7aa6d096180ac74a086d74fd2fee3b75844570d615e4",
+  "README.md": "ca6786a26048d4fb54000c475493a187479891da712436857fb24282dd60ac5b",
   "RESULTS.md": "33a7018c97c96092bf023cff0c7a1fb09014a57d29d9470929c761da0779f31b",
   "global.json": "a97385ba41542256aadfcc3a7f6ba18689347abc45e61d1a19980583f8c502a2",
   "prepare_arms.py": "aa51ee56e6877c3eb8ffc318ffd5a5bfef0d998aaeb88bc2767d44c3485a57c5",
@@ -28,10 +28,11 @@
   "shapes/probe/HotCostProbe.csproj": "f584aa0cd6f561a38a897f5e55aa201d562a8aa1ef817178f277be8746bfa66c",
   "shapes/probe/Program.cs": "1bdbe3c4c42352262aa595bde0679dd366935dbb8eeb8d48f79c5f8b6ab165ff",
   "shapes/probe/TlsNetwork.cs": "bf6809da67fdb0023da6c5ec0e4b549f9fae172e2786bf1c7d82b34e024b0937",
-  "shapes/run_probe.py": "c2358437be43fb6bc5fc3e82d68f73bcfcdc3bbb617e3ddbbf1eea05e4cbd4f2",
+  "shapes/run_probe.py": "f3ce70f80b54a5d5241c1d84e5fb0bc7961dccadde8e2e3a476853a1bd665584",
   "shapes/services/HotCostDynamic.Services.csproj": "9e8be6b0f334b2c27c7fbae840ae53636f04ea43c618026f50a23a26bdb95262",
   "shapes/services/Service.cs": "a5733cb5ee10490f650400141a749be96a353eac9b688d2b929735a5e18ecef2",
-  "summarize.py": "69a6ad9c34da357d4ae99b9b5fe0d1f063de506aadcfccc4f77e96db2b8aa537",
+  "summarize.py": "a9633985ad94f9261454265fa3617a55ff70845b01bda8b7bcb952b5efb50576",
   "test_prepare_arms.py": "5b8d849b22dc30448ded26e23890961f5ca02610fa5944f5fda2eceeb2508635",
-  "../maintenance-integration-sources.json": "e282c45c8de0e77a3732e8c7e5e591658563ed0379211ba451afef83c7514b62"
+  "../maintenance-integration-sources.json": "fd43eee403afd2c74a2417fbd78b5c15457bb96ba22eccce8e8f0a3f0d6ec19d",
+  "test_native_companion.py": "d2ad62f2e878b2ceb9520879e12eae8c2eb43e2d0d8c4124e3578cbe28517b93"
 }

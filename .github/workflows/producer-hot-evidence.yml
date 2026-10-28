@@ -36,7 +36,7 @@ jobs:
           for name,expected in json.loads((root/'authored-files.sha256.json').read_text()).items():
               assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
           PY
-          python3 -m unittest test_prepare_arms.py -v
+          python3 -m unittest test_prepare_arms.py test_native_companion.py -v
           git -C "$GITHUB_WORKSPACE" fetch --no-tags origin 92a8936eb6656d6bf427ec4fbf807dde5903434a
           python3 prepare_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA" --profile integrated
       - name: Build both source arms with the same SDK 10.0.102
@@ -66,7 +66,8 @@ jobs:
           for kit in shapes retry; do
             python3 "$kit/run_probe.py" --run-name runtime-${{ matrix.runtime }} --iterations 5000 --core-only
           done
-          python3 summarize.py --group runtime-${{ matrix.runtime }} --expected-runtime '${{ matrix.runtime }}' --expected-head "$GITHUB_SHA"
+          python3 shapes/run_probe.py --run-name registration-runtime-${{ matrix.runtime }} --iterations 5000 --modes pgo --registration-only
+          python3 summarize.py --group runtime-${{ matrix.runtime }} --expected-runtime '${{ matrix.runtime }}' --expected-head "$GITHUB_SHA" --registration-native-group registration-runtime-${{ matrix.runtime }}
       - name: Upload fresh text/native evidence, including failure provenance
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -78,6 +79,7 @@ jobs:
             eng/producer-hot-cost/shapes/evidence/build-toolchain.json
             eng/producer-hot-cost/shapes/evidence/build-sdk-version.txt
             eng/producer-hot-cost/shapes/evidence/runtime-${{ matrix.runtime }}/
+            eng/producer-hot-cost/shapes/evidence/registration-runtime-${{ matrix.runtime }}/
             eng/producer-hot-cost/retry/evidence/build-toolchain.json
             eng/producer-hot-cost/retry/evidence/build-sdk-version.txt
             eng/producer-hot-cost/retry/evidence/runtime-${{ matrix.runtime }}/

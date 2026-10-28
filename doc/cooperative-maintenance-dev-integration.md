@@ -6,8 +6,10 @@ The ordinary merge `ea1acc9e4584f4ac0ca2e6df6b1a33f26d432117` retains both
 `92a8936eb6656d6bf427ec4fbf807dde5903434a` (#933) and
 `ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c` (dev plus physical ownership) as
 parents. Its production source tree is
-`2bb7adfa59119695e627ab711f26178abc68c485`. Subsequent evidence-tool and document
-changes do not change that product tree. The current dev product arm is
+`2bb7adfa59119695e627ab711f26178abc68c485`. Through `16efc987`, subsequent
+evidence-tool and document changes left that product tree unchanged. The cold
+Codec-publication repair below changes the candidate product tree to
+`9fa53b1b2c22dcd012a4e3e3d19e91d7f678bfbb`. The current dev product arm is
 `cc7c458b559295e0fc61ec0062bb220faf880a76`.
 
 This candidate implements the restricted #933 capability: host-authorized,
@@ -46,7 +48,7 @@ GenerationControl package remains separate and is not an ExactRegistration recei
   retained. Maintenance adds no ordinary per-RPC maintenance table, epoch, hash or
   counter. Its existing producer reservation changes still require cost acceptance.
 
-## Focused local evidence
+## Initial integration evidence (before the repair)
 
 Release unit and integration builds succeeded with SDK 10.0.102 and zero warnings
 or errors. The executable reports identify macOS 27.0.1, Arm64, .NET 10.0.11 and
@@ -117,6 +119,65 @@ The first historical Python reconstruction attempt used the host's older Python,
 which rejected `tarfile.extractall(filter='data')` before source reconstruction.
 The documented modern Python runtime then passed all seven cases; no guard was
 removed. This environment failure is separate from product/test results.
+
+## Repair of run 40636189267
+
+The first exact-`16efc987` hosted run passed 2,435 unit, 294 generator and 77 load
+cases. Integration reported 530 passes and 26 failures: one catalog-revision
+conflict in queued module cancellation cleanup and 25 later missing-contract
+failures. Their log order alone does not establish causality. Two controlled local
+negative tests reproduce the mechanisms separately:
+
+- A manifest retirement finishing during public dependency metadata validation
+  makes the original `PublishGeneratedCodecs` reject a legal candidate.
+- A forced queued-fixture cleanup failure followed by contract-context unload
+  leaves the replacement implementation manifest in the global catalog. The next
+  ordinary server build rejects `FirstThrowingDisposalService` for its missing
+  contract manifest.
+
+The repair keeps metadata validation outside `_registrationGate`. Publication may
+accept intervening retirement only when the adopted owner set is a strict subset
+of the validated snapshot, the revision delta equals the removed-owner count,
+the published codec map is unchanged, and the candidate contains none of those
+removed owners. This uses captured owner identities and internal collections;
+no metadata getter is reread under the gate and no hot-path field is added.
+Concurrent adoption and competing publication still fail. Referenced dependencies
+remain bound to the candidate's exact Type, owner assembly and codec hash. A
+surviving registration for the same assembly can supply that dependency; a removed
+provider cannot be revived by the candidate.
+
+Queued replacement cleanup now unloads its collectible context in `finally`.
+The controlled regression checks the original failure instance, removal from the
+global catalog and successful construction of the next ordinary server.
+
+The repair adds exactly four unit cases, with no removed cases:
+
+- `CodecPublicationMustAllowCompletedUnrelatedManifestRetirement`
+- `CodecPublicationMustRejectRetiringAReferencedCodecOwnerDuringValidation`
+- `CodecPublicationMustAllowRetirementWhenAnotherSameAssemblyOwnerSuppliesDependency`
+- `CodecPublicationMustRejectACompetingPublicationDuringValidation`
+
+Unit discovery is 2,444; the same five Explicit workers leave **2,439 regular
+cases**. The lease collector's unchanged eight controls give **2,447**. All four
+collectors retain exact equality and their historical negative-control counts.
+Integration discovery is **557**, adding only
+`QueuedFixtureFailureMustRemoveReplacementManifestFromCatalog` to the prior 556.
+
+The repaired source passes the focused runtime group **45/45**, the runtime
+assembly integration group **132/132**, the unfiltered unit suite **2,439/2,439**
+and the complete integration suite **557/557**, all with zero failures, skips,
+cancellations or timeouts. These are Release runs on macOS 27.0.1 Arm64,
+.NET 10.0.11, SDK 10.0.102 and TUnit 1.73.19, with concurrency 8. Eight native
+collector/source-binding tests also pass. Original negative attempts remain under
+`artifacts/maintenance-integration/repair-40636189267/`; new reports, discovery
+inventories and `summary.json` are in its `resumed/` subdirectory.
+
+The runtime 10.0.2 primary shapes capture also lacked a complete baseline
+`OnRegistered` PGO Tier1 body. Both runtimes now predeclare a symmetric shapes-only
+PGO companion with identical binaries, workload and JIT settings and a narrower
+native-output filter. Its two complete Tier1 bodies remain mandatory; primary
+missing rows and companion allocation windows are kept separately. The collection
+change still requires fresh Linux x64 hosted evidence on 10.0.2 and 10.0.13.
 
 ## Source profiles and remaining acceptance
 

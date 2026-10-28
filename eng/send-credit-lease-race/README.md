@@ -38,9 +38,9 @@ python3 eng/send-credit-lease-race/run.py --out artifacts/send-credit-lease-race
 |---|---|---|
 | old | focused 一轮、8 cases | exit 2，精确 1 failed / 7 succeeded / 0 skipped；必须是同 key 同对象新 lease 被接受且信用为 0/16，任意其他失败不算有效 red。 |
 | current | focused 四轮 | 每轮 8/8、exit 0、0 skipped。 |
-| current | unfiltered 完整套件四轮 | 每轮 2,443/2,443、exit 0、0 skipped；原测试和超时不变。 |
+| current | unfiltered 完整套件四轮 | 每轮 2,447/2,447、exit 0、0 skipped；原测试和超时不变。 |
 
-当前 `FULL_COUNT=2443` 是预先固定的常规库存 2,435 加 8 个未改变的诊断 cases：2,440 条 discovery 包含 5 个 `[Explicit]` worker，它们不参加 unfiltered 常规执行。首次 full 必须确认该预期；若不符，先解释缺失/新增 case，不能按实际结果追改计数。[库存核对依据](../../doc/cooperative-maintenance-dev-integration.md#discovery-and-regular-execution-inventory)。
+当前 `FULL_COUNT=2447` 是预先固定的常规库存 2,439 加 8 个未改变的诊断 cases：2,444 条 discovery 包含 5 个 `[Explicit]` worker，它们不参加 unfiltered 常规执行。首次 full 必须确认该预期；若不符，先解释缺失/新增 case，不能按实际结果追改计数。[库存核对依据](../../doc/cooperative-maintenance-dev-integration.md#discovery-and-regular-execution-inventory)。
 
 历史 physical-ownership 整合实际执行过 2,282 个原生 cases，加 8 个诊断 cases 后为 2,290。该阶段保留了 dev 的全部 2,169 个原生 cases，新增 113 个；两套实际报告的 case 集合分别验证无删除以及仅增加这 8 个诊断 case。历史 #843 阶段的 2,131 预期对应当时的 2,123 个原生 cases；原始独立修复的原生 suite 为 2,082 cases，历史证据计数保持原样。以后合法新增/删除既有 case 时应在同一评审中显式更新计数，不能因本回归失败而降低计数、跳过失败或放宽断言。工作流保留原 TUnit 并行数 8，以及既有断言、超时和失败证据保存行为。
 
@@ -51,3 +51,5 @@ python3 eng/send-credit-lease-race/run.py --out artifacts/send-credit-lease-race
 [run 38166410894](https://github.com/SunSi12138/SharpLink/actions/runs/38166410894)、[artifact 11712012693](https://github.com/SunSi12138/SharpLink/actions/runs/38166410894/artifacts/11712012693) 已实际编译并运行相同 8 个测试：旧 f8 为精确 1/8 red，修复臂四轮 focused 全过，四轮完整套件均 2,090/2,090。原 artifact 2,047,595 B，SHA256 `e5dc1b0ae73bffc11f7f19f98ed0161bea5eaef71ab9486f98f46d3298b7811b`，harness commit 为 `d421334ed1069c276ff86113a4b436399900f070`。
 
 该历史 run 的修复臂由诊断 overlay 提供算法变化，用于归因；**本持久回归取消了这项能力，改为测试 current 的真实生产源码**。新 workflow 的执行结果应以其自己的 run/artifact 为准，不能借历史 green 声称新 workflow 已通过。此目录只覆盖 lease 捕获的 correctness，不提供 B2/B3、吞吐或 NativeAOT 性能结论。
+
+#933 修复新增四个 Codec publication case：无关 owner 退役、拒绝已退役的依赖 provider、接受同程序集的存活 provider，以及拒绝竞争发布。16ef 的 hosted run 已实际执行 2,435 个常规 cases；只新增这四个 case，预先固定常规库存为 2,439（lease overlay 后为 2,447）。历史负控计数不变。
