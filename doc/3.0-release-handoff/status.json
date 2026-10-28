@@ -1,0 +1,91 @@
+{
+  "updatedAt": "2026-10-28T14:50:00+08:00",
+  "goal": "Release SharpLink 3.0 after independent review and complete release acceptance",
+  "goalStatus": "active",
+  "releaseReady": false,
+  "mergedDev": "eec9524aa21251a1d548f33e363dd4c51094cb14",
+  "remainingIssues": [
+    929,
+    805,
+    775,
+    732,
+    728,
+    387,
+    253
+  ],
+  "evidenceRoot": "artifacts/release-readiness/2026-10-28",
+  "tasks": {
+    "maintenance933": {
+      "pullRequest": "https://github.com/SunSi12138/SharpLink/pull/933",
+      "worktree": "/Users/sunsi/.codex/worktrees/maintenance-933-integration/SharpLink",
+      "branch": "codex/933-integrate-maintenance",
+      "remoteBranch": "feat/cooperative-maintenance-20261022",
+      "head": "10b1bf03881337c0801d6ff24318bb479747ca6c",
+      "independentCodeReview": "approved",
+      "localValidation": "Unit 2439/2439; Integration 557/557; native/source fixtures8/8",
+      "canonicalRun": null,
+      "state": "50e608 canonical only failed whitespace; formatting-only10b independently approved and pushed, query latest branch run",
+      "previousFailedRun": 40636189267,
+      "nextAction": "Query cold-control-production.yml on feat/cooperative-maintenance-20261022 and require head10b; preserve50e format red and16ef product red. Do not merge before prerequisite performance acceptance.",
+      "previousRepairRun": 40642182557
+    },
+    "methodFacts732": {
+      "worktree": "/Users/sunsi/.codex/worktrees/issue-732-controlled-tools/SharpLink",
+      "toolHead": "47cc9ec301911c876cc4a1b1d1aa5eb5faa6d33f",
+      "toolBranch": "codex/732-controlled-performance-tools",
+      "independentToolReview": "approved",
+      "run": 40642190610,
+      "plan": "eng/method-facts-causal/CONTROLLED-PLAN.md on toolBranch",
+      "arms": {
+        "O": "a6bd0352a931d5c2816e42778055e90efb01144b",
+        "A": "37548b7a35d50803212d2b0a637306636cc0a1d3",
+        "B": "2756e8810772cf956ee70ed380925ecc86e86a32"
+      },
+      "M1ProductionPatch": "652ffca720ba188a7e544f1f5e2da7dafa5e1568",
+      "M1Worktree": "/Users/sunsi/.codex/worktrees/issue-732-method-facts-m1/SharpLink",
+      "state": "hosted36process/720samples/1440000calls complete and independently recomputed; all six T/U contrast decisions inconclusive; M1 Hold, M0 NoGo retained",
+      "nextAction": "Read method-facts-variance.md; diagnose existing sample-stage drift and actual JIT/scheduling non-timed evidence before proposing another fixed campaign. Do not rerun unchanged.",
+      "result": {
+        "B/O_timedMeanGM": 1.0191221303303852,
+        "B/O_timedP99GM": 1.0537540200965323,
+        "B/A_timedMeanGM": 1.0109137301000377,
+        "A/O_timedMeanGM": 1.001741
+      }
+    },
+    "physicalOwnership931": {
+      "pullRequest": "https://github.com/SunSi12138/SharpLink/pull/931",
+      "productWorktree": "/Users/sunsi/.codex/worktrees/physical-ownership-931/SharpLink",
+      "productHead": "ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c",
+      "state": "correctness approved; performance NoGo; remain draft",
+      "originalPairedRun": 40634900826,
+      "originalEvidence": "artifacts/release-readiness/2026-10-28/ownership-931-run40634900826",
+      "toolWorktree": "/Users/sunsi/.codex/worktrees/physical-ownership-performance-tools/SharpLink",
+      "toolHead": "51f5bd0ec3f600196f2e26ea48a466ec2cea62d8",
+      "toolBranch": "codex/931-client-ablation-tools",
+      "independentToolReview": "approved",
+      "ablationRun": 40642932620,
+      "nextAction": "Read default-PGO run40646151477 at tool51f5; preflight must capture4 real optimizedTier1 targets; measurement12 valid samples/6pairs. Read client-pgo-experiment.md for branches. Do not infer every timed call is Tier1 from preflight.",
+      "loopExitExperiment": {
+        "worktree": "/Users/sunsi/.codex/worktrees/ownership-931-loop-exit/SharpLink",
+        "head": "94adeae886c4ddfd0c02ec2dcb700cd97e9cad80",
+        "state": "67Unit+5Integration pass; scalarArm64 FullOpts duplicatehasNext removed, IL1920to1882/native5348to5308; no TCP/PGO timing or merge acceptance",
+        "reportHead": "87f76fb805c70693513a87c5acec03e9643e910a",
+        "independentCodeReview": "approved for isolated experiment",
+        "remoteBackup": "initial push failed with generic remote rejection; local branch and verified bundle preserved",
+        "bundle": "artifacts/release-readiness/2026-10-28/loop-exit-experiment.bundle"
+      },
+      "ablationResult": "FullOpts Client-only12samples6pairs247595RPC complete. Mixed directions: throughput+0.90%,CPU-0.57%,P99-0.99%,P999-0.50%; original defaultPGO full-product NoGo remains.",
+      "defaultPgoRun": 40646151477
+    },
+    "fullMatrixTools": {
+      "pullRequest": 954,
+      "head": "2422d3b40d9a64380c5f75cb6bcd87a67db9c17f",
+      "worktree": "/Users/sunsi/.codex/worktrees/release-full-matrix-tools/SharpLink",
+      "branch": "codex/release-full-matrix-tools",
+      "independentCodeReview": "approved",
+      "state": "pushed PR954, hostedCI pending; no actual performance workload run",
+      "entry": "eng/performance-matrix.py and eng/performance-matrix-acceptance.md on tool branch",
+      "nextAction": "After CI success merge reviewed head; use plan/run-shard/validate only on frozen candidate with required resources. Coverage success never means performance equivalence."
+    }
+  }
+}
