@@ -21,6 +21,31 @@ def observation():
     }
 
 
+def execute_sample(command, log_path, host_path, variant, round_number, environment, timeout):
+    """Retain process outcome even when it times out or cannot start."""
+    host = {"command": command, "variant": variant, "round": round_number,
+            "before": observation(), "exitCode": None, "timeoutSeconds": timeout}
+    started = time.monotonic()
+    try:
+        with log_path.open("w", encoding="utf-8") as log:
+            result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
+                                    env=environment, timeout=timeout)
+        host.update(exitCode=result.returncode,
+                    status="success" if result.returncode == 0 else "failed")
+        if result.returncode:
+            host["reason"] = f"Process exited with code {result.returncode}"
+        return result.returncode
+    except subprocess.TimeoutExpired as error:
+        host.update(status="timed-out", reason=str(error))
+        raise
+    except OSError as error:
+        host.update(status="start-failed", reason=str(error))
+        raise
+    finally:
+        host.update(after=observation(), wallSeconds=time.monotonic() - started)
+        host_path.write_text(json.dumps(host, indent=2) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prepared", type=Path, required=True)
@@ -80,17 +105,11 @@ def main():
                             str(destination)]
                 run_env = dict(env, SHARPLINK_BENCHMARK_SHA=(args.baseline_revision
                                if variant == "baseline" else args.candidate_revision))
-                before = observation()
-                started = time.monotonic()
-                with (runs / (key + ".log")).open("w", encoding="utf-8") as log:
-                    result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
-                                            env=run_env, timeout=args.warmup + args.seconds + 90)
-                host = {"command": command, "variant": variant, "round": round_number,
-                        "before": before, "after": observation(),
-                        "wallSeconds": time.monotonic() - started, "exitCode": result.returncode}
-                (runs / (key + ".host.json")).write_text(json.dumps(host, indent=2) + "\n")
-                if result.returncode:
-                    raise RuntimeError(f"Failed {key}: exit {result.returncode}; inspect its log")
+                exit_code = execute_sample(
+                    command, runs / (key + ".log"), runs / (key + ".host.json"),
+                    variant, round_number, run_env, args.warmup + args.seconds + 90)
+                if exit_code:
+                    raise RuntimeError(f"Failed {key}: exit {exit_code}; inspect its log")
                 data = json.loads(destination.read_text())
                 print(f"{key} ops/s={data['operationsPerSecond']:.0f} "
                       f"p50={data['p50Us']:.2f}us p99={data['p99Us']:.2f}us "

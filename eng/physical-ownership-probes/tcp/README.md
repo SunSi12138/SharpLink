@@ -48,7 +48,13 @@ Latency is closed-loop, complete client-observed stream duration. There is no op
 
 `/proc/stat` and `/proc/loadavg` are recorded around each process where available. Affinity does not reserve a CPU; a quiet local build window does not eliminate hypervisor steal or other host activity. The October 22, 2026 matrix had substantial variation and 2.35–4.81% affinity-CPU steal despite local build avoidance.
 
-The summarizer reports throughput, P50/P99/P99.9, CPU/op and B/op for all complete paired samples, baseline/candidate medians and ranges, paired ratios and deterministic 20,000-resample descriptive bootstrap intervals. It separately reports incomplete pairs. Six pairs are underpowered for small changes; these intervals are **not** an equivalence test and do not correct host drift/dependence. Do not infer throughput from allocation/JIT size, claim a noisy null result proves no regression, or discard unfavorable samples.
+The summarizer reports throughput, P50/P99/P99.9, CPU/op and B/op for all complete paired samples, baseline/candidate medians and ranges, paired ratios and deterministic 20,000-resample descriptive bootstrap intervals. Only samples with an exit-0 host record enter comparisons. Timed-out processes,
+nonzero exits (including shutdown failures after a sample was written), missing
+completion records and invalid/missing samples are listed in
+`summary-integrity.json.failedSamples`. Raw JSON and logs remain untouched.
+Timeout host records retain the command, before/after observations and reason.
+The integrity report is also written when no successful pair exists; that case
+returns a nonzero exit. It separately reports incomplete pairs. Six pairs are underpowered for small changes; these intervals are **not** an equivalence test and do not correct host drift/dependence. Do not infer throughput from allocation/JIT size, claim a noisy null result proves no regression, or discard unfavorable samples.
 
 This is bounded two-core loopback evidence, not production certification. It does not cover separate hosts, multiple clients/connections, large/complex payloads, asynchronous/expensive service producers, server GC, other transports or exceptional behavior.
 

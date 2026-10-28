@@ -25,11 +25,11 @@ def capture(command, cwd=None):
     return subprocess.check_output(command, cwd=cwd, text=True).strip()
 
 
-def run(command, log, cwd=None, environment=None):
+def run(command, log, cwd=None, environment=None, check=True):
     print("RUN", " ".join(map(str, command)), flush=True)
     with log.open("w") as stream:
         subprocess.run(list(map(str, command)), cwd=cwd, env=environment,
-                       stdout=stream, stderr=subprocess.STDOUT, check=True)
+                       stdout=stream, stderr=subprocess.STDOUT, check=check)
 
 
 def verify_source(root, expected):
@@ -168,9 +168,14 @@ def main():
              *revisions, "--dotnet", runtime_dotnet, "--rounds", "6", "--warmup", "3", "--seconds", "6",
              "--workers", "1", "--items", "1,100", "--modes", "static-intercepted,dynamic-intercepted",
              "--affinity", affinity], output / "tcp-run.log", tools_root, environment)
-    finally:
+    except Exception:
         if (tcp_results / "runs").exists():
-            run([sys.executable, source / "tcp/summarize.py", "--input", tcp_results], output / "tcp-summary.log", tools_root)
+            run([sys.executable, source / "tcp/summarize.py", "--input", tcp_results],
+                output / "tcp-summary.log", tools_root, check=False)
+        raise
+    else:
+        run([sys.executable, source / "tcp/summarize.py", "--input", tcp_results],
+            output / "tcp-summary.log", tools_root)
     raw = [p for p in (tcp_results / "runs").glob("*.json") if not p.name.endswith(".host.json")]
     if len(raw) != 48:
         raise ValueError(f"Expected 48 TCP samples; found {len(raw)}")

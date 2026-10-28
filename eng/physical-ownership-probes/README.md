@@ -44,6 +44,10 @@ installation logs, source/binary identities, environment and assembly versions.
 
 - `experiment.json`: three revisions, SDK, runtimes and allowed/selected CPUs.
 - `tcp/runs/`: every sample JSON, log and before/after host observation.
+- `tcp/summary-integrity.json`: successful sample count, failed-process statuses
+  and incomplete pairs, including when no successful pair remains. Only exit-0
+  processes with valid samples enter comparisons; a shutdown failure excludes
+  its sample without deleting the raw evidence.
 - `tcp/summary.json`: paired ratios, medians and ranges for throughput,
   P50/P99/P99.9, CPU/op and B/op; descriptive bootstrap intervals.
 - `scalar/<arm>/<mode>/run-N/`: each allocation/layout JSON and log, plus native
