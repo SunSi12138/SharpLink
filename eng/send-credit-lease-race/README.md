@@ -38,9 +38,11 @@ python3 eng/send-credit-lease-race/run.py --out artifacts/send-credit-lease-race
 |---|---|---|
 | old | focused 一轮、8 cases | exit 2，精确 1 failed / 7 succeeded / 0 skipped；必须是同 key 同对象新 lease 被接受且信用为 0/16，任意其他失败不算有效 red。 |
 | current | focused 四轮 | 每轮 8/8、exit 0、0 skipped。 |
-| current | unfiltered 完整套件四轮 | 每轮 2,290/2,290、exit 0、0 skipped；原测试和超时不变。 |
+| current | unfiltered 完整套件四轮 | 每轮 2,443/2,443、exit 0、0 skipped；原测试和超时不变。 |
 
-`FULL_COUNT=2290` 来自实际执行的完整 case 库存：2,282 个原生 cases 加 8 个未改变的诊断 cases。整合保留了 dev 的全部 2,169 个原生 cases，新增 113 个；两套实际报告的 case 集合分别验证无删除以及仅增加这 8 个诊断 case。历史 #843 阶段的 2,131 预期对应当时的 2,123 个原生 cases；原始独立修复的原生 suite 为 2,082 cases，历史证据计数保持原样。以后合法新增/删除既有 case 时应在同一评审中显式更新计数，不能因本回归失败而降低计数、跳过失败或放宽断言。工作流保留原 TUnit 并行数 8，以及既有断言、超时和失败证据保存行为。
+当前 `FULL_COUNT=2443` 是预先固定的常规库存 2,435 加 8 个未改变的诊断 cases：2,440 条 discovery 包含 5 个 `[Explicit]` worker，它们不参加 unfiltered 常规执行。首次 full 必须确认该预期；若不符，先解释缺失/新增 case，不能按实际结果追改计数。[库存核对依据](../../doc/cooperative-maintenance-dev-integration.md#discovery-and-regular-execution-inventory)。
+
+历史 physical-ownership 整合实际执行过 2,282 个原生 cases，加 8 个诊断 cases 后为 2,290。该阶段保留了 dev 的全部 2,169 个原生 cases，新增 113 个；两套实际报告的 case 集合分别验证无删除以及仅增加这 8 个诊断 case。历史 #843 阶段的 2,131 预期对应当时的 2,123 个原生 cases；原始独立修复的原生 suite 为 2,082 cases，历史证据计数保持原样。以后合法新增/删除既有 case 时应在同一评审中显式更新计数，不能因本回归失败而降低计数、跳过失败或放宽断言。工作流保留原 TUnit 并行数 8，以及既有断言、超时和失败证据保存行为。
 
 每次运行保存真实 argv、cwd、退出码、stdout/stderr、完整 TUnit 输出、输入/输出源码身份和编译后二进制 hashes。每轮前后再次核对全部 DLL/PDB/config 身份，避免测到另一套 build；下一轮前只清理隔离目录中已经归档的旧 TestResults，防止旧 HTML 被当成新报告。非预期失败立即使工作流失败，不重跑到绿。artifact 上传使用 `if: always()`，失败日志照常保留。
 

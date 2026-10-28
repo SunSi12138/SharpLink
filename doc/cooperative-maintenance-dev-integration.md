@@ -67,10 +67,47 @@ NotInParallel policy.
 | Producer archive/profile source binding | 4/4 passed |
 | Project-reference boundaries | 10 projects; 15 declared/active references passed |
 
-The historical full-suite collectors now require 2,440 regular cases; the lease
-collector requires those cases plus its eight unchanged overlay controls (2,448).
-These are inventory requirements, not claims that the full suites have run here.
 The focused .NET runs had zero failures, skips, cancellations or timeouts.
+The original 2,440/2,448 collector expectations conflated discovery with regular
+execution; the reconciliation below corrects that classification before the first
+full run. Raw discovery output and historical execution counts remain unchanged.
+
+### Discovery and regular execution inventory
+
+The discovered unit inventory is **2,440**, including five tests on four
+`[Explicit]` process-worker classes:
+
+- `AdmissionDiagnosticsValidationProbe.Run`
+- `PendingLifecycleValidationProbe.Run`
+- `DateTimeOffsetPerformanceValidationProbe.Run`
+- `CodecValidationProbe.DateTimeCrossZone`
+- `CodecValidationProbe.DateTimeOffsetFragmentation`
+
+These workers require their isolated drivers and are not selected by an unfiltered
+regular run. Their Explicit declarations and test entry points already exist in
+the prerequisite source; PendingLifecycle's registration-witness implementation
+changes in #933 do not change that selection rule.
+
+The saved prerequisite-worktree full report executes **2,282/2,282**, with the same
+TUnit 1.73.19 and .NET 10.0.11 as this discovery. Comparing display-name multisets
+finds all 2,282 executed entries in the new discovery, with zero missing and 158
+additional entries. Exactly five additional entries are the Explicit workers above:
+three `Run` entries and the two named codec methods. Thus the predeclared regular
+expectation is **2,435**, and the unchanged eight-case lease overlay requires
+**2,443**. Hosting, generated-snapshot and terminal-accounting collectors use 2,435;
+their focused and historical-negative expectations remain unchanged.
+
+This static reconciliation explains the five-entry difference; it is not a new
+full-suite execution. The first full run must confirm the predeclared inventory.
+Any mismatch requires a case-level explanation before changing a collector; exact
+equality, failure/skip rules and the historical fixed-source control counts remain.
+The local evidence is `artifacts/maintenance-integration/inventory-reconciliation.json`.
+
+The follow-up ordinary merge of dev `cb23bca989231b1c4408e0f8c6e0b683d937e95e`
+changes no product or test source relative to `0218ffacd202f770fc4654d94e0e99a9c4636216`.
+It retains the already-integrated #951 reader fixtures and adds #952's matched
+CodeQL versions/Dependabot grouping plus the current release-performance guidance.
+No build, test discovery, test execution or timing was repeated during that merge.
 
 Raw build logs, discovery output, TUnit JSON/HTML and source-preparation provenance
 are retained locally under `artifacts/maintenance-integration/`; `summary.json`

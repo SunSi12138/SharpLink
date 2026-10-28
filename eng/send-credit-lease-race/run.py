@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/StreamFlowControllerLeaseRaceTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/StreamFlowControllerLeaseRaceTests/*"
 FOCUSED_COUNT = 8
-FULL_COUNT = 2448  # Combined dev/physical/maintenance discovery: 2440 regular cases; lease overlay adds eight.
+FULL_COUNT = 2443  # 2440 discovered minus five Explicit workers plus eight unchanged lease controls.
 
 
 def digest(path):

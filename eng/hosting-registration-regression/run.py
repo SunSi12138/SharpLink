@@ -24,7 +24,7 @@ BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 CORE_FILTER = "/*/*/HostingBuilderRegistrationTests/Repeated*"
 HEALTH_FILTER = "/*/*/HostingBuilderRegistrationTests/PreRegistered*"
 ALL_FILTER = "/*/*/HostingBuilderRegistrationTests/*"
-FULL_COUNT = 2282  # Verified complete dev integration inventory; the unchanged Hosting fixture has 11 cases.
+FULL_COUNT = 2435  # 2440 discovered minus five Explicit workers; first full execution must confirm.
 
 
 def digest(path):
