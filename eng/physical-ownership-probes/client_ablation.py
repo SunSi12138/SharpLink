@@ -190,6 +190,16 @@ def validate_measurements(results, prepared, manifest, runtime_dotnet):
     return report
 
 
+def validate_summary(results):
+    integrity = json.loads((results / "summary-integrity.json").read_text())
+    summary = json.loads((results / "summary.json").read_text())
+    if (integrity["failedSamples"] or integrity["incompletePairs"] or
+            integrity["completedRawSamples"] != ROUNDS * 2):
+        raise ValueError("Summary did not accept all 12 measured samples")
+    if len(summary) != 1 or (summary[0]["mode"], summary[0]["items"], summary[0]["workers"], summary[0]["pairs"]) != (SCENE, ITEMS, 1, ROUNDS):
+        raise ValueError("Summary does not contain exactly the fixed scene and six pairs")
+
+
 def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet, affinity, tool_sha):
     source = Path(__file__).resolve().parent
     topology = cpu_topology(affinity)
@@ -257,6 +267,7 @@ def run_client_ablation(product_snapshots, output, runtime_dotnet, build_dotnet,
         raise execution_error
     if validation["status"] != "Passed":
         raise ValueError("Measured evidence validation failed; inspect client-tcp/sample-validation.json")
+    validate_summary(results)
     write(output / "complete.json", {"experiment": "client-only", "toolRevision": tool_sha,
                                       "preflightProcesses": 2, "timedProcesses": 12,
                                       "status": "Evidence complete; no performance acceptance threshold applied"})

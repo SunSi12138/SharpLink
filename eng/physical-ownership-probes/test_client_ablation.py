@@ -234,6 +234,41 @@ class ClientAblationTests(unittest.TestCase):
             self.assertEqual([0, 0], [row["exitCode"] for row in integrity["failedSamples"]])
             self.assertEqual(originals, {p.name: p.read_text() for p in (results / "runs").iterdir()})
 
+    def test_missing_metric_cannot_claim_complete_when_summary_keeps_five_pairs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs = root / "runs"
+            runs.mkdir()
+            for r in range(1, 7):
+                for arm in ("baseline", "candidate"):
+                    name = f"dynamic-intercepted-n100-c1-r{r}-{arm}"
+                    sample = {"mode": "dynamic-intercepted", "itemCount": 100, "workers": 1}
+                    for metric in ("operationsPerSecond", "p50Us", "p99Us", "p999Us", "allocatedBytesPerOperation", "cpuUsPerOperation"):
+                        sample[metric] = 1 if arm == "baseline" else 2
+                    if r == 2 and arm == "candidate":
+                        del sample["p999Us"]
+                    (runs / (name + ".json")).write_text(json.dumps(sample))
+                    (runs / (name + ".host.json")).write_text('{"exitCode":0,"status":"success"}')
+            command = [sys.executable, str(Path(ablation.__file__).parent / "tcp/summarize.py"), "--input", str(root)]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(5, json.loads((root / "summary.json").read_text())[0]["pairs"])
+            self.assertEqual("invalid-sample", json.loads((root / "summary-integrity.json").read_text())["failedSamples"][0]["status"])
+            with self.assertRaisesRegex(ValueError, "all 12 measured samples"):
+                ablation.validate_summary(root)
+            path = runs / "dynamic-intercepted-n100-c1-r2-candidate.json"
+            sample = json.loads(path.read_text())
+            sample["p999Us"] = 2
+            path.write_text(json.dumps(sample))
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            ablation.validate_summary(root)
+            summary = json.loads((root / "summary.json").read_text())
+            summary[0]["mode"] = "static-intercepted"
+            (root / "summary.json").write_text(json.dumps(summary))
+            with self.assertRaisesRegex(ValueError, "fixed scene and six pairs"):
+                ablation.validate_summary(root)
+
     def test_schedule_attempts_twelve_once_with_balanced_order_despite_failures(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
