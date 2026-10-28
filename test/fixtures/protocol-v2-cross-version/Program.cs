@@ -1,5 +1,8 @@
 using System.Net;
-using System.Net.Sockets;
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text.Json;
+using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Sdk;
 using SharpLink.Server;
@@ -10,24 +13,56 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        if (args.Length == 1 && string.Equals(args[0], "server", StringComparison.Ordinal))
-            return await RunServerAsync().ConfigureAwait(false);
-        if (args.Length == 2 &&
-            string.Equals(args[0], "client", StringComparison.Ordinal) &&
-            int.TryParse(args[1], out var port))
-        {
-            return await RunClientAsync(port).ConfigureAwait(false);
-        }
-
-        Console.Error.WriteLine("Usage: <server | client PORT>");
+        PrintIdentity();
+        if (args is ["identity"])
+            return 0;
+        if (args is ["server", var serverExpectation])
+            return await RunServerAsync(serverExpectation == "reject").ConfigureAwait(false);
+        if (args is ["client", var portText, var clientExpectation] && int.TryParse(portText, out var port))
+            return await RunClientAsync(port, clientExpectation == "reject").ConfigureAwait(false);
+        Console.Error.WriteLine("Usage: identity | server positive/reject | client PORT positive/reject");
         return 2;
     }
 
-    private static async Task<int> RunServerAsync()
+    private static void PrintIdentity()
+    {
+        var owner = typeof(Program).Assembly;
+        var locator = owner.GetCustomAttribute<SharpLinkGeneratedAssemblyManifestAttribute>()
+            ?? throw new InvalidOperationException("Missing generated manifest locator.");
+        var manifest = (ISharpLinkGeneratedAssemblyManifest)Activator.CreateInstance(locator.ManifestType)!;
+        foreach (var name in new[] { "Abstractions", "Runtime", "Client", "Server", "Sdk" })
+            Assembly.Load("SharpLink." + name);
+        var packages = AppDomain.CurrentDomain.GetAssemblies()
+            .Where(assembly => assembly != owner &&
+                assembly.GetName().Name!.StartsWith("SharpLink.", StringComparison.Ordinal))
+            .OrderBy(assembly => assembly.GetName().Name, StringComparer.Ordinal)
+            .Select(assembly => new
+            {
+                name = assembly.GetName().Name,
+                version = assembly.GetName().Version!.ToString(),
+                informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion,
+                path = assembly.Location,
+                sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(assembly.Location))).ToLowerInvariant(),
+                mvid = assembly.ManifestModule.ModuleVersionId
+            }).ToArray();
+        Console.WriteLine("IDENTITY " + JsonSerializer.Serialize(new
+        {
+            packages,
+            api = locator.ApiVersion,
+            protocol = locator.ProtocolVersion,
+            abi = locator.AbiIdentity,
+            generator = locator.GeneratorVersion,
+            rpcAssemblyHash = manifest.RpcAssemblyHash.ToString(),
+            contractIds = manifest.Contracts.Select(contract => contract.ContractId).ToArray(),
+            minor = ProtocolV2Constants.MinorVersion,
+            minimumMinor = ProtocolV2Constants.MinimumCompatibleMinorVersion
+        }));
+    }
+
+    private static async Task<int> RunServerAsync(bool expectRejection)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback);
+        var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback);
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
         var runTask = server.RunUntilStoppedAsync(timeout.Token).AsTask();
@@ -35,18 +70,17 @@ public static class Program
         Console.Out.Flush();
         try
         {
-            await CrossVersionService.CompletionObserved.Task
-                .WaitAsync(timeout.Token)
-                .ConfigureAwait(false);
+            if (await Console.In.ReadLineAsync(timeout.Token).ConfigureAwait(false) != "STOP")
+                throw new InvalidOperationException("Missing controller STOP; EOF is not success.");
+            if (!expectRejection)
+                await CrossVersionService.CompletionObserved.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
             await timeout.CancelAsync().ConfigureAwait(false);
-            try
-            {
-                await runTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            Console.WriteLine("SERVER_PASS");
+            try { await runTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            var expectedInvocations = expectRejection ? 0 : 5;
+            if (CrossVersionService.Invocations != expectedInvocations)
+                throw new InvalidOperationException($"Expected {expectedInvocations} invocations, got {CrossVersionService.Invocations}.");
+            Console.WriteLine(expectRejection ? "SERVER_REJECTION_PASS" : "SERVER_PASS");
             return 0;
         }
         catch (Exception exception)
@@ -56,36 +90,45 @@ public static class Program
         }
     }
 
-    private static async Task<int> RunClientAsync(int port)
+    private static async Task<int> RunClientAsync(int port, bool expectRejection)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await using var client = SharpClientBuilder.Create()
-            .DisableRequestTimeout()
-            .UseTcp(IPAddress.Loopback.ToString(), port)
-            .Build();
+            .DisableRequestTimeout().UseTcp(IPAddress.Loopback.ToString(), port).Build();
         try
         {
+            // A failed handshake, timeout, missing contract or ABI failure is NOT a hash-rejection pass.
             await client.ConnectAsync(timeout.Token).ConfigureAwait(false);
-            var result = await client.Get<ICrossVersionService>()
-                .AddAsync(20, 22)
-                .ConfigureAwait(false);
+            Console.WriteLine("CLIENT_CONNECTED");
+            ICrossVersionService service;
+            try
+            {
+                service = client.Get<ICrossVersionService>();
+            }
+            catch (SharpLinkException exception) when (
+                expectRejection && exception.Code == SharpLinkErrorCode.FailedPrecondition &&
+                exception.Message.Contains("local RpcAssemblyHash=", StringComparison.OrdinalIgnoreCase) &&
+                exception.Message.Contains("remote RpcAssemblyHash=", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("REJECTION " + JsonSerializer.Serialize(new
+                {
+                    code = exception.Code.ToString(), message = exception.Message
+                }));
+                Console.WriteLine("CLIENT_REJECTION_PASS");
+                return 0;
+            }
+            if (expectRejection)
+                throw new InvalidOperationException("Incompatible wire hash was accepted.");
+            var result = await service.AddAsync(20, 22).ConfigureAwait(false);
             if (result != 42)
-                throw new InvalidOperationException($"Unexpected cross-version result: {result}.");
-
-            var service = client.Get<ICrossVersionService>();
+                throw new InvalidOperationException($"Unexpected unary result: {result}.");
             var upload = await service.SumAsync(ToAsyncEnumerable([3, 5, 7])).ConfigureAwait(false);
             if (upload != 15)
-                throw new InvalidOperationException($"Unexpected cross-version upload sum: {upload}.");
-
-            var download = await CollectAsync(service.RangeAsync(4)).ConfigureAwait(false);
-            if (!download.SequenceEqual([0, 1, 2, 3]))
-                throw new InvalidOperationException("Unexpected cross-version server stream.");
-
-            var duplex = await CollectAsync(service.DoubleAsync(
-                ToAsyncEnumerable([2, 4, 6]))).ConfigureAwait(false);
-            if (!duplex.SequenceEqual([4, 8, 12]))
-                throw new InvalidOperationException("Unexpected cross-version duplex stream.");
-
+                throw new InvalidOperationException($"Unexpected upload sum: {upload}.");
+            if (!(await CollectAsync(service.RangeAsync(4)).ConfigureAwait(false)).SequenceEqual([0, 1, 2, 3]))
+                throw new InvalidOperationException("Unexpected server stream.");
+            if (!(await CollectAsync(service.DoubleAsync(ToAsyncEnumerable([2, 4, 6]))).ConfigureAwait(false)).SequenceEqual([4, 8, 12]))
+                throw new InvalidOperationException("Unexpected duplex stream.");
             await service.CompleteAsync().ConfigureAwait(false);
             Console.WriteLine("CLIENT_PASS");
             return 0;
@@ -129,18 +172,35 @@ public interface ICrossVersionService : IService
     [Oneway]
     [NonCancellable]
     ValueTask CompleteAsync();
+#if INCOMPATIBLE_WIRE_CONTRACT
+    [NonCancellable]
+    ValueTask<int> ExtraAsync();
+#endif
 }
 
 [RpcService]
 public sealed class CrossVersionService : ICrossVersionService
 {
+    internal static int Invocations;
+#if INCOMPATIBLE_WIRE_CONTRACT
+    public ValueTask<int> ExtraAsync()
+    {
+        Interlocked.Increment(ref Invocations);
+        return ValueTask.FromResult(-1);
+    }
+#endif
     internal static TaskCompletionSource CompletionObserved { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public ValueTask<int> AddAsync(int left, int right) => ValueTask.FromResult(left + right);
+    public ValueTask<int> AddAsync(int left, int right)
+    {
+        Interlocked.Increment(ref Invocations);
+        return ValueTask.FromResult(left + right);
+    }
 
     public async ValueTask<int> SumAsync(IAsyncEnumerable<int> values)
     {
+        Interlocked.Increment(ref Invocations);
         var sum = 0;
         await foreach (var value in values.ConfigureAwait(false))
             sum += value;
@@ -149,6 +209,7 @@ public sealed class CrossVersionService : ICrossVersionService
 
     public async IAsyncEnumerable<int> RangeAsync(int count)
     {
+        Interlocked.Increment(ref Invocations);
         for (var value = 0; value < count; value++)
         {
             yield return value;
@@ -158,12 +219,14 @@ public sealed class CrossVersionService : ICrossVersionService
 
     public async IAsyncEnumerable<int> DoubleAsync(IAsyncEnumerable<int> values)
     {
+        Interlocked.Increment(ref Invocations);
         await foreach (var value in values.ConfigureAwait(false))
             yield return value * 2;
     }
 
     public ValueTask CompleteAsync()
     {
+        Interlocked.Increment(ref Invocations);
         CompletionObserved.TrySetResult();
         return ValueTask.CompletedTask;
     }

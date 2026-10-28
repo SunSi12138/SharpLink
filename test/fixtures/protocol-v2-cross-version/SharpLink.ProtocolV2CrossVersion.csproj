@@ -4,12 +4,21 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.0.0</Version>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)generated</CompilerGeneratedFilesOutputPath>
+    <DefineConstants Condition="'$(IncompatibleWireContract)' == 'true'">$(DefineConstants);INCOMPATIBLE_WIRE_CONTRACT</DefineConstants>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
-    <SharpLinkVersion Condition="'$(SharpLinkVersion)' == ''">2.0.0</SharpLinkVersion>
+    <SharpLinkVersion Condition="'$(SharpLinkVersion)' == ''">3.0.0</SharpLinkVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="SharpLink.Client" Version="[$(SharpLinkVersion)]" />
     <PackageReference Include="SharpLink.Server" Version="[$(SharpLinkVersion)]" />
     <PackageReference Include="SharpLink.Sdk" Version="[$(SharpLinkVersion)]" />
   </ItemGroup>
+  <Target Name="RecordAnalyzers" BeforeTargets="CoreCompile">
+    <WriteLinesToFile File="$(BaseIntermediateOutputPath)analyzers.txt" Lines="@(Analyzer->'%(FullPath)')" Overwrite="true" />
+  </Target>
 </Project>
