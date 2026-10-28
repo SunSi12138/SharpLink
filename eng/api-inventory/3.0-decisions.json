@@ -1,0 +1,4085 @@
+{
+  "schemaVersion": 1,
+  "status": "proposal-not-approved",
+  "inventory": {
+    "sourceCommit": "de0d871f7a13662010fdf47d140ee885d7ba04ea",
+    "sourceTree": "ccc99fbab3daa767ef1bb340bd3a73c9472d798c",
+    "equivalentToolPrHead": "87aeaf66cba5f804b8a33d312b9878143adbc9dd",
+    "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/39986953281",
+    "artifactName": "api-inventory-39986953281-1",
+    "artifactId": 12515194592,
+    "hostOs": "linux",
+    "hostArchitecture": "x86_64",
+    "configuration": "Release",
+    "declarations": 18713,
+    "decisionIds": 3397
+  },
+  "targets": {
+    "Abstractions": {
+      "project": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.Abstractions"
+    },
+    "Client": {
+      "project": "src/SharpLink.Client/SharpLink.Client.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.Client"
+    },
+    "Compression.Zstd": {
+      "project": "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.Compression.Zstd"
+    },
+    "GenerationControl": {
+      "project": "src/SharpLink.GenerationControl/SharpLink.GenerationControl.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.GenerationControl"
+    },
+    "Generator": {
+      "project": "src/SharpLink.Generator/SharpLink.Generator.csproj",
+      "framework": "netstandard2.0",
+      "assembly": "SharpLink.Generator"
+    },
+    "Hosting": {
+      "project": "src/SharpLink.Hosting/SharpLink.Hosting.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.Hosting"
+    },
+    "Runtime": {
+      "project": "src/SharpLink.Runtime/SharpLink.Runtime.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.Runtime"
+    },
+    "Sdk": {
+      "project": "src/SharpLink.Sdk/SharpLink.Sdk.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.Sdk"
+    },
+    "Serializer.SharpPack": {
+      "project": "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.Serializer.SharpPack"
+    },
+    "Server": {
+      "project": "src/SharpLink.Server/SharpLink.Server.csproj",
+      "framework": "net10.0",
+      "assembly": "SharpLink.Server"
+    }
+  },
+  "roles": {
+    "application-contract": "Keep application entry points and their value contracts usable outside SharpLink; they do not expose the retired Session engine.",
+    "policy-spi": "Keep external policy implementations and their input/result contracts accessible. Preserve each SPI ownership and synchronous/asynchronous calling contract.",
+    "codec-spi": "Keep standalone serialization and externally implementable codec/adapter services available without starting a Client/Server.",
+    "generated-abi": "Keep API5 cross-assembly generated bootstrap, codec and invocation contracts public. EditorBrowsable is not an access boundary.",
+    "protocol-buffer-spi": "Keep the Accepted ADR0001 protocol data, encoding and bounded buffer SPI; using these tools does not grant access to a live Session.",
+    "configuration": "Keep caller-configurable values and validation available through existing builder/configuration entry points; copying does not necessarily make an options object immutable.",
+    "diagnostics": "Keep observable state, stable codes and diagnostic snapshots readable by application consumers without exposing mutable engine state.",
+    "transport-composition": "Keep direct construction and composition of the built-in transport SPI, with existing ownership and platform limits.",
+    "contract-metadata": "Keep source-level contract annotations and metadata accessible to user assemblies and the SDK generator.",
+    "hosting": "Keep Generic Host/DI registration, accessors and health integration usable by applications without friendship or engine access.",
+    "generation-control": "Keep the explicit generation-control service, provider contract and serializable control-plane values public.",
+    "internal-polymorphism": "Keep actual internal/private base classes inheritable by their implementation family; no external visibility is added.",
+    "generator-entry": "Keep Roslyn generator discovery/construction public and the implementation sealed.",
+    "legacy-helper": "Keep the released helper capability instead of introducing an additional breaking removal without an equivalent replacement."
+  },
+  "types": [
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IClientTransportFactory",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Creates independent outbound transport connections.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ITransportConnection.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcBufferWriterPool",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Rents and returns packet writers for one runtime context.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcRuntimeContext.cs:32",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcByteBufferWriter",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Represents an owned, contiguous RPC packet buffer. Codecs should depend only on IBufferWriter{T}; the additional members exist for protocol header backfilling.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcRuntimeContext.cs:52",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcChannel",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Client channel consumed by generated proxies.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcChannel.cs:268",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcClientStreamSink",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Sends typed client stream items on the connection selected for an invocation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcChannel.cs:245",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcClientStreamWriter",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Writes generated client streams after a request has been accepted.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcChannel.cs:232",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcCodec",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Marks a serializer that can be registered for an RPC contract type.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcCodec.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcCodecAdapter",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Creates manifest-scoped Codec state for one serializer integration.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcCodecAdapter.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcCodecAdapterScope",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Creates closed Codecs that share one serializer context.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcCodecAdapter.cs:14",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcCodecProvider",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Resolves codecs without relying on process-wide mutable configuration.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcRuntimeContext.cs:23",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcCodec`1",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Serializes and deserializes values of T on the RPC wire.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcCodec.cs:10",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcContractCodecProviderResolver",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Resolves the immutable Codec provider owned by one generated RPC Contract assembly.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcRuntimeContext.cs:16",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcExceptionMapper",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Maps service exceptions to status and messages safe to return over the wire.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:166",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcGeneratedCodecFactory",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Creates one source-generated Codec for an immutable runtime-context snapshot.",
+      "evidence": [
+        "src/SharpLink.Abstractions/RpcGeneratedCodecRegistry.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcGeneratedServerBridge",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Provides the Runtime-owned streaming operations required by source-generated server stubs.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcGeneratedServerBridge.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcGeneratedUnsafeBlitCodecFactory",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Identifies a generated raw Codec factory and its finalized ABI requirement.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcGeneratedUnsafeBlitCodecProvider.cs:5",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcGeneratedUnsafeBlitCodecProvider",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Constructs a raw Codec only for an admitted owner-local generated factory.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcGeneratedUnsafeBlitCodecProvider.cs:13",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcRuntimeContext",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Provides instance-scoped runtime services used by generated proxies and stubs.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcRuntimeContext.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcSizedCodecSnapshot",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Marker for a generated snapshot of member values captured during exact sizing.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcSizedCodec.cs:37",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcSizedCodec`1",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Marks a generated codec that can calculate the exact encoded size of a value. The contract lives in the shared abstractions assembly so generated codecs from different assemblies can recognize each other.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcSizedCodec.cs:10",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IRpcStub",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Dispatches decoded request metadata to a source-generated server contract stub.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcStub.cs:3",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.IServerTransportListener",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Owns a server listening resource and accepts independent connections.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ITransportConnection.cs:15",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkAssemblyRegistry",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Controls the lifecycle of source-generated runtime assembly registrations.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ISharpLinkAssemblyRegistry.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkCircuitBreakerOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Provides the endpoint-generation circuit-breaker settings copied for runtime publication.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ISharpLinkCircuitBreakerOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkClient",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Owns the SharpLink client runtime, remote connections, and generated contract proxies.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ISharpLinkClient.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkClientAuthenticator",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Creates the opaque authentication payload for each client connection handshake.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAuthenticator.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkClientInterceptor",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Intercepts a generated client call and may mutate metadata, short-circuit, or observe the result.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:79",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkEndpointAdmissionPolicy",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Controls whether a specific endpoint may receive a client RPC attempt.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpointAdmission.cs:52",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkEndpointResolver",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Supplies complete endpoint topology snapshots to a dynamic SharpLink client.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpointResolver.cs:59",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkEndpointSelector",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Selects an endpoint from one immutable Ready candidate snapshot.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:149",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Provides all artifacts generated for one owner assembly.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:106",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkGeneratedClusterRouteManifest",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Provides source-generated static contract routes owned by an application assembly.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedClusterRouteManifest.cs:13",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkMultiClusterClient",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Coordinates isolated SharpLink clients and routes a contract once while its proxy is created. Subsequent RPC calls execute directly through the selected child client.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ISharpLinkMultiClusterClient.cs:9",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkReferencedCodecDependencyManifest",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Optional generated-manifest capability that publishes binding-aware referenced Codec dependencies. The target Type preserves the exact assembly/load-context generation selected by the consumer, while SharpLinkReferencedCodecDependency.ExpectedCodecHash locks the expected generated Codec semantics.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkReferencedCodecDependency.cs:17",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkRetryOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Provides the bounded retry-loop settings copied when a runtime retry-policy generation is published.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ISharpLinkRetryOptions.cs:6"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkRetryPolicy",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Evaluates retry decisions for explicitly idempotent unary RPC calls.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRetry.cs:26",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkServer",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Owns a SharpLink listener, its local runtime, and all sessions accepted from it.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ISharpLinkServer.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkServerAuthenticator",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Authenticates one server-side connection handshake.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAuthenticator.cs:14",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ISharpLinkServerInterceptor",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Intercepts a server call for authorization, limiting, auditing, or exception policy.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:154",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ITransportConnection",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Represents one duplex byte transport connection.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ITransportConnection.cs:27",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.LogEvents",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Defines stable event identifiers emitted by SharpLink logging integrations.",
+      "evidence": [
+        "src/SharpLink.Abstractions/LogEvents.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.LogEvents.Client",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Defines client event identifiers in the 6000-6999 range.",
+      "evidence": [
+        "src/SharpLink.Abstractions/LogEvents.cs:96"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.LogEvents.Connection",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Defines connection and handshake event identifiers in the 1000-1999 range.",
+      "evidence": [
+        "src/SharpLink.Abstractions/LogEvents.cs:7"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.LogEvents.Rpc",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Defines RPC dispatch event identifiers in the 2000-2999 range.",
+      "evidence": [
+        "src/SharpLink.Abstractions/LogEvents.cs:40"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.LogEvents.Server",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Defines server event identifiers in the 5000-5999 range.",
+      "evidence": [
+        "src/SharpLink.Abstractions/LogEvents.cs:77"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.LogEvents.Stream",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Defines streaming event identifiers in the 3000-3999 range.",
+      "evidence": [
+        "src/SharpLink.Abstractions/LogEvents.cs:61"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.LogEvents.Transport",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Defines transport event identifiers in the 4000-4999 range.",
+      "evidence": [
+        "src/SharpLink.Abstractions/LogEvents.cs:70"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2CancelReason",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Identifies why a client abandoned an active RPC call.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:108",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2Capabilities",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Protocol v2 negotiated capabilities.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:86",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2Constants",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Defines the fixed SharpLink Protocol v2 wire constants.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2Error",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Decoded binary error payload.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:199",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2FrameFlags",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Protocol v2 frame flags.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:62",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2FrameHeader",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Parsed Protocol v2 frame header.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:124",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2FrameType",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Protocol v2 frame types.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:23",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2HandshakeRequest",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Protocol v2 handshake request values.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:141",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2HandshakeResponse",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Protocol v2 negotiated handshake response values.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:160",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2ResponseCompressionPreferenceAck",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Acknowledges the cumulative response-compression preference generation applied by the server.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:177",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2ResponseCompressionPreferenceUpdate",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Updates the client preference governing future server response-compression decisions.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:171",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2SessionRefreshRequested",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Requests replacement of one healthy physical session to converge to a server desired generation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:183",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.ProtocolV2WindowUpdate",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Returns consumed byte credit for one request stream.",
+      "evidence": [
+        "src/SharpLink.Abstractions/ProtocolV2.cs:190",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcEmptyRequest",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Represents a generated request with no business fields.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcChannel.cs:205",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcEmptyRequestCodec",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Codec for RpcEmptyRequest.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcChannel.cs:208",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcGeneratedCodecSizing",
+      "decision": "keep-public",
+      "role": "legacy-helper",
+      "rationale": "Retain the released 2.0.3 thread-local IsSuppressed/Enter/Exit helper for direct consumers. Current API5 generator does not use this legacy helper; same-thread nesting remains its contract.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcSizedCodec.cs:46",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcGeneratedCodecWire",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Provides allocation-free primitives used only by source-generated Codecs.",
+      "evidence": [
+        "src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:30",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcGeneratedLengthToken",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Identifies a generated length prefix awaiting backfill.",
+      "evidence": [
+        "src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:27",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcGeneratedWireType",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Identifies the bounded payload representation of one generated DTO field.",
+      "evidence": [
+        "src/SharpLink.Abstractions/RpcGeneratedCodecWire.cs:8",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcHash128",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Represents a deterministic fixed-width RPC semantic identity.",
+      "evidence": [
+        "src/SharpLink.Abstractions/RpcHash128.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcInvocationExtensions",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Helpers used by generated proxies to preserve Task/ValueTask contract shapes.",
+      "evidence": [
+        "src/SharpLink.Abstractions/RpcInvocationExtensions.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcMethodDescriptor",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Immutable metadata emitted once for an RPC contract method.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcChannel.cs:23",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcMethodKind",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Identifies one generated RPC invocation shape.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcChannel.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.RpcNoClientStreams",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Zero-allocation stream writer used by methods without client streams.",
+      "evidence": [
+        "src/SharpLink.Abstractions/IRpcChannel.cs:257",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAnonymousPipeAddress",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Represents a one-time anonymous-pipe handle offer.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:94",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAssemblyRegistrationError",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Contains a stable error code and reference-free diagnostic details.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAssemblyRegistrationResult.cs:48"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAssemblyRegistrationErrorCode",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Identifies why a runtime assembly registration was rejected.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAssemblyRegistrationResult.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAssemblyRegistrationResult",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Reports whether a runtime assembly was atomically registered.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAssemblyRegistrationResult.cs:64",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAssemblyReplacementResult",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Reports whether a replacement was published and how far the old registration drained.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAssemblyRegistrationResult.cs:104",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAssemblyUnregisterResult",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Reports the state reached by an assembly unregister operation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAssemblyRegistrationResult.cs:87",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAuthenticationContext",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Contains the normalized identity established for one authenticated connection.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAuthenticationContext.cs:7",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAuthenticationRequest",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Contains the opaque authentication payload and peer information for one connection.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAuthenticator.cs:29",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAuthenticationResult",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Describes the result returned by a server authentication provider.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAuthenticationResult.cs:8",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAuthenticator",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Creates allocation-free delegate adapters for custom authentication providers.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAuthenticator.cs:36",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkAuthorization",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Provides server-side authorization guards for the current RPC call.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkAuthorization.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkCallContext",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Provides access to metadata for the currently executing server RPC.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkCallContext.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkCallContextSnapshot",
+      "decision": "keep-inheritable",
+      "role": "diagnostics",
+      "rationale": "Keep the public call-context data contract and its actual SharpLinkServerInvocationContext subclass; sealing the base would break that hierarchy.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkCallContextSnapshot.cs:4",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkServerInvocationContext"
+      ]
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkCircuitBreakerPolicySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes the currently published built-in endpoint circuit-breaker configuration.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkCircuitBreakerPolicySnapshot.cs:11"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkClientInvocationContext",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Contains mutable client-side control data and immutable method data for one intercepted call.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:20",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkClientInvocationDelegate",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Continues a client interceptor pipeline. If used, invoke this continuation at most once and await or directly return the resulting ValueTask{TResult}. Do not retain the continuation or invocation context after ISharpLinkClientInterceptor.InvokeAsync returns. Violating these rules is an interceptor bug and is not dynamically enforced by SharpLink.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:75",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkClientInvocationResult",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Represents the boxed terminal result used only by an enabled client interceptor pipeline.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:56",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkClientLifecycleState",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes the lifecycle of the local SharpLink client runtime.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkClientLifecycleState.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkClientReadinessSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes an immutable point-in-time observation of one Client's active endpoint topology. The topology can change immediately after the snapshot is returned; the value is not a lease or a guarantee that the observed readiness level will be retained.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkClientReadinessSnapshot.cs:16"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkClusterKey",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Identifies one case-sensitive logical cluster in a multi-cluster client.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkClusterKey.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkClusterState",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Describes the connectivity state of one configured SharpLink cluster runtime.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkClusterState.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkClusterStatusSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Captures immutable status values observed for one configured multi-cluster slot.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkClusterStatusSnapshot.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkCompressionSendPolicy",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Defines one immutable local outbound compression policy snapshot.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkCompressionSendPolicy.cs:8"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkConnectionState",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Describes the lifecycle state of one SharpLink client.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkConnectionState.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpoint",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Describes one logical endpoint in a static or dynamic SharpLink topology.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:123",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointAdmissionDecision",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Describes whether an endpoint may accept one client attempt.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpointAdmission.cs:7",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointAdmissionPolicyKind",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Identifies the currently published client endpoint-admission mode.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpointAdmissionPolicySnapshot.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointAdmissionPolicySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes the current atomic endpoint-admission publication.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpointAdmissionPolicySnapshot.cs:19"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointCandidate",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Describes a Ready endpoint visible to one selector invocation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:191",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointOutcome",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Contains one completed endpoint-bound client attempt for admission policy reporting.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpointAdmission.cs:38",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointOutcomeKind",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Classifies the terminal result of one endpoint-bound client attempt.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpointAdmission.cs:13",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointSelectionContext",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Provides a zero-allocation read-only view of one endpoint selection snapshot.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:158",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointSnapshot",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Represents one versioned endpoint topology supplied by a resolver.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpointResolver.cs:11",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkEndpointTransportFactory",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Creates a transport factory owned by a SharpLink client for one endpoint generation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:141",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkErrorCode",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Identifies a framework or application error returned by a SharpLink endpoint.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkErrorCode.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkErrorDetails",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Defines stable machine-readable detail codes for SharpLink wire errors.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkErrorDetails.cs:8"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkErrorDetails.ResourceExhausted",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Stable detail codes for SharpLinkErrorCode.ResourceExhausted.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkErrorDetails.cs:14"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkException",
+      "decision": "keep-inheritable",
+      "role": "policy-spi",
+      "rationale": "Keep the public exception extension boundary and existing protocol/compression subclasses. This does not promise arbitrary CLR subclass reconstruction at the remote peer.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkException.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|T:SharpLink.Runtime.SharpLinkCompressionProviderException",
+        "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|T:SharpLink.Runtime.SharpLinkProtocolViolationException"
+      ]
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedAssemblyCatalog",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Keep generated weak-catalog bootstrap registration public across user assemblies; entries do not mutate a built runtime. Retain point-in-time inspection separately from owner registration.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:175",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [
+        {
+          "member": "M:CreateSnapshot",
+          "decision": "keep-public",
+          "rationale": "Retain legacy inspection of all currently live weak-catalog entries. Owner-scoped registration/resolution does not provide equivalent lossless enumeration. The returned strong point-in-time list can retain its manifests until the caller releases it.",
+          "evidence": [
+            "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:215"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Identifies the single source-generated SharpLink manifest in an assembly.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:8",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedClusterAssemblyRoute",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Maps one contract-owning assembly to a multi-cluster slot.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedClusterRouteManifest.cs:7",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedClusterRouteCatalog",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Keep cross-assembly generated route-manifest registration and point-in-time inspection; weak catalog storage does not own collectible ALCs.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedClusterRouteManifest.cs:26",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [
+        {
+          "member": "M:CreateSnapshot",
+          "decision": "keep-public",
+          "rationale": "Retain legacy inspection of all currently live weak-catalog entries. Owner-scoped registration/resolution does not provide equivalent lossless enumeration. The returned strong point-in-time list can retain its manifests until the caller releases it.",
+          "evidence": [
+            "src/SharpLink.Abstractions/SharpLinkGeneratedClusterRouteManifest.cs:65"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Publishes the deterministic default Codec identity of one closed payload type for downstream source-generation. The target Type is a metadata lookup key and is not part of the hash.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedCodecIdentityAttribute.cs:7",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedContractDescriptor",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Describes the contract-owned generated artifacts in one assembly.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:84",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedManifestVersions",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Keep Api=5, exact AbiIdentity and Protocol=2 observable to generated consumers and startup validation; these are distinct version boundaries.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:153",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedMethodDescriptor",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Describes one generated RPC method for compatibility and conflict validation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:74",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedServiceDescriptor",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Describes one service-owned generated activator.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs:94",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedUnsafeBlitRequirement",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Describes runtime ABI checks carried directly by one generated UnsafeBlit factory.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkGeneratedUnsafeBlitRequirement.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkHealthCheckResult",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Represents one health probe result, separating local reachability/capability from a remote health response.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkHealth.cs:40"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkHealthProbeOutcome",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes whether a protocol health probe obtained a remote health response.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkHealth.cs:17"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkHealthStatus",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes whether a SharpLink server can currently accept new RPC calls.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkHealth.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkHeartbeatConfigurationSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes the currently published client heartbeat scheduling and liveness configuration.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkHeartbeatConfigurationSnapshot.cs:7"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkInvocationStatus",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Describes the current outcome of an intercepted call.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:7",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkMultiClusterState",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Describes the aggregate lifecycle state of a multi-cluster client.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkMultiClusterState.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkNamedPipeAddress",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Represents a named-pipe server and pipe name.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:52",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkReadinessState",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes whether the client can currently route calls to its configured remote dependencies.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkReadinessState.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkReconnectPolicy",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Immutable client reconnect timing policy. The policy governs reconnect waits only; the first connection attempt and logical-RPC retry backoff use their own independent lifecycles.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkReconnectPolicy.cs:7"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkReferencedCodecDependency",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Binds a compile-time referenced generated Codec to the exact runtime target type and semantic hash that the consuming generated assembly was compiled against.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkReferencedCodecDependency.cs:7",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkRequestTimeoutPolicySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes one atomically published request-timeout policy generation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRequestTimeoutPolicySnapshot.cs:18"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkRequestTimeoutPolicySource",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Identifies the source of the effective client-wide request-timeout fallback.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRequestTimeoutPolicySnapshot.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkRetryContext",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Describes the completed outcome of one retryable unary attempt.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRetry.cs:9",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkRetryDecision",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Specifies whether a failed idempotent unary attempt should be retried.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRetry.cs:19",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkRetryPolicyKind",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Identifies the strategy in one atomically published client retry-policy generation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRetryPolicySnapshot.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkRetryPolicySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes the currently published retry-policy generation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRetryPolicySnapshot.cs:21"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkServerDesiredSessionConfiguration",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Desired values captured exactly once by each newly accepted server session.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkServerDesiredSessionConfiguration.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkServerDesiredSessionSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Identifies one immutable desired-session publication owned by one server instance.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkServerDesiredSessionConfiguration.cs:23"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkServerInvocationContext",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Contains server-side call identity, peer data, authentication, and completion state.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:88",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkServerInvocationDelegate",
+      "decision": "keep-public",
+      "role": "policy-spi",
+      "rationale": "Continues a server interceptor pipeline. If used, invoke this continuation at most once and await or directly return the resulting ValueTask. Do not retain the continuation or invocation context after ISharpLinkServerInterceptor.InvokeAsync returns. Violating these rules is an interceptor bug and is not dynamically enforced by SharpLink.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkInterceptors.cs:151",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkServerLifecycleState",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes the lifecycle of the local SharpLink server runtime independently of process lifetime.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkServerLifecycleState.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkSessionRolloutMode",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Controls whether publication affects only future sessions or also asks capable existing sessions to refresh.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkServerDesiredSessionConfiguration.cs:11",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkSharedMemoryAddress",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Represents a same-user, same-machine shared-memory transport name.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:74",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkTcpAddress",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Represents a TCP host and port.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:11",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkTelemetry",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Exposes SharpLink OpenTelemetry-compatible activity and metric sources.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkTelemetry.cs:8"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkTelemetryDetailExtensions",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Runtime helpers for replacing SharpLink-owned optional telemetry detail.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkTelemetryDetailPolicy.cs:29"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkTelemetryDetailMode",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Controls SharpLink-owned optional telemetry detail without replacing OpenTelemetry infrastructure.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkTelemetryDetailPolicy.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkTelemetryDetailPolicySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes one atomically published SharpLink telemetry-detail policy generation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkTelemetryDetailPolicy.cs:14"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkTransportAddress",
+      "decision": "keep-inheritable",
+      "role": "policy-spi",
+      "rationale": "Keep the abstract immutable address record extensible for custom endpoint factories; built-in factories may reject unknown address subtypes.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:8",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkAnonymousPipeAddress",
+        "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkNamedPipeAddress",
+        "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkSharedMemoryAddress",
+        "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkTcpAddress",
+        "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkUnixDomainSocketAddress"
+      ]
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Abstractions.SharpLinkUnixDomainSocketAddress",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Represents a Unix-domain socket path.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkEndpoints.cs:36",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.IService",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Marks an interface as eligible to define a SharpLink RPC contract.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/IService.cs:8"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.IdempotentAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Marks a unary RPC as safe for an explicitly configured retry policy.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/IdempotentAttribute.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.NonCancellableAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Declares that an RPC method intentionally does not accept a System.Threading.CancellationToken.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/NonCancellableAttribute.cs:13"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.OnewayAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Marks an RPC method as fire-and-forget. The method must return a non-generic System.Threading.Tasks.Task or System.Threading.Tasks.ValueTask.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/OnewayAttribute.cs:7"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcCodecAdapterAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Explicitly selects a registered Codec adapter for a closed RPC payload type.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcCodecAdapterAttribute.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcCodecAdapterRegistrationAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Declares one serializer Codec adapter for source-generated selection and lifecycle ownership.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcCodecAdapterRegistrationAttribute.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcCodecAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Explicitly binds a closed RPC payload type to one concrete custom Codec implementation.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcCodecAttribute.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcCodecRouteAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Routes an RPC payload scope to a registered Codec adapter at compile time.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcCodecRouteAttribute.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcCodecScope",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Classifies configurable RPC payload types for compile-time Codec routing.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcCodecScope.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcCodecSemanticIdentityAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Declares the fixed-width semantic identity of an opaque hand-written Codec or Codec Adapter. Change this value whenever the implementation's RPC-visible wire semantics change. For Codec Adapters, SharpLink combines this value with the target type's stable logical identity; SharpLink does not infer serializer-specific schema evolution inside the same target type, so the adapter or integration author must change this identity when that closed Codec's wire schema changes.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcCodecSemanticIdentityAttribute.cs:10"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcContractAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Marks a publicly reachable interface whose supported instance methods are RPC routes.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcContractAttribute.cs:5"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcIgnoreAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Excludes a public DTO field or property from generated serialization.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcIgnoreAttribute.cs:5"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcMemberAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Assigns a stable positive wire field ID to a DTO field or property.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcMemberAttribute.cs:5"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcRequiredAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Requires a DTO member to be present while deserializing.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcRequiredAttribute.cs:5"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcSerializableAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Explicitly includes a DTO entry point in SharpLink source-generated serialization.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcSerializableAttribute.cs:5"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcServiceAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Marks a concrete class for generated RPC service registration.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcServiceAttribute.cs:8"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.RpcUnionCaseAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Assigns a stable positive wire tag to one closed concrete case of a polymorphic RPC contract type.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/RpcUnionCaseAttribute.cs:6"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.SharpLinkClusterContractAssemblyAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Assigns all generated contracts in a marker assembly to one multi-cluster slot.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/SharpLinkClusterContractAssemblyAttribute.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.SharpLinkMetadata",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Represents an immutable, ordered collection of RPC metadata entries.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/SharpLinkMetadata.cs:13",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.SharpLinkRpcContractsAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Restricts referenced-contract discovery to the assemblies that own the supplied marker types.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/SharpLinkRpcContractsAttribute.cs:5"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.SharpLinkServiceLifetime",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Defines the lifetime of a root RPC service instance.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/SharpLinkServiceLifetime.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.Sdk.TimeoutAttribute",
+      "decision": "keep-public",
+      "role": "contract-metadata",
+      "rationale": "Defines the generated default timeout for an RPC method.",
+      "evidence": [
+        "src/SharpLink.Abstractions/Sdk/TimeoutAttribute.cs:5"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.SharpLinkRuntimeConfigurationUpdateFailureCode",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Identifies an expected rejection from a runtime configuration publication.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRuntimeConfigurationUpdateResult.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.SharpLinkRuntimeConfigurationUpdateResult",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Reports whether a runtime configuration candidate was accepted and atomically published.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkRuntimeConfigurationUpdateResult.cs:31",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Abstractions",
+      "type": "T:SharpLink.SharpLinkServerDesiredSessionPublicationResult",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Reports desired-session publication success or an expected control-plane rejection.",
+      "evidence": [
+        "src/SharpLink.Abstractions/SharpLinkServerDesiredSessionPublicationResult.cs:10",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.ClientRuntimeTopologyComposition",
+      "decision": "keep-inheritable",
+      "role": "internal-polymorphism",
+      "rationale": "Internal base for fixed, static and dynamic runtime topology materialization.",
+      "evidence": [
+        "src/SharpLink.Client/ClientRuntimeComposition.cs:8"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.DynamicClientRuntimeTopologyComposition",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.FixedClientRuntimeTopologyComposition",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.StaticClientRuntimeTopologyComposition"
+      ]
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.ClientTopologyDraft",
+      "decision": "keep-inheritable",
+      "role": "internal-polymorphism",
+      "rationale": "Internal mutable topology-selection base for fixed transport, static endpoints and dynamic resolver builder drafts.",
+      "evidence": [
+        "src/SharpLink.Client/ClientBuildPlan.cs:12"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.DynamicResolverTopologyDraft",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.FixedTransportTopologyDraft",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.StaticEndpointsTopologyDraft"
+      ]
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.ClientTopologyPlan",
+      "decision": "keep-inheritable",
+      "role": "internal-polymorphism",
+      "rationale": "Internal frozen topology-plan base for fixed, static and dynamic materialization.",
+      "evidence": [
+        "src/SharpLink.Client/ClientBuildPlan.cs:42"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.DynamicResolverTopologyPlan",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.FixedTransportTopologyPlan",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.StaticEndpointsTopologyPlan"
+      ]
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.DelegateSharpLinkEndpointResolver",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Adapts application-supplied resolve and watch delegates to an endpoint resolver.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkEndpointResolvers.cs:17",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpClientBuilder",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Keep the sealed public Client builder with its existing constructors, Create and fluent configuration; no public subclassing SPI.",
+      "evidence": [
+        "src/SharpLink.Client/SharpClientBuilder.Compression.cs:3",
+        "src/SharpLink.Client/SharpClientBuilder.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkCircuitBreakerOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures the built-in endpoint circuit breaker.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkCircuitBreakerOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClient.ClientInterceptorState",
+      "decision": "keep-inheritable",
+      "role": "internal-polymorphism",
+      "rationale": "Private shared invocation-state base for unary, one-way, client-stream, server-stream and duplex interceptor implementations.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClient.Interceptors.cs:75"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.SharpLinkClient.ClientStreamingInterceptorState`3",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.SharpLinkClient.DuplexStreamingInterceptorState`3",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.SharpLinkClient.OneWayInterceptorState`2",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.SharpLinkClient.ServerStreamingInterceptorState`2",
+        "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.SharpLinkClient.UnaryInterceptorState`2"
+      ]
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClientDiagnosticsExtensions",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Creates bounded support snapshots and JSON attachments from the built-in SharpLink client.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:301"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClientRpcSessionFlushExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Runtime RPC session flush controls for ISharpLinkClient.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClient.RuntimeRpcSessionFlush.cs:13",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClientRuntimeConfigurationExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Non-throwing expected-rejection paths for Client runtime configuration publication.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientRuntimeConfigurationExtensions.cs:9",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClientSupportSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Root schema for one point-in-time, redacted client support artifact.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:143"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClientSupportSnapshotOptions",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Bounds one on-demand, redacted client support snapshot.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:7"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClientTopologyRuntimeConfigurationExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Structured expected-rejection paths for Client topology and telemetry runtime controls.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClient.RuntimeConfigurationTopologyResults.cs:135",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClusterAddResult",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Reports whether a runtime cluster add was atomically published.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClusterMutationResults.cs:25",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClusterMutationFailureCode",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Identifies an expected runtime multi-cluster mutation rejection.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClusterMutationResults.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClusterOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures the bounded resources owned by a static multi-endpoint client.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClusterOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClusterRemovalResult",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Reports removal publication separately from bounded cleanup of the retired cluster.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClusterMutationResults.cs:108",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkClusterReplacementResult",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Reports replacement publication separately from bounded retirement of the old cluster.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClusterMutationResults.cs:56",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkConnectionFailureClass",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Provides a coarse, non-secret failure classification suitable for public issue attachments.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:120"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkConnectionFailureSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "One already-redacted last-known connection failure publication.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:271"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkConnectionFailureStage",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Identifies the stage of the most recently observed connection failure.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:99"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkConnectionPoolOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures the bounded connection pool owned by one SharpLink client endpoint.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkConnectionPoolOptions.cs:14"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkConnectionPoolSizingExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Runtime connection-capacity controls for ISharpLinkClient.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkConnectionPoolSizing.cs:29",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkConnectionPoolSizingKind",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Identifies which existing Client topology owns the published connection-capacity limits.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkConnectionPoolSizing.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkConnectionPoolSizingSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes the currently published Client connection-capacity generation.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkConnectionPoolSizing.cs:14"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkDnsEndpointResolver",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Resolves A and AAAA records into a dynamic TCP endpoint topology.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkEndpointResolvers.cs:200",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkDnsResolverOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures DNS endpoint discovery refresh behavior.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkEndpointResolvers.cs:135"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkEndpointSelectionPolicyKind",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Identifies the endpoint-selection policy currently published by a multi-endpoint Client.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkEndpointSelectionRuntimeExtensions.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkEndpointSelectionPolicySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes one immutable endpoint-selection policy generation.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkEndpointSelectionRuntimeExtensions.cs:17"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkEndpointSelectionRuntimeExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Runtime endpoint-selection configuration for multi-endpoint SharpLink clients.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkEndpointSelectionRuntimeExtensions.cs:28",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkLoadBalancingStrategy",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Chooses the built-in strategy used for static endpoint selection.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClusterOptions.cs:119",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkMultiClusterClientBuilder",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Keep public multi-cluster composition and explicit UseLoggerFactory; Host fallback remains internal.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkMultiClusterClientBuilder.cs:8",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkMultiClusterClientExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Adds runtime lifecycle operations to a SharpLink multi-cluster client.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkMultiClusterClientExtensions.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkMultiClusterOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures global resource limits for a multi-cluster client.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkMultiClusterOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkMultiClusterSlotOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures one cluster slot in a multi-cluster client.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkMultiClusterOptions.cs:43"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkRetryOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures the built-in retry policy for idempotent unary calls.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkRetryOptions.cs:10"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportCompressionPolicySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Non-secret request-compression decision thresholds.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:198"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportConfigurationSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Effective non-secret client limits and policy generations.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:179"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportConnectionResourceSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Existing owner counters captured for one physical connection.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:239"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportConnectionSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "One redacted physical connection entry.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:229"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportConnectionState",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes a physical client connection without exposing transport endpoints.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:88"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportEndpointSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "One redacted endpoint entry. SafeId is only an ordinal inside this snapshot.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:217"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportEndpointState",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes an endpoint's support-facing lifecycle state.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:77"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportNegotiationSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Safe protocol/security details captured from an established session.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:249"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportResourceSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Aggregate resource counts derived from existing connection owners at capture time.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:263"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportRuntimeSnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Safe runtime/package identity fields.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:170"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportTopologyKind",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Identifies the topology shape without exposing endpoint identities.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:49"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportTopologySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Bounded endpoint and connection inventory.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:205"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkSupportTransportKind",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Identifies a transport category without exposing its address.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkClientSupportSnapshot.cs:60"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.SharpLinkTransportFactories",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Creates built-in endpoint transport factories for static SharpLink topologies.",
+      "evidence": [
+        "src/SharpLink.Client/SharpLinkTransportFactories.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.TransportExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Provides built-in client transport configuration extensions.",
+      "evidence": [
+        "src/SharpLink.Client/TransportExtensions.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Client",
+      "type": "T:SharpLink.Client.TransportExtensions.<G>$4E9AF8304764784C43B9A62906CB71F3.<M>$7C7A9175EE91404926EE3FAFE3FB6E4A",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Keep the C# extension declaration implementing its containing TransportExtensions/HostExtensions public entry points; this compiler identity is inventoried separately from the container.",
+      "evidence": [
+        "src/SharpLink.Client/TransportExtensions.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Compression.Zstd",
+      "type": "T:SharpLink.Compression.Zstd.SharpLinkZstdCompressionProvider",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Provides the official SharpLink Zstandard wire profile for .NET 10 by using ZstdSharp.Port.",
+      "evidence": [
+        "src/SharpLink.Compression.Zstd/SharpLinkZstdCompressionProvider.cs:19",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.Generated.__SharpLinkGeneratedAssemblyManifest_32f0a8024fcc85d7",
+      "decision": "keep-public",
+      "role": "generated-abi",
+      "rationale": "Keep the generated owner manifest visible to assembly bootstrap and consumers; API5 validates its exact generated ABI and owner-local factories.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs",
+        "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.ISharpLinkGenerationControl",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Stable optional peer contract for generation declaration and synchronization.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:129"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.ISharpLinkGenerationProvider",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Local materialization SPI used only after local reconciliation policy decides to change this endpoint.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:150"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.SharpLinkGenerationDescriptor",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Describes one endpoint generation and the metadata a peer may use for local compatibility decisions.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:68"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.SharpLinkGenerationIdentity",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Identifies one capability generation without imposing module- or assembly-specific semantics.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:58"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.SharpLinkGenerationInventory",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Provides the queryable source of truth for an endpoint's declared generation state.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:103"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.SharpLinkGenerationMaterializationMode",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Describes how the local endpoint can materialize a generation when its reconciler decides to follow a peer.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:9"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.SharpLinkGenerationOperationStatus",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Describes a structured outcome from the local generation provider.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:43"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.SharpLinkGenerationProviderResult",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Reports a local provider outcome before the application publishes a new endpoint inventory revision.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:177"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.SharpLinkGenerationSnapshot",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Declares one generation currently known by the endpoint.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:90"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "GenerationControl",
+      "type": "T:SharpLink.GenerationControl.SharpLinkGenerationState",
+      "decision": "keep-public",
+      "role": "generation-control",
+      "rationale": "Describes the endpoint-local lifecycle state of one generation.",
+      "evidence": [
+        "src/SharpLink.GenerationControl/GenerationControlContracts.cs:22"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Generator",
+      "type": "T:SharpLink.Generator.FinalCodecPlan",
+      "decision": "keep-inheritable",
+      "role": "internal-polymorphism",
+      "rationale": "Internal abstract record base for the finalized primitive, enum, DTO, union, collection, adapter, custom, referenced and UnsafeBlit codec plans.",
+      "evidence": [
+        "src/SharpLink.Generator/RpcGenerator.FinalCodecPlan.Models.cs:35"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalAdapterCodecPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalCollectionCodecPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalCustomCodecPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalEnumCodecPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalGeneratedDtoCodecPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalPrimitiveCodecPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalReferencedCodecPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalUnionCodecPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalUnsafeBlitCodecPlan"
+      ]
+    },
+    {
+      "target": "Generator",
+      "type": "T:SharpLink.Generator.FinalPhysicalLayoutPlan",
+      "decision": "keep-inheritable",
+      "role": "internal-polymorphism",
+      "rationale": "Internal abstract record base for finalized primitive, enum, pointer, function-pointer, fixed-buffer and struct layout plans.",
+      "evidence": [
+        "src/SharpLink.Generator/RpcGenerator.FinalCodecPlan.Models.cs:122"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalEnumPhysicalPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalFixedBufferPhysicalPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalFunctionPointerPhysicalPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalPointerPhysicalPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalPrimitivePhysicalPlan",
+        "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalStructPhysicalPlan"
+      ]
+    },
+    {
+      "target": "Generator",
+      "type": "T:SharpLink.Generator.RpcGenerator",
+      "decision": "keep-public",
+      "role": "generator-entry",
+      "rationale": "Roslyn discovers this sealed IIncrementalGenerator through its public generator entry point; the generator implementation models remain internal.",
+      "evidence": [
+        "src/SharpLink.Generator/RpcGenerator.AdapterClosedIdentity.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CancellationAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ClusterRouteAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ClusterRouteEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CodecEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CodecFactoryEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CodecFailurePropagation.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CodecIdentity.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CodecPolicyOwnership.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CodecPolicySupport.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CodecRoutes.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CollectionCodecEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ContractAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ContractManifest.Compatibility.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ContractManifest.Infrastructure.cs:7",
+        "src/SharpLink.Generator/RpcGenerator.ContractManifest.cs:6",
+        "src/SharpLink.Generator/RpcGenerator.ContractManifestCodecs.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ContractModeling.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.CustomCodecConcreteDispatch.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.Diagnostics.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.DtoAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.DtoAnalysisModels.cs:29",
+        "src/SharpLink.Generator/RpcGenerator.DtoCodecEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.DtoCodecPolicyAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.DtoDeserializeEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.DtoGraphAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.DtoObjectAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.DtoSerializeEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.DtoSizingEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.FinalCodecBindings.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.FinalCodecPlan.Diagnostics.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.FinalCodecPlan.Physical.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.FinalCodecPlan.Selection.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.FinalCodecPlan.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.GeneratedUtf16HelperEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.GenericContractAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.MethodAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.MethodSemantics.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ReferenceAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ReferencedManifestBootstrap.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.RpcIdentity.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.ServiceAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.Analysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.Diagnostics.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.Emitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.FinalBinding.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.GeneratedDependencies.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.Helpers.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.Identity.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.MetadataSemantics.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.TypeHelpers.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SharpPackIntegration.cs:32",
+        "src/SharpLink.Generator/RpcGenerator.SourceFormatting.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.StreamingAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.StubEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.SymbolAnalysis.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.UnionCodecEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.UnionCodecIdentity.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.UnionCodecPlan.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.UnsafeBlitCompatibilityDiagnostic.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.UnsafeBlitFactoryEmitter.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.UnsafeBlitRequirements.cs:3",
+        "src/SharpLink.Generator/RpcGenerator.cs:7",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Hosting",
+      "type": "T:SharpLink.Hosting.HostExtensions",
+      "decision": "keep-public",
+      "role": "hosting",
+      "rationale": "Registers SharpLink servers, clients, health checks, and lifecycle services with a generic host.",
+      "evidence": [
+        "src/SharpLink.Hosting/HostExtensions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Hosting",
+      "type": "T:SharpLink.Hosting.HostExtensions.<G>$7B30185E57B8298C6754F16C0BCF4773.<M>$6BEA73177691D2862842D66CC9F1DED9",
+      "decision": "keep-public",
+      "role": "hosting",
+      "rationale": "Keep the C# extension declaration implementing its containing TransportExtensions/HostExtensions public entry points; this compiler identity is inventoried separately from the container.",
+      "evidence": [
+        "src/SharpLink.Hosting/HostExtensions.cs:6"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Hosting",
+      "type": "T:SharpLink.Hosting.IAnonymousPipeAllocatorAccessor",
+      "decision": "keep-public",
+      "role": "hosting",
+      "rationale": "Exposes the anonymous-pipe allocator registered by a hosted server.",
+      "evidence": [
+        "src/SharpLink.Hosting/IAnonymousPipeAllocatorAccessor.cs:6"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Hosting",
+      "type": "T:SharpLink.Hosting.ISharpLinkClientAccessor",
+      "decision": "keep-public",
+      "role": "hosting",
+      "rationale": "Provides the running client managed by the generic-host lifecycle service.",
+      "evidence": [
+        "src/SharpLink.Hosting/ISharpLinkClientAccessor.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Hosting",
+      "type": "T:SharpLink.Hosting.ISharpLinkMultiClusterClientAccessor",
+      "decision": "keep-public",
+      "role": "hosting",
+      "rationale": "Provides the running multi-cluster coordinator managed by the generic host.",
+      "evidence": [
+        "src/SharpLink.Hosting/ISharpLinkMultiClusterClientAccessor.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Hosting",
+      "type": "T:SharpLink.Hosting.ISharpLinkServerReadiness",
+      "decision": "keep-public",
+      "role": "hosting",
+      "rationale": "Exposes the in-process SharpLink server readiness state to host integrations.",
+      "evidence": [
+        "src/SharpLink.Hosting/SharpLinkHealthChecks.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Hosting",
+      "type": "T:SharpLink.Hosting.SharpLinkRemoteHealthCheck",
+      "decision": "keep-public",
+      "role": "hosting",
+      "rationale": "Queries SharpLink remote readiness through the protocol health control frame.",
+      "evidence": [
+        "src/SharpLink.Hosting/SharpLinkHealthChecks.cs:57"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Hosting",
+      "type": "T:SharpLink.Hosting.SharpLinkServerHealthCheck",
+      "decision": "keep-public",
+      "role": "hosting",
+      "rationale": "Maps the local SharpLink server state into Microsoft.Extensions.Diagnostics health checks.",
+      "evidence": [
+        "src/SharpLink.Hosting/SharpLinkHealthChecks.cs:29"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.AnonymousPipeClientTransportFactory",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Keep the one-shot inherited-handle factory as an independent transport SPI component. SafePipeHandle construction remains internal.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/AnonymousPipeTransportV2.cs:6",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.AnonymousPipeOffer",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Contains the inheritable handles needed to connect an anonymous-pipe client.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/AnonymousPipeOffer.cs:9",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.AnonymousPipeServerTransportListener",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Keep the configurable bounded offerQueueCapacity and IAnonymousPipeAllocator entry point; high-level UseAnonymousPipe only supplies the default capacity.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/AnonymousPipeTransportV2.cs:77",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.BufferWriterPoolOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures the writer pool owned by one runtime context.",
+      "evidence": [
+        "src/SharpLink.Runtime/BufferWriterPoolOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [
+        {
+          "member": "M:CloneValidated",
+          "decision": "keep-public",
+          "rationale": "Retain validation plus an independent, still-mutable options copy for standalone configuration. Property setters remain usable; this is not an immutable snapshot.",
+          "evidence": [
+            "src/SharpLink.Runtime/BufferWriterPoolOptions.cs:38"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.IAnonymousPipeAllocator",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "用于向Host中的其他服务暴露，来重复建立多个匿名管道连接",
+      "evidence": [
+        "src/SharpLink.Runtime/IAnonymousPipeAllocator.cs:5",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.ISharpLinkCompressionProvider",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Synchronously compresses and decompresses complete SharpLink business payloads.",
+      "evidence": [
+        "src/SharpLink.Runtime/Compression/SharpLinkCompression.cs:10",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.NamedPipeClientTransportFactory",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Keep serverName and native PipeOptions construction, including options not represented by high-level AllowCrossUserAccess.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/NamedPipeTransportV2.cs:6",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.NamedPipeServerTransportListener",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Keep maxServerInstances, PipeTransmissionMode and native PipeOptions construction under the existing platform restrictions.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/NamedPipeTransportV2.cs:69",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.NamedPipeTransportOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures one named-pipe transport endpoint.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/NamedPipeTransportOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.PooledByteBufferWriter",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "A contiguous byte writer whose backing storage is rented from ArrayPool{T} for one ownership lease.",
+      "evidence": [
+        "src/SharpLink.Runtime/PooledByteBufferWriter.cs:7",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.ProtocolV2FrameParser",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Parses bounded SharpLink Protocol v2 frames.",
+      "evidence": [
+        "src/SharpLink.Runtime/ProtocolV2/ProtocolV2FrameCodec.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.ProtocolV2PayloadCodec",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Keep standalone Protocol v2 payload encoding/decoding, sizing and bounded read/write helpers. Payload data and buffer operations do not control a live Session.",
+      "evidence": [
+        "src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.ResponseCompressionPreference.cs:3",
+        "src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.SessionRefresh.cs:3",
+        "src/SharpLink.Runtime/ProtocolV2/ProtocolV2PayloadCodec.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.RpcGeneratedCodecResolver",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Retain the public Assembly/Type owner-codec bridge for standalone consumers; registration-bound overloads stay internal. The current generator does not call this Runtime helper.",
+      "evidence": [
+        "src/SharpLink.Runtime/Codec/RpcManifestCodecProvider.cs:13",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.RpcSessionFlushOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Retain the public readonly record struct configuration. Hiding only its primary constructor would not prevent default/init/with values or establish a safety boundary.",
+      "evidence": [
+        "src/SharpLink.Runtime/RpcSessionFlushOptions.cs:4",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.RuntimeConcurrencyOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures striped state containers owned by one runtime context.",
+      "evidence": [
+        "src/SharpLink.Runtime/RuntimeConcurrencyOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [
+        {
+          "member": "M:CloneValidated",
+          "decision": "keep-public",
+          "rationale": "Retain validation plus an independent, still-mutable options copy for standalone configuration. Property setters remain usable; this is not an immutable snapshot.",
+          "evidence": [
+            "src/SharpLink.Runtime/RuntimeConcurrencyOptions.cs:43"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharedMemoryClientTransportFactory",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Keep independent factory composition using SharedMemoryTransportOptions even though the high-level builder accepts equivalent options; platform restrictions remain.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/SharedMemoryTransport.cs:7",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharedMemoryServerTransportListener",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Keep independent listener construction, Accept and Dispose composition even though high-level options are equivalent; platform restrictions remain.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/SharedMemoryTransport.cs:131",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharedMemoryTransportOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures one local shared-memory transport endpoint.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/SharedMemoryTransportOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkBufferWriterPool",
+      "decision": "keep-public",
+      "role": "protocol-buffer-spi",
+      "rationale": "Instance-scoped pool for packet writers.",
+      "evidence": [
+        "src/SharpLink.Runtime/BufferWriterPool.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkCompressionOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures negotiated payload-compression capability for one runtime context.",
+      "evidence": [
+        "src/SharpLink.Runtime/Compression/SharpLinkCompression.cs:62"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkFlowControlOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures bounded buffering and call concurrency for one runtime context.",
+      "evidence": [
+        "src/SharpLink.Runtime/SharpLinkRuntimeOptions.cs:20"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkPerformanceProfile",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Predefined runtime behavior profiles.",
+      "evidence": [
+        "src/SharpLink.Runtime/SharpLinkRuntimeOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkProtocolOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures protocol safety limits applied independently by each SharpLink client or server.",
+      "evidence": [
+        "src/SharpLink.Runtime/SharpLinkProtocolOptions.cs:12"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [
+        {
+          "member": "M:CloneValidated",
+          "decision": "keep-public",
+          "rationale": "Retain validation plus an independent, still-mutable options copy for standalone configuration. Property setters remain usable; this is not an immutable snapshot.",
+          "evidence": [
+            "src/SharpLink.Runtime/SharpLinkProtocolOptions.cs:77"
+          ]
+        }
+      ]
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkRpcSessionFlushPolicySnapshot",
+      "decision": "keep-public",
+      "role": "diagnostics",
+      "rationale": "Describes the currently published RPC session flush-policy generation.",
+      "evidence": [
+        "src/SharpLink.Runtime/SharpLinkRpcSessionFlushPolicySnapshot.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkRuntimeContext",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Retain independently disposable codec services for golden-byte encoding/decoding and owner-manifest validation without a Client/Server. Do not restore AddCodec or UseCodecResolver.",
+      "evidence": [
+        "src/SharpLink.Runtime/SharpLinkRuntimeContext.cs:6",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkRuntimeContextBuilder",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Retain construction of isolated standalone serialization contexts. Caller disposes the built context; generated owner validation still applies.",
+      "evidence": [
+        "src/SharpLink.Runtime/SharpLinkRuntimeContext.cs:315",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SharpLinkRuntimeOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Mutable builder options that are frozen when a client or server is built.",
+      "evidence": [
+        "src/SharpLink.Runtime/SharpLinkRuntimeOptions.cs:200"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SocketClientTransportFactory",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Keep direct EndPoint, full SocketTransportOptions and TLS/timeout construction plus independent IClientTransportFactory composition; fixed UseTcp does not expose all socket options.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/SocketTransportV2.cs:56",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SocketServerTransportListener",
+      "decision": "keep-public",
+      "role": "transport-composition",
+      "rationale": "Keep bind EndPoint, backlog, accepted-socket options, TLS/timeout and LocalEndPoint. No public constructor accepts an existing Socket; high-level UseTcp/UseUds omit full socket options.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/SocketTransportV2.cs:137",
+        "doc/3.0-api-surface-audit-decisions.md",
+        "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.SocketTransportOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures sockets created by SharpLink transport factories and listeners.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/SocketTransportV2.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Runtime",
+      "type": "T:SharpLink.Runtime.StreamTransportConnection",
+      "decision": "keep-inheritable",
+      "role": "internal-polymorphism",
+      "rationale": "Internal stream-backed transport base used by TlsStreamTransportConnection; sealing it would break the actual TLS implementation.",
+      "evidence": [
+        "src/SharpLink.Runtime/Transport/TransportConnection.cs:3"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|T:SharpLink.Runtime.TlsStreamTransportConnection"
+      ]
+    },
+    {
+      "target": "Serializer.SharpPack",
+      "type": "T:SharpLink.Serializer.SharpPack.ISharpPackRpcCodecAdapterScopeConfiguration",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Build-time generated SharpPack integration hook for a generation-owned Adapter Scope.",
+      "evidence": [
+        "src/SharpLink.Serializer.SharpPack/SharpPackRpcCodec.cs:32",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Serializer.SharpPack",
+      "type": "T:SharpLink.Serializer.SharpPack.SharpPackRpcCodec",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "Creates explicit SharpPack Codecs backed by a caller-owned serializer Context.",
+      "evidence": [
+        "src/SharpLink.Serializer.SharpPack/SharpPackRpcCodec.cs:16",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Serializer.SharpPack",
+      "type": "T:SharpLink.Serializer.SharpPack.SharpPackRpcCodecAdapter",
+      "decision": "keep-public",
+      "role": "codec-spi",
+      "rationale": "SharpPack integration selected by generated Manifest metadata.",
+      "evidence": [
+        "src/SharpLink.Serializer.SharpPack/SharpPackRpcCodec.cs:42",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.ISharpLinkServerBuilder",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Builds an independently owned SharpLink RPC server.",
+      "evidence": [
+        "src/SharpLink.Server/ISharpLinkServerBuilder.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkAdmissionContext",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Read-only data supplied to a synchronous admission partition selector.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:232",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkAdmissionControlOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures optional active admission control for one SharpLink server.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:283"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkAdmissionRuleOptions",
+      "decision": "keep-inheritable",
+      "role": "configuration",
+      "rationale": "Keep the public rule configuration base and actual SharpLinkPartitionAdmissionOptions subclass.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:95",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": [],
+      "directDerivedTypes": [
+        "src/SharpLink.Server/SharpLink.Server.csproj@net10.0|SharpLink.Server|T:SharpLink.Server.SharpLinkPartitionAdmissionOptions"
+      ]
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkConcurrencyLimitOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures a concurrency limit owned by one admission scope.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:4"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkConnectionAdmissionOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures the connection-level resource envelope applied before RPC call admission: one hard bound for simultaneously live accepted connections and one independent hard bound for connections still inside TLS / Protocol v2 / authentication handshake.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkConnectionAdmissionOptions.cs:22"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkFixedWindowLimitOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures a fixed-window request-rate limit.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:44"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkFixedWindowUpdateActivation",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Controls when a runtime FixedWindow update becomes active.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:33",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkPartitionAdmissionOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures a bounded, opportunistically reclaimed partition admission layer.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:202"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkServerAdmissionControlExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Runtime admission-control operations for SharpLink servers.",
+      "evidence": [
+        "src/SharpLink.Server/SharpLinkServerAdmissionControlExtensions.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkServerBuilder",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Keep the sealed public Server builder and ISharpLinkServerBuilder contract; typed IPAddress overloads replace the removed server string-IP overloads.",
+      "evidence": [
+        "src/SharpLink.Server/SharpLinkServerBuilder.Compression.cs:3",
+        "src/SharpLink.Server/SharpLinkServerBuilder.Hosting.cs:3",
+        "src/SharpLink.Server/SharpLinkServerBuilder.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md",
+        "doc/3.0-api-surface-audit-decisions.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkServerCallCapacityExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Runtime active-RPC capacity operations for SharpLink servers.",
+      "evidence": [
+        "src/SharpLink.Server/SharpLinkServerCallCapacityExtensions.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkServerConnectionAdmissionExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Runtime pre-session connection-admission operations for SharpLink servers.",
+      "evidence": [
+        "src/SharpLink.Server/SharpLinkServerConnectionAdmissionExtensions.cs:4",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkServerRpcSessionFlushExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Runtime RPC session flush controls for ISharpLinkServer.",
+      "evidence": [
+        "src/SharpLink.Server/SharpLinkServer.RuntimeRpcSessionFlush.cs:13",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkServerRuntimeConfigurationExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Non-throwing expected-rejection paths for Server runtime configuration publication.",
+      "evidence": [
+        "src/SharpLink.Server/SharpLinkServerRuntimeConfigurationExtensions.cs:9",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkSlidingWindowLimitOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures a segmented sliding-window request-rate limit.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:70"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.SharpLinkTokenBucketLimitOptions",
+      "decision": "keep-public",
+      "role": "configuration",
+      "rationale": "Configures a token-bucket request-rate limit.",
+      "evidence": [
+        "src/SharpLink.Server/Admission/SharpLinkAdmissionControlOptions.cs:14"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.TransportExtensions",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Provides built-in server transport configuration extensions.",
+      "evidence": [
+        "src/SharpLink.Server/TransportExtensions.cs:7",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    },
+    {
+      "target": "Server",
+      "type": "T:SharpLink.Server.TransportExtensions.<G>$C27F459FFA7968962F54E8AFE6DF1868.<M>$8D61C3E8745FC218730E6EE5F53ACADA",
+      "decision": "keep-public",
+      "role": "application-contract",
+      "rationale": "Keep the C# extension declaration implementing its containing TransportExtensions/HostExtensions public entry points; this compiler identity is inventoried separately from the container.",
+      "evidence": [
+        "src/SharpLink.Server/TransportExtensions.cs:9",
+        "doc/adr/0001-2.0-public-api-and-packages.md"
+      ],
+      "memberDecision": "keep-public",
+      "memberExceptions": []
+    }
+  ]
+}

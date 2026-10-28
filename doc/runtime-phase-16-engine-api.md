@@ -4,6 +4,9 @@ Phase 16 makes the business API, Generated ABI, and Runtime engine three separat
 an intentional CLR/source breaking change; Protocol v2, contract IDs, method IDs, DTO member IDs,
 and the released Generated API version lineage remain separate from Runtime engine visibility.
 
+This document records the 2.0 Phase 16 boundary. The 3.0 line now requires Generated API 5
+and its exact ABI identity; see [the 3.0 API decision ledger](3.0-api-decision-ledger.md).
+
 ## Public-surface diff
 
 The following engine APIs are no longer exported:
@@ -40,7 +43,10 @@ must be rebuilt against this shape.
 ## Migration
 
 Do not construct `RpcSession`, subscribe to lifecycle notifications, read a Session `PipeReader`,
-set `LastActive`, register a dispatcher, or call protocol-frame helpers. For a custom transport,
+set `LastActive`, register a dispatcher, or invoke Session-bound control-frame emission.
+Public ProtocolV2 records, `ProtocolV2FrameParser`, `ProtocolV2PayloadCodec`, and bounded buffer
+tools remain available for standalone protocol/codec use under [ADR 0001](adr/0001-2.0-public-api-and-packages.md);
+they do not expose a live Session. For a custom transport,
 implement `ITransportConnection` and expose it through `IClientTransportFactory` or
 `IServerTransportListener`, then configure the appropriate builder. For application diagnostics,
 use the existing call/connection diagnostic snapshots rather than retaining a mutable Session
@@ -60,4 +66,5 @@ exact `SharpLink.Runtime.PooledAsyncStreamDispatcher\`1` sentinel and exported-t
 `SharpLink.PackageSmoke.AssertEnginePublicApiBoundary` check compiles real transport, codec, and
 interceptor implementations solely against published packages. Generator tests continue to reject
 generated references to `SharpLink.Runtime`, `IRpcSession`, `RuntimeContext`, pooled dispatchers,
-and Runtime protocol helpers.
+and concrete Runtime protocol helpers in generated output. That generator dependency rule does
+not prohibit standalone consumers from using the retained public protocol data/encoding SPI.

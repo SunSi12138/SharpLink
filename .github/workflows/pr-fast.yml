@@ -48,6 +48,9 @@ jobs:
       - name: Published API evidence regression tests
         run: python3 -m unittest discover -s eng/tests -p 'test_compare_published_api.py' -v
 
+      - name: API decision ledger coverage regression tests
+        run: python3 -m unittest discover -s eng/tests -p 'test_api_decision_ledger.py' -v
+
       - name: Admitted dispatch source parity guards
         run: python3 eng/tests/test_admitted_dispatch_parity.py
 
