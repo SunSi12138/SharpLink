@@ -1,0 +1,108 @@
+name: Packaged Trim and NativeAOT
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/packaged-trim-smoke.yml'
+      - '.github/workflows/release-gate.yml'
+      - '.github/actions/package-smoke/**'
+      - 'eng/run-packaged-trim-smoke.py'
+      - 'eng/tests/test_packaged_trim_smoke.py'
+      - 'eng/verify-package-identities.py'
+      - 'eng/release-versions.json'
+      - 'test/SharpLink.Package*Smoke/**'
+      - 'src/**'
+      - 'Directory.*.props'
+      - 'global.json'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      package-artifact:
+        description: Same-run nine-package artifact already produced and verified by the release pack job. Empty builds one candidate for this matrix.
+        type: string
+        default: ''
+
+jobs:
+  pack-candidate:
+    if: inputs.package-artifact == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Verify packaged gate fixtures and reject controls
+        run: python -m unittest discover -s eng/tests -p test_packaged_trim_smoke.py -v
+
+      - name: Pack one candidate for all three native hosts
+        run: dotnet pack Sharplink.slnx -c Release -o artifacts/nuget -v minimal
+
+      - name: Verify NuGet package contracts
+        uses: ./.github/actions/verify-packages
+
+      - name: Upload candidate packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packaged-trim-candidate
+          path: |
+            artifacts/nuget/*.nupkg
+            artifacts/nuget/*.snupkg
+          if-no-files-found: error
+
+  packaged-consumers:
+    needs: pack-candidate
+    # A caller's verified artifact deliberately skips pack-candidate, never repacks it.
+    if: ${{ always() && !cancelled() && (needs.pack-candidate.result == 'success' || (needs.pack-candidate.result == 'skipped' && inputs.package-artifact != '')) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-14
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - name: Preserve shell script LF before Windows checkout
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Verify packaged gate fixtures and reject controls
+        run: python -m unittest discover -s eng/tests -p test_packaged_trim_smoke.py -v
+
+      - name: Download the same candidate packages on every host
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.package-artifact || 'packaged-trim-candidate' }}
+          path: artifacts/nuget
+
+      - name: Run packaged full/partial Trim and NativeAOT reject controls
+        uses: ./.github/actions/package-smoke
+        with:
+          packaged-only: 'true'
+          rid: ${{ matrix.rid }}
+
+      - name: Upload package identity, publish, and execution evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packaged-trim-${{ matrix.rid }}-${{ github.sha }}
+          path: artifacts/packaged-trim
+          if-no-files-found: error
+          retention-days: 30

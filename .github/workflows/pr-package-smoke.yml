@@ -12,6 +12,8 @@ on:
       - '.github/actions/package-smoke/**'
       - '.github/actions/verify-packages/**'
       - '.github/workflows/pr-package-smoke.yml'
+      - 'eng/run-packaged-trim-smoke.py'
+      - 'eng/tests/test_packaged_trim_smoke.py'
       - 'eng/run-quickstart-package-smoke.sh'
       - 'eng/verify-packages.sh'
       - 'eng/run-project-reference-trim-smoke.sh'
@@ -85,3 +87,12 @@ jobs:
 
       - name: Run NuGet package smoke
         uses: ./.github/actions/package-smoke
+
+      - name: Upload packaged Trim and NativeAOT evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-package-trim-${{ github.sha }}
+          path: artifacts/packaged-trim
+          if-no-files-found: warn
+          retention-days: 30
