@@ -17,7 +17,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkTelemetryDetailRuntime
         lock (_telemetryDetailGate)
         {
             var state = (ServerState)Volatile.Read(ref _state);
-            if (state is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            if (MaintenanceConfigured || state is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             {
                 throw new InvalidOperationException(
                     $"Telemetry detail policy cannot be updated while the server is {state}.");

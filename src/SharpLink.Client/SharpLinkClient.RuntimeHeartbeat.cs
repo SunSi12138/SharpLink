@@ -111,7 +111,7 @@ internal sealed partial class SharpLinkClient
     private void EnsureHeartbeatPublicationAllowed()
     {
         var state = State;
-        if (Volatile.Read(ref _stopStarted) != 0 ||
+        if (MaintenanceOptions is not null || Volatile.Read(ref _stopStarted) != 0 ||
             state is SharpLinkConnectionState.Draining or
                 SharpLinkConnectionState.Stopped or
                 SharpLinkConnectionState.Faulted)

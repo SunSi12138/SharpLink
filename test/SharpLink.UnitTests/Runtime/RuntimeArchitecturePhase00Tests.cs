@@ -107,6 +107,7 @@ public sealed class RuntimeArchitecturePhase00Tests
     {
         var random = new Random(RaceSeed);
         var owner = new RecordingPendingCallOwner();
+        using var registrations = new ScopedPendingRegistrationObserver(owner.ObserveRegistration);
         using var table = new PendingRequestTable(
             1,
             PendingRequestTableTestFixture.Codecs,
@@ -115,7 +116,8 @@ public sealed class RuntimeArchitecturePhase00Tests
 
         for (var iteration = 0; iteration < RaceRepetitions; iteration++)
         {
-            var operation = table.Rent<int>(out var requestId);
+            long requestId = 0;
+            var operation = registrations.Observe(() => table.Rent<int>(out requestId));
             using var start = new ManualResetEventSlim();
             Func<bool>[] racers =
             [
@@ -183,12 +185,14 @@ public sealed class RuntimeArchitecturePhase00Tests
         foreach (var terminal in Enum.GetValues<PendingTerminal>())
         {
             var owner = new RecordingPendingCallOwner();
+            using var registrations = new ScopedPendingRegistrationObserver(owner.ObserveRegistration);
             using var table = new PendingRequestTable(
                 1,
                 PendingRequestTableTestFixture.Codecs,
                 owner,
                 TimeProvider.System);
-            var operation = table.Rent<int>(out var requestId);
+            long requestId = 0;
+            var operation = registrations.Observe(() => table.Rent<int>(out requestId));
 
             var won = CompletePendingTerminal(table, requestId, terminal);
 
@@ -214,12 +218,14 @@ public sealed class RuntimeArchitecturePhase00Tests
         foreach (var terminal in Enum.GetValues<PendingTerminal>())
         {
             var owner = new RecordingPendingCallOwner();
+            using var registrations = new ScopedPendingRegistrationObserver(owner.ObserveRegistration);
             using var table = new PendingRequestTable(
                 1,
                 PendingRequestTableTestFixture.Codecs,
                 owner,
                 TimeProvider.System);
-            var operation = table.Rent<int>(out var requestId);
+            long requestId = 0;
+            var operation = registrations.Observe(() => table.Rent<int>(out requestId));
             var competingTerminal = terminal == PendingTerminal.GoAway
                 ? PendingTerminal.ConnectionFailure
                 : PendingTerminal.GoAway;
@@ -343,7 +349,7 @@ public sealed class RuntimeArchitecturePhase00Tests
         public int RegisteredCount => Volatile.Read(ref _registeredCount);
         public int CompletedCount => Volatile.Read(ref _completedCount);
 
-        public void OnPendingCallRegistered()
+        internal void ObserveRegistration()
         {
             Interlocked.Increment(ref _registeredCount);
             Interlocked.Increment(ref _activeCount);

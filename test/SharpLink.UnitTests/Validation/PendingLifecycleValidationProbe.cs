@@ -124,6 +124,9 @@ public sealed class PendingLifecycleValidationProbe
         var hits = 0;
         var positiveHits = 0;
         var negativeHits = 0;
+        var positiveRegistrationState = -1;
+        long positiveRegistrationId = 0;
+        const string registrationWitnessKind = "pending-call-registered-field-before-response";
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, current) =>
         {
@@ -133,7 +136,17 @@ public sealed class PendingLifecycleValidationProbe
         listener.SetMeasurementEventCallback<long>((_, measurement, _, _) =>
         {
             Interlocked.Increment(ref hits);
-            if (measurement > 0) Interlocked.Increment(ref positiveHits);
+            if (measurement > 0)
+            {
+                var firstPositive = Interlocked.Increment(ref positiveHits) == 1;
+                // The throwing listener itself records this existing pre-MarkRegistered cut.
+                // A second listener is not guaranteed to run after another listener throws.
+                if (firstPositive)
+                {
+                    positiveRegistrationId = RegistrationId(Slot(table));
+                    positiveRegistrationState = ReadRegistrationState(table, positiveRegistrationId);
+                }
+            }
             if (measurement < 0) Interlocked.Increment(ref negativeHits);
             if ((scenario == "metric-plus" && measurement == 1) ||
                 (scenario == "metric-minus" && measurement == -1))
@@ -145,9 +158,13 @@ public sealed class PendingLifecycleValidationProbe
         RpcRequestOperation<int>? operation = null;
         Exception? escaped = null;
         long id = 0;
+        var registrationStateBeforeResponse = -1;
+        long registrationRequestId = 0;
         try
         {
             operation = table.Rent<int>(out id);
+            registrationRequestId = id;
+            registrationStateBeforeResponse = ReadRegistrationState(table, id);
             if (scenario != "metric-plus")
                 Respond(table, id);
         }
@@ -160,9 +177,10 @@ public sealed class PendingLifecycleValidationProbe
         var activeBefore = table.ActiveCount;
         if (scenario == "metric-plus")
         {
-            var call = table.Count == 0 ? null : Slot(table);
-            var registered = call is null ? -1 : (int)call.GetType().GetField("_registered",
-                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(call)!;
+            // Rent may throw before assigning its returned operation on the historical target.
+            // Bind the surviving slot to the exact ID captured by its own +1 callback.
+            registrationRequestId = positiveRegistrationId;
+            var registered = ReadRegistrationState(table, registrationRequestId);
             // This file is written atomically BEFORE Dispose. On a broken baseline the outer
             // watchdog still uses it to distinguish the known published/unregistered hang.
             Write(new
@@ -176,7 +194,11 @@ public sealed class PendingLifecycleValidationProbe
                 positiveHits,
                 negativeHits,
                 escaped = escaped?.GetType().Name,
-                ownerRegistered = owner.Registered
+                registrationWitnessKind,
+                registrationRequestId,
+                positiveRegistrationId,
+                positiveRegistrationState,
+                ownerRegistered = registered
             });
             table.Dispose();
             var disposeOperationError = operation is null
@@ -195,11 +217,16 @@ public sealed class PendingLifecycleValidationProbe
                 positiveHits,
                 negativeHits,
                 escaped = escaped?.GetType().Name,
-                ownerRegistered = owner.Registered,
+                registrationWitnessKind,
+                registrationRequestId,
+                positiveRegistrationId,
+                positiveRegistrationState,
+                ownerRegistered = registered,
                 operationError = disposeOperationError,
                 active,
                 count,
-                invariant = escaped is null && registered == 1 && owner.Registered == 1 &&
+                invariant = escaped is null && registered == 1 && positiveRegistrationState == 0 &&
+                    registrationRequestId == positiveRegistrationId &&
                     disposeOperationError == SharpLinkErrorCode.ConnectionClosed.ToString() &&
                     active == 0 && count == 0
             });
@@ -209,7 +236,9 @@ public sealed class PendingLifecycleValidationProbe
         string? operationError = null;
         if (operation is not null)
             operationError = await Observe(operation.AsValueTask().AsTask());
-        var ownerRegisteredBeforeNext = owner.Registered;
+        // Preserve the legacy JSON field as a labelled physical registration witness,
+        // captured before the first response can recycle the PendingCall.
+        var ownerRegisteredBeforeNext = registrationStateBeforeResponse;
         var nextSucceeded = false;
         string? nextError = null;
         try
@@ -238,12 +267,29 @@ public sealed class PendingLifecycleValidationProbe
             escaped = escaped?.GetType().Name,
             operationError,
             ownerRegisteredBeforeNext,
+            registrationWitnessKind,
+            registrationRequestId,
+            positiveRegistrationId,
+            positiveRegistrationState,
             nextSucceeded,
             nextError,
             invariant = escaped is null && operationError is null &&
                 ownerRegisteredBeforeNext == 1 && nextSucceeded &&
                 table.ActiveCount == 0 && table.Count == 0
         });
+    }
+
+    private static long RegistrationId(object call)
+        => (long)call.GetType().GetProperty("Id", BindingFlags.Instance | BindingFlags.Public)!
+            .GetValue(call)!;
+
+    private static int ReadRegistrationState(PendingRequestTable table, long expectedId)
+    {
+        var call = Slot(table);
+        Require(expectedId > 0 && RegistrationId(call) == expectedId,
+            "registration witness does not name the exact pending request");
+        return (int)call.GetType().GetField("_registered",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(call)!;
     }
 
     private static object Slot(PendingRequestTable table)
@@ -285,9 +331,10 @@ public sealed class PendingLifecycleValidationProbe
 
     private sealed class RecordingOwner : IPendingCallOwner
     {
-        internal int Registered { get; private set; }
         internal PendingCallCompletionReason LastReason { get; private set; }
-        public void OnPendingCallRegistered() => Registered++;
+        // Extra member only for the historical characterization target's old interface.
+        // The probe never treats this obsolete notification as registration evidence.
+        public void OnPendingCallRegistered() { }
         public void OnPendingCallCompleted(in PendingCallCompletion completion) => LastReason = completion.Reason;
         public void OnProducerCancellationCallbackFailed(Exception exception) => throw exception;
     }

@@ -60,7 +60,7 @@ Each recovery cycle is operation-count/barrier driven:
 4. release exactly enough capacity, require every waiter to make progress, then simulate disconnect cleanup;
 5. prove pending/waiter counts return to zero, refill the entire table to prove all capacity is reusable, drain it again, and run a post-recovery baseline probe.
 
-CI runs three cycles, P0 seven, and P1 twenty. Full-GC heap samples are retained per cycle; the `RecordingOwner` drops its entire exactly-once request-ID history whenever pending ownership reaches a quiescent zero boundary, so full-GC samples do not retain a monotonically growing harness-only `HashSet`. The deterministic gate rejects gross retained-state growth (more than 64 MiB above the minimum observed full-GC heap) while leaving normal performance comparison to formal evidence runs.
+CI runs three cycles, P0 seven, and P1 twenty. Full-GC heap samples are retained per cycle; the `RecordingOwner` drops its entire exactly-once request-ID history when each predeclared completion phase reaches zero, before the recovery heap sample, so full-GC samples do not retain a monotonically growing harness-only `HashSet`. The deterministic gate rejects gross retained-state growth (more than 64 MiB above the minimum observed full-GC heap) while leaving normal performance comparison to formal evidence runs.
 
 ## Correctness gates
 
@@ -80,3 +80,29 @@ Any violation throws and fails the matrix before the report is marked complete. 
 - feature-heavy saturation reaches at least 90% actual pending occupancy under the real production feature stack, preserves the expected cancellation/deadline terminals, releases every held call, returns pending state to zero, and proves same-session recovery by comparing the server-side session identity before pressure with the identity after recovery.
 
 The permanent pull-request gate is the `issue-571-pending-request-matrix` job in `.github/workflows/pending-validation.yml`. It runs the `ci` tier and uploads the exact evidence used for the gate. Formal P1 review additionally runs the feature-heavy saturation/cancellation/deadline cell.
+
+## Completion accounting after owner-notification removal
+
+The `predeclared-phase-completions-v2` harness declares each cell's expected
+successful completion total before entering its timed region. Its completion
+callback checks request-ID uniqueness and exact totals; missing, duplicate and
+extra-completion counterfactuals must all fail. A sticky harness failure survives
+product callback-exception isolation. Every recovery cycle releases its entire
+ID history and checks zero remaining completions before the full-GC heap sample.
+The existing 64 MiB recovery bound, cell workloads and other correctness gates
+are unchanged. No new metric listener runs in a timed benchmark operation.
+
+This is **not** a registration-before-completion oracle. The scoped unit probes
+and explicit lifecycle worker separately retain the existing synchronous
+pre-`MarkRegistered` boundary. The explicit worker labels its legacy
+`ownerRegistered` JSON field as the actual `_registered` state for the exact
+request ID, captured before response/reuse; the throwing metric listener itself
+records its pre-registration witness, with no second listener dependency.
+
+Phase accounting retains IDs longer than the former active-call ledger (which
+could clear history after every sequential call). It changes harness allocation,
+live history and timing work. Compare source revisions only with this **same
+revised harness on both arms**, and do not compare these timing/allocation values
+directly with old published matrix results or claim harness-cost equivalence.
+The contention/saturation benchmarks' existing setup-selected no-op owners and
+historical compatibility owners are unchanged.

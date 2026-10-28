@@ -31,10 +31,6 @@ internal static class PendingRequestTableTestFixture
 
     private sealed class NoOpPendingCallOwner : IPendingCallOwner
     {
-        public void OnPendingCallRegistered()
-        {
-        }
-
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
         }

@@ -5,8 +5,20 @@ public class LongRunningTestWorkerTests
     [Test]
     public async Task CleanupJoinShouldObserveAnAlreadyTerminatedWorkersTimeout()
     {
-        var worker = Task.FromException(new TimeoutException("The worker's semantic phase timed out."));
+        var failure = new TimeoutException("The worker's semantic phase timed out.");
+        var worker = Task.FromException(failure);
         await LongRunningTestWorker.JoinAsync(worker, TimeSpan.FromSeconds(10));
+        if (LongRunningTestWorker.WaitForPhase(Task.FromResult(42), TimeSpan.FromSeconds(10)) != 42)
+            throw new InvalidOperationException("A synchronous phase observation changed the worker result.");
+        try
+        {
+            LongRunningTestWorker.WaitForPhase(worker, TimeSpan.FromSeconds(10));
+        }
+        catch (TimeoutException observed) when (ReferenceEquals(observed, failure))
+        {
+            return;
+        }
+        throw new InvalidOperationException("A semantic phase must preserve its original failure identity.");
     }
 
     [Test]

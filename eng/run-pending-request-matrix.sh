@@ -34,7 +34,15 @@ report = json.loads(report_path.read_text(encoding="utf-8"))
 if report.get("phase") != "complete" or report.get("invariant") is not True:
     raise SystemExit("pending request matrix report did not complete its correctness gates")
 
+if report.get("completionAccounting") != "predeclared-phase-completions-v2":
+    raise SystemExit("pending matrix has a missing or stale completion accounting witness")
+
 cells = report.get("cells") or []
+ledger_controls = [cell for cell in cells
+                   if cell.get("scenario") == "completion-ledger-missing-duplicate-extra-controls"]
+if len(ledger_controls) != 1 or any(ledger_controls[0].get(key) is not True for key in
+        ("missingDetected", "duplicateDetected", "extraDetected", "recoveredPhaseHistoryReleased")):
+    raise SystemExit("pending matrix completion ledger negative/positive controls are incomplete")
 categories = {cell.get("category") for cell in cells}
 required = {
     "hard-gate",

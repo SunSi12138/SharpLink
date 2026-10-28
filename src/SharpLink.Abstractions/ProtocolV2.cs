@@ -55,7 +55,9 @@ public enum ProtocolV2FrameType : byte
     /// <summary>Acknowledges the cumulative response compression preference generation applied by the server.</summary>
     ResponseCompressionPreferenceAck = 15,
     /// <summary>Requests blue-green replacement of this healthy physical session.</summary>
-    SessionRefreshRequested = 16
+    SessionRefreshRequested = 16,
+    /// <summary>Coordinates authenticated, opt-in whole-domain maintenance on the normal frame FIFO.</summary>
+    CooperativeMaintenance = 17
 }
 
 /// <summary>Protocol v2 frame flags.</summary>
@@ -101,7 +103,9 @@ public enum ProtocolV2Capabilities : ulong
     /// <summary>Publishes deterministic contract-assembly identities for bind-time compatibility checks.</summary>
     ContractManifest = 1UL << 5,
     /// <summary>Supports server-requested blue-green physical-session replacement.</summary>
-    SessionRefresh = 1UL << 6
+    SessionRefresh = 1UL << 6,
+    /// <summary>Supports authenticated, compatible server implementation maintenance.</summary>
+    CooperativeMaintenance = 1UL << 7
 }
 
 /// <summary>Identifies why a client abandoned an active RPC call.</summary>

@@ -301,6 +301,10 @@ public class NegotiatedSessionOptionsTests
             ProtocolV2FrameType.ResponseCompressionPreferenceAck,
             ProtocolV2FrameType.SessionRefreshRequested
         };
+        // Paused maintenance can exchange its control and publish the new catalog, but a
+        // permanently draining session must not accept any new maintenance stage.
+        var paused = draining.Append(ProtocolV2FrameType.ContractManifest)
+            .Append(ProtocolV2FrameType.CooperativeMaintenance).ToArray();
 
         foreach (var frameType in Enum.GetValues<ProtocolV2FrameType>())
         {
@@ -313,6 +317,9 @@ public class NegotiatedSessionOptionsTests
             Ensure(RpcSessionProtocolRules.IsFrameAllowed(RpcSessionProtocolPhase.Draining, frameType) ==
                    draining.Contains(frameType),
                 $"Draining frame eligibility mismatch for {frameType}");
+            Ensure(RpcSessionProtocolRules.IsFrameAllowed(RpcSessionProtocolPhase.MaintenancePaused, frameType) ==
+                   paused.Contains(frameType),
+                $"MaintenancePaused frame eligibility mismatch for {frameType}");
             Ensure(!RpcSessionProtocolRules.IsFrameAllowed(RpcSessionProtocolPhase.Stopping, frameType) &&
                    !RpcSessionProtocolRules.IsFrameAllowed(RpcSessionProtocolPhase.Terminal, frameType),
                 $"cleanup phases must reject {frameType}");

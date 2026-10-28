@@ -15,7 +15,7 @@ The guardrail is closed-world for test-originating `ProjectReference` edges, not
 - deny a `ProjectReference` from an unregistered test project, to an unregistered test target, or to any project outside the registered production/test project sets;
 - keep `src/` production rules from #371 authoritative and independent.
 
-The current inventory was captured from `dev` at `3e772ef0de75bda9f79d5f3508ef01f573bb6254`. It contains **107** test-originating `ProjectReference` edges and no debt exception.
+The baseline inventory was captured from `dev` at `3e772ef0de75bda9f79d5f3508ef01f573bb6254` with **107** test-originating `ProjectReference` edges. The reviewed policy now lists **108** edges after adding the allocation-probe build dependency below; there is no debt exception.
 
 ## Reference modes
 
@@ -90,7 +90,7 @@ The following table is explanatory; the YAML is normative. Unmarked targets use 
 | `SharpLink.StaticCodecOwnerTest.Contracts` | `Sdk`, `Generator` (analyzer) | — |
 | `SharpLink.StreamLoadTest` | `Abstractions`, `Server`, `Client`, `Runtime`, `Sdk`, `Serializer.SharpPack`, `Generator` (analyzer) | `test:LoadTestBase` |
 | `SharpLink.StreamLoadTest.Tests` | — | `test:StreamLoadTest`, `test:LoadTestBase` |
-| `SharpLink.UnitTests` | `Abstractions`, `Client`, `Hosting`, `Runtime`, `Sdk`, `Serializer.SharpPack`, `Server` | `test:MultiClusterTest.Contracts`, `test:RollbackPlugin`, `test:StaticCodecOwnerTest.Contracts` |
+| `SharpLink.UnitTests` | `Abstractions`, `Client`, `Hosting`, `Runtime`, `Sdk`, `Serializer.SharpPack`, `Server` | `test:MultiClusterTest.Contracts`, `test:RollbackPlugin`, `test:StaticCodecOwnerTest.Contracts`, `test:ReadOwnershipAllocationProbe` (build-only) |
 | `test/fixtures/generated-api4/source/SharpLink.Api4Fixture` | `Sdk`, `Generator` (analyzer) | — |
 
 Current test projects with no outgoing `ProjectReference` are still valid. In particular, package/version fixtures such as `SharpLink.AbstractionsPackageSmoke`, `SharpLink.HostingPackageSmoke`, `SharpLink.SdkOnlyPackageSmoke`, the API3 fixture, the generated-ABI-mixing fixtures, and the protocol-v2 cross-version fixture use package dependencies rather than project dependencies. `SharpLink.ReferenceRooting.PackageContracts` and `SharpLink.SdkOnlyPackageSmoke` are registered in the YAML because other test projects target them. `SharpLink.GeneratedAssemblyScanner` currently has no project edge in either direction.
@@ -104,6 +104,7 @@ Important current support roles include:
 - `SharpLink.MultiClusterTest.Contracts`: generated contracts consumed by UnitTests for multi-cluster scenarios;
 - `SharpLink.RollbackPlugin`: separately built plugin assembly consumed by rollback/dynamic-module tests;
 - `SharpLink.StaticCodecOwnerTest.Contracts`: generated contracts used by static-codec ownership tests;
+- `SharpLink.ReadOwnershipAllocationProbe`: a standalone reader-allocation child host built and copied by UnitTests. Its `ReferenceOutputAssembly="false"` edge is `build_only`, not an assembly or analyzer dependency; the child loads the tested module at execution time rather than creating a reverse project-reference edge;
 - `SharpLink.DynamicContracts` / `SharpLink.DynamicServices`: collectible/dynamic-module artifacts; some consumers compile against contracts while only building the service assembly;
 - `SharpLink.LoadTestBase`: shared load-test infrastructure used by both load executables and their tests;
 - `SharpLink.ReferenceRooting.*` and `SharpLink.SdkOnlyPackageSmoke`: package-rooting/build-order fixtures;

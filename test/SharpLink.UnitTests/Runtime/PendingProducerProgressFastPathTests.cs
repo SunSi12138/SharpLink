@@ -238,8 +238,6 @@ public class PendingProducerProgressFastPathTests
         internal readonly ManualResetEventSlim Entered = new();
         internal readonly ManualResetEventSlim AllowCompletion = new();
 
-        public void OnPendingCallRegistered() { }
-
         public void OnProducerCancellationCallbackFailed(Exception exception)
             => throw new InvalidOperationException(
                 "The test producer has no cancellation callbacks.", exception);

@@ -78,10 +78,6 @@ public class PendingRequestTableWrapTests
 
     private sealed class NoopPendingCallOwner : IPendingCallOwner
     {
-        public void OnPendingCallRegistered()
-        {
-        }
-
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
         }

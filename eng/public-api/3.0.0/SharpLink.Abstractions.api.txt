@@ -217,6 +217,18 @@ namespace SharpLink.Abstractions
         System.Reflection.Assembly OwnerAssembly { get; }
         System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkGeneratedClusterAssemblyRoute> Routes { get; }
     }
+    public interface ISharpLinkMaintenanceController
+    {
+        long CatalogGeneration { get; }
+        SharpLink.Abstractions.ISharpLinkMaintenanceOperation BeginMaintenance(long expectedGeneration, System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkImplementationReplacement> replacements);
+    }
+    public interface ISharpLinkMaintenanceOperation
+    {
+        System.Guid OperationId { get; }
+        string PlanDigest { get; }
+        SharpLink.Abstractions.SharpLinkMaintenanceStage Stage { get; }
+        System.Threading.Tasks.Task<SharpLink.Abstractions.SharpLinkMaintenanceResult> WaitAsync(System.Threading.CancellationToken cancellationToken = default);
+    }
     public interface ISharpLinkMultiClusterClient : System.IAsyncDisposable
     {
         SharpLink.Abstractions.SharpLinkClientLifecycleState LifecycleState { get; }
@@ -356,6 +368,7 @@ namespace SharpLink.Abstractions
         CancellationReason = 16ul,
         ContractManifest = 32ul,
         SessionRefresh = 64ul,
+        CooperativeMaintenance = 128ul,
     }
     public static class ProtocolV2Constants
     {
@@ -412,6 +425,7 @@ namespace SharpLink.Abstractions
         ResponseCompressionPreferenceUpdate = 14,
         ResponseCompressionPreferenceAck = 15,
         SessionRefreshRequested = 16,
+        CooperativeMaintenance = 17,
     }
     public readonly struct ProtocolV2HandshakeRequest : System.IEquatable<SharpLink.Abstractions.ProtocolV2HandshakeRequest>
     {
@@ -724,6 +738,13 @@ namespace SharpLink.Abstractions
         Stopped = 4,
         Faulted = 5,
     }
+    public sealed class SharpLinkClientMaintenanceOptions : System.IEquatable<SharpLink.Abstractions.SharpLinkClientMaintenanceOptions>
+    {
+        public SharpLinkClientMaintenanceOptions(System.Guid DomainId, System.Guid ParticipantId, System.Guid RuntimeIncarnation) { }
+        public System.Guid DomainId { get; init; }
+        public System.Guid ParticipantId { get; init; }
+        public System.Guid RuntimeIncarnation { get; init; }
+    }
     public readonly struct SharpLinkClientReadinessSnapshot : System.IEquatable<SharpLink.Abstractions.SharpLinkClientReadinessSnapshot>
     {
         public SharpLinkClientReadinessSnapshot(SharpLink.Abstractions.SharpLinkConnectionState State, int ActiveEndpoints, int ReadyEndpoints, int ReadyConnections, int TargetReadyEndpoints) { }
@@ -1015,12 +1036,47 @@ namespace SharpLink.Abstractions
         public System.TimeSpan Interval { get; init; }
         public System.TimeSpan Timeout { get; init; }
     }
+    public sealed class SharpLinkImplementationReplacement : System.IEquatable<SharpLink.Abstractions.SharpLinkImplementationReplacement>
+    {
+        public SharpLinkImplementationReplacement(System.Reflection.Assembly Source, System.Reflection.Assembly Target) { }
+        public System.Reflection.Assembly Source { get; init; }
+        public System.Reflection.Assembly Target { get; init; }
+    }
     public enum SharpLinkInvocationStatus : byte
     {
         Pending = 0,
         Succeeded = 1,
         Failed = 2,
         Cancelled = 3,
+    }
+    public sealed class SharpLinkMaintenanceParticipant : System.IEquatable<SharpLink.Abstractions.SharpLinkMaintenanceParticipant>
+    {
+        public SharpLinkMaintenanceParticipant(System.Guid ParticipantId, System.Guid RuntimeIncarnation, string AuthenticatedSubject) { }
+        public string AuthenticatedSubject { get; init; }
+        public System.Guid ParticipantId { get; init; }
+        public System.Guid RuntimeIncarnation { get; init; }
+    }
+    public sealed class SharpLinkMaintenanceResult : System.IEquatable<SharpLink.Abstractions.SharpLinkMaintenanceResult>
+    {
+        public SharpLinkMaintenanceResult(System.Guid OperationId, string PlanDigest, SharpLink.Abstractions.SharpLinkMaintenanceStage Stage, long TargetGeneration, System.Exception? Failure) { }
+        public System.Exception? Failure { get; init; }
+        public System.Guid OperationId { get; init; }
+        public string PlanDigest { get; init; }
+        public SharpLink.Abstractions.SharpLinkMaintenanceStage Stage { get; init; }
+        public long TargetGeneration { get; init; }
+    }
+    public enum SharpLinkMaintenanceStage
+    {
+        Validating = 0,
+        Freezing = 1,
+        Draining = 2,
+        Quiescent = 3,
+        Retiring = 4,
+        CommittedPaused = 5,
+        Resuming = 6,
+        Succeeded = 7,
+        RejectedBeforeSeal = 8,
+        FailedClosed = 9,
     }
     public enum SharpLinkMultiClusterState
     {

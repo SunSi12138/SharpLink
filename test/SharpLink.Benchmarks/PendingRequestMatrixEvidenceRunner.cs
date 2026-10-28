@@ -43,6 +43,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         var output = GetString(args, "--output", "artifacts/perf/pending-request-matrix/report.json");
         var cells = new List<object>();
 
+        RunCompletionLedgerGates(cells);
         RunStaleResponseGate(cells);
         await RunDisposeWaiterGateAsync(cells).ConfigureAwait(false);
 
@@ -123,6 +124,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
             phase = "complete",
             invariant = true,
             issue = 571,
+            completionAccounting = "predeclared-phase-completions-v2",
             tier,
             commit = Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "local",
             runtime = RuntimeInformation.FrameworkDescription,
@@ -237,6 +239,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
     private static void RunStaleResponseGate(List<object> cells)
     {
         var owner = new RecordingOwner();
+        owner.ExpectCompletions(2);
         using var table = CreateTable(64, TimeProvider.System, owner);
         var first = table.Rent<int>(out var staleId);
         CompleteSuccess(table, first, staleId);
@@ -265,6 +268,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
     private static async Task RunDisposeWaiterGateAsync(List<object> cells)
     {
         var owner = new RecordingOwner();
+        owner.ExpectCompletions(64);
         var table = CreateTable(64, TimeProvider.System, owner);
         var held = Fill(table, 64);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -305,9 +309,10 @@ internal static partial class PendingRequestMatrixEvidenceRunner
     {
         var target = Math.Clamp((int)Math.Floor(capacity * occupancyPercent / 100d), 1, capacity - 1);
         var owner = new RecordingOwner();
+        var workerCount = Math.Min(Math.Min(producers, target), 128);
+        owner.ExpectCompletions(checked(target + workerCount * operationsPerProducer));
         using var table = CreateTable(capacity, TimeProvider.System, owner);
         var held = Fill(table, target);
-        var workerCount = Math.Min(Math.Min(producers, target), 128);
         var currentOperations = new RpcRequestOperation<int>[workerCount];
         var currentIds = new long[workerCount];
         for (var worker = 0; worker < workerCount; worker++)
@@ -405,6 +410,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
     private static void RunFullFailFastCell(List<object> cells, int capacity)
     {
         var owner = new RecordingOwner();
+        owner.ExpectCompletions(checked(capacity + 1));
         using var table = CreateTable(capacity, TimeProvider.System, owner);
         var held = Fill(table, capacity);
         const int attempts = 64;
@@ -464,6 +470,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         Require(deadlines > 0 && deadlines <= active, "Sparse deadline cell has invalid deadline count.");
         var time = new AdvancingTimeProvider();
         var owner = new RecordingOwner();
+        owner.ExpectCompletions(active);
         using var table = CreateTable(capacity, time, owner);
         var operations = new RpcRequestOperation<int>[active];
         var ids = new long[active];
@@ -527,6 +534,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
     private static async Task RunRealTimerDeadlineCellAsync(List<object> cells, int samples)
     {
         var owner = new RecordingOwner();
+        owner.ExpectCompletions(checked(7 + samples));
         using var table = CreateTable(65_536, TimeProvider.System, owner);
         var fillers = Fill(table, 7);
         var lateness = new double[samples];
@@ -585,6 +593,9 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         var time = terminalMode == "deadline" ? new AdvancingTimeProvider() : null;
         var provider = (TimeProvider?)time ?? TimeProvider.System;
         var owner = new RecordingOwner();
+        var shortCount = target - longCount;
+        var workerCount = Math.Min(Math.Min(producers, shortCount), 128);
+        owner.ExpectCompletions(checked(target + workerCount * operationsPerProducer));
         using var table = CreateTable(capacity, provider, owner);
         using var cancellation = terminalMode == "cancel" ? new CancellationTokenSource() : null;
         var longOperations = new RpcRequestOperation<int>[longCount];
@@ -602,9 +613,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
                 out longIds[index]);
         }
 
-        var shortCount = target - longCount;
         var shortHeld = Fill(table, shortCount);
-        var workerCount = Math.Min(Math.Min(producers, shortCount), 128);
         var currentOperations = new RpcRequestOperation<int>[workerCount];
         var currentIds = new long[workerCount];
         for (var worker = 0; worker < workerCount; worker++)
@@ -724,6 +733,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         var heapAfterGc = new long[cycles];
         for (var cycle = 0; cycle < cycles; cycle++)
         {
+            owner.ExpectCompletions(checked(128 + 2 * capacity + waiterCount));
             var baseline = MeasureSequentialProbe(table, 64);
             var held = Fill(table, capacity);
             Require(table.ActiveCount == capacity, "Recovery phase C did not reach full occupancy.");
@@ -774,6 +784,7 @@ internal static partial class PendingRequestMatrixEvidenceRunner
             ObserveFailures(reuse.Select(static item => item.Operation), static exception => ReferenceEquals(exception, CleanupException));
             Require(table.ActiveCount == 0 && table.Count == 0, "Reusable-capacity proof did not return to zero.");
             var recovered = MeasureSequentialProbe(table, 64);
+            owner.RequireIdle();
 
             ForceFullGc();
             heapAfterGc[cycle] = GC.GetTotalMemory(forceFullCollection: false);

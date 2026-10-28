@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "scope": "No queued-admission cooperative maintenance only. These hashes are conservative review triggers, not an executable proof of physical quiescence. Callback tails have a separate owner and tests. Client outgoing producer groups retain their existing selection reservation through physical disposal; immutable abandoned unary callbacks are not censused.",
+  "reviewed_source": [
+    {
+      "purpose": "selected registration and dispatch resource lifetime",
+      "path": "src/SharpLink.Server/SharpLinkServer.InvocationDispatch.cs",
+      "sha256": "012eb36ece8efc6a34aa227e0972c0219125cbe833fb48eed7ae335067e26835"
+    },
+    {
+      "purpose": "immediate admission and rejection branches",
+      "path": "src/SharpLink.Server/SharpLinkServer.AdmissionDispatch.cs",
+      "sha256": "c4ed7ce475c9f43e0b417e2c0fb037cac7f4eed9f819a3029d60ee3d6d5ef28c"
+    },
+    {
+      "purpose": "request permit before asynchronous persistent decode",
+      "path": "src/SharpLink.Server/SharpLinkServer.PersistentDecodeDispatch.cs",
+      "sha256": "9ce400f1ff0f64b642f04be333b06fe3b05c1bbd884d1faf20b6f0e36f24d53a"
+    },
+    {
+      "purpose": "synchronous no-queue acquisition",
+      "path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.cs",
+      "sha256": "9c5c4f613e4d28726bae6f61087fa9ecdad0ea1cc3fef40ea5ce8fe75aaea704"
+    },
+    {
+      "purpose": "immutable queue capability classification",
+      "path": "src/SharpLink.Server/Admission/SharpLinkAdmissionController.MaintenanceEligibility.cs",
+      "sha256": "f1d3877fb022a75ce7ea97e8f0bbd8be623802bfada84869bfc48442fb697d82"
+    },
+    {
+      "purpose": "all-generation admission capability seal",
+      "path": "src/SharpLink.Server/Admission/AdmissionStateKernel.MaintenanceEligibility.cs",
+      "sha256": "722381373c1b8a880ed0bdd99eb0c5188644d229b4d48528391e77954f11850b"
+    },
+    {
+      "purpose": "sole FIFO request reader",
+      "path": "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs",
+      "start": "    private async Task ProcessRequestLoop(",
+      "sha256": "61a0e0db905f4bc9e6d336a7a9ef4142cab80473c6281f36ecd845903702742c"
+    },
+    {
+      "purpose": "inline dispatch prefix",
+      "path": "src/SharpLink.Server/SharpLinkServer.RequestLoop.cs",
+      "start": "    private async Task DispatchRequestAsync(",
+      "sha256": "41c32408d796b7da7e510a474f0a064531c47e4a18d36cf27d4105451503dfc4"
+    },
+    {
+      "purpose": "error sender synchronous prefix",
+      "path": "src/SharpLink.Runtime/RpcSessionExtensions.cs",
+      "start": "    private static async ValueTask SendErrorFrameWithBackpressureAsync(",
+      "sha256": "ad637415b29cd8bf380f718971b6f34d5ee340baaa6aa982ddfb0b6db76f576e"
+    },
+    {
+      "purpose": "session pending-send ownership transfer",
+      "path": "src/SharpLink.Runtime/RpcSession.cs",
+      "start": "    private async ValueTask AwaitBackpressureEnqueueAsync(",
+      "sha256": "c5739cc5856b642b5244b966693fa750aac3a7f4dce2334892d17bcd80ecef09"
+    },
+    {
+      "purpose": "session sender synchronous prefix",
+      "path": "src/SharpLink.Runtime/RpcSession.cs",
+      "start": "    internal ValueTask SendPacketWithBackpressureAsync(",
+      "sha256": "f91206f732914a77ca77a59af9f815bac2bbb9521d8db03f6f740646f6c39e10"
+    },
+    {
+      "purpose": "pump synchronous publication entry",
+      "path": "src/SharpLink.Runtime/RpcSession.SendPump.cs",
+      "start": "        public ValueTask<SendEnqueueResult> EnqueueAsync(",
+      "sha256": "67cd32c591e5412af7a6262993b80200796ca562ca16aaecbe766144a6955d75"
+    },
+    {
+      "purpose": "intrinsic pending-node publication and reentrant reservation/retirement ownership",
+      "path": "src/SharpLink.Runtime/RpcSession.SendPump.BackpressureOwnership.cs",
+      "sha256": "1d447c5ab53f09bd8b19a5d27483cb969aca27284d8009b5513daa3798a900f7"
+    },
+    {
+      "purpose": "admission publication writer seal",
+      "path": "src/SharpLink.Server/SharpLinkServer.AdmissionProgram.cs",
+      "sha256": "c95bcac71d99af07f52e8fb9676023108d659f2dd4a3cb28ed4577b3e68f1768"
+    },
+    {
+      "purpose": "in-flight preparation writer exclusion",
+      "path": "src/SharpLink.Server/SharpLinkServer.ColdPreparation.cs",
+      "sha256": "a3d95981963617a83c24eecc3ca5520dcbcfff307ccdc538584faf1cb1e580ab"
+    },
+    {
+      "purpose": "service-registry cold writer eligibility",
+      "path": "src/SharpLink.Server/ServerServiceModuleRegistry.Maintenance.cs",
+      "sha256": "5ad03ad505c8934c6de0ecf8a78fa3c40923088bb2edd4d1c76f4c75616c0ffa"
+    },
+    {
+      "purpose": "actual capability opt-in under writer locks",
+      "path": "src/SharpLink.Server/SharpLinkServer.Maintenance.cs",
+      "start": "    internal ISharpLinkMaintenanceController ConfigureMaintenance(",
+      "sha256": "0a78fd16294fc06ab587c80a9c328353baa49889cdbb14db47702c1ea6d1775b"
+    },
+    {
+      "purpose": "retained program removal only after physical reclaim",
+      "path": "src/SharpLink.Server/Admission/AdmissionStateKernel.cs",
+      "start": "    internal void TryReclaimProgram(",
+      "sha256": "64db4f5ca2ec97bcee6b169e05f240b92a5a893e65f76fafc6873955360ecd95"
+    },
+    {
+      "purpose": "registration lease and retirement classification; queued weak identity adds no active lease",
+      "path": "src/SharpLink.Server/ServiceRegistration.cs",
+      "sha256": "4953426c898556cfeedff88e70594472f7b53e81d2baa9b8fc3991793aa20389"
+    },
+    {
+      "purpose": "queued selected-payload capture remains outside the no-waiting prefix",
+      "path": "src/SharpLink.Server/SharpLinkServer.PreAdmissionStreams.cs",
+      "sha256": "e9b5c600234e9469aba01ba758a0f67fefee162b71fb3bd2cc34fff822375b8a"
+    },
+    {
+      "purpose": "six invoker registration exits and one reservation per whole producer group",
+      "path": "src/SharpLink.Client/SharpLinkClient.Invokers.cs",
+      "sha256": "eba748c488a074848664232a3b7bc2dcfed3fdf41ce4c5b5ab3e7d93ca7db067"
+    },
+    {
+      "purpose": "retry nonproducer release before request serialization",
+      "path": "src/SharpLink.Client/SharpLinkClient.Retry.cs",
+      "sha256": "6d8457c1d719804633fe278932a0eff80204ec53bd94971646fd123633b524a1"
+    },
+    {
+      "purpose": "health nonproducer release before publication",
+      "path": "src/SharpLink.Client/SharpLinkClient.Health.cs",
+      "sha256": "d83ad5dbeef63dbe5975168a3dbc9c3e0333d191655f4fe86e58bb6ec463caf7"
+    },
+    {
+      "purpose": "existing selection reservation release and planned refresh retirement",
+      "path": "src/SharpLink.Client/ClientConnection.cs",
+      "start": "    internal void ReleaseCallAdmissionReservation()",
+      "sha256": "44a62e5cfaccf17b8f2abe726bc05c3810b8cc4c18c8db798e8ea9badda43462"
+    },
+    {
+      "purpose": "physical stream producer includes sequential enumerator disposal",
+      "path": "src/SharpLink.Client/ClientConnection.cs",
+      "start": "    public async Task SendClientStreamAsync<T>(",
+      "sha256": "4048758338ac3a1bf2f2408c5b11c7deb58c22b881ba7c939db919e41a6f0b9f"
+    },
+    {
+      "purpose": "registration publication without obsolete owner notification",
+      "path": "src/SharpLink.Client/PendingRequestTable.cs",
+      "start": "    private void OnRegistered(PendingCall call)",
+      "sha256": "c459287630290c793f008fcab82132ff78c77802b23dc6a0740c6f82902eec9f"
+    },
+    {
+      "purpose": "generated multiple stream parameters join the whole Task.WhenAll group",
+      "path": "src/SharpLink.Generator/RpcGenerator.ProxyEmitter.cs",
+      "start": "    private static void AppendGeneratedStreams(",
+      "sha256": "4285a3b144cc56a031551ac0ae5bb1ebc3f8983871bf5867a5748368bb744413"
+    },
+    {
+      "purpose": "cold ingress fence waits retained producer selection ownership",
+      "path": "src/SharpLink.Client/SharpLinkClient.Maintenance.cs",
+      "start": "        internal async Task FreezeAsync()",
+      "sha256": "e1570d2c5cb8d668e54b28d5b722398b54b90192cd636c2eeb384889743b2cd4"
+    },
+    {
+      "purpose": "reverse fence joins receive auxiliary and send owners after producer closure",
+      "path": "src/SharpLink.Client/SharpLinkClient.Maintenance.cs",
+      "start": "        private async Task AcknowledgeReturnFenceAsync(ClientConnection connection)",
+      "sha256": "1eeb22de8830bebbf62989d493b255a852c439d82c8534a9c5bec07f04237d6c"
+    }
+  ]
+}

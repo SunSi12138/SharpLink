@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - dev
+      - feat/cooperative-maintenance-20261022
+      - fix/physical-work-ownership-20261022
   pull_request:
     branches:
       - main

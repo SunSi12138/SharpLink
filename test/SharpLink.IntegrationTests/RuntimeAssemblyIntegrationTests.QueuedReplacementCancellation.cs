@@ -103,21 +103,64 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         }
         finally
         {
-            holder.Lease!.Dispose();
-            replacementType?.GetMethod("ReleaseBlock")!.Invoke(null, null);
-            plugin.ReleaseBlock();
-            if (queued is not null)
+            await UnloadQueuedReplacementAfterCleanupAsync(replacementContext, async () =>
             {
-                try { _ = await queued.WaitAsync(TimeSpan.FromSeconds(5)); }
-                catch (SharpLinkException) { }
-            }
-            if (replacementAssembly is not null)
-                _ = await harness.Server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
-            _ = await harness.Server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
-            _ = await harness.Server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
-            _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
-            replacementContext.Unload();
+                holder.Lease!.Dispose();
+                replacementType?.GetMethod("ReleaseBlock")!.Invoke(null, null);
+                plugin.ReleaseBlock();
+                if (queued is not null)
+                {
+                    try { _ = await queued.WaitAsync(TimeSpan.FromSeconds(5)); }
+                    catch (SharpLinkException) { }
+                }
+                if (replacementAssembly is not null)
+                    _ = await harness.Server.UnregisterAssemblyAsync(replacementAssembly, TimeSpan.FromSeconds(2));
+                _ = await harness.Server.UnregisterAssemblyAsync(plugin.ServiceAssembly, TimeSpan.FromSeconds(2));
+                _ = await harness.Server.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+                _ = await harness.Client.UnregisterAssemblyAsync(plugin.ContractAssembly, TimeSpan.FromSeconds(2));
+            });
         }
+    }
+
+    private static async Task UnloadQueuedReplacementAfterCleanupAsync(
+        AssemblyLoadContext replacementContext, Func<Task> cleanup)
+    {
+        try { await cleanup(); }
+        finally { replacementContext.Unload(); }
+    }
+
+    [Test]
+    public async Task QueuedFixtureFailureMustRemoveReplacementManifestFromCatalog()
+    {
+        using var plugin = PluginBundle.Load("queued-cleanup-failure-contract");
+        var replacementContext = new SharedContractServiceLoadContext(plugin.ContractAssembly);
+        var replacement = replacementContext.LoadFromAssemblyPath(plugin.ServiceAssembly.Location);
+        var service = replacement.GetType("SharpLink.DynamicPlugin.DynamicPluginService", throwOnError: true)!;
+        service.GetMethod("Reset")!.Invoke(null, null);
+        var failure = new InvalidOperationException("controlled queued fixture cleanup failure");
+        try
+        {
+            Ensure(SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Any(manifest =>
+                    ReferenceEquals(manifest.OwnerAssembly, replacement)),
+                "the replacement implementation manifest must really enter the global catalog");
+            Exception? observed = null;
+            try
+            {
+                await UnloadQueuedReplacementAfterCleanupAsync(
+                    replacementContext, () => Task.FromException(failure));
+            }
+            catch (Exception exception) { observed = exception; }
+            Ensure(ReferenceEquals(observed, failure), "cleanup must preserve the actual unregister failure");
+            plugin.Dispose();
+
+            // The next ordinary fixture must build after the contract context unloads.
+            // A leaked replacement manifest reproduces the later full-suite builder failure.
+            await using var next = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback).Build();
+            Ensure(!SharpLinkGeneratedAssemblyCatalog.CreateSnapshot().Any(manifest =>
+                    ReferenceEquals(manifest.OwnerAssembly, replacement)),
+                "failed cleanup must not leave an implementation whose contract owner unloaded");
+        }
+        finally { replacementContext.Unload(); }
     }
 
     private sealed class SharedContractServiceLoadContext(Assembly contractAssembly)

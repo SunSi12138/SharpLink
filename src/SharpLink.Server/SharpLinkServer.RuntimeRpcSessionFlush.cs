@@ -84,7 +84,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServerRpcSessionFlushR
                 throw new InvalidOperationException(
                     $"RPC session flush configuration cannot be updated while the server is {CurrentState}.");
             }
-            if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+            if (MaintenanceConfigured || CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
             {
                 throw new InvalidOperationException(
                     $"RPC session flush configuration cannot be updated while the server is {CurrentState}.");
@@ -101,7 +101,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServerRpcSessionFlushR
         lock (_stateGate)
         {
             var state = CurrentState;
-            if (_lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
+            if (MaintenanceConfigured || _lifecycle.HasStopStarted || IsRuntimeConfigurationPublicationClosed(state))
             {
                 return LifecycleClosed(
                     $"RPC session flush configuration cannot be updated while the server is {state}.");

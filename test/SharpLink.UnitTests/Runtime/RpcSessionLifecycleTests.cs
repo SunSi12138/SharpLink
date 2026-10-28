@@ -292,6 +292,7 @@ public partial class RpcSessionLifecycleTests
         Ensure(ReferenceEquals(first, published), "the first structured failure should be published");
         Ensure(ReferenceEquals(first, thrown), "later sends should receive the first failure instance");
         Ensure(publishedCount == 1, "disconnect should be published once");
+        await session.DisposeAsync();
         Ensure(transport.DisposeCount == 1, "transport should be disposed once");
     }
 
@@ -332,6 +333,7 @@ public partial class RpcSessionLifecycleTests
         Ensure(terminal is SharpLinkException, "terminal failure should be structured");
         Ensure(ReferenceEquals(terminal, laterSend), "all waiters should observe the terminal instance");
         Ensure(publishedCount == 1, "competing faults should publish one disconnect");
+        await session.DisposeAsync();
         Ensure(transport.DisposeCount == 1, "competing faults should dispose transport once");
     }
 

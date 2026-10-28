@@ -6,6 +6,7 @@ permissions:
 on:
   push:
     branches:
+      - feat/cooperative-maintenance-20261022
       - fix/queued-registration-coherence-20261022
       - fix/physical-work-ownership-20261022
       - fix/backpressured-send-ownership-20261022
@@ -49,6 +50,12 @@ jobs:
       - name: Generated ABI evidence shell regression tests
         run: python3 -m unittest discover -s eng/tests -p 'test_generated_abi_evidence_batch.py' -v
 
+      - name: Published API evidence regression tests
+        run: python3 -m unittest discover -s eng/tests -p 'test_compare_published_api.py' -v
+
+      - name: Admitted dispatch source parity guards
+        run: python3 eng/tests/test_admitted_dispatch_parity.py
+
       - name: Maintainability Debt Gate Tests
         run: python3 eng/test-verify-maintainability.py
 
@@ -90,7 +97,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   external-server-tcp-api:
-    name: Server TCP external consumer compatibility
+    name: TCP, Builder and logger external consumer compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -234,6 +241,170 @@ jobs:
             exit 1
           fi
 
+  reader-allocation-oracle:
+    name: Reader allocation oracle (${{ matrix.architecture }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            architecture: X64
+          - runner: ubuntu-24.04-arm
+            architecture: Arm64
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_PROCESSOR_COUNT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+      - name: Record actual SDK and runtime
+        run: |
+          mkdir -p artifacts/reader-allocation
+          dotnet --info | tee artifacts/reader-allocation/dotnet-info.txt
+      - name: Build exact test and child modules
+        run: dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release -m:1 -nr:false -p:UseSharedCompilation=false
+      - name: Run both consumer oracles and concurrent-unload semantic controls
+        run: |
+          dotnet test/SharpLink.UnitTests/bin/Release/net10.0/SharpLink.UnitTests.dll \
+            --treenode-filter '/*/*/ReadOwnershipPipeReaderLifetimeTests/*' \
+            --progress off --output Detailed \
+            --results-directory artifacts/reader-allocation/lifetime
+      - name: Verify exact lifetime inventory and child architecture
+        run: >-
+          python3 eng/read-ownership-allocation/verify_lifetime.py
+          --results artifacts/reader-allocation/lifetime
+          --architecture '${{ matrix.architecture }}'
+      - name: Require exact 280-byte negative and restored positive
+        run: |
+          python3 eng/read-ownership-allocation/run_counterfactual.py \
+            --repo . --output artifacts/reader-allocation/counterfactual \
+            --build-dotnet dotnet --runtime-dotnet dotnet \
+            --expected-architecture '${{ matrix.architecture }}'
+          git diff --exit-code -- test/SharpLink.UnitTests/Runtime/ReadOwnershipPipeReaderLifetimeTests.cs
+      - name: Upload fresh oracle evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reader-allocation-${{ matrix.architecture }}-${{ github.sha }}
+          path: artifacts/reader-allocation/
+          if-no-files-found: error
+
+  maintenance-prefix-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require review of changed FIFO ownership regions
+        run: python3 eng/test-maintenance-prefix-proof.py
+
+  maintenance-enabled-hot-evidence:
+    name: Enabled TLS maintenance evidence (${{ matrix.runtime }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ['10.0.2', '10.0.13']
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout exact feature source and public prerequisites
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify nested-checkout source reconstruction and failure provenance
+        run: python3 eng/test-maintenance-source-reconstruction.py
+      - name: Install official SDKs containing both selected runtimes
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            10.0.102
+            10.0.113
+      - name: Verify authored sources and construct exact production arms
+        working-directory: eng/maintenance-hot-cost
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          root=pathlib.Path('.')
+          manifest=json.loads((root/'authored-files.sha256.json').read_text())
+          assert len(manifest)==22
+          for name,expected in manifest.items():
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
+          PY
+          python3 test_native_evidence.py
+          git -C "$GITHUB_WORKSPACE" fetch --no-tags origin ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c
+          python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA" --profile integrated-prerequisites
+          test "$(dotnet --version)" = "10.0.102"
+          python3 capture_build_toolchain.py
+          bash build_arms.sh published-prerequisites candidate
+      - name: Verify and build the matched streaming evidence arms
+        working-directory: eng/maintenance-stream-cost
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib,json,pathlib
+          root=pathlib.Path('.')
+          manifest=json.loads((root/'authored-files.json').read_text())
+          assert len(manifest)==20
+          for name,expected in manifest.items():
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
+          PYTHON
+          python3 prepare_public_arms.py --repo "$GITHUB_WORKSPACE" --candidate "$GITHUB_SHA" --profile integrated-prerequisites
+          test "$(dotnet --version)" = "10.0.102"
+          python3 capture_build_toolchain.py
+          bash build_arms.sh published-prerequisites candidate
+      - name: Isolate the selected installed runtime without changing build SDK
+        shell: bash
+        run: |
+          source_root="$(dirname "$(readlink -f "$(command -v dotnet)")")"
+          runtime='${{ matrix.runtime }}'
+          target="$RUNNER_TEMP/maintenance-runtime-$runtime"
+          test -f "$source_root/shared/Microsoft.NETCore.App/$runtime/System.Private.CoreLib.dll"
+          test -f "$source_root/host/fxr/$runtime/libhostfxr.so"
+          mkdir -p "$target/host/fxr" "$target/shared/Microsoft.NETCore.App"
+          cp "$source_root/dotnet" "$target/dotnet"
+          cp -a "$source_root/host/fxr/$runtime" "$target/host/fxr/"
+          cp -a "$source_root/shared/Microsoft.NETCore.App/$runtime" "$target/shared/Microsoft.NETCore.App/"
+          echo "MAINTENANCE_RUNTIME_ROOT=$target" >> "$GITHUB_ENV"
+      - name: Capture all four modes with two persistent authenticated TLS sessions
+        working-directory: eng/maintenance-hot-cost
+        run: |
+          export DOTNET_ROOT="$MAINTENANCE_RUNTIME_ROOT"
+          export PATH="$DOTNET_ROOT:$PATH"
+          python3 run_probe.py --run-name runtime-${{ matrix.runtime }} --iterations 5000
+          python3 analyze.py --group runtime-${{ matrix.runtime }}
+          python3 summarize.py --group runtime-${{ matrix.runtime }} --expected-runtime '${{ matrix.runtime }}'
+      - name: Retain all matched TLS small-item streaming samples
+        working-directory: eng/maintenance-stream-cost
+        run: |
+          export DOTNET_ROOT="$MAINTENANCE_RUNTIME_ROOT"
+          export PATH="$DOTNET_ROOT:$PATH"
+          python3 run_stream.py --run-name runtime-${{ matrix.runtime }} --expected-runtime '${{ matrix.runtime }}'
+          python3 summarize_stream.py --group runtime-${{ matrix.runtime }}
+      - name: Upload only fresh source provenance and text/JSON/native evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maintenance-enabled-${{ matrix.runtime }}-${{ github.sha }}
+          path: |
+            eng/maintenance-hot-cost/source-provenance.json
+            eng/maintenance-hot-cost/evidence/build-toolchain.json
+            eng/maintenance-hot-cost/evidence/build-sdk-version.txt
+            eng/maintenance-hot-cost/evidence/runtime-${{ matrix.runtime }}/
+            eng/maintenance-hot-cost/comparison-runtime-${{ matrix.runtime }}/
+            eng/maintenance-stream-cost/source-provenance.json
+            eng/maintenance-stream-cost/evidence/build-toolchain.json
+            eng/maintenance-stream-cost/evidence/build-sdk-version.txt
+            eng/maintenance-stream-cost/evidence/runtime-${{ matrix.runtime }}/
+          if-no-files-found: error
+
+  producer-cost-evidence:
+    uses: ./.github/workflows/producer-hot-evidence.yml
   queued-dispatch-evidence:
     name: Queued dispatch source and native evidence
     runs-on: ubuntu-latest

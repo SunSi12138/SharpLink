@@ -160,7 +160,8 @@ internal sealed partial class RpcSession
     {
         if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType))
             return;
-        if (phase == RpcSessionProtocolPhase.Draining && frameType == ProtocolV2FrameType.Request)
+        if (phase is RpcSessionProtocolPhase.Draining or RpcSessionProtocolPhase.MaintenancePaused &&
+            frameType == ProtocolV2FrameType.Request)
         {
             throw new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,
