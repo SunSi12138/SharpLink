@@ -1,9 +1,9 @@
 {
-  "updatedAt": "2026-10-28T14:50:00+08:00",
+  "updatedAt": "2026-10-28T19:00:07+08:00",
   "goal": "Release SharpLink 3.0 after independent review and complete release acceptance",
   "goalStatus": "active",
   "releaseReady": false,
-  "mergedDev": "eec9524aa21251a1d548f33e363dd4c51094cb14",
+  "mergedDev": "80965d5de2bd7bc4979bb36f3f2811493ade4fd0",
   "remainingIssues": [
     929,
     805,
@@ -23,8 +23,8 @@
       "head": "10b1bf03881337c0801d6ff24318bb479747ca6c",
       "independentCodeReview": "approved",
       "localValidation": "Unit 2439/2439; Integration 557/557; native/source fixtures8/8",
-      "canonicalRun": null,
-      "state": "50e608 canonical only failed whitespace; formatting-only10b independently approved and pushed, query latest branch run",
+      "canonicalRun": 40644131003,
+      "state": "canonical current-head validation success; prerequisite931 performance and933 feature performance still block merge",
       "previousFailedRun": 40636189267,
       "nextAction": "Query cold-control-production.yml on feat/cooperative-maintenance-20261022 and require head10b; preserve50e format red and16ef product red. Do not merge before prerequisite performance acceptance.",
       "previousRepairRun": 40642182557
@@ -50,7 +50,8 @@
         "B/O_timedP99GM": 1.0537540200965323,
         "B/A_timedMeanGM": 1.0109137301000377,
         "A/O_timedMeanGM": 1.001741
-      }
+      },
+      "cloudEvidence": "codex/3-release-evidence plus Actions run40642190610"
     },
     "physicalOwnership931": {
       "pullRequest": "https://github.com/SunSi12138/SharpLink/pull/931",
@@ -71,11 +72,12 @@
         "state": "67Unit+5Integration pass; scalarArm64 FullOpts duplicatehasNext removed, IL1920to1882/native5348to5308; no TCP/PGO timing or merge acceptance",
         "reportHead": "87f76fb805c70693513a87c5acec03e9643e910a",
         "independentCodeReview": "approved for isolated experiment",
-        "remoteBackup": "initial push failed with generic remote rejection; local branch and verified bundle preserved",
+        "remoteBackup": "pushed and verified branch codex/931-loop-exit-experiment at87f76fb",
         "bundle": "artifacts/release-readiness/2026-10-28/loop-exit-experiment.bundle"
       },
       "ablationResult": "FullOpts Client-only12samples6pairs247595RPC complete. Mixed directions: throughput+0.90%,CPU-0.57%,P99-0.99%,P999-0.50%; original defaultPGO full-product NoGo remains.",
-      "defaultPgoRun": 40646151477
+      "defaultPgoRun": 40646151477,
+      "defaultPgoRunState": "completed success; raw interpretation and independent decision pending"
     },
     "fullMatrixTools": {
       "pullRequest": 954,
@@ -83,9 +85,11 @@
       "worktree": "/Users/sunsi/.codex/worktrees/release-full-matrix-tools/SharpLink",
       "branch": "codex/release-full-matrix-tools",
       "independentCodeReview": "approved",
-      "state": "pushed PR954, hostedCI pending; no actual performance workload run",
+      "state": "PR954 merged as80965d5 after independent review and all hosted checks",
       "entry": "eng/performance-matrix.py and eng/performance-matrix-acceptance.md on tool branch",
       "nextAction": "After CI success merge reviewed head; use plan/run-shard/validate only on frozen candidate with required resources. Coverage success never means performance equivalence."
     }
-  }
+  },
+  "cloudResources": "cloud-resources.md",
+  "localPathsAreHistorical": true
 }
