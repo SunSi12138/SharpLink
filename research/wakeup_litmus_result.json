@@ -1,0 +1,47 @@
+{
+  "scope": "bounded abstract TSO model only; not runtime/performance or full weak-memory proof",
+  "results": [
+    {
+      "variant": "original",
+      "states": 43,
+      "terminalStates": 6,
+      "lostWakeTerminalStates": 0,
+      "example": null
+    },
+    {
+      "variant": "unsafe_read_only",
+      "states": 36,
+      "terminalStates": 5,
+      "lostWakeTerminalStates": 1,
+      "example": [
+        "P.enqueue release-store buffered",
+        "P.acquire-read latch=1",
+        "C.Interlocked clear old latch",
+        "C.mailbox acquire-read=0",
+        "P.storebuffer.flush(mailbox=1)",
+        "C.exchange arm; previous=0"
+      ]
+    },
+    {
+      "variant": "fence_without_reread",
+      "states": 41,
+      "terminalStates": 5,
+      "lostWakeTerminalStates": 1,
+      "example": [
+        "P.enqueue release-store buffered",
+        "P.acquire-read latch=1",
+        "C.Interlocked clear old latch",
+        "C.mailbox acquire-read=0",
+        "P.full-fence publishes mailbox",
+        "C.exchange arm; previous=0"
+      ]
+    },
+    {
+      "variant": "fenced_reread",
+      "states": 52,
+      "terminalStates": 6,
+      "lostWakeTerminalStates": 0,
+      "example": null
+    }
+  ]
+}

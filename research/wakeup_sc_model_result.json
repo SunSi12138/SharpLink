@@ -1,0 +1,17 @@
+{
+  "scope": "bounded SC interleaving model, not weak-memory or actual runtime proof",
+  "results": [
+    {
+      "variant": "original",
+      "states": 1416,
+      "terminalStates": 27,
+      "doubleOrStaleCompletions": 0
+    },
+    {
+      "variant": "fenced",
+      "states": 1294,
+      "terminalStates": 27,
+      "doubleOrStaleCompletions": 0
+    }
+  ]
+}

@@ -115,10 +115,21 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>, IThreadPoolWorkItem
 
     internal void Signal()
     {
-        // Fast path: claim the live arm without touching the latch. Untimed arms never read
-        // deadline ownership state after the claim, keeping the common idle/wake path identical
-        // to the original zero-allocation signal protocol apart from the timed-bit test.
+        // Live arms retain the original claim protocol. Untimed arms never read deadline
+        // ownership state after the claim; only an observed idle latch enters the fenced
+        // read-mostly path below. No producer or wait state is allocated.
         var s = Volatile.Read(ref _state);
+        if (s == Latched)
+        {
+            // Elide only the shared-state write, not its publication ordering. A release
+            // mailbox write followed by an acquire latch read can otherwise race the
+            // consumer's clear/recheck into a lost wake. Fence before a fresh latch read;
+            // if that latch was consumed, retain the original claim/latch protocol below.
+            Interlocked.MemoryBarrier();
+            s = Volatile.Read(ref _state);
+            if (s == Latched)
+                return;
+        }
         if (s > Latched &&
             Interlocked.CompareExchange(ref _state, Idle, s) == s)
         {

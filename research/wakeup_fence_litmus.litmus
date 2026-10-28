@@ -1,0 +1,13 @@
+AArch64 WakeupFullFenceRequired
+"Publication x precedes full barrier, then readiness y is observed. Consumer clears y using a full-fence RMW (represented here as a write plus full barrier), then checks x. Initial y=1 is an existing latch. Forbidden: producer sees old latch AND consumer misses publication. This file is explanatory Herd-style ISA input, not executed or validated against installed herd tools."
+{
+x=0; y=1;
+0:X1=x; 0:X3=y;
+1:X1=y; 1:X3=x;
+}
+ P0             | P1             ;
+ MOV W0,#1      | MOV W0,#0      ;
+ STR W0,[X1]    | STR W0,[X1]    ;
+ DMB ISH        | DMB ISH        ;
+ LDR W2,[X3]    | LDR W2,[X3]    ;
+exists (0:X2=1 /\ 1:X2=0)

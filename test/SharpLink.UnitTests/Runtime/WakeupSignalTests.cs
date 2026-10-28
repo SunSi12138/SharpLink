@@ -304,6 +304,91 @@ public class WakeupSignalTests
         ambient.Value = null;
     }
 
+    [Test]
+    public async Task AlreadyLatchedSignalsCoalesceWithoutAnotherSharedLatchWrite()
+    {
+        var signal = new WakeupSignal();
+        signal.Signal();
+        signal.BeforeLatchWrite = () =>
+            throw new InvalidOperationException("An already latched signal must not rewrite the shared latch.");
+
+        for (var index = 0; index < 128; index++)
+            signal.Signal();
+
+        Ensure(await signal.WaitAsync(), "coalesced signals must still satisfy one wait");
+        signal.BeforeLatchWrite = null;
+        var next = signal.WaitAsync();
+        Ensure(!next.IsCompleted, "coalescing must not manufacture a second signal");
+        signal.Signal();
+        Ensure(await next, "a new arm must still require and receive its own signal");
+    }
+
+    [Test]
+    public async Task CoalescedMailboxBurstsSurviveClearRecheckAndTimedRearm()
+    {
+        const int producerCount = 4;
+        const int perProducer = 2_000;
+        var mailbox = new System.Collections.Concurrent.ConcurrentQueue<int>();
+        var signal = new WakeupSignal();
+        var seen = new bool[producerCount * perProducer];
+        var received = 0;
+
+        void Drain()
+        {
+            while (mailbox.TryDequeue(out var value))
+            {
+                Ensure(!seen[value], "mailbox item must be consumed exactly once");
+                seen[value] = true;
+                received++;
+            }
+        }
+
+        async Task ConsumeAsync()
+        {
+            while (received < seen.Length)
+            {
+                Drain();
+                // This is the timed-batch protocol's required ordering: clear the
+                // observed old latch, then inspect publication again before arming.
+                signal.ConsumeLatched();
+                Drain();
+                if (received < seen.Length)
+                {
+                    Ensure(await signal.WaitAsync(TimeProvider.System, TimeSpan.FromSeconds(5))
+                        .ConfigureAwait(false), "published work must not be rescued by the watchdog deadline");
+                }
+            }
+        }
+
+        var consumer = ConsumeAsync();
+        var producers = new Task[producerCount];
+        for (var index = 0; index < producers.Length; index++)
+        {
+            var producerId = index;
+            producers[index] = Task.Run(() =>
+            {
+                for (var item = 0; item < perProducer; item++)
+                {
+                    mailbox.Enqueue(producerId * perProducer + item);
+                    signal.Signal();
+                }
+            });
+        }
+        try
+        {
+            await Task.WhenAll(producers).WaitAsync(TimeSpan.FromSeconds(10));
+            await consumer.WaitAsync(TimeSpan.FromSeconds(10));
+            Ensure(received == seen.Length, "all published items must reach the consumer");
+        }
+        finally
+        {
+            // Do not leave a failed test with an outstanding timer/consumer arm.
+            signal.Signal();
+            await Task.WhenAll(producers).WaitAsync(TimeSpan.FromSeconds(10));
+            await consumer.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
     private static void Ensure(bool condition, string message)
     {
         if (!condition)
