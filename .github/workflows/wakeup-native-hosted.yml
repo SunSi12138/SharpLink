@@ -1,0 +1,66 @@
+name: Wakeup native mechanism staged evidence
+on:
+  push:
+    branches:
+      - codex/wakeup-native-prepare-v1
+      - codex/wakeup-native-collect-v1
+    paths:
+      - research/hosted-wakeup/REQUEST.json
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: wakeup-native-hosted-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  evidence:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-24.04
+          - rid: osx-arm64
+            runner: macos-14
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: '3.12'
+      - name: Validate immutable request and stage
+        id: request
+        env:
+          EVIDENCE_RID: ${{ matrix.rid }}
+        run: python3 research/hosted-wakeup/driver.py request
+      - name: Prepare only; build binaries and receipts without executing probes
+        if: steps.request.outputs.stage == 'prepare'
+        env:
+          EVIDENCE_RID: ${{ matrix.rid }}
+        run: python3 research/hosted-wakeup/driver.py prepare
+      - name: Download exact independently reviewed prepare artifact
+        if: steps.request.outputs.stage == 'collect'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.request.outputs.prepare_run_id }}
+          name: ${{ steps.request.outputs.prepare_artifact }}
+          path: artifacts/wakeup-input
+      - name: Restore reviewed bytes and collect frozen cells; never rebuild
+        if: steps.request.outputs.stage == 'collect'
+        env:
+          EVIDENCE_RID: ${{ matrix.rid }}
+        run: python3 research/hosted-wakeup/driver.py collect
+      - name: Preserve complete success or failed-attempt evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: wakeup-${{ steps.request.outputs.stage }}-${{ matrix.rid }}-${{ github.run_id }}
+          path: artifacts/wakeup-output/
+          if-no-files-found: error
+          retention-days: 30

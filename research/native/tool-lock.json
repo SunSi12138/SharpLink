@@ -1,0 +1,17 @@
+{
+  ".gitignore": "41a3fd6ac63c87b65069bbfa56036b0731f66e44cd77a21bd016996a2738e5f5",
+  "PLAN.md": "292d6bdc26fefa2894cd8bcf745aee6948d7d69569529acf845296ae1e4910eb",
+  "artifact-lock.json": "29691ce55fb213b31c96197b8ed7b142ba9a9c23b6d2bb2e7d7f12126834b616",
+  "collect.py": "4605f4d3c6c594defc49715173f60c851736ebdd8435f6727f120038010db441",
+  "decoder/Program.cs": "7c4ad669a2a84d31516548bc646cf7be67a57b496160487b722d362a09a04574",
+  "decoder/TraceDecoder.csproj": "25aaa4395d9e7e1aedb6221dc8af5164ffea19a119f019d642407a2e7870b922",
+  "inventory.py": "cb597d2267275f36c43755077aecdc971b1180786c0b9a2d67d07919f7e88e83",
+  "plan.json": "00abc7e4eec6ff0d4c197e83a01c9bef49e69d794136e11ee8b15ec5634de0e4",
+  "probe/Program.cs": "a1b74b1fbffc938e47aeb5ba61d362e986817ef7b9c500a9917d6532b5c1b281",
+  "probe/WakeupNativeProbe.csproj": "f25aa86b1bd7bde1897e0dc9b8f8b7c859c268f7df70d0ed03b7f732b1494ce9",
+  "receipt.py": "0da08593cf6a823c21689aa299652465dade4e89dc10b56cf711d8cb8dcfb990",
+  "source-binding.json": "c46ced7df51b4eb013e7565d3ad47bf92af4305e815d082b24c2c02835bf4887",
+  "test_receipt.py": "5a733793cf64f73ee4f813da79265425be7caff6dd55e6c21b690ed0e5d94386",
+  "test_tools.py": "e8599c01441617aab65d27650ab4023003fcaf4606c6ecb68e4c686a9ac45b36",
+  "verify_archives.py": "a713df31233521d6be2783e9a7adb621bfeede3cb983faf9c5344ac09b2c353a"
+}

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "stage": "collect",
+  "prepareRunId": 0,
+  "prepareCommit": "REPLACE_WITH_INDEPENDENTLY_REVIEWED_40_HEX_COMMIT",
+  "architectures": {
+    "linux-x64": {
+      "bundleSha256": "REPLACE_WITH_REVIEWED_BUNDLE_SHA256",
+      "DReceiptSha256": "REPLACE_WITH_REVIEWED_D_RECEIPT_SHA256",
+      "CReceiptSha256": "REPLACE_WITH_REVIEWED_C_RECEIPT_SHA256"
+    },
+    "osx-arm64": {
+      "bundleSha256": "REPLACE_WITH_REVIEWED_BUNDLE_SHA256",
+      "DReceiptSha256": "REPLACE_WITH_REVIEWED_D_RECEIPT_SHA256",
+      "CReceiptSha256": "REPLACE_WITH_REVIEWED_C_RECEIPT_SHA256"
+    }
+  }
+}

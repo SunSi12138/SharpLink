@@ -1,0 +1,40 @@
+{
+  "schema": 2,
+  "purpose": "mechanism-only; not timing or product acceptance",
+  "sdk": "10.0.102",
+  "runtime": "10.0.14",
+  "baseline": "f724c7aaabdeb5e02bec23f32f6b3c709860e97c",
+  "candidate": "e5a35b9bf63d162c3077aec389d402e28bd2fb53",
+  "cells": [
+    "default-c1",
+    "default-c8",
+    "timed-c1",
+    "timed-c8"
+  ],
+  "rids": {
+    "linux-x64": {
+      "machine": "x86_64",
+      "architecture": "X64",
+      "runner": "ubuntu-24.04"
+    },
+    "osx-arm64": {
+      "machine": "arm64",
+      "architecture": "Arm64",
+      "runner": "macos-14"
+    }
+  },
+  "armOrder": [
+    "D",
+    "C"
+  ],
+  "warmupCalls": 20000,
+  "quietMilliseconds": 250,
+  "exerciseCalls": 20000,
+  "processTimeoutSeconds": 180,
+  "perRawFileCapBytes": 67108864,
+  "providers": "Microsoft-Windows-DotNETRuntime:0x10400210b9:5,SharpLink-Wakeup-Native:0xffffffffffffffff:5",
+  "nativeFilter": "*",
+  "automaticRetries": 0,
+  "candidateReviewedLocalCommit": "c17f434e8ec8d019625e64c7f51a4c8eb8e55981",
+  "candidateCompleteTree": "ea401a81c4b5a52966f4281acc348f838b9fc935"
+}

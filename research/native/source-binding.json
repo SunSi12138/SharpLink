@@ -1,0 +1,245 @@
+{
+  "schema": 1,
+  "repository": "SunSi12138/SharpLink",
+  "localReviewedCandidate": "c17f434e8ec8d019625e64c7f51a4c8eb8e55981",
+  "remoteCandidate": "e5a35b9bf63d162c3077aec389d402e28bd2fb53",
+  "identicalCompleteTree": "ea401a81c4b5a52966f4281acc348f838b9fc935",
+  "remoteParent": "f724c7aaabdeb5e02bec23f32f6b3c709860e97c",
+  "sourceAudit": {
+    "changedFiles": 11,
+    "scope": "Research source, tests, abstract model results and historical engineering evidence descriptions only. No raw captures, credentials, user payloads or private conversation dumps included.",
+    "historicalLocalPaths": "Research harness contains its original scratch path; it conveys no access credential and is retained for complete-tree identity."
+  },
+  "metadataPolicy": "Remote metadata and direct-base parent differ honestly. Local correctness/native/prepared-only evidence remains bound to its original local commits and binaries. Hosted preparation must rebuild from remoteCandidate; do not relabel existing DLLs.",
+  "remoteCommit": {
+    "sha": "e5a35b9bf63d162c3077aec389d402e28bd2fb53",
+    "node_id": "C_kwDOROK3ytoAKGU1YTM1YjliZjYzZDE2MmMzMDc3YWVjMzg5ZDQwMmUyOGJkMmZiNTM",
+    "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/commits/e5a35b9bf63d162c3077aec389d402e28bd2fb53",
+    "html_url": "https://github.com/SunSi12138/SharpLink/commit/e5a35b9bf63d162c3077aec389d402e28bd2fb53",
+    "author": {
+      "name": "SunSi12138",
+      "email": "54728594+SunSi12138@users.noreply.github.com",
+      "date": "2026-10-28T14:49:21Z"
+    },
+    "committer": {
+      "name": "SunSi12138",
+      "email": "54728594+SunSi12138@users.noreply.github.com",
+      "date": "2026-10-28T14:49:21Z"
+    },
+    "tree": {
+      "sha": "ea401a81c4b5a52966f4281acc348f838b9fc935",
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/ea401a81c4b5a52966f4281acc348f838b9fc935"
+    },
+    "message": "research: publish tree-equivalent fenced wakeup candidate for hosted preparation\n\nComplete tree exactly equals independently reviewed local c17f434e8ec8d019625e64c7f51a4c8eb8e55981 (tree ea401a81c4b5a52966f4281acc348f838b9fc935). Connector-created metadata and direct base parent intentionally produce a new commit identity; this is not the original c17 SHA. Historical local correctness evidence keeps its original identity. Hosted binaries must be freshly built from this published source after source-binding review. No performance acceptance or merge authorization.",
+    "parents": [
+      {
+        "sha": "f724c7aaabdeb5e02bec23f32f6b3c709860e97c",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/commits/f724c7aaabdeb5e02bec23f32f6b3c709860e97c",
+        "html_url": "https://github.com/SunSi12138/SharpLink/commit/f724c7aaabdeb5e02bec23f32f6b3c709860e97c"
+      }
+    ],
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  },
+  "remoteTopLevelTree": {
+    "sha": "ea401a81c4b5a52966f4281acc348f838b9fc935",
+    "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/ea401a81c4b5a52966f4281acc348f838b9fc935",
+    "tree": [
+      {
+        "path": ".editorconfig",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "4898ba057b87997a53808cdc0c4fef7206b42263",
+        "size": 2761,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/4898ba057b87997a53808cdc0c4fef7206b42263"
+      },
+      {
+        "path": ".github",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "974199f88e5ac7af172dc60c3b9e3bb586b797e1",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/974199f88e5ac7af172dc60c3b9e3bb586b797e1"
+      },
+      {
+        "path": ".gitignore",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "543e3e8d26932170b54520b86f16367e5249c033",
+        "size": 8107,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/543e3e8d26932170b54520b86f16367e5249c033"
+      },
+      {
+        "path": "CHANGELOG.md",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "60db18ec8e1af1bbb8c680f1fa2ceefb02a283c8",
+        "size": 163460,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/60db18ec8e1af1bbb8c680f1fa2ceefb02a283c8"
+      },
+      {
+        "path": "CODE_OF_CONDUCT.md",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "d7f3f0912929f611f76a8c79d4e162cbad1cd05f",
+        "size": 1290,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/d7f3f0912929f611f76a8c79d4e162cbad1cd05f"
+      },
+      {
+        "path": "CONTRIBUTING.md",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "33c532da729a05ce3dbbfc123fc31e7652ad7f45",
+        "size": 6703,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/33c532da729a05ce3dbbfc123fc31e7652ad7f45"
+      },
+      {
+        "path": "Directory.Build.props",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "a20e1f128ccfa06c4d0a4e6324b8c698a21f9916",
+        "size": 5702,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/a20e1f128ccfa06c4d0a4e6324b8c698a21f9916"
+      },
+      {
+        "path": "Directory.Packages.props",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "0fe99e9456299e47981e5965b22961e3d92fcc73",
+        "size": 2476,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/0fe99e9456299e47981e5965b22961e3d92fcc73"
+      },
+      {
+        "path": "LICENSE",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "d90571c75c62dfdd2f1f55c8d3aa2e391044c3ba",
+        "size": 1062,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/d90571c75c62dfdd2f1f55c8d3aa2e391044c3ba"
+      },
+      {
+        "path": "README.md",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "290731984c887a01d635762d575520100e02776f",
+        "size": 14321,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/290731984c887a01d635762d575520100e02776f"
+      },
+      {
+        "path": "SECURITY.md",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "d68559d5e735dd0f8e071196c325567ea678f708",
+        "size": 1578,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/d68559d5e735dd0f8e071196c325567ea678f708"
+      },
+      {
+        "path": "Sharplink.sln.DotSettings",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "d563ece8617a1c6868828403adbb01b926729dae",
+        "size": 402,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/d563ece8617a1c6868828403adbb01b926729dae"
+      },
+      {
+        "path": "Sharplink.slnx",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "9a1545f4ef34328f4b0a619ba56dee7f4dd15c08",
+        "size": 5032,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/9a1545f4ef34328f4b0a619ba56dee7f4dd15c08"
+      },
+      {
+        "path": "assets",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "422602f7c275a5528c716cacf1553d16f422f10e",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/422602f7c275a5528c716cacf1553d16f422f10e"
+      },
+      {
+        "path": "demo",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "134809234b18270bc04cb538086f146889b2503b",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/134809234b18270bc04cb538086f146889b2503b"
+      },
+      {
+        "path": "doc",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "928f4262c2bf80adb779d1a59998f00701a4c0f8",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/928f4262c2bf80adb779d1a59998f00701a4c0f8"
+      },
+      {
+        "path": "docs",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "f670cbb77bfd4888362cac0f29028b991a4015fa",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/f670cbb77bfd4888362cac0f29028b991a4015fa"
+      },
+      {
+        "path": "eng",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "8ca4e601680757ead2873352de44794287f7045d",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/8ca4e601680757ead2873352de44794287f7045d"
+      },
+      {
+        "path": "global.json",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "e9ed1033b3534e6d844d4c34b2783ab0c814ed84",
+        "size": 169,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/e9ed1033b3534e6d844d4c34b2783ab0c814ed84"
+      },
+      {
+        "path": "research",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "ab7c78542abcc73679d6bf7ec7de67ddb640f551",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/ab7c78542abcc73679d6bf7ec7de67ddb640f551"
+      },
+      {
+        "path": "run-132-macro.sh",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "7a8e72efad5e79d355d8804b54cc2ae26671dfe5",
+        "size": 1639,
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/blobs/7a8e72efad5e79d355d8804b54cc2ae26671dfe5"
+      },
+      {
+        "path": "samples",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "b8355e710bcbf5b933b137db3ec0f559e65d65df",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/b8355e710bcbf5b933b137db3ec0f559e65d65df"
+      },
+      {
+        "path": "script",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "26783a1539f8dce43198f94a28a93208db2dbf4c",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/26783a1539f8dce43198f94a28a93208db2dbf4c"
+      },
+      {
+        "path": "src",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "de17c3a7e524cbbd65f205146741dfdec9394a96",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/de17c3a7e524cbbd65f205146741dfdec9394a96"
+      },
+      {
+        "path": "test",
+        "mode": "040000",
+        "type": "tree",
+        "sha": "e64e7e0bf52f0bf57cb51b088f0916e4da10427a",
+        "url": "https://api.github.com/repos/SunSi12138/SharpLink/git/trees/e64e7e0bf52f0bf57cb51b088f0916e4da10427a"
+      }
+    ],
+    "truncated": false
+  }
+}
