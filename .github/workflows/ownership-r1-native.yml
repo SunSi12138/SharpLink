@@ -1,0 +1,116 @@
+name: Ownership R1 Native Mechanism
+
+on:
+  pull_request:
+    types: [opened]
+    branches: [codex/931-client-ablation-tools]
+    paths:
+      - '.github/workflows/ownership-r1-native.yml'
+      - 'eng/physical-ownership-probes/r1_native.py'
+
+permissions:
+  contents: read
+
+jobs:
+  native-only:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'codex/931-r1-native-validation'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+    steps:
+      - name: Checkout reviewed PR head, not merge commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: tools
+          persist-credentials: false
+      - name: Checkout exact unchanged R1 product
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 94adeae886c4ddfd0c02ec2dcb700cd97e9cad80
+          path: sources/r1
+          persist-credentials: false
+      - name: Checkout immutable original PGO evidence
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 5a6cf6c490b43c083fb772e2c6f2663fa94bbe16
+          path: archived
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /archives/931-pgo-12.tar.gz
+            /index.json
+      - name: Configure isolated paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/r1-hosted/runtime-install"
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/r1-sdk"
+            echo "PRIVATE_RUNTIME=$RUNNER_TEMP/r1-runtime"
+            echo "R1_ROOT=$RUNNER_TEMP/r1-hosted"
+          } >> "$GITHUB_ENV"
+      - name: Install exact build SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.102
+      - name: Verify and unpack frozen original archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '34210a62a927ac8e3c9168c8a3e9e4d884998fad4826fc8c94895b09f281afe7  archived/archives/931-pgo-12.tar.gz' | sha256sum --check | tee "$R1_ROOT/archive-verification.log"
+          cp archived/index.json "$R1_ROOT/original-archive-index.json"
+          mkdir "$RUNNER_TEMP/r1-reference"
+          python3 - <<'PY'
+          import os, tarfile
+          with tarfile.open('archived/archives/931-pgo-12.tar.gz') as archive:
+              archive.extractall(os.environ['RUNNER_TEMP'] + '/r1-reference', filter='data')
+          PY
+      - name: Install SHA512-verified official private frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$R1_ROOT/runtime-install"
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json --output releases.json
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.13/dotnet-runtime-10.0.13-linux-x64.tar.gz --output dotnet.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.13/aspnetcore-runtime-10.0.13-linux-x64.tar.gz --output aspnetcore.tar.gz
+          {
+            echo '9574d95364110409416735e7842796f8d614c21d74cb25d204a3e4cfd11b2c05efdf19ca89b8069650a04f64add2705967dcb04b8665a36d7a3f30a5d8c05afe  dotnet.tar.gz'
+            echo '7b20d4164f097e1cf616d8174b6a64be100e6f30dc4e028b16e551e8b0c86dff0ef424bb4bf52d1ff0ecca38e102d3fa80814e06cb85a32d6eee4c3b99764f79  aspnetcore.tar.gz'
+          } | sha512sum --check | tee framework-verification.log
+          mkdir "$PRIVATE_RUNTIME"
+          tar -xzf dotnet.tar.gz -C "$PRIVATE_RUNTIME"
+          tar -xzf aspnetcore.tar.gz -C "$PRIVATE_RUNTIME"
+      - name: Fixed two-process native-only comparison
+        shell: bash
+        working-directory: tools
+        env:
+          REVIEWED_TOOL_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$REVIEWED_TOOL_SHA"
+          {
+            echo "tool=$REVIEWED_TOOL_SHA"
+            echo "r1=94adeae886c4ddfd0c02ec2dcb700cd97e9cad80"
+            echo "archive=5a6cf6c490b43c083fb772e2c6f2663fa94bbe16"
+            echo "run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT"
+            echo "runner=$RUNNER_OS/$RUNNER_ARCH image=${ImageOS:-unknown}/${ImageVersion:-unknown}"
+            echo 'Prior cloud attempt003 incomplete: Runtime/Server Tier1 absent; never superseded.'
+          } > "$R1_ROOT/source-identities.txt"
+          python3 eng/physical-ownership-probes/r1_native.py \
+            --reference-evidence "$RUNNER_TEMP/r1-reference/931-pgo-12/physical-ownership-931-client-ablation-pgo-51f5bd0ec3f600196f2e26ea48a466ec2cea62d8-1/ownership-931-evidence" \
+            --r1-source "$GITHUB_WORKSPACE/sources/r1" \
+            --build-dotnet "$DOTNET_INSTALL_DIR/dotnet" \
+            --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --output "$R1_ROOT/native" 2>&1 | tee "$R1_ROOT/driver.log"
+      - name: Retain all diagnostics and failed attempts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ownership-r1-native-${{ github.event.pull_request.head.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r1-hosted
+          if-no-files-found: error
+          retention-days: 30

@@ -87,7 +87,7 @@ def clean_runtime_environment(runtime_dotnet, profile="fullopts"):
     return environment
 
 
-def validate_process_identity(data, arm, prepared, manifest, runtime_dotnet, profile="fullopts"):
+def validate_process_identity(data, arm, prepared, manifest, runtime_dotnet, profile="fullopts", *, product_revisions=None):
     verify_process(data, runtime_dotnet.parent)
     tiering = "0" if profile == "fullopts" else "default"
     if data["processorCount"] != 2 or data["tieredCompilation"] != tiering:
@@ -111,7 +111,8 @@ def validate_process_identity(data, arm, prepared, manifest, runtime_dotnet, pro
         if path.parent != prepared / arm or path.name not in expected:
             raise ValueError(f"Assembly loaded outside frozen snapshot: {assembly}")
         if assembly["name"].startswith("SharpLink."):
-            revision = BASELINE if arm == "baseline" and assembly["name"] == "SharpLink.Client" else CANDIDATE
+            revision = (product_revisions[assembly["name"]] if product_revisions is not None else
+                        BASELINE if arm == "baseline" and assembly["name"] == "SharpLink.Client" else CANDIDATE)
             if assembly["productVersion"].split("+")[-1] != revision:
                 raise ValueError(f"Loaded product source revision differs: {assembly}")
     wrappers = data["wrapperTypes"]
