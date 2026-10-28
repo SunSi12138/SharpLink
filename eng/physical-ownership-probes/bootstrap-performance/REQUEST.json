@@ -1,1 +1,16 @@
-{"state":"review-required","campaign":"bootstrap-supervision-48tcp-v1"}
+{
+  "state": "authorized",
+  "campaign": "bootstrap-supervision-48tcp-v1",
+  "reviewedToolCommit": "185395ff454e61d199ac62afb77dd906ecfd5769",
+  "reviewedToolTree": "8b363dcf02a0b3ad8046a074e935024316acd6cb",
+  "sources": {
+    "dev": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+    "a": "ed34529fd660484c546f9ac96f73e322b5e04312",
+    "b": "13e75f15f16cb98960c97f9500e17d26ba81f43b"
+  },
+  "trees": {
+    "dev": "e5b72625377ffdcf5f5470e2ddd69be12a449d8e",
+    "a": "806337ad391f691b477a47d9349694fac95ed23f",
+    "b": "025dba3a4756227e062eab005b2693fc24a62f6a"
+  }
+}
