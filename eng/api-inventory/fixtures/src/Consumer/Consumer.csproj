@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net10.0-windows</TargetFrameworks>
+    <AssemblyName>Fixture.Consumer</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Base/Base.csproj" />
+    <ProjectReference Include="../Generator/Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <Compile Include="../../Shared.cs" Link="Shared.cs" />
+    <AdditionalFiles Include="mode.txt" />
+  </ItemGroup>
+</Project>

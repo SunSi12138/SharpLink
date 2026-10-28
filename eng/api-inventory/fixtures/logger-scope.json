@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "scope": "synthetic-fixture",
+  "projectGlob": "logger-probe/*.csproj",
+  "requiredGeneratedProjects": ["logger-probe/LoggerProbe.csproj"],
+  "excludedScopes": ["Real Microsoft LoggerMessage generator comparison fixture; not production API evidence."]
+}
