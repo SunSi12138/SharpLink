@@ -1,0 +1,70 @@
+name: Full Performance Isolated Shard (internal)
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      shard:
+        required: true
+        type: string
+      candidate_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-shard:
+    # No self-hosted/large runner selection; each matrix cell gets a separate VM.
+    runs-on: ${{ inputs.platform == 'linux' && 'ubuntu-24.04' || inputs.platform == 'macos' && 'macos-14' || 'windows-2022' }}
+    timeout-minutes: 240
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TARGET_PLATFORM: ${{ inputs.platform }}
+      SHARD: ${{ inputs.shard }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: full-matrix-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: campaign
+      - name: Bind exact job identity before SDK preparation
+        shell: bash
+        run: |
+          python3 tools/eng/performance-matrix-scheduler.py prepare-job \
+            --root candidate --campaign campaign --output output \
+            --tool-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --platform "$TARGET_PLATFORM" --shard "$SHARD"
+      - name: Install candidate-requested SDK (actual version captured before load)
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: candidate/global.json
+      - name: Execute unchanged five-repetition shard, then validate even on workload failure
+        shell: bash
+        run: |
+          python3 tools/eng/performance-matrix-scheduler.py run-job \
+            --root candidate --campaign campaign --output output \
+            --tool-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --platform "$TARGET_PLATFORM" --shard "$SHARD"
+      - name: Upload successes and failures without replacing previous attempts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: full-matrix-shard-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.platform }}-${{ inputs.shard }}
+          path: output
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

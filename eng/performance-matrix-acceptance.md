@@ -64,18 +64,145 @@ Validation rejects missing/extra report files, missing/duplicate/extra result ce
 
 **Raw oneway-backpressure is not a failure waiver.** The report may expose saturation. Any nonzero `Failure` remains a failed correctness result under the existing strict validator semantics, even if coverage is complete. Keep the raw report and diagnose/classify the failures; this tool does not invent an allowed-error threshold or silently subtract them. OneWay measures local acceptance, not receiver business completion.
 
-## GitHub dispatch recipe (template, not an installed workflow)
+## Manual GitHub scheduler (structural evidence only)
 
-`performance-evidence.yml` remains smoke-only. Do not pass nonexistent `tier` or `runtime` inputs to it. Add the following small scheduling workflow through an independently reviewed PR before using it. Do not run this cost without the existing resource authorization. Each job uses one dedicated runner; choose a platform-specific plan and runner label. This example schedules Linux only, not a three-OS claim.
+`full-performance-matrix.yml` wires the existing `plan/run-shard/validate` contract;
+`performance-evidence.yml` remains smoke-only. The new scheduler has **only** a
+manual `workflow_dispatch` trigger: publishing this workflow or opening a PR does
+not start 378 workload jobs. Have an independent reviewer approve the exact tool
+commit before using it. No execution is implied by installing or testing it.
 
-1. `workflow_dispatch` on the frozen candidate branch; checkout its exact `github.sha` and use the existing `./.github/actions/setup-dotnet`.
-2. A plan job runs the `plan --platform linux` command above; upload the plan and expose `{"include":[{"shard":"<id>"},...]}` from its `shards[].id` as a job output.
-3. A matrix job consumes those IDs with `strategy.fail-fast: false`, a resource-approved `max-parallel`, `runs-on: ubuntu-latest`, and `timeout-minutes: 240`. Download the plan, run `run-shard` with `${{ matrix.shard }}`, then run single-shard `validate`. Use a separate runner per shard, not background processes in one job.
-4. With `if: always()`, upload `attempt-01/${{ matrix.shard }}` under a unique name containing SHA, shard, run ID and attempt. Upload failures too. Retain enough storage for binary provenance copies and all raw reports.
-5. A final job waits for all shard jobs with `if: always()`, downloads each artifact **into its matching shard directory**, then runs full `validate` on the same exact candidate. A job success or a single-shard pass never substitutes for this full aggregate.
-6. Keep the final structural check separate from the independent performance decision and the rest of `doc/releasing.md`.
+Inputs:
 
-Each hosted job has a six-hour hard limit; 240 minutes leaves headroom for the heaviest planned shard, not a completion guarantee. A timeout is a failed/partial attempt. The five repetitions are kept together per shard; for baseline/candidate comparisons, arrange the separately reviewed alternating same-machine protocol rather than comparing arbitrary hosted runners.
+| Input | Contract |
+|---|---|
+| `candidate_sha` | Required complete lowercase 40-character frozen source commit. |
+| `baseline_sha` | Optional complete frozen baseline commit, resolved and recorded **only**; never run or compared here. |
+| `mode` | `plan-only` (default), `selected-shards`, or `full-structural`. |
+| `shards` | Selected mode only: 1–6 comma-separated `platform:shard` IDs from the full plan. No wildcard, duplicate or unknown ID. |
+| `resources_confirmed` | Default false. Both execution modes require true after resource authorization/preflight. This input is not permission to purchase resources. |
+| `max_parallel` | 1 (default) through 4 **per platform**; combined Linux/macOS/Windows concurrency can be three times this. |
+
+The workflow/tools are checked out at the dispatch's exact `github.sha`, also
+checked against `github.workflow_sha`, separately from the candidate. The scheduler
+records both SHAs. The candidate's `eng/performance-matrix.py` and
+`eng/run-performance-matrix.sh` must byte-match the reviewed tool checkout: the
+existing runner invokes its own capture hook. An older or changed contract stops
+before load; do not overlay files, dirty the candidate or relabel its SHA to make
+it pass. Review a compatible tool revision instead. Candidate source constants
+and the complete runner plan are regenerated and checked at planning, execution
+and aggregation. Baseline omission is allowed only because this is explicitly a
+single-candidate **structural** campaign, not a comparative acceptance mode.
+
+Example after publishing the reviewed workflow on a frozen branch (commands are
+instructions, not evidence that a dispatch was performed):
+
+```bash
+# No dotnet setup, build or workload in this default planning run.
+gh workflow run full-performance-matrix.yml --ref "$FROZEN_TOOL_BRANCH" \
+  -f candidate_sha="$CANDIDATE"
+
+# Only after reviewing the plan and confirming the required resources:
+gh workflow run full-performance-matrix.yml --ref "$FROZEN_TOOL_BRANCH" \
+  -f candidate_sha="$CANDIDATE" -f mode=selected-shards \
+  -f shards=linux:tcp-balanced-jit-unary -f resources_confirmed=true
+
+# Full structural coverage, not a performance Go. 378 separate workload jobs.
+gh workflow run full-performance-matrix.yml --ref "$FROZEN_TOOL_BRANCH" \
+  -f candidate_sha="$CANDIDATE" -f baseline_sha="$BASELINE" \
+  -f mode=full-structural -f resources_confirmed=true -f max_parallel=1
+```
+
+A connector without workflow dispatch cannot execute these commands by inventing
+inputs on another workflow. Use an authorized supported dispatch route and verify
+its actual run ID and `headSha` against the reviewed tool commit. This scheduler
+adds no PR/push/tag trigger and no release/publish step.
+
+### Isolation, limits and resource preflight
+
+Linux, macOS and Windows use **three independent matrices: 135 / 135 / 108**,
+respectively, rather than one matrix exceeding the 256-job matrix limit. Every
+cell is a separate standard hosted VM job; no shard is backgrounded alongside
+another workload. `fail-fast: false` preserves other cells when one fails. Each
+job keeps all five unchanged repetitions, full payloads/concurrencies, warmup,
+duration and original strict correctness rules. The fixed job timeout is 240
+minutes, below the hosted six-hour limit; build/AOT/drain overhead can still cause
+a legitimate failure. Never shorten the plan to fit a timeout.
+
+Plan-only creates all three full plans but schedules zero workload jobs. A
+selected run is a bounded operational preflight, **not full acceptance**. The
+full timing floor is 369.792 runner-hours (133.125 + 133.125 + 103.542), before
+build/publish/startup/drain. Standard public-repository runners do not require paid
+runner minutes, but this does **not** establish available artifact storage,
+concurrency, queue capacity, bandwidth, or aggregate runner disk space. Check
+those against the actual account and measured selected-shard artifact sizes
+before full execution. The aggregate currently downloads all retained shards to
+one standard Linux runner; capacity must cover both download/extraction and
+assembled evidence. If it cannot fit, stop and review a bounded/streaming
+aggregation change rather than discard binaries or raw reports. No paid/large
+runner or quota/security setting is selected by this workflow. The concurrency
+input does not grant authority to change account limits.
+
+Reference: [GitHub Actions limits](https://docs.github.com/en/actions/reference/limits).
+Hosted availability and actual SDK may vary; the existing provenance hook records
+the actual SDK/runtime, CPU, OS/architecture and executed DLL/AOT bytes, not the
+requested SDK as if it were measured. Runners are isolated at the job level, not
+claimed to be physically exclusive or noise-free machines.
+
+### Immutable attempts and failure retention
+
+Artifacts are named with run ID and attempt; shard names additionally include
+candidate SHA, OS and shard ID. Every upload uses `if: always()` and never
+`overwrite: true`. Shard artifacts retain this disjoint layout, so merging their
+extracted paths does not flatten or overwrite different OS/shard results:
+
+```text
+output/
+  evidence/<platform>/<shard>/execution.json, provenance.json, runner.log, binaries/..., reports...
+  jobs/<platform>/<shard>.start.json
+  jobs/<platform>/<shard>.finish.json
+  checks/<platform>/<shard>.json
+```
+
+The start receipt is created before SDK setup; setup failure therefore remains
+an incomplete job. Workload failure still invokes single-shard validation and
+writes a failure receipt. A timeout/cancellation may prevent the finish receipt
+or even an upload; missing evidence always fails aggregation, never counts as
+zero failures. Actions logs are additional evidence for failures occurring
+before a start receipt. Uploads are best effort under hard cancellation, not a
+guarantee that a killed runner can finish uploading.
+
+The aggregate runs even after a shard failure, downloads **only the current run
+attempt**, checks every selected receipt's tool/source/run/attempt identity, and
+revalidates the raw reports and archived binaries. It does not trust a green job
+or the saved per-shard check. Full mode invokes the original full validator for
+all three platforms; selected mode invokes only the selected-shard checks and
+always sets `fullThreePlatformCoverageAndCorrectnessPassed: false`. All modes
+retain `performanceDecision: not-assessed`. A plan-only run has no execution
+summary at all. Successful planning is not structural or performance acceptance.
+
+Do not use “rerun failed jobs” to assemble a release campaign: its new attempt
+number intentionally cannot borrow the previous attempt's plan/shards. Keep the
+failed run, diagnose, then use a justified new dispatch (or rerun **all** jobs)
+with a new attempt identity. No previous failures are deleted or silently mixed
+into a claimed full attempt. Artifact retention is 30 days; archive the entire
+accepted and failed evidence before expiry through the separately authorized
+evidence process. There is no auto-retry, artifact deletion or archival push in
+this workflow.
+
+### Comparative performance remains a separate gate
+
+The existing runner executes five repetitions of **one source**. Baseline and
+candidate running on different hosted jobs cannot provide a paired equivalence
+verdict. Even serial baseline-then-candidate shards would not implement a
+predeclared alternating protocol, and two longest shards already exceed this
+workflow's 240-minute budget before build overhead. This scheduler deliberately
+does not implement or claim that protocol. Before comparative release acceptance,
+freeze baseline/candidate, exact toolchain/environment, alternating same-runner
+order, statistical method and the **original** thresholds in a separately
+reviewed campaign. Do not invent thresholds, treat nonsignificance as equivalence,
+claim any ratio target met, or replace the original recorder/allocation and
+#732/#931/#933 gates with a structural pass.
 
 ## Offline regression tests
 
