@@ -4,9 +4,9 @@ Candidate commit: `51f5bd0ec3f600196f2e26ea48a466ec2cea62d8`.
 Base: `dd02ecfc6970cfa3b621d919d48e4d9e48f205aa`.
 Branch: `codex/931-client-ablation-tools`.
 Worktree: `/Users/sunsi/.codex/worktrees/physical-ownership-performance-tools/SharpLink`.
-Independent review and root push/dispatch approval remain required.
+Historical preparation text below predates dispatch. The exact tool was independently reviewed and run40646151477 completed. Its [independent result](reviews/931-pgo-40646151477/INDEPENDENT-REVIEW.md) is **inconclusive; original full-product NoGo remains**. The commands below are retained for provenance, not instructions to rerun the completed campaign.
 
-## Current scientific decision
+## Scientific decision at preparation time
 
 FullOpts run40642932620 completed 12 processes / 247595 RPCs. Parent independently
 reported paired throughput +0.90%, CPU/op -0.57%, P99 -0.99%, P99.9 -0.50%, mixed
@@ -47,7 +47,7 @@ processes retain default adaptive tiering and the unchanged original warmup.
 - Local runtime/CPU arrangement is not hosted private10.0.13 acceptance. The
   formal gate must pass on its actual runner. No push or dispatch by this owner.
 
-## Review and dispatch (root only after approval)
+## Historical review and dispatch recipe (completed; do not repeat unchanged)
 
 ```sh
 git diff dd02ecfc..51f5bd0e -- .github/workflows/performance-evidence.yml eng/physical-ownership-probes

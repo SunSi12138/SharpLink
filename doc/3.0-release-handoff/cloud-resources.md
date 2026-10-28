@@ -49,7 +49,7 @@ cat index.json
 |---|---|---|
 | [40634900826](https://github.com/SunSi12138/SharpLink/actions/runs/40634900826) | #931 默认 PGO 全产品，48 processes | 独立复核为 NoGo；dynamic100 的 P99 六对全不利 |
 | [40642932620](https://github.com/SunSi12138/SharpLink/actions/runs/40642932620) | #931 FullOpts Client-only，12 processes | 完整，未复现原持续不利方向；不能解除原全产品 NoGo |
-| [40646151477](https://github.com/SunSi12138/SharpLink/actions/runs/40646151477) | #931 默认 PGO Client-only | workflow 已成功；接手首项是独立复核原始数据和判断结果，不把成功状态当性能 Go |
+| [40646151477](https://github.com/SunSi12138/SharpLink/actions/runs/40646151477) | #931 默认 PGO Client-only | 已独立复核12进程/354648ticks；Client-only inconclusive，原全产品NoGo保留；[报告](reviews/931-pgo-40646151477/INDEPENDENT-REVIEW.md) |
 | [40642190610](https://github.com/SunSi12138/SharpLink/actions/runs/40642190610) | #732 三臂，36 processes/1.44M calls | 三个 contrast 的 T/U 全为 inconclusive；M1 Hold、M0 NoGo 保留 |
 | [40636189267](https://github.com/SunSi12138/SharpLink/actions/runs/40636189267) | #933 旧整合头 | 保留 product/native 失败，不能删除 |
 | [40642182557](https://github.com/SunSi12138/SharpLink/actions/runs/40642182557) | #933 产品修复头 50e608 | canonical 仅格式检查失败；后续 10b 只修格式 |
@@ -71,3 +71,7 @@ gh run download 40646151477 --repo SunSi12138/SharpLink --dir artifacts/client-p
 - 原 `/opt/homebrew/bin/python3` 是本机 Python 3.14。云端使用满足脚本要求的 Python，建议 3.12+。
 - 原小爱/QQ脚本仅在用户 Mac 存在；云端不存在时直接向用户报告必要输入或完成结果，不因此中止工程任务。
 - 所有代码和证据先按固定来源核对，再执行一次尚缺的步骤。不要重新提交已合并 PR，也不要重跑已完成的 NoGo/inconclusive campaign。
+
+## 2026-10-28 云端接手更新
+
+当前读取/写入/dispatch 路由和运行时缺口见 [接手进度](cloud-takeover-status.md)。GitHub connector 的 repository push/actions-write 权限元数据不等同于本机 `gh` 已认证或暴露了 workflow dispatch；缺少可用工具路由不是权限拒绝。未为探测权限创建提交、工作流或标签。

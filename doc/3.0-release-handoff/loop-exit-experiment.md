@@ -1,6 +1,8 @@
 # #931: inner loop exit experiment
 
-Date: 2026-10-28. Status: **compiled, focused correctness checked, non-timed ARM64 mechanism observed; independent review and performance acceptance remain open**.
+Date: 2026-10-28. Current status: **compiled, focused correctness checked, non-timed ARM64 mechanism observed; independently approved for an isolated experiment and backed up on remote at `87f76fb8`; no performance acceptance**. The body below preserves the author's original pre-review/pre-push record.
+
+Cloud takeover: the completed default-PGO Client-only run is [inconclusive](reviews/931-pgo-40646151477/INDEPENDENT-REVIEW.md). Actual TCP Tier1 nevertheless shows the precise duplicate `hasNext` targeted by R1, supporting one reviewed, bounded **non-timed** comparison. It does not show that this branch caused the original regression, nor authorize timed reruns or merging.
 
 ## Candidate and decision
 

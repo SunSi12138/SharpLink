@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-10-28T19:02:59+08:00",
+  "updatedAt": "2026-10-28T11:18:00Z",
   "goal": "Release SharpLink 3.0 after independent review and complete release acceptance",
   "goalStatus": "active",
   "releaseReady": false,
@@ -26,8 +26,9 @@
       "canonicalRun": 40644131003,
       "state": "canonical current-head validation success; prerequisite931 performance and933 feature performance still block merge",
       "previousFailedRun": 40636189267,
-      "nextAction": "Query cold-control-production.yml on feat/cooperative-maintenance-20261022 and require head10b; preserve50e format red and16ef product red. Do not merge before prerequisite performance acceptance.",
-      "previousRepairRun": 40642182557
+      "nextAction": "Canonical run40644131003 is verified completed/success at exact10b1bf03. Independently inspect raw native companion and executed inventories; keep prerequisite931 and feature-performance gates open. Preserve50e format red and16ef product red.",
+      "previousRepairRun": 40642182557,
+      "canonicalVerifiedAtUtc": "2026-10-28T11:13:23Z"
     },
     "methodFacts732": {
       "worktree": "/Users/sunsi/.codex/worktrees/issue-732-controlled-tools/SharpLink",
@@ -65,7 +66,7 @@
       "toolBranch": "codex/931-client-ablation-tools",
       "independentToolReview": "approved",
       "ablationRun": 40642932620,
-      "nextAction": "Read default-PGO run40646151477 at tool51f5; preflight must capture4 real optimizedTier1 targets; measurement12 valid samples/6pairs. Read client-pgo-experiment.md for branches. Do not infer every timed call is Tier1 from preflight.",
+      "nextAction": "Read independent default-PGO review; original full-product NoGo remains. Prepare independently reviewed R1-only bounded non-timed actualTCP comparison against ac17, common candidate DLLs/private10.0.13; do not launch new timing or stack R2.",
       "loopExitExperiment": {
         "worktree": "/Users/sunsi/.codex/worktrees/ownership-931-loop-exit/SharpLink",
         "head": "94adeae886c4ddfd0c02ec2dcb700cd97e9cad80",
@@ -77,7 +78,19 @@
       },
       "ablationResult": "FullOpts Client-only12samples6pairs247595RPC complete. Mixed directions: throughput+0.90%,CPU-0.57%,P99-0.99%,P999-0.50%; original defaultPGO full-product NoGo remains.",
       "defaultPgoRun": 40646151477,
-      "defaultPgoRunState": "completed success; raw interpretation and independent decision pending"
+      "defaultPgoRunState": "independently verified complete12process/354648ticks; Client-only inconclusive, original full-product NoGo unchanged",
+      "defaultPgoReview": "reviews/931-pgo-40646151477/INDEPENDENT-REVIEW.md",
+      "defaultPgoResult": {
+        "verifiedProcesses": 12,
+        "verifiedOperations": 354648,
+        "pairedMeanChangePercent": {
+          "throughput": 0.25910034764231593,
+          "cpuPerOperation": -0.12342117154812149,
+          "p99": 1.1567005610138903,
+          "p999": 4.734739853698722
+        },
+        "decision": "inconclusive; all throughput/CPU/P99/P99.9 descriptive95 intervals cross1; adverse pair3 retained; no equivalence or product Go"
+      }
     },
     "fullMatrixTools": {
       "pullRequest": 954,
@@ -98,5 +111,6 @@
     "index": "https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/index.json",
     "archives": 10,
     "compressedBytes": 95369648
-  }
+  },
+  "takeoverStatus": "cloud-takeover-status.md"
 }
