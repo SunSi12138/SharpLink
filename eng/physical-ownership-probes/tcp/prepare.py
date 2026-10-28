@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--baseline-generator", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True, help="New, non-existing directory")
     parser.add_argument("--dotnet", default="dotnet")
+    parser.add_argument("--probe-source", type=Path, help="Optional isolated probe sources; default preserves the original matrix probe")
     args = parser.parse_args()
     baseline = args.baseline_libraries.resolve(strict=True)
     candidate = args.candidate_libraries.resolve(strict=True)
@@ -32,9 +33,11 @@ def main():
     # Keep repository-level build settings from altering this standalone probe.
     for filename in ("Directory.Build.props", "Directory.Build.targets"):
         (build / filename).write_text("<Project />\n", encoding="utf-8")
+    inputs = {"module": source / "module",
+              "probe": args.probe_source.resolve(strict=True) if args.probe_source else source / "probe"}
     commands = []
-    for name in ("module", "probe"):
-        shutil.copytree(source / name, build / name,
+    for name, input_directory in inputs.items():
+        shutil.copytree(input_directory, build / name,
                         ignore=shutil.ignore_patterns("bin", "obj"))
         command = [args.dotnet, "build", str(build / name / f"{name}.csproj"),
                    "-c", "Release", "-m:1", "-nr:false", "-p:UseSharedCompilation=false",
@@ -70,8 +73,9 @@ def main():
         "baselineGeneratorPath": str(generator),
         "baselineGeneratorSha256": hashlib.sha256(generator.read_bytes()).hexdigest(),
         "buildCommands": commands,
-        "sourceHashes": {str(p.relative_to(source)): hashlib.sha256(p.read_bytes()).hexdigest()
-                         for folder in ("module", "probe") for p in sorted((source / folder).glob("*"))
+        "probeSourceDirectory": str(inputs["probe"]),
+        "sourceHashes": {f"{name}/{p.name}": hashlib.sha256(p.read_bytes()).hexdigest()
+                         for name, directory in inputs.items() for p in sorted(directory.glob("*"))
                          if p.is_file()},
         "baselineBinaryHashes": baseline_hashes,
         "candidateBinaryHashes": candidate_hashes,

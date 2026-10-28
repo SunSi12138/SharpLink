@@ -53,6 +53,9 @@ def main():
     parser.add_argument("--baseline-revision", required=True)
     parser.add_argument("--candidate-revision", required=True)
     parser.add_argument("--dotnet", default="dotnet")
+    parser.add_argument("--runtime-mode", choices=("default", "fullopts"), default="default")
+    parser.add_argument("--export-ticks", action="store_true", help="Requires the ablation probe; export ordered durations after measurement")
+    parser.add_argument("--keep-going", action="store_true", help="Attempt the declared schedule once despite failures; never retry or replace")
     parser.add_argument("--rounds", type=int, default=6)
     parser.add_argument("--warmup", type=float, default=3)
     parser.add_argument("--seconds", type=float, default=6)
@@ -79,6 +82,10 @@ def main():
                            "DOTNET_TC_", "COMPlus_TC_", "DOTNET_ReadyToRun", "COMPlus_ReadyToRun",
                            "DOTNET_ZapDisable", "COMPlus_ZapDisable")):
             del env[key]
+    if args.runtime_mode == "fullopts":
+        env["DOTNET_TieredCompilation"] = "0"
+    if args.export_ticks:
+        (output / "ticks").mkdir()
     manifest = {
         "arguments": {key: str(value) if isinstance(value, Path) else value
                       for key, value in vars(args).items()},
@@ -90,6 +97,7 @@ def main():
         "cpuinfo": Path("/proc/cpuinfo").read_text() if Path("/proc/cpuinfo").exists() else None,
     }
     (output / "matrix-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    failures = []
     scenarios = [(mode, count) for count in items for mode in modes]
     for round_number in range(1, args.rounds + 1):
         rotation = (round_number - 1) % len(scenarios)
@@ -103,17 +111,27 @@ def main():
                 command += [args.dotnet, str(prepared / variant / "PhysicalTcpProbe.dll"),
                             mode, str(count), str(args.workers), str(args.warmup), str(args.seconds),
                             str(destination)]
+                if args.export_ticks:
+                    command += ["measure", str(output / "ticks" / (key + ".json"))]
                 run_env = dict(env, SHARPLINK_BENCHMARK_SHA=(args.baseline_revision
                                if variant == "baseline" else args.candidate_revision))
-                exit_code = execute_sample(
-                    command, runs / (key + ".log"), runs / (key + ".host.json"),
-                    variant, round_number, run_env, args.warmup + args.seconds + 90)
-                if exit_code:
-                    raise RuntimeError(f"Failed {key}: exit {exit_code}; inspect its log")
-                data = json.loads(destination.read_text())
-                print(f"{key} ops/s={data['operationsPerSecond']:.0f} "
-                      f"p50={data['p50Us']:.2f}us p99={data['p99Us']:.2f}us "
-                      f"alloc={data['allocatedBytesPerOperation']:.1f}B/op", flush=True)
+                try:
+                    exit_code = execute_sample(
+                        command, runs / (key + ".log"), runs / (key + ".host.json"),
+                        variant, round_number, run_env, args.warmup + args.seconds + 90)
+                    if exit_code:
+                        raise RuntimeError(f"Failed {key}: exit {exit_code}; inspect its log")
+                    data = json.loads(destination.read_text())
+                    print(f"{key} ops/s={data['operationsPerSecond']:.0f} "
+                          f"p50={data['p50Us']:.2f}us p99={data['p99Us']:.2f}us "
+                          f"alloc={data['allocatedBytesPerOperation']:.1f}B/op", flush=True)
+                except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, RuntimeError) as error:
+                    failures.append({"sample": key, "error": repr(error)})
+                    (output / "matrix-failures.json").write_text(json.dumps(failures, indent=2) + "\n")
+                    if not args.keep_going:
+                        raise
+    if failures:
+        raise RuntimeError(f"Declared matrix finished with {len(failures)} failures; no samples were replaced")
     print("MATRIX_COMPLETE", flush=True)
 
 

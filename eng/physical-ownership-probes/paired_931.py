@@ -96,6 +96,7 @@ def main():
     parser.add_argument("--build-dotnet", type=Path, required=True)
     parser.add_argument("--runtime-dotnet", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--experiment", choices=("full", "client-only"), default="full")
     args = parser.parse_args()
     source = Path(__file__).resolve().parent
     tools_root = source.parent.parent
@@ -119,8 +120,11 @@ def main():
     write(output / "experiment.json", {
         "baselineRevision": BASELINE, "candidateRevision": CANDIDATE, "toolRevision": tool_sha,
         "sdk": actual_sdk, "runtimes": runtimes, "availableCpus": available, "affinity": affinity,
+        "experiment": args.experiment,
         "runner": {k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")},
-        "scope": "Successful scalar streams: two-core loopback TCP and short-circuit allocation/JIT diagnostics. Not all RPC, AOT, or the final 3.0 matrix.",
+        "scope": ("Client-only binary ablation; common candidate runtime/server; not product acceptance."
+                  if args.experiment == "client-only" else
+                  "Successful scalar streams: two-logical-CPU loopback TCP and short-circuit allocation/JIT diagnostics. Not all RPC, AOT, or the final 3.0 matrix."),
         "interpretation": "All samples retained; no added performance threshold. Zero allocation and noisy null results do not establish performance equivalence.",
     })
     for name, command in (("build-dotnet-info", [build_dotnet, "--info"]),
@@ -143,9 +147,14 @@ def main():
     shared_args = ["--baseline-libraries", libraries["baseline"], "--candidate-libraries", libraries["candidate"], "--dotnet", build_dotnet]
     tcp = output / "tcp-prepared"
     scalar = output / "scalar-prepared"
-    run([sys.executable, source / "tcp/prepare.py", *shared_args,
+    probe_args = ["--probe-source", source / "tcp/ablation-probe"] if args.experiment == "client-only" else []
+    run([sys.executable, source / "tcp/prepare.py", *shared_args, *probe_args,
          "--baseline-generator", roots["baseline"] / "src/SharpLink.Generator/bin/Release/netstandard2.0/SharpLink.Generator.dll",
          "--output", tcp], output / "tcp-prepare.log", tools_root)
+    if args.experiment == "client-only":
+        from client_ablation import run_client_ablation
+        run_client_ablation(tcp, output, runtime_dotnet, build_dotnet, affinity, tool_sha)
+        return
     revisions = ["--baseline-revision", BASELINE, "--candidate-revision", CANDIDATE]
     run([sys.executable, source / "scalar/run.py", *shared_args, *revisions,
          "--prepare-only", "--output", scalar], output / "scalar-prepare.log", tools_root)

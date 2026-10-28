@@ -9,6 +9,7 @@ on:
         options:
           - smoke
           - ownership-931
+          - ownership-931-client-ablation
         default: smoke
         required: true
       repetitions:
@@ -56,7 +57,7 @@ jobs:
           retention-days: 30
 
   ownership-931:
-    if: inputs.suite == 'ownership-931'
+    if: inputs.suite == 'ownership-931' || inputs.suite == 'ownership-931-client-ablation'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -106,18 +107,22 @@ jobs:
       - name: Build both arms, freeze snapshots, then measure
         shell: bash
         working-directory: tools
+        env:
+          EVIDENCE_SUITE: ${{ inputs.suite }}
         run: |
+          experiment=full
+          if [[ "$EVIDENCE_SUITE" == ownership-931-client-ablation ]]; then experiment=client-only; fi
           python3 eng/physical-ownership-probes/paired_931.py \
             --baseline "$GITHUB_WORKSPACE/sources/baseline" \
             --candidate "$GITHUB_WORKSPACE/sources/candidate" \
             --build-dotnet "$DOTNET_INSTALL_DIR/dotnet" \
             --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
-            --output "$EVIDENCE_ROOT"
+            --output "$EVIDENCE_ROOT" --experiment "$experiment"
       - name: Upload complete raw evidence, including failed runs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: physical-ownership-931-${{ github.sha }}-${{ github.run_attempt }}
+          name: physical-${{ inputs.suite }}-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             ${{ env.EVIDENCE_ROOT }}
             ${{ runner.temp }}/ownership-runtime-install
