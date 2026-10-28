@@ -669,8 +669,10 @@ internal sealed partial class SharpLinkClient
                             }
                             hasNext = await moveNextTask.ConfigureAwait(false);
                         }
-                        item = hasNext ? enumerator.Current : default!;
-                        if (hasNext && !responseNullable && default(T) is null && item is null)
+                        if (!hasNext)
+                            break;
+                        item = enumerator.Current;
+                        if (!responseNullable && default(T) is null && item is null)
                             throw new InvalidCastException("A non-nullable intercepted RPC stream response was null.");
                     }
                     catch (OperationCanceledException exception) when (!ownershipTransferred &&
@@ -695,8 +697,6 @@ internal sealed partial class SharpLinkClient
                         throw failure;
                     }
 
-                    if (!hasNext)
-                        yield break;
                     yield return item;
                 }
             }
