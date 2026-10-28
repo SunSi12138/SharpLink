@@ -1,0 +1,80 @@
+{
+  "observedAtUtc": "2026-10-28T16:15:00Z",
+  "scope": "Read-only metadata, not replacement for raw audit. Later events are outside this checkpoint.",
+  "devHandoffPathsAbsent": {
+    "tree": "e5b72625377ffdcf5f5470e2ddd69be12a449d8e",
+    "recursiveTreeTruncated": false,
+    "matchingPaths": []
+  },
+  "observations": [
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/branches/dev",
+      "name": "dev",
+      "head": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+      "tree": "e5b72625377ffdcf5f5470e2ddd69be12a449d8e"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/branches/codex/3-release-handoff",
+      "name": "codex/3-release-handoff",
+      "head": "d0f493fbf25bb3b4f90f758dc5b098241ac1f0e6",
+      "tree": "794ea2e3e46debe3d1857b176ad4346de34ea4d5"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/branches/codex/3-release-evidence",
+      "name": "codex/3-release-evidence",
+      "head": "f90e9adf565cb3e96adbaa9d150d7f03712a9a80",
+      "tree": "0fc4cbe0271446137590917733283427f37c4ee8"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/pulls/961",
+      "number": 961,
+      "state": "closed",
+      "merged": true,
+      "head": "1a76e1b858b9b306f8d09ed6f85bc3c5319e2da5",
+      "merge_commit_sha": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+      "merged_at": "2026-10-28T15:07:19Z",
+      "draft": false
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/pulls/962",
+      "number": 962,
+      "state": "closed",
+      "merged": false,
+      "head": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+      "merge_commit_sha": "c88fc1930110cfe4a821561fcd321434580474a3",
+      "merged_at": null,
+      "draft": false
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/pulls/963",
+      "number": 963,
+      "state": "open",
+      "merged": false,
+      "head": "90d98e3cb84ce36425b99c88c8112632194834b5",
+      "merge_commit_sha": "26b629dd34224121aa14076a670b245f52a64945",
+      "merged_at": null,
+      "draft": true
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs/40712925050",
+      "id": 40712925050,
+      "head": "90d98e3cb84ce36425b99c88c8112632194834b5",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs/40716132624",
+      "id": 40716132624,
+      "head": "2b59e359bff99ec8f7d5b1de158179d6eb9fa4f0",
+      "status": "completed",
+      "conclusion": "failure"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs/40710903027",
+      "id": 40710903027,
+      "head": "e25ac990d72d63f040dfda6127cceb3b8a00de9d",
+      "status": "completed",
+      "conclusion": "failure"
+    }
+  ]
+}

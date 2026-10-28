@@ -1,3 +1,83 @@
+# 独立交接检查点：2026-10-28 16:15 UTC
+
+**当前决定：#961 已获用户明确同意并合入 dev；607 已完成真实性能测试但不晋级、不合并；logical-forwarder 有狭窄正向机制证据，真实 TCP 性能尚未测；wakeup 仍只完成部分受审准备，没有 collect。尚无官方 2.0.3 对比达到 QPS +10% / P99 −20% 的验收结果。**
+
+本检查点固定于 16:15 UTC，后续并发事件留给下一次更新。[只读 GitHub 快照](reviews/checkpoint-20261028-1615/github-observations.json) 核实 dev=`57f06f172d29fa5cfd4ea8e9b86a23f122df24ab`，tree=`e5b72625377ffdcf5f5470e2ddd69be12a449d8e`；完整 recursive tree 未截断，交接路径仍不存在。此次从独立交接父提交 `d0f493fbf25bb3b4f90f758dc5b098241ac1f0e6` 更新，不把文档并入 dev，不创建交接 PR。
+
+用户已允许性能验证 PR；这不把验证 PR 变成产品合并许可。3.x breaking 范围保持：允许 API/ABI/wire 变化，不要求 2.x↔3.x 互通；[#962](https://github.com/SunSi12138/SharpLink/pull/962) 仍 closed/unmerged、不采纳、非 release blocker。3.x 自身正确性、完整功能、包/生成器一致性、Trim/AOT、协议合法/非法输入、取消、资源、安全及迁移说明仍须成立；breaking 不是功能缩水许可。官方 2.0.3 仍为性能基线。
+
+以下引用的正式报告是当时的独立技术记录；原件保留，除明确标注省略内部协作信息的技术摘录外，副本均未改写。其中旧的“尚待合并确认”“后续尚未测量”等时态只代表报告时点，当前状态以本节为准。历史 failed、skipped、缺失报告及不利样本均不改判。
+
+本次只增加报告/技术摘录，不把它们称为完整 raw 镜像。Phase 完整 raw 已在 f90e9adf 持久归档；#961/wakeup 的原始 Actions 工件仍有保留期限，logical-forwarder 的完整本地 corpus 尚未在本检查点声称上传。报告内的本地路径、verify.py/JSON 文件名是原来源位置；仅本目录实际列出的报告副本可从本交接下载。
+
+## #961：适用技术门禁 PASS，已明确授权并合并
+
+用户于 15:05 UTC 明确同意合并；[PR #961](https://github.com/SunSi12138/SharpLink/pull/961) 于 **15:07:19 UTC** squash 为 [`57f06f172d29fa5cfd4ea8e9b86a23f122df24ab`](https://github.com/SunSi12138/SharpLink/commit/57f06f172d29fa5cfd4ea8e9b86a23f122df24ab)。完整 tree 与受审 PR HEAD `1a76e1b858b9b306f8d09ed6f85bc3c5319e2da5` / 本地 `555cdb9f8e7230b555257ddc86ce8fcb4dc0181d` 相同，不再列为待审/待合并。
+
+[最终独立技术报告](reviews/checkpoint-20261028-1615/pr961-final-review.md)：全部适用 CI terminal success；新 [Extended40706353475](https://github.com/SunSi12138/SharpLink/actions/runs/40706353475) 24 jobs = 16 success / 8 optional browser skips，完整无过滤 Integration **491/491，0 failed/skip**。六原生 codec consumer 的 raw 报告与汇总逐行一致：**2088 rows = 36 ordered pairs × 58 fixtures**，零 blocking failures。不能把 optional skips 算成通过。
+
+重要证据边界：Extended 没有上传 Integration 全部 per-case native JSON/HTML；491/491 来自原始 runner summary，目标测试包含性由精确源码、无过滤命令与零 skip 支持，另有同树 hosted diagnostic 的具名 native JSON 通过证明。不得声称检查了并不存在的完整逐例报告。旧 Extended40697027111 的真实 490/491 Broken pipe 仍为失败；首个本地 native JSON/HTML 在后续 attempt 覆盖前未保存，仅 stdout/stack/build 留存，不能重建成“已留存完整报告”。后续本地 Permission denied 与 hosted 受控负例也分别保留。已合并的是正确性修复，不是性能增益或完整 3.0 发布接受。
+
+## 607 阶段化重写：已实测，不晋级；不是按代码大小判定
+
+[#963](https://github.com/SunSi12138/SharpLink/pull/963) 为 Draft 验证 PR，精确工具 `90d98e3cb84ce36425b99c88c8112632194834b5`，**DO NOT MERGE**。对照为原 `ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c` 与实际构建候选 `2153cd9228c1de25e89a4bb68f0e3da4dc19f867`（tree `02a2824f344c3614fff8de1d8a10ed7a5be87c21`，与受审原 607 whole tree 相同），不是官方 2.0.3。
+
+- [本地独立报告](reviews/checkpoint-20261028-1615/phase-local-review.md)：工具 `76b8de5fc52e0a32ed8bc7a2e3772e9c1b29e6fb`，48 TCP processes / 24 pairs、14 scalar processes，4,137,425 ticks，604 文件 receipt 完整。四 cell QPS 依次 −1.80%、−1.61%、+3.14%、+1.03%；QPS/CPU/latency 的描述性 95% 区间均跨无变化。观察到 guest steal 非零：1.474%–6.854%，median 3.483%，覆盖进程边界而非仅计时窗。结果 mixed/inconclusive，不校正/删去这些样本。
+- [Hosted40712925050](https://github.com/SunSi12138/SharpLink/actions/runs/40712925050) 与 [独立报告](reviews/checkpoint-20261028-1615/phase-hosted-review.md)：48 TCP processes / 24 pairs、14 scalar processes，3,551,642 ticks，596 个原始 ZIP members 全部逐字节核验。每 cell 六个进程对，统计单位不是单次 RPC。
+
+| Hosted cell | QPS paired-mean | CPU/RPC | P99 | P99.9 |
+|---|---:|---:|---:|---:|
+| static1 | −0.01% | −0.33% | −1.44% | +24.28% |
+| static100 | −0.35% | +0.55% | +2.95% | −5.94% |
+| dynamic1 | −1.42% | +0.47% | −3.04% | −11.23% |
+| dynamic100 | −0.51% | +0.50% | +3.24% | +7.35% |
+
+所有 QPS/CPU/P99 描述性 95% 区间跨 0。static1 P99.9 +24.28%，区间 +2.80%..+52.72%，但六对是 **3 不利 / 3 有利**，不是六对同向；它是未做多重比较校正的描述性尾延迟风险，不是正式回退证明。不要混淆 paired mean 与 ratio-of-medians。两臂 scalar 分配在全部 12 cells / 五个 FullOpts pairs 完全相同。
+
+Hosted 选定 CPU0/CPU1 同属 guest CORE0，是 SMT siblings；steal=0 不证明物理隔离或无争用。本地与 hosted 拓扑/争用不同，**不得合并样本**。当前不晋级、不合并 607，是因为这两个有界真实测试未建立吞吐/CPU 收益且保留尾延迟风险，不是因为代码变大。旧机制完整性失败、旧 STOP 建议原样作为历史保留；不能继续把“尚无 QPS/P99”当当前事实，也不增加样本刷绿。
+
+### 持久证据已保存，不依赖 Actions 留存期
+
+证据分支 [`f90e9adf565cb3e96adbaa9d150d7f03712a9a80`](https://github.com/SunSi12138/SharpLink/tree/f90e9adf565cb3e96adbaa9d150d7f03712a9a80) 已公开保存完整 phase 实验、旧机制失败、准备失败及独立复算。[发布核验报告](reviews/checkpoint-20261028-1615/phase-publication-review.md)、[固定 README](https://github.com/SunSi12138/SharpLink/blob/f90e9adf565cb3e96adbaa9d150d7f03712a9a80/README.md)、[30-part manifest](https://github.com/SunSi12138/SharpLink/blob/f90e9adf565cb3e96adbaa9d150d7f03712a9a80/archives/phase-rewrite-performance-20261028.parts/manifest.json)、[5072-member inventory](https://github.com/SunSi12138/SharpLink/blob/f90e9adf565cb3e96adbaa9d150d7f03712a9a80/phase-rewrite-performance-20261028-files.json)。
+
+重组 **93,087,850 bytes / 5,072 members / 30 parts**，SHA-256 `8c1cd1ff0f165eba1d0912d5fbe75604030c8ce895cf359f15b38b260dab6454`；前 13 个逻辑归档及其 24 个存储路径未变。当前 **14 个逻辑归档，总 229,505,339 bytes**。按 manifest 顺序验证每片及整包后才解压；不是仓库已存有单体 tar.gz。首次上传截断形成的孤立错误 blob 未进入任何 tree/ref，相关失败留存；成功发布只是证据完整性，不是性能 Go。
+
+## Logical-forwarder：实现与机制 PASS，真实 TCP 未测
+
+这是新轴线：本地 `d17e1ac691325b8948ca8663ba2d2b836c3ac2a0` 基于原 ac17，**没有叠加 607**；远端等价源 [`484a5d279a84a3cd9e717c1ec94d3a5a415112df`](https://github.com/SunSi12138/SharpLink/commit/484a5d279a84a3cd9e717c1ec94d3a5a415112df)，tree `5c0060b2fbd7ca41deb78022170148992d32eea6`。它移除真正的 pending logical forwarding layer，不是只把 driver 代码搬进 helper。
+
+[独立实现审核](reviews/checkpoint-20261028-1615/logical-implementation-review.md) PASS 限于源码、设计落实与已有针对性正确性：candidate/baseline dedicated 各 22、inner 各 17、candidate adjacent 109、publication overlay 2，均通过；不冒充全量 release suite。早期 14/20 项实际进入 Telemetry fallback，不能算优化路径验收；最终加入实际 wrapper 身份断言。
+
+[独立机制审核](reviews/checkpoint-20261028-1615/logical-mechanism-review.md)：工具 `01f6aad58dd14278497a219dfad4f96906b8919a`，4 个非计时进程，每进程全部 24 cells，189/189 census 文件完整，原始 backing/continuation 图支持 direct pending 路径确实移除了逻辑转发 box。观察到：
+- Telemetry off / direct / pending：long slope 约 **136 → 0 B/item**；
+- off / AsTask / pending：候选仍约 **88 B/item**，不能把 direct 结果推广给转换桥；
+- Telemetry on / pending：两臂约 **272 B/item**，未证明 fallback 改善；
+- 同步路径约 **+8 B/call**，不利结果保留。
+
+这是每臂一次 allocation process 的进程级总量，包含 harness/runtime/scheduling；实际 allocation 窗口的 forwarding suspension 次数 W 未测，不能把 item count 当 W，也不是 allocation-stack 归因、精确 GC 责任或 QPS/P99 收益。后续重型 scanner 的已知时间在本机制结束之后，不据此宣称污染；完整静默窗口也未被穷尽证明。真实 TCP 工具正在准备，尚未测量；应冻结实际路径、Telemetry 与 AsTask 范围后做独立受审端到端测试，不与 607 混样本。
+
+## Wakeup：Linux 准备通过；ARM 原 receipt 失败保留，尚未 collect
+
+产品远端 C `e5a35b9bf63d162c3077aec389d402e28bd2fb53` 等价受审 c17；没有改变正确性 PASS 的边界。首个 prepare [40710903027](https://github.com/SunSi12138/SharpLink/actions/runs/40710903027) 因环境 guard 失败，原样保留。
+
+第二 prepare [40716132624](https://github.com/SunSi12138/SharpLink/actions/runs/40716132624) 的整体 workflow **failure**；[独立拆分裁决](reviews/checkpoint-20261028-1615/wakeup-hosted-preparation-review.md) 是：
+- **Linux x64 PASS（仅准备）**：artifact12828492592，bundle/两份 D/C receipts 已独立核验，1741 regular members、每臂1091 bound files；Ubuntu24.04，SDK10.0.102/runtime10.0.14，三个 Release builds 零 warning/error。保留同一 bundle/receipt，不重建、不替换 Linux bytes。
+- **ARM64 原 receipt 仍 FAILED，不可 collect**：artifact12828441906，实际 macOS14.8/arm64，三个 builds 均成功；13 个 Core/ASP 共用 dylib 路径由既定 Core→ASP 提取顺序覆盖，旧验证器错误地逐 component 比对。独立完整检查确认最终 336 runtime files 全部符合固定 last-writer 官方 archive bytes；不声称冲突只是签名差别，不重签、不归一化、不改原失败。
+
+候选 revalidation 工具 `46bb5bf37eb0da3ae225cdce4f0af98049e067ce` 正在独立审核：只对原 ARM 工件做纯字节恢复/重验，**不 build、不运行 CLR/probe/decoder、不重签名、不改 Linux**，新的 receipts 须使用新身份并保留原 receipt。这不是新的准备运行或已执行的 collect。现有协议仍要求两架构 receipts 批准后才能 collect；截至本快照零 collect、零 native 性能结果，不能凭 Linux PASS 自动开始单架构运行。早先 Debian13 本地 receipt PASS 仍仅 prepared-only，不替代 hosted cell。
+
+## 下一步与仍开放的验收
+
+1. 607 本轮不晋级、不合并、不补有利样本；维护 #963 的验证用途与持久证据即可。此前代码大小 STOP 建议由真实测试裁决取代，不删除任何原始意见/失败。
+2. Logical-forwarder 准备真实 TCP 工具及冻结配对方案，独立审核后执行；报告 off/direct 的实际覆盖、AsTask/Telemetry fallback、同步开销及资源/错误行为，不仅挑有利 allocation slope。
+3. 完成 wakeup ARM-only 字节 revalidation 工具审核，再对原 bytes 产生新的可审核 receipts；Linux 保持原 bytes。两架构 gate 未满足前不 collect。
+4. 只读寻找实际 CPU/allocation-stack 证据的工作刚开始；**尚未形成新的 profile**，不得把假设或已有 allocation 总量称为已取得堆栈归因。
+5. #931 NoGo、#732 M0 NoGo/M1 Hold、#933 feature performance open、完整 #775 未交付均不变。最终官方 2.0.3 的产品性能比较、平台/soak/API 与完整功能验收仍开放。没有 dev→main、tag、NuGet 或正式 Release 操作。
+
+---
+
+## 历史检查点（14:24 UTC；下文旧待办不代表当前状态）
+
 # 独立交接更新：2026-10-28 14:24 UTC（原 GitHub 快照 14:06；#962 关闭于 14:19、#961 当前头/诊断于 14:24 再核实）
 
 ## 先看结论与保存边界

@@ -1,6 +1,6 @@
 # SharpLink 3.0 继续执行入口
 
-**用户指定的保存边界：交接资料仅保留在独立交接分支，不再并入 dev。** #955 的18文件已由 [PR #957](https://github.com/SunSi12138/SharpLink/pull/957) 撤回，当时完整 tree 恢复为 pre95580965；当前 dev 已推进到 `e3808b65e694bf1ed250d55fa2ad48a6ef88d285`，2026-10-28 14:06 UTC 再核实交接路径仍不存在。原交接分支与原始证据均保留。当前执行状态见 [独立交接更新](doc/3.0-release-handoff/independent-handoff-status.md)。
+**用户指定的保存边界：交接资料仅保留在独立交接分支，不再并入 dev。** #955 的18文件已由 [PR #957](https://github.com/SunSi12138/SharpLink/pull/957) 撤回，当时完整 tree 恢复为 pre95580965；当前 dev 已推进到 `57f06f172d29fa5cfd4ea8e9b86a23f122df24ab`，2026-10-28 16:15 UTC 再核实交接路径仍不存在。原交接分支与原始证据均保留。当前执行状态见 [独立交接更新](doc/3.0-release-handoff/independent-handoff-status.md)。
 
 目标仍是正式发布 3.0。当前尚未达到发布条件；不要因为交接、订阅到期或 CI 绿色而提前合并性能未验收的候选。
 
@@ -10,7 +10,7 @@
 
 ## 云端接手，先恢复事实
 
-**云端入口：**[本文件](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-handoff/HANDOFF.md)。先读 [云端资源与恢复命令](doc/3.0-release-handoff/cloud-resources.md)。代码分支、实验提交和证据均在 GitHub；后面的 `/Users/sunsi/...` 仅说明历史运行位置，云端不需要这些目录。
+**云端入口：**[本文件](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-handoff/HANDOFF.md)。先读 [云端资源与恢复命令](doc/3.0-release-handoff/cloud-resources.md)。已归档的代码与证据通过 GitHub 恢复；尚未归档的本地原件由最新检查点明确标注，不能把本地路径当下载链接。后面的 `/Users/sunsi/...` 仅说明历史运行位置，云端不需要这些目录。
 
 如果环境已有该仓库，先检查现有修改并复用；没有仓库时：
 
@@ -27,18 +27,18 @@ gh pr list --repo SunSi12138/SharpLink --state open --limit 30
 
 不要破坏环境中已有修改，或重复未改变的失败实验。先读实际 diff、已有日志及最后提交。同一源码、同一输入的有效证据直接复用。
 
-## 当前执行顺序（2026-10-28 14:24 UTC）
+## 当前执行顺序（2026-10-28 16:15 UTC）
 
-1. **先读 [最新独立交接状态](doc/3.0-release-handoff/independent-handoff-status.md)。** #961 当前 HEAD `1a76e1b858b9b306f8d09ed6f85bc3c5319e2da5`；nonce 工具与 hosted40704347751 原始证据已独立 PASS，下一步是新源码的 Extended 验证。旧 Extended 的真实 Broken pipe 失败保留，不重跑刷绿。#962 的已通过独立审核/CI 及历史失败证据全部保留，但按用户最新 3.x breaking 决定不采纳，已于 14:18:45 UTC 关闭且未合并，不再等待合并确认，也不作为发布 blocker。#961 狭窄诊断通过不替代完整新源码 Extended。
-2. **保留性能 NoGo，不把证据存档当接受。** R1 全产品 run40687272444 已独立确认 dynamic1 P99 六对不利；11 parts / 611 members 已验证并保存在证据提交 `f55d291f5fa1ee4c5807e4b448718e60405fd960`，前 12 个归档不变。#931 NoGo、#732 M0 NoGo/M1 Hold、#933 feature performance open 不变。
-3. **以实际性能验证状态机重写。** 阶段化 enumerator607 正确性 PASS，机制结果混合，4 scalar gates PASS / 4 native completeness gates FAIL，尚无 QPS/P99 数据。用户明确代码变大不是无收益结论；此前独立 STOP 建议原样保留为历史意见，当前决定已覆盖，正在准备固定配对端到端性能诊断，尚未执行。新的 terminal-notification 仅为设计；wakeup 正确性与本地 receipt 独立 PASS，但只是 Debian13 prepared-only、零 probe，不能充作冻结 Ubuntu hosted cell；正在准备 hosted prepare → 审 receipt → 同一二进制 collect 方案；borrowed singleton 的 6 pass / 3 fail 保留，不冒充性能主线。
-4. **最后才是冻结候选与完整发布验收。** 尚无官方 2.0.3 对比满足 QPS +10% / P99 −20%；完整平台、API、性能、soak 与最终 main SHA 验收未完成。受限 maintenance 不能关闭完整 #775。没有合并、tag、NuGet 或 Release 操作。
+1. **#961 已合并，不再待审。** 用户明确同意后，15:07:19 UTC squash 到 dev `57f06f17`，tree 与受审 `1a76e1b8` 相同。适用 CI、新 Extended 的 Integration491/491 及原生 codec2088 rows 均独立通过；旧 Broken pipe 失败、缺失的首个本地 native 报告与 optional browser skips 仍保留。
+2. **607 已完成真实性能诊断，目前不晋级、不合并。** #963 hosted40712925050 与 local76b8de5 分别独立复核，不能混样本。Hosted 四 cell QPS −0.01/−0.35/−1.42/−0.51%，所有 QPS/CPU/P99 区间跨无变化；static1 P99.9 +24.28% 是未多重校正的描述性风险。结论来自真实测量，不是代码变大。完整 30-part 证据已保存到 `f90e9adf`，之前 13 个归档不变。
+3. **继续两个尚未形成性能结论的方向。** 新 logical-forwarder 基于 ac17、不叠加607，源码/针对性正确性与4进程机制独立 PASS；off/direct/pending 分配斜率约136→0，但 AsTask约88、Telemetry on约272两臂无改善、sync约+8B/call，真实 TCP 尚未测。Wakeup Linux hosted preparation/receipts PASS，ARM三个build成功但原receipt FAILED；ARM-only纯字节revalidate工具正在审核，零 collect。只读 profiling 证据查找尚未产出新 profile。
+4. **完整发布门禁仍开放。** #962 closed/unmerged 且不采用跨 major 互通要求；#931 NoGo、#732 M0 NoGo/M1 Hold、#933 feature performance open、完整#775未交付不变。尚无官方2.0.3对比达到QPS+10%/P99−20%；未操作main/tag/NuGet/Release。具体来源、失败边界与下一步见 [最新检查点](doc/3.0-release-handoff/independent-handoff-status.md)。
 
 [状态总表](doc/3.0-release-handoff/status.json) 与最新页面优先于旧实验附录。旧「运行中 / 待审核 / 未推送」保留为历史，不能当当前事实；先核对真实 HEAD 和已有证据，不重复失败实验。
 
 ## 已经完成的工作
 
-本轮目标中已合并 #936、#937、#938、#939、#940、#718、#941、#942、#951、#952、#943、#953、#954；#691 已关闭。当前 dev 为 `e3808b65e694bf1ed250d55fa2ad48a6ef88d285`（后续已含 #958 / #959；#957 撤回交接的历史仍保留，当前 tree 已不是旧 `80965d5`。交接仅保留独立分支，继续查询远端）。
+本轮目标中已合并 #936、#937、#938、#939、#940、#718、#941、#942、#951、#952、#943、#953、#954；#691 已关闭。当前 dev 为 `57f06f172d29fa5cfd4ea8e9b86a23f122df24ab`（后续已含 #958 / #959 / #961；#957 撤回交接的历史仍保留，当前 tree 已不是旧 `80965d5`。交接仅保留独立分支，继续查询远端）。
 
 API inventory 和 302 类型 / 3397 decision IDs 的分类台账已合入。台账仍保留固定来源及 `proposal-not-approved` 发布状态：最终 #732/#931/#933 的声明差异、真实九包对比和冻结 HEAD 验收还要完成，#805 继续 open。
 

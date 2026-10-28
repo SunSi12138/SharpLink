@@ -1,9 +1,9 @@
 {
-  "updatedAt": "2026-10-28T14:24:00Z",
+  "updatedAt": "2026-10-28T16:15:00Z",
   "goal": "Release SharpLink 3.0 after independent review and complete release acceptance",
   "goalStatus": "active",
   "releaseReady": false,
-  "mergedDev": "e3808b65e694bf1ed250d55fa2ad48a6ef88d285",
+  "mergedDev": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
   "remainingIssues": [
     929,
     805,
@@ -80,7 +80,7 @@
       "toolBranch": "codex/931-client-ablation-tools",
       "independentToolReview": "approved",
       "ablationRun": 40642932620,
-      "nextAction": "Keep original931/R1 NoGo after independent full-product40687272444 review; do not append samples to that campaign. Separately, user requests actual performance measurement of607 phase rewrite; prepare an independently reviewed fixed paired end-to-end diagnostic without claiming code size predicts performance.",
+      "nextAction": "Keep original931/R1 NoGo. Separate607 actual local/hosted measurements completed and candidate not promoted; logical-forwarder is a new ac17-based hypothesis, not a continuation or pooling of those campaigns.",
       "loopExitExperiment": {
         "worktree": "/Users/sunsi/.codex/worktrees/ownership-931-loop-exit/SharpLink",
         "head": "94adeae886c4ddfd0c02ec2dcb700cd97e9cad80",
@@ -137,19 +137,52 @@
       "independentCodeReview": "approved",
       "state": "PR954 merged as80965d5 after independent review and all hosted checks",
       "entry": "eng/performance-matrix.py and eng/performance-matrix-acceptance.md on tool branch",
-      "nextAction": "Use merged dev80965d5 tools to plan/run-shard/validate frozen candidate; shard scheduler/resources and performance acceptance remain pending"
+      "nextAction": "Scheduler and three-OS packaged Trim/NativeAOT wiring are delivered; do not reimplement them. Use the verified current dev infrastructure with a newly frozen candidate to execute the complete performance matrix and final candidate packaged Trim/AOT gates. Resource/capacity planning and final performance/release acceptance remain open; old infrastructure validation is not acceptance of a new candidate.",
+      "currentInfrastructure": {
+        "observedDev": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+        "state": "delivered; historical PR954 fields above are retained as provenance",
+        "scheduler": {
+          "pullRequest": 958,
+          "mergeCommit": "f724c7aaabdeb5e02bec23f32f6b3c709860e97c",
+          "entry": "eng/performance-matrix-scheduler.py",
+          "workflows": [
+            ".github/workflows/full-performance-matrix.yml",
+            ".github/workflows/full-performance-shard.yml"
+          ],
+          "matrixEngine": "eng/performance-matrix.py",
+          "acceptanceGuide": "eng/performance-matrix-acceptance.md"
+        },
+        "packagedTrimAot": {
+          "pullRequest": 959,
+          "mergeCommit": "e3808b65e694bf1ed250d55fa2ad48a6ef88d285",
+          "entry": "eng/run-packaged-trim-smoke.py",
+          "workflow": ".github/workflows/packaged-trim-smoke.yml",
+          "integrationWorkflows": [
+            ".github/workflows/pr-package-smoke.yml",
+            ".github/workflows/release-gate.yml"
+          ],
+          "hosts": [
+            "linux-x64",
+            "win-x64",
+            "osx-arm64"
+          ],
+          "historicalValidationRun": "https://github.com/SunSi12138/SharpLink/actions/runs/40686455800",
+          "historicalValidation": "nine consumers passed; applicable CI independently reviewed; not final new-candidate acceptance"
+        },
+        "remaining": "Freeze final candidate; execute full performance and packaged Trim/AOT validation with required resources/capacity and independently accept the resulting evidence."
+      }
     },
     "faultCleanup961": {
       "pullRequest": "https://github.com/SunSi12138/SharpLink/pull/961",
       "head": "1a76e1b858b9b306f8d09ed6f85bc3c5319e2da5",
-      "state": "open/not merged; product/census and nonce tool source/remote review PASS; hosted nonce diagnostic independent raw PASS; new-source Extended remains next",
+      "state": "merged with explicit user confirmation; applicable technical gates PASS",
       "censusRunsPassed": [
         40698378662,
         40698378679,
         40698378900
       ],
       "retainedFailedExtended": 40697027111,
-      "nextAction": "Validate Extended on new source1a76e1b8. Preserve original40697027111 Broken pipe, controlled negative failures and local NamedPipe permission denial; focused diagnostic is not full-suite acceptance.",
+      "nextAction": "Completed merge; retain original failure and missing first local native-report gap. No release or performance gain inferred.",
       "censusRunsHead": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
       "nonceToolHead": "555cdb9f8e7230b555257ddc86ce8fcb4dc0181d",
       "nonceDiagnostic": {
@@ -159,7 +192,15 @@
         "independentRawReview": "PASS",
         "positives": "two gated positives and strengthened fixture passed",
         "negativeControls": "removing nonce check and blocking rearm each failed as expected"
-      }
+      },
+      "merged": true,
+      "mergeCommit": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+      "mergedAt": "2026-10-28T15:07:19Z",
+      "tree": "e5b72625377ffdcf5f5470e2ddd69be12a449d8e",
+      "finalReview": "reviews/checkpoint-20261028-1615/pr961-final-review.md",
+      "extendedRun": 40706353475,
+      "extendedCensus": "491/491 success; no filter or skips; full per-case native report not uploaded",
+      "codecRowsVerified": 2088
     },
     "realWire962": {
       "pullRequest": "https://github.com/SunSi12138/SharpLink/pull/962",
@@ -208,27 +249,69 @@
       "scalarGatesPassed": 4,
       "nativeCompletenessGatesFailed": 4,
       "receiptFilesVerified": 193,
-      "decision": "Correctness PASS; mixed mechanism evidence/native completeness gaps; no QPS/P99 data. User-directed actual performance diagnostic pending; code growth alone does not establish no benefit.",
+      "decision": "Actual local/hosted performance evidence independently verified; no demonstrated throughput/CPU gain, descriptive tail risks; candidate not promoted or merged, not a code-size judgment.",
       "independentReview": "reviews/checkpoint-20261028-1405/phase-mechanism-independent-review.md",
-      "nextHypothesis": "Terminal-notification design only;136B/item slope is not proven object attribution",
-      "historicalStopAdvice": "Retained verbatim in independent report as historical interpretation; superseded by current user decision to measure performance. Raw failed native gates remain failed.",
-      "performanceMeasured": false,
-      "nextAction": "measure_phase_rewrite_performance is preparing fixed paired end-to-end diagnostic; independently review/freeze exact source/tool/runtime/load/pairs/samples/decision rules before execution. No diagnostic has run at this checkpoint."
+      "nextHypothesis": "Separate logical-forwarder d17/484a5d onac17, not stacked607; implementation/mechanism PASS, actualTCP pending.",
+      "historicalStopAdvice": "Earlier STOP report retained verbatim as historical advice; actual measurement now supplies current disposition, not code size.",
+      "performanceMeasured": true,
+      "nextAction": "Preserve completed campaigns and permanent archive. No extra samples, pooling, reruns-to-green or merge of validationPR963.",
+      "performanceToolHead": "90d98e3cb84ce36425b99c88c8112632194834b5",
+      "performanceCandidate": "2153cd9228c1de25e89a4bb68f0e3da4dc19f867",
+      "validationPR": 963,
+      "hostedRun": 40712925050,
+      "hostedReport": "reviews/checkpoint-20261028-1615/phase-hosted-review.md",
+      "localReport": "reviews/checkpoint-20261028-1615/phase-local-review.md",
+      "hostedQpsChangesPercent": [
+        -0.01,
+        -0.35,
+        -1.42,
+        -0.51
+      ],
+      "hostedLimits": "QPS/CPU/P99 intervals cross0; static1P999+24.28% descriptive risk,3adverse/3favorable,no multiplicity correction; CPU0/1SMT CORE0;zero steal not isolation",
+      "localLimits": "Mixed/inconclusive; nonzero steal; separate campaign, no pooling",
+      "localPerformanceToolHead": "76b8de5fc52e0a32ed8bc7a2e3772e9c1b29e6fb"
     },
     "wakeupResearch": {
       "productHead": "c17f434e8ec8d019625e64c7f51a4c8eb8e55981",
       "productReview": "PASS correctness only",
       "toolHead": "410c7a71e178385b5eaddf4b525af9e54dd78b4f",
       "offlineTestsPassed": 20,
-      "preparation": "D/C local receipts each7685files independently PASS; three Release builds zero warnings/errors. Actual Debian13 Linuxx64; prepared-only, not frozen Ubuntu24.04 hosted matrix cell.",
+      "preparation": "LocalDebian prepared-only PASS historical. Hosted40716132624 overallfailure: Linuxbundle/receiptsPASS; ARM3buildsPASS but originalreceiptFAILED due orderedarchive overlaymodel.",
       "probesExecuted": 0,
       "performanceMeasured": false,
-      "nextAction": "Prepare independently reviewed hosted prepare -> receipt review -> same-binary collect workflow. Local Debian receipt PASS does not authorize probes/decoder or direct16-process execution; ARM64 remains unprepared/unreviewed; zero collection processes consumed.",
-      "independentPreparationReview": "/workspace/shared/sharplink-native-local-preparation-independent-review-410c7a7.md"
+      "nextAction": "ReviewARM-only byte revalidation; retain original failedreceipt and successfulbuildbytes; emit distinctreviewedreceipts. ReuseLinux unchanged. Existing two-architecture gate still required before anycollect.",
+      "independentPreparationReview": "/workspace/shared/sharplink-native-local-preparation-independent-review-410c7a7.md",
+      "remoteProductHead": "e5a35b9bf63d162c3077aec389d402e28bd2fb53",
+      "hostedPrepareTool": "2b59e359bff99ec8f7d5b1de158179d6eb9fa4f0",
+      "hostedPrepareRun": 40716132624,
+      "retainedFailedPrepare": 40710903027,
+      "independentHostedReview": "reviews/checkpoint-20261028-1615/wakeup-hosted-preparation-review.md",
+      "armDiagnosis": "13Core/ASP overlappingdylibs;336finalruntimefiles all match fixed Core->ASP lastwriter. Do not resign/normalize or relabel originalfailure.",
+      "revalidationTool": "46bb5bf37eb0da3ae225cdce4f0af98049e067ce",
+      "revalidationState": "under independent review; ARM-only pure-byte recovery; no build/CLR/signing or Linux changes"
     },
     "borrowedSingletonResearch": {
       "state": "HOLD;6passed/3failed original focused tests preserved",
       "nextAction": "Quantify copy-only upper bound before proposing separate reviewed mechanism/timing; #961 cleanup fix is not borrowing acceptance",
+      "performanceMeasured": false
+    },
+    "logicalForwarderResearch": {
+      "localProductHead": "d17e1ac691325b8948ca8663ba2d2b836c3ac2a0",
+      "remoteProductHead": "484a5d279a84a3cd9e717c1ec94d3a5a415112df",
+      "tree": "5c0060b2fbd7ca41deb78022170148992d32eea6",
+      "base": "ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c",
+      "stacked607": false,
+      "implementationReview": "reviews/checkpoint-20261028-1615/logical-implementation-review.md",
+      "mechanismTool": "01f6aad58dd14278497a219dfad4f96906b8919a",
+      "mechanismReview": "reviews/checkpoint-20261028-1615/logical-mechanism-review.md",
+      "mechanismState": "PASS4non-timedprocesses24cells each189censusfiles",
+      "observations": "off/direct/pending slope~136to0;AsTask candidate~88;Telemetryon~272both;sync~+8Bcall",
+      "limits": "Single allocation process perarm; actual forwarding suspensionW and allocationstack attribution unmeasured; not QPS/P99",
+      "performanceMeasured": false,
+      "nextAction": "Prepare independent realTCP tool/plan with actual path,Telemetry/AsTask and all retained results; no timing yet."
+    },
+    "optimizationCeilingProfile": {
+      "state": "read-only search for actualCPU/allocationstack evidence started; no newprofile yet",
       "performanceMeasured": false
     }
   },
@@ -236,10 +319,10 @@
   "localPathsAreHistorical": true,
   "cloudEvidence": {
     "branch": "codex/3-release-evidence",
-    "commit": "f55d291f5fa1ee4c5807e4b448718e60405fd960",
-    "index": "https://github.com/SunSi12138/SharpLink/blob/f55d291f5fa1ee4c5807e4b448718e60405fd960/index.json",
-    "archives": 13,
-    "compressedBytes": 136417489,
+    "commit": "f90e9adf565cb3e96adbaa9d150d7f03712a9a80",
+    "index": "https://github.com/SunSi12138/SharpLink/blob/f90e9adf565cb3e96adbaa9d150d7f03712a9a80/index.json",
+    "archives": 14,
+    "compressedBytes": 229505339,
     "originalExperimentCommit": "5a6cf6c490b43c083fb772e2c6f2663fa94bbe16",
     "addedR1CloudArchive": {
       "path": "archives/r1-cloud-native-20261028.tar.gz",
@@ -256,6 +339,15 @@
       "previous12ArchivesUnchanged": true,
       "verification": "reviews/checkpoint-20261028-1405/evidence-publication-verification.json",
       "acceptance": "Evidence retention PASS; R1 NoGo unchanged"
+    },
+    "phasePerformanceArchive": {
+      "bytes": 93087850,
+      "members": 5072,
+      "parts": 30,
+      "sha256": "8c1cd1ff0f165eba1d0912d5fbe75604030c8ce895cf359f15b38b260dab6454",
+      "previous13Unchanged": true,
+      "manifest": "https://github.com/SunSi12138/SharpLink/blob/f90e9adf565cb3e96adbaa9d150d7f03712a9a80/archives/phase-rewrite-performance-20261028.parts/manifest.json",
+      "verification": "reviews/checkpoint-20261028-1615/phase-publication-review.md"
     }
   },
   "takeoverStatus": "cloud-takeover-status.md",
@@ -270,12 +362,12 @@
     "revertHead": "d5f18510ff0015f3b7b36af140f7cc188d5b5f80",
     "revertState": "mergedsquasha2e2fd9 at11:53:19UTC afterexactd5independentPASS+Fast40682750725/CodeQL40682750738success; devtreeaaf9ce equals80965;handoff/evidencerefs preserved",
     "revertMergeCommit": "a2e2fd91473668317fde37ba238b8a7c0ec8728c",
-    "previousRemoteHead": "98ea64cab08190615e7022d5964fae40ec6c5bff",
-    "devHandoffPathsAbsentAt": "2026-10-28T14:06:00Z"
+    "previousRemoteHead": "d0f493fbf25bb3b4f90f758dc5b098241ac1f0e6",
+    "devHandoffPathsAbsentAt": "2026-10-28T16:15:00Z"
   },
-  "productCheckpointObservedAt": "2026-10-28T14:24:00Z",
+  "productCheckpointObservedAt": "2026-10-28T16:15:00Z",
   "historicalDetailPolicy": "Old local paths, historical task fields and prior snapshots remain provenance, not fresh assertions. See independent-handoff-status.md for current passed/failed/unrun boundaries.",
-  "latestGitHubObservations": "reviews/checkpoint-20261028-1405/github-observations.json",
+  "latestGitHubObservations": "reviews/checkpoint-20261028-1615/github-observations.json",
   "majorVersionPolicy": {
     "version": "3.x",
     "breakingApiAbiWireChangesAllowed": true,

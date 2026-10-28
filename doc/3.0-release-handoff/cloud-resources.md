@@ -8,8 +8,8 @@
 
 | 用途 | 远端分支 | 固定参考提交 |
 |---|---|---|
-| 当前开发基线，含 #959；交接仍不在 dev | `dev` | `e3808b65e694bf1ed250d55fa2ad48a6ef88d285`（14:06 UTC 核实；不是发布验收） |
-| 本交接资料 | `codex/3-release-handoff` 独立持续入口，按用户要求不再并入 dev | 本次更新前远端为 `98ea64cab08190615e7022d5964fae40ec6c5bff`；原固定交接 `ba99c6f9` 不改写；dev中的 #955 已由 PR #957 单独撤回 |
+| 当前开发基线，已合入 #961；交接仍不在 dev | `dev` | `57f06f172d29fa5cfd4ea8e9b86a23f122df24ab`（16:15 UTC 核实；不是发布验收） |
+| 本交接资料 | `codex/3-release-handoff` 独立持续入口，按用户要求不再并入 dev | 本次更新前远端为 `d0f493fbf25bb3b4f90f758dc5b098241ac1f0e6`；原固定交接 `ba99c6f9` 不改写；dev中的 #955 已由 PR #957 单独撤回 |
 | #931 物理所有权候选，性能 NoGo | `fix/physical-work-ownership-20261022` | `ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c` |
 | #931 Client-only 工具，FullOpts 和默认 PGO profile | `codex/931-client-ablation-tools` | `51f5bd0ec3f600196f2e26ea48a466ec2cea62d8` |
 | #931 loop-exit 隔离实验和报告，尚非合并候选 | `codex/931-loop-exit-experiment` | `87f76fb805c70693513a87c5acec03e9643e910a`；产品改动在 `94adeae8` |
@@ -31,7 +31,7 @@ git worktree add --detach ../maintenance-933 10b1bf03881337c0801d6ff24318bb47974
 
 ## 持久证据不依赖 Actions 过期时间
 
-[证据分支 README](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/README.md) 和 [机器索引 index.json](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/index.json) 列出每个归档的来源、内容、排除项及解包方式。归档位于该分支 `archives/`，与 dev 代码分开保存。最新核实证据提交为 `f55d291f5fa1ee4c5807e4b448718e60405fd960`：13 个逻辑归档，共 136,417,489 字节；其中 full-product 归档以 11 个有序 binary parts 保存，单体 tar.gz 仅是本地重组路径。原 `5a6cf6c490b43c083fb772e2c6f2663fa94bbe16` 的 10 个归档及后续失败证据仍保留。恢复须使用固定提交 README 的 fail-closed 校验命令，不直接解压不存在的单体路径。详见 [最新状态与精确 hash](independent-handoff-status.md)。
+[证据分支 README](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/README.md) 和 [机器索引 index.json](https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/index.json) 列出每个归档的来源、内容、排除项及解包方式。归档位于该分支 `archives/`，与 dev 代码分开保存。最新核实证据提交为 `f90e9adf565cb3e96adbaa9d150d7f03712a9a80`：14 个逻辑归档，共 229,505,339 字节；新增 phase-rewrite-performance-20261028 以30片保存，93,087,850字节/5072members，SHA256 `8c1cd1ff0f165eba1d0912d5fbe75604030c8ce895cf359f15b38b260dab6454`。前13归档不变；R1 full-product仍为11片。单体tar.gz仅是本地重组路径。原 `5a6cf6c490b43c083fb772e2c6f2663fa94bbe16` 的 10 个归档及后续失败证据仍保留。恢复须使用固定提交 README 的 fail-closed 校验命令，不直接解压不存在的单体路径。详见 [最新状态与精确 hash](independent-handoff-status.md)。
 
 ```sh
 git clone --depth 1 --single-branch --branch codex/3-release-evidence \
