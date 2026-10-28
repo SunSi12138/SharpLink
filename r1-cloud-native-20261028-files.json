@@ -1,0 +1,520 @@
+{
+  "schemaVersion": 1,
+  "scope": "All files in the proposed public archive, including binary strings; no match values printed",
+  "fileCount": 97,
+  "bytes": 10984977,
+  "findings": [],
+  "limits": "Pattern scan is not proof of absence; reviewer must inspect provenance and text logs. Existing public Mac source paths and current cloud paths are identity context, not credentials. Original numeric/native/proof bytes and all failures retained. No exclusions or sanitization applied.",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 6589,
+      "sha256": "b6d66dca30b5fc1a25e34665ee548a2213c654c0a5857921b75c6ae7f2076d8d"
+    },
+    {
+      "path": "attempts/r1-native-001-driver.exit",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "attempts/r1-native-001-driver.log",
+      "bytes": 1340,
+      "sha256": "d6dd39e517ac2e0a7c0b542106ed4e4feecb0d6a6714ed957e3b18f2571ced75"
+    },
+    {
+      "path": "attempts/r1-native-002/build-command.json",
+      "bytes": 217,
+      "sha256": "5926fa4a95a1c026d1f1ceeb5ef432789965156c0b2b3eca7e5884721ca1ee39"
+    },
+    {
+      "path": "attempts/r1-native-002/cpu.txt",
+      "bytes": 13077,
+      "sha256": "423d0eb409963890d618ed0f24c13b5781960e4b74d250cfeb9f2c4ea81dfa07"
+    },
+    {
+      "path": "attempts/r1-native-002/os.txt",
+      "bytes": 80,
+      "sha256": "6ed9c30b25af4449bac3c01d8c021249e865619870c17f0240d8d7a682adc0f2"
+    },
+    {
+      "path": "attempts/r1-native-002/plan.json",
+      "bytes": 2894,
+      "sha256": "da97a0d8a5f728f4ccad1419d27eeaad0d0ce05ee84d828814bca14b3a3fbd51"
+    },
+    {
+      "path": "attempts/r1-native-002/r1-build.log",
+      "bytes": 2817,
+      "sha256": "44bb31414bd8eb8e767f805599035f25d9f04172c0828fef0b710c97521e178c"
+    },
+    {
+      "path": "attempts/r1-native-002/runtime.txt",
+      "bytes": 978,
+      "sha256": "b2311dedfd2fa51a87f19f91f9ed32eb05f6bc77c33fda5057ec85c27989823a"
+    },
+    {
+      "path": "attempts/r1-native-002/sdk.txt",
+      "bytes": 1433,
+      "sha256": "30f7e34c50a2550d5183bbb77df8230b5bce77a32b2f45a57e871ba40902069f"
+    },
+    {
+      "path": "attempts/r1-native-002-driver.exit",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "attempts/r1-native-002-driver.log",
+      "bytes": 1395,
+      "sha256": "478b01fb3bd42a4d3ba73e2b8303be9fdcfa706ff766bd5b969487114b373e7c"
+    },
+    {
+      "path": "attempts/r1-native-003/build-command.json",
+      "bytes": 217,
+      "sha256": "5926fa4a95a1c026d1f1ceeb5ef432789965156c0b2b3eca7e5884721ca1ee39"
+    },
+    {
+      "path": "attempts/r1-native-003/cpu.txt",
+      "bytes": 13077,
+      "sha256": "423d0eb409963890d618ed0f24c13b5781960e4b74d250cfeb9f2c4ea81dfa07"
+    },
+    {
+      "path": "attempts/r1-native-003/diagnostic-summary.json",
+      "bytes": 10577,
+      "sha256": "d36cef3bde612e11867ccca75cdc36fd2648a7a5f80cedaede9834ec9d606768"
+    },
+    {
+      "path": "attempts/r1-native-003/os.txt",
+      "bytes": 80,
+      "sha256": "6ed9c30b25af4449bac3c01d8c021249e865619870c17f0240d8d7a682adc0f2"
+    },
+    {
+      "path": "attempts/r1-native-003/plan.json",
+      "bytes": 2894,
+      "sha256": "da97a0d8a5f728f4ccad1419d27eeaad0d0ce05ee84d828814bca14b3a3fbd51"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/baseline-intercepted-tier1.asm",
+      "bytes": 55914,
+      "sha256": "31716f51017ea1862069b84c6c3d765452038618b3b1fcd431174d2e149798b5"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/baseline-jit.txt",
+      "bytes": 636143,
+      "sha256": "3efea24ae388f1e992436a502d4fb64a25599ec570f450b153d392c41707c10d"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/baseline.host.json",
+      "bytes": 3896,
+      "sha256": "9809287cbc92ac352b858b788ba6cf9bda831f14bc9198f2a68454c541969f22"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/baseline.json",
+      "bytes": 4928,
+      "sha256": "abf72b814a67938a374b15bb62f9c28d3d158868171c060202b405c26dffaf53"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/baseline.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/candidate-intercepted-tier1.asm",
+      "bytes": 63718,
+      "sha256": "5071283245246390cb2651d5174b050e319d93cb4f1a1cb80e6c94a720b063d9"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/candidate-jit.txt",
+      "bytes": 646077,
+      "sha256": "0cdf7354b33e2338c98cc0ad1d4ade15dea69d57a4c45d11c4b4d8983c54eca2"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/candidate.host.json",
+      "bytes": 3898,
+      "sha256": "688c885c48efad40f712786b96e8d6a21ea97b7040f37c2a057c8d2c06e6b4a8"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/candidate.json",
+      "bytes": 4934,
+      "sha256": "6e6f4eec925fa22c5299a65c225d3e786dee3c4f96918bed2cdbbb771e747f58"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/candidate.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "attempts/r1-native-003/preflight/gate.json",
+      "bytes": 445,
+      "sha256": "a6816b4e04f344ee04bbe36b30d2fadead5f5d8533327bf416aca4debf50f308"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/PhysicalTcpProbe",
+      "bytes": 78256,
+      "sha256": "f12fbd5590f2e3548caf910b9e39fb3929a37309c7208c1985ae7b908dc90451"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/PhysicalTcpProbe.deps.json",
+      "bytes": 3033,
+      "sha256": "c5d7666c362974f9c99c2959c0beb491409f8f36c18c3715a882b0c2adbfbd8f"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/PhysicalTcpProbe.dll",
+      "bytes": 52224,
+      "sha256": "dcac09cfd421c6ef1242587caa617649af7709e717d8936a84df2d221b76dc5b"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/PhysicalTcpProbe.pdb",
+      "bytes": 24692,
+      "sha256": "1800c63175617bc903cdf07ad8cd2ecc449ddff6b0cc85e1bd42c3ba124468fb"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/PhysicalTcpProbe.runtimeconfig.json",
+      "bytes": 473,
+      "sha256": "0f53cacd39d4fa02823f1e81d25cfab8aed16754b0b66de4015d401d4dcc11c0"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/ScalarStreamModule.dll",
+      "bytes": 25088,
+      "sha256": "06f0749e29a342af262033f8751743b618e2218dc52ef77ff67a5cc3ac75477e"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Abstractions.dll",
+      "bytes": 196608,
+      "sha256": "85cca1cb21d89e68323bed177d998f87a7c142d22bad80ac6f01bf828793352f"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Abstractions.pdb",
+      "bytes": 53820,
+      "sha256": "0fa3edd90b0a4858c6bd32a3d7f67377226829a58ef4b8b40aa6b2bd3d469262"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Abstractions.xml",
+      "bytes": 274846,
+      "sha256": "522c0f562503d379fc7e343f99d13a1ffceeebb6bb6fcd6ac08c8a0432675fd3"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Client.dll",
+      "bytes": 992256,
+      "sha256": "0686f359f96cfbda10355f5d17fd14d33dafdc321130ba9fc1e8cb63f87cb4de"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Client.pdb",
+      "bytes": 374320,
+      "sha256": "10d2e55b6c09574e1bff3be3a05a8d61faf2b94fa0e5f96540709594b28a0427"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Client.xml",
+      "bytes": 133749,
+      "sha256": "4eb8e6d20f67324a387c6604aa0b1539dd58b61928d2c03cdb7cf4a413f9c02e"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Runtime.dll",
+      "bytes": 541696,
+      "sha256": "c86633290e64d7f676dc7531219b4c87ef6188b8d496431fc383ed5c29ced680"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Runtime.pdb",
+      "bytes": 161676,
+      "sha256": "27baebc4ef7c9d87457550305e962853bb1aaec1c1cbfa0e8a2f4092d8bfb367"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Runtime.xml",
+      "bytes": 95139,
+      "sha256": "e4b6ff1c079c925a3d600c6c8c3068686d7f838fbf79550180afe0ea6cae89e3"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Sdk.dll",
+      "bytes": 6144,
+      "sha256": "50f2cd144e34d5bd84c092fe96051f78e693ee536e6fccf582d1d0ad8f012028"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Sdk.pdb",
+      "bytes": 12112,
+      "sha256": "4e34a90c82cafb9dc8780aebfdd39a68418f6e3a312bf007965dee5a4374f92d"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Sdk.xml",
+      "bytes": 130,
+      "sha256": "682bdc8db2f37d42f3d57f3da6772a66eec24daf115915a559d015fe20528b38"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Serializer.SharpPack.dll",
+      "bytes": 11776,
+      "sha256": "5d1b4e36a528fd07c8264c60c6951f7d6e8b3f17a144973bc8bb1734518467ce"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Serializer.SharpPack.pdb",
+      "bytes": 12792,
+      "sha256": "572562df206bb2838266e554ebae4252de42d06049efa694a77ce2cb1c1b6f75"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Serializer.SharpPack.xml",
+      "bytes": 1824,
+      "sha256": "1ae29bde79a34467482c1538b57ec11fb1dcd60722a963135e28d8f2a74e98bc"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Server.dll",
+      "bytes": 488960,
+      "sha256": "e56501aca56e9a4d0e8c0fe9192e4ad832bfd545902f20f1e8154eecd74d2318"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Server.pdb",
+      "bytes": 147604,
+      "sha256": "f2d6b3995603adc28a65092345f834ffc5a4dbe452189af419c0ee55148b03ae"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpLink.Server.xml",
+      "bytes": 77900,
+      "sha256": "e35578a4be15ec8e6929b870410bb6051a6a9a41aba6b215c884ae73db7d50c0"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/baseline/SharpPack.Core.dll",
+      "bytes": 246272,
+      "sha256": "b1f436b2911975ba6882c40cd23dfb067ad4592292c45679d8fcc5c2f5e01142"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/PhysicalTcpProbe",
+      "bytes": 78256,
+      "sha256": "f12fbd5590f2e3548caf910b9e39fb3929a37309c7208c1985ae7b908dc90451"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/PhysicalTcpProbe.deps.json",
+      "bytes": 3033,
+      "sha256": "c5d7666c362974f9c99c2959c0beb491409f8f36c18c3715a882b0c2adbfbd8f"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/PhysicalTcpProbe.dll",
+      "bytes": 52224,
+      "sha256": "dcac09cfd421c6ef1242587caa617649af7709e717d8936a84df2d221b76dc5b"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/PhysicalTcpProbe.pdb",
+      "bytes": 24692,
+      "sha256": "1800c63175617bc903cdf07ad8cd2ecc449ddff6b0cc85e1bd42c3ba124468fb"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/PhysicalTcpProbe.runtimeconfig.json",
+      "bytes": 473,
+      "sha256": "0f53cacd39d4fa02823f1e81d25cfab8aed16754b0b66de4015d401d4dcc11c0"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/ScalarStreamModule.dll",
+      "bytes": 25088,
+      "sha256": "06f0749e29a342af262033f8751743b618e2218dc52ef77ff67a5cc3ac75477e"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Abstractions.dll",
+      "bytes": 196608,
+      "sha256": "85cca1cb21d89e68323bed177d998f87a7c142d22bad80ac6f01bf828793352f"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Abstractions.pdb",
+      "bytes": 53820,
+      "sha256": "0fa3edd90b0a4858c6bd32a3d7f67377226829a58ef4b8b40aa6b2bd3d469262"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Abstractions.xml",
+      "bytes": 274846,
+      "sha256": "522c0f562503d379fc7e343f99d13a1ffceeebb6bb6fcd6ac08c8a0432675fd3"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Client.dll",
+      "bytes": 992256,
+      "sha256": "e85d1c68dd1070427c6c520a0cad87d4e791370bd38e39f536b25b2379de8f94"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Client.pdb",
+      "bytes": 375852,
+      "sha256": "4df3927ad12675e3ee8e55d5e828ccb9499b150497f8e64c30710cdcd50bfa42"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Client.xml",
+      "bytes": 133749,
+      "sha256": "4eb8e6d20f67324a387c6604aa0b1539dd58b61928d2c03cdb7cf4a413f9c02e"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Runtime.dll",
+      "bytes": 541696,
+      "sha256": "c86633290e64d7f676dc7531219b4c87ef6188b8d496431fc383ed5c29ced680"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Runtime.pdb",
+      "bytes": 161676,
+      "sha256": "27baebc4ef7c9d87457550305e962853bb1aaec1c1cbfa0e8a2f4092d8bfb367"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Runtime.xml",
+      "bytes": 95139,
+      "sha256": "e4b6ff1c079c925a3d600c6c8c3068686d7f838fbf79550180afe0ea6cae89e3"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Sdk.dll",
+      "bytes": 6144,
+      "sha256": "50f2cd144e34d5bd84c092fe96051f78e693ee536e6fccf582d1d0ad8f012028"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Sdk.pdb",
+      "bytes": 12112,
+      "sha256": "4e34a90c82cafb9dc8780aebfdd39a68418f6e3a312bf007965dee5a4374f92d"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Sdk.xml",
+      "bytes": 130,
+      "sha256": "682bdc8db2f37d42f3d57f3da6772a66eec24daf115915a559d015fe20528b38"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Serializer.SharpPack.dll",
+      "bytes": 11776,
+      "sha256": "5d1b4e36a528fd07c8264c60c6951f7d6e8b3f17a144973bc8bb1734518467ce"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Serializer.SharpPack.pdb",
+      "bytes": 12792,
+      "sha256": "572562df206bb2838266e554ebae4252de42d06049efa694a77ce2cb1c1b6f75"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Serializer.SharpPack.xml",
+      "bytes": 1824,
+      "sha256": "1ae29bde79a34467482c1538b57ec11fb1dcd60722a963135e28d8f2a74e98bc"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Server.dll",
+      "bytes": 488960,
+      "sha256": "e56501aca56e9a4d0e8c0fe9192e4ad832bfd545902f20f1e8154eecd74d2318"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Server.pdb",
+      "bytes": 147604,
+      "sha256": "f2d6b3995603adc28a65092345f834ffc5a4dbe452189af419c0ee55148b03ae"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpLink.Server.xml",
+      "bytes": 77900,
+      "sha256": "e35578a4be15ec8e6929b870410bb6051a6a9a41aba6b215c884ae73db7d50c0"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/candidate/SharpPack.Core.dll",
+      "bytes": 246272,
+      "sha256": "b1f436b2911975ba6882c40cd23dfb067ad4592292c45679d8fcc5c2f5e01142"
+    },
+    {
+      "path": "attempts/r1-native-003/prepared/prepared-manifest.json",
+      "bytes": 9855,
+      "sha256": "5e8e505f227bf516e203331a98421f257178f87a7d8022baccb212e09557f143"
+    },
+    {
+      "path": "attempts/r1-native-003/r1-build.log",
+      "bytes": 886,
+      "sha256": "28cd7df34dbe43002d5a7723b517bd7ead1d6ba5f6216469f4d2bc61ffd7840f"
+    },
+    {
+      "path": "attempts/r1-native-003/runtime.txt",
+      "bytes": 978,
+      "sha256": "b2311dedfd2fa51a87f19f91f9ed32eb05f6bc77c33fda5057ec85c27989823a"
+    },
+    {
+      "path": "attempts/r1-native-003/sdk.txt",
+      "bytes": 1433,
+      "sha256": "30f7e34c50a2550d5183bbb77df8230b5bce77a32b2f45a57e871ba40902069f"
+    },
+    {
+      "path": "attempts/r1-native-003-driver.exit",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "attempts/r1-native-003-driver.log",
+      "bytes": 1073,
+      "sha256": "1c986f12aa746eec1e0efc725a8c07f6a09b392627a254f79e9d934c61b8f388"
+    },
+    {
+      "path": "attempts/r1-native-003-environment.txt",
+      "bytes": 404,
+      "sha256": "a894a39634061638613269c74ec8121efa376e06a7c714bf4b5186beb9421a16"
+    },
+    {
+      "path": "python-fixtures-hosted.log",
+      "bytes": 3925,
+      "sha256": "562ce52136381366470dccaf65008df492c79e7c3a4e6aa2d49986cba272b1e3"
+    },
+    {
+      "path": "python-fixtures-procfs.log",
+      "bytes": 3925,
+      "sha256": "9a24cbb7cfab0a262d5684e8ca0bc14a64679343a28afe3c0ada28eafdc50d04"
+    },
+    {
+      "path": "python-fixtures.log",
+      "bytes": 3769,
+      "sha256": "b2c021bd06f1a8f0f46faadf771617b364c16ef282c64bd9b4e6f933a6d8cdf0"
+    },
+    {
+      "path": "r1-product.patch",
+      "bytes": 1377,
+      "sha256": "d01ae1c5acd6f69763ee569b1b47d2204efce0196cce82f04781bedffa1ba04c"
+    },
+    {
+      "path": "reused-r1-correctness/SharpLink.IntegrationTests-macos-net10.0.tunit-report.json",
+      "bytes": 28587,
+      "sha256": "a9fcca810ea2a0fe2e5f20834dcc393c943a9c1c08f17e42aa57c9ac35a192d0"
+    },
+    {
+      "path": "reused-r1-correctness/SharpLink.UnitTests-macos-net10.0.tunit-report.json",
+      "bytes": 229269,
+      "sha256": "068e86e911ddd539abffa62d65b7438d3f7a5ad64249168bec9581d0eacb4ccf"
+    },
+    {
+      "path": "reused-r1-correctness/applicability-summary.json",
+      "bytes": 2631,
+      "sha256": "48edb35aebb38728b1a24b26cb9faf0af5ee9823cb13f3ea4507ab860264ad33"
+    },
+    {
+      "path": "reused-r1-correctness/integration-focused.log",
+      "bytes": 482,
+      "sha256": "cc1d36e4aab5f680fdebf584c0d9fa0ceed64dfe2abd65f69e4f7bce6210b439"
+    },
+    {
+      "path": "reused-r1-correctness/unit-focused.log",
+      "bytes": 453,
+      "sha256": "e0c61a73fd5289f58b429585e788b652bb54ca6a597564a6750a79def2739182"
+    },
+    {
+      "path": "reviewed-tool-candidate.patch",
+      "bytes": 38221,
+      "sha256": "9991f303347a9955f993539715bfc28dc866f9c2ab53ff04cf44477664d8d67f"
+    },
+    {
+      "path": "runtime-provenance/provenance.json",
+      "bytes": 146,
+      "sha256": "ceec15411736b3169d44b91adedcb511a11882e41851f76f4cf00c7c6b0257e8"
+    },
+    {
+      "path": "runtime-provenance/releases.json",
+      "bytes": 1151627,
+      "sha256": "8fa7ae2d46b1f94416d5458c7ed68b0c3cafc5efb8e34d89dea3a98bf0a38b33"
+    }
+  ],
+  "archive": "r1-cloud-native-20261028.tar.gz",
+  "archiveBytes": 3325186,
+  "archiveSha256": "d38f97ee440ddd639e15a9e47774c8981584a374c85ccbecaa9adcbbc03c36cf",
+  "executedTool": "17038d5014d1d4a76407fa13c451d6a0606968ff",
+  "reviewedInitialTool": "573c51331059f6cf453cbd2e903aebafe7f85531",
+  "reportToolCandidate": "5c6606a1fea4e165036b316491c0b4ce9e9cc419",
+  "baselineClient": "ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c",
+  "candidateClient": "94adeae886c4ddfd0c02ec2dcb700cd97e9cad80",
+  "referenceArchiveCommit": "5a6cf6c490b43c083fb772e2c6f2663fa94bbe16",
+  "referenceRun": "40646151477",
+  "excludedWorkspaceCategories": [
+    "SDK/private-runtime installed binaries and official downloaded runtime tarballs (official release metadata and verified hashes/provenance retained)",
+    "NuGet restored package/HTTP cache and CLI-home first-run caches",
+    "Downloaded actionlint executable/archive",
+    "Unrelated workspaces and unrelated process command lines (never collected)"
+  ],
+  "sanitization": "None; included raw attempt logs/native/proof/host/DLL bytes unchanged",
+  "status": "Failed four-target native gate; no timing or product acceptance",
+  "archivePathNotes": {
+    "runtimeMetadata": "runtime-provenance/ (historical README workspace path artifacts/runtime-install maps here)",
+    "plan": "Embedded in reviewed-tool-candidate.patch; not a loose file",
+    "historicalReportCandidate": "5c6606a is report/tool-preparation source only; not executed tool",
+    "executedTools": "001=573c513;002/003=17038d5",
+    "newHostedValidation": "Remote9c0cf9e; PR956 is separate future execution, not part of this cloud archive"
+  }
+}

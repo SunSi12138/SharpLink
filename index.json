@@ -392,6 +392,49 @@
       "uncompressedBytes": 416652,
       "identityFiles": [],
       "originalIdentityDeclarations": []
+    },
+    {
+      "id": "r1-cloud-native-20261028",
+      "archive": "archives/r1-cloud-native-20261028.tar.gz",
+      "archiveBytes": 3325186,
+      "sha256": "d38f97ee440ddd639e15a9e47774c8981584a374c85ccbecaa9adcbbc03c36cf",
+      "files": 97,
+      "uncompressedBytes": 10984977,
+      "inventory": "r1-cloud-native-20261028-files.json",
+      "source": "Cloud R1 native-only attempts001/002/003 on2026-10-28; original prepared DLLs derived from run40646151477",
+      "runId": null,
+      "runUrl": null,
+      "sourceIdentity": "Executed native tool17038d5014d1d4a76407fa13c451d6a0606968ff; baseline/commonac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c; R1Client94adeae886c4ddfd0c02ec2dcb700cd97e9cad80. 5c6606a is historical report/workflow candidate, not executed source.",
+      "status": "Failed four-target native gate in both arms: Runtime/Server Tier1 absent. Two4352-RPC processes exit0; identitiespass; no timing/productacceptance. Preparation001/002 failures retained.",
+      "unpack": "tar -xzf archives/r1-cloud-native-20261028.tar.gz",
+      "compress": "tar -czf archives/r1-cloud-native-20261028.tar.gz r1-cloud-native-20261028/",
+      "identityFiles": [
+        "attempts/r1-native-003/plan.json",
+        "attempts/r1-native-003/prepared/prepared-manifest.json",
+        "attempts/r1-native-003/preflight/baseline.json",
+        "attempts/r1-native-003/preflight/candidate.json",
+        "attempts/r1-native-003/preflight/gate.json",
+        "runtime-provenance/provenance.json"
+      ],
+      "originalIdentityDeclarations": [
+        {
+          "file": "attempts/r1-native-003/plan.json",
+          "field": "/toolRevision",
+          "value": "17038d5014d1d4a76407fa13c451d6a0606968ff"
+        },
+        {
+          "file": "attempts/r1-native-003/plan.json",
+          "field": "/baselineClient",
+          "value": "ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c"
+        },
+        {
+          "file": "attempts/r1-native-003/plan.json",
+          "field": "/candidateClient",
+          "value": "94adeae886c4ddfd0c02ec2dcb700cd97e9cad80"
+        }
+      ],
+      "privacyReview": "r1-cloud-native-20261028-files.json",
+      "sanitization": "None of included raw evidence; excluded SDK/runtime/package caches documented in inventory. Prior ten archives and their privacy records unchanged."
     }
   ],
   "exclusions": "excluded-files.json",
@@ -401,5 +444,8 @@
   },
   "localOriginalsUnmodified": true,
   "privacyReview": "scan-review.json",
-  "integrity": "Archive SHA-256 is for upload/download transfer verification; timing files remain original bytes."
+  "integrity": "Archive SHA-256 is for upload/download transfer verification; timing files remain original bytes.",
+  "updatedAtUtc": "2026-10-28T11:41:00Z",
+  "archiveCount": 11,
+  "archiveBytes": 98694834
 }

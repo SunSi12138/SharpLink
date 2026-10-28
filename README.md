@@ -9,7 +9,7 @@ mkdir extracted
 for archive in archives/*.tar.gz; do tar -xzf "$archive" -C extracted; done
 ```
 
-The machine inventory is [index.json](index.json). Each archive has a file inventory and transfer-integrity identity. Source commit/arm/binary identities inside the original evidence remain authoritative; this mirror commit is not their source SHA. Every archive is under 50 MiB.
+The machine inventory is [index.json](index.json). It currently contains **11 archives, 98,694,834 bytes total**; all prior ten archives remain unchanged. Each archive has a file inventory and transfer-integrity identity. Source commit/arm/binary identities inside the original evidence remain authoritative; this mirror commit is not their source SHA. Every archive is under 50 MiB.
 
 | Archive | MiB | Files | Status |
 |---|---:|---:|---|
@@ -23,6 +23,20 @@ The machine inventory is [index.json](index.json). Each archive has a file inven
 | [933-repair-40636189267](archives/933-repair-40636189267.tar.gz) | 8.01 | 4209 | Repair/source preparation evidence after failed canonical run; not final release acceptance |
 | [workflow-logs](archives/workflow-logs.tar.gz) | 0.04 | 8 | Unmodified hosted run logs; failures retained |
 | [release-status-logs](archives/release-status-logs.tar.gz) | 0.06 | 14 | Historical status and diagnostic logs; current root handoff and precise candidate gates prevail |
+| [r1-cloud-native-20261028](archives/r1-cloud-native-20261028.tar.gz) | 3.17 | 97 | Failed four-target Tier1 gate in both cloud arms; preparation failures retained; no timing or acceptance |
+
+The new R1 cloud archive contains attempts001/002/003. Executed native tool is
+`17038d5014d1d4a76407fa13c451d6a0606968ff`; product R1 remains `94adeae8`.
+The embedded report/workflow candidate `5c6606a` was **not** the executed tool.
+The later [Draft validation PR956](https://github.com/SunSi12138/SharpLink/pull/956)
+uses a separate hosted environment and is not evidence inside this cloud archive.
+SHA256 is `d38f97ee440ddd639e15a9e47774c8981584a374c85ccbecaa9adcbbc03c36cf`.
+Its [file/provenance/privacy inventory](r1-cloud-native-20261028-files.json)
+records all97 member hashes, zero credential-pattern findings and explicit cache
+exclusions; independent review checked the exact archive bytes. Raw proof, host,
+native, DLL and failure logs are unmodified. Pattern scanning is not an absolute
+absence guarantee. Archive runtime metadata is under `runtime-provenance/`; the
+frozen plan is embedded in `reviewed-tool-candidate.patch`, not a loose file.
 
 ## Privacy and exclusions
 
