@@ -49,6 +49,12 @@ records Protocol v2 frame metadata to verify the last condition. Timeout, missin
 package, compiler error, failed handshake, connection close, or generic exception
 is never accepted as an expected rejection.
 
+The narrow `protocol-v2-process-gate.yml` workflow runs on ready dev/main PRs
+against the exact PR head, builds only the five-package peer closure, and retains
+failure evidence. Draft PRs skip execution until independent review. The full
+Release Gate also invokes this same script; running that entire workflow is not
+necessary to validate a tooling-only PR.
+
 This is a focused Linux release gate, not the full codec/transport/security/
 cancellation/deadline/Trim/AOT matrix, nor a promise that every different contract
 or codec can interoperate. Existing ABI-mixing and protocol-minor rejection tests

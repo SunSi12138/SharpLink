@@ -1,0 +1,68 @@
+name: Real-version Protocol v2 Process Gate
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/protocol-v2-process-gate.yml'
+      - '.github/workflows/release-gate.yml'
+      - '.github/actions/setup-dotnet/**'
+      - 'eng/verify-protocol-v2-cross-version.*'
+      - 'eng/tests/test_protocol_v2_cross_version.py'
+      - 'test/fixtures/protocol-v2-cross-version/**'
+      - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.Runtime/**'
+      - 'src/SharpLink.Client/**'
+      - 'src/SharpLink.Server/**'
+      - 'src/SharpLink.Sdk/**'
+      - 'src/SharpLink.Generator/**'
+      - 'src/SharpLink.Shared/**'
+      - 'Directory.*.props'
+      - 'Directory.*.targets'
+      - 'global.json'
+  workflow_dispatch:
+
+jobs:
+  wire-process-gate:
+    # New/changed gate tools are independently reviewed before leaving Draft.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Test wire gate reject controls
+        run: python3 -m unittest discover -s eng/tests -p test_protocol_v2_cross_version.py -v
+
+      - name: Build and pack only the five-package wire peer closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in Client Server Sdk; do
+            dotnet build "src/SharpLink.$name/SharpLink.$name.csproj" -c Release -m:1 -nodeReuse:false -p:UseSharedCompilation=false
+          done
+          for name in Abstractions Runtime Client Server Sdk; do
+            dotnet pack "src/SharpLink.$name/SharpLink.$name.csproj" --no-build --no-restore -c Release -o artifacts/nuget -m:1 -nodeReuse:false
+          done
+
+      - name: Run real published and candidate process pairs
+        run: ./eng/verify-protocol-v2-cross-version.sh
+
+      - name: Upload identities, wire observations and retained failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: protocol-v2-process-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: artifacts/protocol-v2-cross-version/attempt-*/evidence
+          if-no-files-found: warn
+          retention-days: 30

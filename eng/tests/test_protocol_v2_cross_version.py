@@ -235,6 +235,23 @@ class WireGateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "five RPC shapes"):
             gate.validate_case(*args)
 
+    def test_narrow_ci_uses_exact_head_and_preserves_failure_evidence(self):
+        root = Path(__file__).parents[2]
+        workflow = (root / ".github/workflows/protocol-v2-process-gate.yml").read_text()
+        release = (root / ".github/workflows/release-gate.yml").read_text()
+        self.assertIn("branches: [dev, main]", workflow)
+        self.assertIn("ready_for_review", workflow)
+        self.assertIn("github.event.pull_request.draft == false", workflow)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", workflow)
+        self.assertIn("for name in Abstractions Runtime Client Server Sdk", workflow)
+        self.assertNotIn("Sharplink.slnx", workflow)
+        self.assertNotIn("tags:", workflow)
+        for text in (workflow, release):
+            self.assertIn("./eng/verify-protocol-v2-cross-version.sh", text)
+            self.assertIn("test_protocol_v2_cross_version.py", text)
+            self.assertIn("path: artifacts/protocol-v2-cross-version/attempt-*/evidence", text)
+            self.assertIn("if: always()", text)
+
     def test_missing_positive_control_fails(self):
         results = [dict(server=s, client=c, expectation=e, status="passed") for s, c, e in gate.MATRIX]
         gate.validate_matrix(results)
