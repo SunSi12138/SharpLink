@@ -460,6 +460,35 @@
       ],
       "privacyReview": "r1-hosted-native-40681832353-files.json",
       "sanitization": "None. All raw included ZIP members byte-identical. Only2official runtime installer tarballs excluded with exact memberSHA256/SHA512/size and reviewed download pins retained. Prior11archives unchanged."
+    },
+    {
+      "id": "r1-full-product-40687272444",
+      "archive": "archives/r1-full-product-40687272444.tar.gz",
+      "storage": "ordered-binary-parts",
+      "partsManifest": "archives/r1-full-product-40687272444.parts/manifest.json",
+      "partCount": 11,
+      "archivePathMeaning": "Logical locally reassembled path; monolithic archive is not stored in Git. Verify each listed part and concatenated whole hash before extracting.",
+      "archiveBytes": 34353133,
+      "sha256": "892b8cfcfcc50da4cf22b4046ea0228ba31f2ecde04c783421760df3288ba23b",
+      "files": 611,
+      "uncompressedBytes": 64991026,
+      "inventory": "r1-full-product-40687272444-files.json",
+      "source": "Official artifact12815898568/run40687272444 attempt1 plus source-bound independent review and owner audit.",
+      "runId": "40687272444",
+      "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/40687272444",
+      "sourceIdentity": "Executed tool271103147577a70bd973adfac1860f2da2276f07, tree-equivalent to reviewed local1712b82fa3656bb934b380576681afc5cecc428b; coherent full-product baselinecc7c458b559295e0fc61ec0062bb220faf880a76 vsR194adeae886c4ddfd0c02ec2dcb700cd97e9cad80.",
+      "status": "VALID diagnostic-only48TCP/14scalar,2,763,672ticks. Independent review confirms dynamic1P99+7.06%(6/6adverse),P99.9+10.60%; other cells mixed/noisy. No broad recovery or no-regression proof; #931NoGo unchanged.",
+      "unpack": "Reassemble/verify ordered parts using README instructions, then tar -xzf archives/r1-full-product-40687272444.tar.gz",
+      "identityFiles": [
+        "official-artifact-members.json",
+        "hosted/extracted/evidence/experiment.json",
+        "hosted/extracted/evidence/snapshot-integrity.json",
+        "hosted/extracted/evidence/tcp/sample-validation.json",
+        "hosted/extracted/evidence/complete.json",
+        "independent-review/REVIEW.md"
+      ],
+      "privacyReview": "r1-full-product-40687272444-files.json",
+      "sanitization": "None of included raw evidence.594/596officialZIPmembers byte-identical; exactly2official runtime installers excluded with hashes/size/URLs retained. Independent archive privacy review covers all611members,23decompressedbinlogs and240packageZIPmembers; prior12archives unchanged."
     }
   ],
   "exclusions": "excluded-files.json",
@@ -470,7 +499,7 @@
   "localOriginalsUnmodified": true,
   "privacyReview": "scan-review.json",
   "integrity": "Archive SHA-256 is for upload/download transfer verification; timing files remain original bytes.",
-  "updatedAtUtc": "2026-10-28T12:15:00Z",
-  "archiveCount": 12,
-  "archiveBytes": 102064356
+  "updatedAtUtc": "2026-10-28T13:05:00Z",
+  "archiveCount": 13,
+  "archiveBytes": 136417489
 }

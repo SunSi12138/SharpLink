@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "format": "ordered binary slices of the exact independently reviewed gzip tar archive; concatenate in listed order, not separate compressed archives",
+  "archiveId": "r1-full-product-40687272444",
+  "reassembledArchive": "archives/r1-full-product-40687272444.tar.gz",
+  "archiveBytes": 34353133,
+  "archiveSha256": "892b8cfcfcc50da4cf22b4046ea0228ba31f2ecde04c783421760df3288ba23b",
+  "partBytesMaximum": 3145728,
+  "parts": [
+    {
+      "order": 1,
+      "path": "archives/r1-full-product-40687272444.parts/part-001",
+      "bytes": 3145728,
+      "sha256": "d0d5705296ac72178a19ae724a1994bcb08e186b6c35342c8474c64c433a457b"
+    },
+    {
+      "order": 2,
+      "path": "archives/r1-full-product-40687272444.parts/part-002",
+      "bytes": 3145728,
+      "sha256": "09d03b23a28c0c7f6dda0f1f3b02bd9146b91c5e0841de620bcead789e6a9123"
+    },
+    {
+      "order": 3,
+      "path": "archives/r1-full-product-40687272444.parts/part-003",
+      "bytes": 3145728,
+      "sha256": "ea68ae812ce8a63b6010d4c3aa2dbd740920edc2c32a640046e94c1940b48574"
+    },
+    {
+      "order": 4,
+      "path": "archives/r1-full-product-40687272444.parts/part-004",
+      "bytes": 3145728,
+      "sha256": "8182e90e5f18af315cd2c7385737e3668e8e2502d101cdf2edba427eb8d43f09"
+    },
+    {
+      "order": 5,
+      "path": "archives/r1-full-product-40687272444.parts/part-005",
+      "bytes": 3145728,
+      "sha256": "8e6bebcbd68af096f330b0c627692ccf5e535c8e4bb75de11f96d94ca54429f2"
+    },
+    {
+      "order": 6,
+      "path": "archives/r1-full-product-40687272444.parts/part-006",
+      "bytes": 3145728,
+      "sha256": "439b030dcabc83f43379b0ae18d8e3053ef54c8537f7b3c17a574b2ad7dd8cd7"
+    },
+    {
+      "order": 7,
+      "path": "archives/r1-full-product-40687272444.parts/part-007",
+      "bytes": 3145728,
+      "sha256": "6d6c8fa1614c01cd7c729a70189ea77ea2bbc1cb87a9bef3d6fd2858362686c7"
+    },
+    {
+      "order": 8,
+      "path": "archives/r1-full-product-40687272444.parts/part-008",
+      "bytes": 3145728,
+      "sha256": "0fe652b38f1fcca1fa4d5ef39f051b342b86928d18f42eedbafae1d4c9da11bc"
+    },
+    {
+      "order": 9,
+      "path": "archives/r1-full-product-40687272444.parts/part-009",
+      "bytes": 3145728,
+      "sha256": "fc408e6135c1b05dfd8509175ccbbef8d8f6bae7ddc9d54bb5f75024958ffbbb"
+    },
+    {
+      "order": 10,
+      "path": "archives/r1-full-product-40687272444.parts/part-010",
+      "bytes": 3145728,
+      "sha256": "a920e2a6be7e4485364eef8006f1afdd81295ba9fab6513ad9efed9998334b5e"
+    },
+    {
+      "order": 11,
+      "path": "archives/r1-full-product-40687272444.parts/part-011",
+      "bytes": 2895853,
+      "sha256": "193ac40318cfdd324cae2afa2dae8963cec4ee59166f94d5a5f24855f1efdb55"
+    }
+  ],
+  "filesInArchive": 611,
+  "uncompressedBytes": 64991026,
+  "reason": "Connector create_blob accepts inline base64, not file streaming; conservative3MiB binary parts keep each request within previously proven upload size. No failed monolithic upload was attempted.",
+  "evidenceScope": "VALID diagnostic execution with adverse dynamic1 tails; #931NoGo unchanged. No raw samples excluded or modified by splitting."
+}

@@ -3,13 +3,36 @@
 This dedicated evidence branch preserves raw task artifacts beyond Actions retention. It is **not a release, not a Go decision, and not the product source branch**. Follow the current root handoff on the product/documentation branch for decisions.
 
 ```bash
+set -euo pipefail
 git clone --single-branch --branch codex/3-release-evidence https://github.com/SunSi12138/SharpLink.git SharpLink-release-evidence
 cd SharpLink-release-evidence
-mkdir extracted
+# Reassemble and verify the split R1 diagnostic archive before extraction.
+python3 - <<'PY_REASSEMBLE'
+import hashlib, json
+from pathlib import Path
+manifest = json.loads(Path('archives/r1-full-product-40687272444.parts/manifest.json').read_text())
+chunks = []
+for order, part in enumerate(manifest['parts'], 1):
+    data = Path(part['path']).read_bytes()
+    if part['order'] != order or len(data) != part['bytes'] or hashlib.sha256(data).hexdigest() != part['sha256']:
+        raise SystemExit('Invalid or reordered part: ' + part['path'])
+    chunks.append(data)
+data = b''.join(chunks)
+if len(data) != manifest['archiveBytes'] or hashlib.sha256(data).hexdigest() != manifest['archiveSha256']:
+    raise SystemExit('Reassembled archive failed integrity check')
+target = Path(manifest['reassembledArchive'])
+if target.exists():
+    if target.read_bytes() != data:
+        raise SystemExit('Existing archive differs; refusing overwrite')
+else:
+    target.write_bytes(data)
+print('Verified:', target, len(data), manifest['archiveSha256'])
+PY_REASSEMBLE
+mkdir -p extracted
 for archive in archives/*.tar.gz; do tar -xzf "$archive" -C extracted; done
 ```
 
-The machine inventory is [index.json](index.json). It currently contains **12 archives, 102,064,356 bytes total**; all prior eleven archives remain unchanged. Each archive has a file inventory and transfer-integrity identity. Source commit/arm/binary identities inside the original evidence remain authoritative; this mirror commit is not their source SHA. Every archive is under 50 MiB.
+The machine inventory is [index.json](index.json). It currently contains **13 logical archives, 136,417,489 bytes total**; all prior twelve archives remain unchanged. The new full-product archive is stored as11 ordered binary parts; its logical `.tar.gz` path exists only after verified local reassembly. Totals count the original archive bytes once, not metadata or a duplicate monolithic file. Each archive has a file inventory and transfer-integrity identity. Source commit/arm/binary identities inside the original evidence remain authoritative; this mirror commit is not their source SHA. Every archive is under 50 MiB.
 
 | Archive | MiB | Files | Status |
 |---|---:|---:|---|
@@ -25,6 +48,7 @@ The machine inventory is [index.json](index.json). It currently contains **12 ar
 | [release-status-logs](archives/release-status-logs.tar.gz) | 0.06 | 14 | Historical status and diagnostic logs; current root handoff and precise candidate gates prevail |
 | [r1-cloud-native-20261028](archives/r1-cloud-native-20261028.tar.gz) | 3.17 | 97 | Failed four-target Tier1 gate in both cloud arms; preparation failures retained; no timing or acceptance |
 | [r1-hosted-native-40681832353](archives/r1-hosted-native-40681832353.tar.gz) | 3.21 | 98 | Valid non-timed mechanism and8focused tests only; not performance Go; cloud failures retained |
+| [r1-full-product-40687272444](archives/r1-full-product-40687272444.parts/manifest.json) | 32.76 | 611 | Valid48+14diagnostic; adverse dynamic1tails, mixed other cells; NoGo unchanged.11lossless parts |
 
 The new R1 cloud archive contains attempts001/002/003. Executed native tool is
 `17038d5014d1d4a76407fa13c451d6a0606968ff`; product R1 remains `94adeae8`.
@@ -537,6 +561,35 @@ excluded official runtime installer tarballs (both hashes/URLs pinned and retain
 No raw native/host/identity/proof/test evidence is sanitized or omitted. The original
 89,150,325-byte officialZIP digest is retained; it is not duplicated as a container.
 Independent report/verifier and8 extracted target bodies are included unchanged.
+
+## Full-product R1 diagnostic archive (lossless split storage)
+
+[Run40687272444](https://github.com/SunSi12138/SharpLink/actions/runs/40687272444),
+exact tool `271103147577a70bd973adfac1860f2da2276f07`, completed the frozen original
+48TCP+14scalar process protocol for coherent cc7 baseline versus94ade R1. Independent
+raw review confirms2,763,672ticks, identities, schedule and descriptive statistics.
+Dynamic1 P99 is+7.06% (all6pairs adverse), P99.9+10.60%; remaining cells are mixed/noisy.
+**No broad recovery or no-regression proof; #931NoGo remains.** No samples were added,
+replaced or removed. Earlier original/cloud failures remain in their prior archives.
+
+The [ordered parts manifest](archives/r1-full-product-40687272444.parts/manifest.json)
+records all11parts' order, exact lengths and SHA256. They are binary slices of one
+already-reviewed gzip archive, **not** independent tarballs. Reassemble using the
+commands above, verify every part and the total, then extract the reconstructed file.
+Reassembled length34,353,133 bytes; SHA256
+`892b8cfcfcc50da4cf22b4046ea0228ba31f2ecde04c783421760df3288ba23b`.
+No monolithic duplicate is stored in Git. Splitting addresses conservative connector
+payload sizing only and changes no archive byte or member. Existing12archives keep
+their original storage paths and hashes. No failed upload was hidden or retried.
+
+The [611-member inventory](r1-full-product-40687272444-files.json) retains all raw
+measurements, prepared binaries, package/build/host/proof logs and independent reports.
+Exactly2official framework installer tarballs are excluded from the original ZIP;
+all594other original members are byte-identical, with full original ZIP/member hashes,
+installer SHA512/URLs and exclusion reasons retained. The approved compact archive
+also contains the unchanged independent report/scripts and supplemental owner audit.
+Independent privacy review checked all611members,23decompressedbinlogs and240package
+ZIP members with no credential findings. None of the included raw evidence is sanitized.
 
 ## Published source branches
 
