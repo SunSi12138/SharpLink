@@ -1,9 +1,23 @@
 {
   "schema": 1,
-  "stage": "revalidate",
+  "stage": "collect",
   "environmentPolicy": "hosted-known-env-v1",
-  "originalBuildRunId": 40716132624,
-  "originalBuildCommit": "2b59e359bff99ec8f7d5b1de158179d6eb9fa4f0",
-  "originalFailureArtifactId": 12828441906,
-  "originalFailureTarSHA256": "8fbd4fb3cf24c7859aa184fbd5c65718aa5bbf58c0f4f73f4d96db7f2dfffd70"
+  "prepareRunId": 40716132624,
+  "prepareCommit": "2b59e359bff99ec8f7d5b1de158179d6eb9fa4f0",
+  "revalidation": {
+    "runId": 40724821669,
+    "toolCommit": "b62ac5a1758fcdcfcc1c60bf8a1d50bf8cfaf5a8"
+  },
+  "architectures": {
+    "linux-x64": {
+      "bundleSha256": "38232d51c7ec14a661a91a0275f2795eda8ba6befa6b8bc51293ba52e4449d34",
+      "DReceiptSha256": "136aa42f2d66deb554092888a75ba055eb27ab00235af616de6419dc7f73a5e2",
+      "CReceiptSha256": "a2b3d9ee0d3511e8892eab7ed2bebf997e32e3c66ced1eda5a8768bbd8bbfe36"
+    },
+    "osx-arm64": {
+      "bundleSha256": "07a79fefc79be993ec204d4d47e4e6aa20919865fa3fb13647cf1078b12b1612",
+      "DReceiptSha256": "548db4b94324ffe65852ea7383b2d22208a7bcc6cbdb69daa84582583c6bcfb0",
+      "CReceiptSha256": "7bb030f5b0dff4c0776a6fa1424a44edddcb48f4836bef2109ab868e62b55a48"
+    }
+  }
 }
