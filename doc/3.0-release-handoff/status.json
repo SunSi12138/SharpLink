@@ -1,9 +1,9 @@
 {
-  "updatedAt": "2026-10-28T11:18:00Z",
+  "updatedAt": "2026-10-28T11:54:00Z",
   "goal": "Release SharpLink 3.0 after independent review and complete release acceptance",
   "goalStatus": "active",
   "releaseReady": false,
-  "mergedDev": "80965d5de2bd7bc4979bb36f3f2811493ade4fd0",
+  "mergedDev": "a2e2fd91473668317fde37ba238b8a7c0ec8728c",
   "remainingIssues": [
     929,
     805,
@@ -26,9 +26,19 @@
       "canonicalRun": 40644131003,
       "state": "canonical current-head validation success; prerequisite931 performance and933 feature performance still block merge",
       "previousFailedRun": 40636189267,
-      "nextAction": "Canonical run40644131003 is verified completed/success at exact10b1bf03. Independently inspect raw native companion and executed inventories; keep prerequisite931 and feature-performance gates open. Preserve50e format red and16ef product red.",
+      "nextAction": "Do not repeat current10b canonical. #931NoGo still blocks. After accepted931 successor, review integration delta if needed then freeze independent three-arm dev/prerequisite/feature plan for affected ordinaryUnary/Retry and finite-deadline small-item streams; preserve integration-only profile limits.",
       "previousRepairRun": 40642182557,
-      "canonicalVerifiedAtUtc": "2026-10-28T11:13:23Z"
+      "canonicalVerifiedAtUtc": "2026-10-28T11:13:23Z",
+      "independentEvidenceAudit": "reviews/933-canonical-40644131003/AUDIT.md",
+      "currentHeadValidation": "Unit2439, Generator294, Load77, Integration557; zero failures/skips. Reader37/37 eachX64/Arm64 and unchanged280Bnegative; four allocation budgets plus512Bnegative; desktopcodec2088rows/36pairs/0blocking.",
+      "nativeCapture": "10.0.2 primary gaps empty;10.0.13 baseline OnRegistered PGO Tier1 primary gap retained; both runtimes symmetric same-source companion Tier1 complete. No feature-performance acceptance.",
+      "canonicalJobInventory": {
+        "total": 35,
+        "success": 27,
+        "skipped": 8,
+        "source": "reviews/933-canonical-40644131003/job-inventory.json",
+        "correction": "initial first30 jobs gave25success/5skips; fullpage includes3morebrowser skips+codecsummary+extendedsummary"
+      }
     },
     "methodFacts732": {
       "worktree": "/Users/sunsi/.codex/worktrees/issue-732-controlled-tools/SharpLink",
@@ -45,14 +55,18 @@
       "M1ProductionPatch": "652ffca720ba188a7e544f1f5e2da7dafa5e1568",
       "M1Worktree": "/Users/sunsi/.codex/worktrees/issue-732-method-facts-m1/SharpLink",
       "state": "hosted36process/720samples/1440000calls complete and independently recomputed; all six T/U contrast decisions inconclusive; M1 Hold, M0 NoGo retained",
-      "nextAction": "Read method-facts-variance.md; diagnose existing sample-stage drift and actual JIT/scheduling non-timed evidence before proposing another fixed campaign. Do not rerun unchanged.",
+      "nextAction": "KeepM0NoGo/M1Hold. Review direct-file startupEventPipe toolde51 before any new fixedtwo-process diagnostic execution; preserve failedcollectorattempt001. Kernel scheduler unavailable; no actualnewJIT evidence untilvalidtrace. No timing/F2.",
       "result": {
         "B/O_timedMeanGM": 1.0191221303303852,
         "B/O_timedP99GM": 1.0537540200965323,
         "B/A_timedMeanGM": 1.0109137301000377,
         "A/O_timedMeanGM": 1.001741
       },
-      "cloudEvidence": "codex/3-release-evidence plus Actions run40642190610"
+      "cloudEvidence": "codex/3-release-evidence plus Actions run40642190610",
+      "independentDiagnosis": "reviews/732-retained-40642190610/DIAGNOSIS.md",
+      "diagnosticToolHead": "de51bd5c95ef31846f9681880974d60e6a8a737d",
+      "diagnosticToolState": "b1b6 independentlyPASS; attempt001 bothprojectsbuilt then externaldotnet-trace UnixIPC Permissiondenied beforephases/RPC, exit2/no trace. Preserved; no unchangedretry/escalation. de51 supported direct-file startupEventPipe alternative underindependentreview,11fixturesPASS,no newexecution atcheckpoint",
+      "diagnosticToolInitialHead": "e64532ef4fd94785001925859eb1eb72641e0e76"
     },
     "physicalOwnership931": {
       "pullRequest": "https://github.com/SunSi12138/SharpLink/pull/931",
@@ -66,7 +80,7 @@
       "toolBranch": "codex/931-client-ablation-tools",
       "independentToolReview": "approved",
       "ablationRun": 40642932620,
-      "nextAction": "Read independent default-PGO review; original full-product NoGo remains. Prepare independently reviewed R1-only bounded non-timed actualTCP comparison against ac17, common candidate DLLs/private10.0.13; do not launch new timing or stack R2.",
+      "nextAction": "Read independent raw gate interpretation for hostedR1run40681832353 exact9c0cf9e; success is collection status only. Preserve local003Failed, no timing or additional samples. Original931NoGo remains; any nextproduct/performanceplan needs independentexactHEADreview.",
       "loopExitExperiment": {
         "worktree": "/Users/sunsi/.codex/worktrees/ownership-931-loop-exit/SharpLink",
         "head": "94adeae886c4ddfd0c02ec2dcb700cd97e9cad80",
@@ -74,7 +88,20 @@
         "reportHead": "87f76fb805c70693513a87c5acec03e9643e910a",
         "independentCodeReview": "approved for isolated experiment",
         "remoteBackup": "pushed and verified branch codex/931-loop-exit-experiment at87f76fb",
-        "bundle": "artifacts/release-readiness/2026-10-28/loop-exit-experiment.bundle"
+        "bundle": "artifacts/release-readiness/2026-10-28/loop-exit-experiment.bundle",
+        "cloudNativeReview": "reviews/931-r1-cloud-native/RESULT.md",
+        "cloudNativeState": "tool17038d5 attempt003 completed2x4352 actualTCP/private10.0.13; bothfour-targetgates Failed: Runtimepump/Serverbridge optimizedTier1 missing. Intercepted duplicate removed but body4703to5645/frame288to312; partial observation only.",
+        "cloudNativeFailedPreparations": [
+          "001 sysfs topology unavailable beforebuild/probe; reviewed procfs fallback followed",
+          "002 NuGet readonlyhomecache beforeprobe; writablecache correction followed"
+        ],
+        "hostedToolCandidate": "760a6d7eb6d17e993a2f17828d44de92d3f8a58c",
+        "hostedToolState": "local760a6d7 and published9c0cf9e independently PASS execution-only; DraftPR956 tofixedtoolbase, DO NOTMERGE; native run40681832353 success, raw independent interpretation pending atcheckpoint; no timedperformance acceptance",
+        "rejectedHostedToolCandidate": "5c6606a1fea4e165036b316491c0b4ce9e9cc419",
+        "hostedToolRemoteHead": "9c0cf9e682deb38c4c321e93db0f11d1338bc7bd",
+        "hostedToolRemoteBranch": "codex/931-r1-native-validation",
+        "hostedDiagnosticPR": 956,
+        "hostedNativeRun": 40681832353
       },
       "ablationResult": "FullOpts Client-only12samples6pairs247595RPC complete. Mixed directions: throughput+0.90%,CPU-0.57%,P99-0.99%,P999-0.50%; original defaultPGO full-product NoGo remains.",
       "defaultPgoRun": 40646151477,
@@ -107,10 +134,29 @@
   "localPathsAreHistorical": true,
   "cloudEvidence": {
     "branch": "codex/3-release-evidence",
-    "commit": "5a6cf6c490b43c083fb772e2c6f2663fa94bbe16",
+    "commit": "4fa383e71abfef508e2d2deacf7ec7daa6d7ba4b",
     "index": "https://github.com/SunSi12138/SharpLink/blob/codex/3-release-evidence/index.json",
-    "archives": 10,
-    "compressedBytes": 95369648
+    "archives": 11,
+    "compressedBytes": 98694834,
+    "originalExperimentCommit": "5a6cf6c490b43c083fb772e2c6f2663fa94bbe16",
+    "addedR1CloudArchive": {
+      "path": "archives/r1-cloud-native-20261028.tar.gz",
+      "sha256": "d38f97ee440ddd639e15a9e47774c8981584a374c85ccbecaa9adcbbc03c36cf",
+      "status": "cloudattempt001/002 preparationfailures and003 nativegatefailure retained; original10archives unchanged"
+    }
   },
-  "takeoverStatus": "cloud-takeover-status.md"
+  "takeoverStatus": "cloud-takeover-status.md",
+  "followupStatus": "cloud-followup-status.md",
+  "independentHandoffStatus": "independent-handoff-status.md",
+  "handoffPublicationPolicy": {
+    "canonicalBranch": "codex/3-release-handoff",
+    "mergeToDev": false,
+    "reason": "User explicitly asked to remove955 fromdev while preserving standalonehandoff/evidence",
+    "restoredHead": "7524fa28e3860c540912c8be76767b575fabb378",
+    "revertPR": 957,
+    "revertHead": "d5f18510ff0015f3b7b36af140f7cc188d5b5f80",
+    "revertState": "mergedsquasha2e2fd9 at11:53:19UTC afterexactd5independentPASS+Fast40682750725/CodeQL40682750738success; devtreeaaf9ce equals80965;handoff/evidencerefs preserved",
+    "revertMergeCommit": "a2e2fd91473668317fde37ba238b8a7c0ec8728c"
+  },
+  "productCheckpointObservedAt": "2026-10-28T11:50:00Z"
 }

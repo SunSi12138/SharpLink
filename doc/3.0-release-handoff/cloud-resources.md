@@ -8,8 +8,8 @@
 
 | 用途 | 远端分支 | 固定参考提交 |
 |---|---|---|
-| 已接受的开发基线，含 full 矩阵工具 #954 | `dev` | `80965d5de2bd7bc4979bb36f3f2811493ade4fd0` |
-| 本交接资料 | `codex/3-release-handoff` | 以该分支最新已审核提交为准 |
+| 已接受的开发基线，含 #954；#957 已从 dev 移出交接 | `dev` | `a2e2fd91473668317fde37ba238b8a7c0ec8728c`（完整tree等于 `80965d5`） |
+| 本交接资料 | `codex/3-release-handoff` 独立持续入口，按用户要求不再并入 dev | 已恢复原发布 `7524fa28e3860c540912c8be76767b575fabb378`；原固定交接 `ba99c6f9` 不改写；dev中的 #955 已由 PR #957 单独撤回 |
 | #931 物理所有权候选，性能 NoGo | `fix/physical-work-ownership-20261022` | `ac17c8d8ea0203edbe7b8cf19ddb95eaa24d4d2c` |
 | #931 Client-only 工具，FullOpts 和默认 PGO profile | `codex/931-client-ablation-tools` | `51f5bd0ec3f600196f2e26ea48a466ec2cea62d8` |
 | #931 loop-exit 隔离实验和报告，尚非合并候选 | `codex/931-loop-exit-experiment` | `87f76fb805c70693513a87c5acec03e9643e910a`；产品改动在 `94adeae8` |
@@ -75,3 +75,7 @@ gh run download 40646151477 --repo SunSi12138/SharpLink --dir artifacts/client-p
 ## 2026-10-28 云端接手更新
 
 当前读取/写入/dispatch 路由和运行时缺口见 [接手进度](cloud-takeover-status.md)。GitHub connector 的 repository push/actions-write 权限元数据不等同于本机 `gh` 已认证或暴露了 workflow dispatch；缺少可用工具路由不是权限拒绝。未为探测权限创建提交、工作流或标签。
+
+保存边界与当前状态见 [独立交接更新](independent-handoff-status.md)。此资料分支的文档更新不需要、也不应通过 PR 合入 dev；产品/工具PR的独立审核和测试门禁仍照常执行。
+
+2026-10-28 11:54 UTC 补充：证据分支已追加为 `4fa383e71abfef508e2d2deacf7ec7daa6d7ba4b`，11归档、98,694,834字节；新增 `archives/r1-cloud-native-20261028.tar.gz`（SHA-256 `d38f97ee440ddd639e15a9e47774c8981584a374c85ccbecaa9adcbbc03c36cf`）保存001/002/003云端准备失败与native gate失败。原10归档字节不变，5a6仍是原实验的固定输入；新增证据不是性能Go。

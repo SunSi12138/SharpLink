@@ -1,5 +1,7 @@
 # SharpLink 3.0 继续执行入口
 
+**用户指定的保存边界：交接资料仅保留在独立交接分支，不再并入 dev。** #955 的18文件已由 [PR #957](https://github.com/SunSi12138/SharpLink/pull/957) 撤回，dev=`a2e2fd91473668317fde37ba238b8a7c0ec8728c`，完整tree恢复为pre95580965；原交接分支与原始证据均保留。当前执行状态见 [独立交接更新](doc/3.0-release-handoff/independent-handoff-status.md)。
+
 目标仍是正式发布 3.0。当前尚未达到发布条件；不要因为交接、订阅到期或 CI 绿色而提前合并性能未验收的候选。
 
 接手者先读本文件，再读 [当前任务与证据](doc/3.0-release-handoff/status.json)、[发布门禁与合并步骤](doc/3.0-release-handoff/release-gates-and-merge.md) 和 [技术方案决策树](doc/3.0-release-handoff/technical-decision-tree.md)。后两份文件给出具体命令、结果分支、实现位置及必须保留的行为。
@@ -25,17 +27,17 @@ gh pr list --repo SunSi12138/SharpLink --state open --limit 30
 
 ## 当前执行顺序
 
-1. **#931 默认 PGO 对照 run40646151477 已独立复核：12 进程 / 354648 ticks 完整，Client-only 方向混合、inconclusive；原全产品 NoGo 不变。** 先读 [独立报告与可复算输出](doc/3.0-release-handoff/reviews/931-pgo-40646151477/INDEPENDENT-REVIEW.md)，再读 #732 三臂与 #931 FullOpts 结果。实际 TCP Tier1 的重复 `hasNext` 支持下一项 **R1-only、有界非计时机制比较**，不支持直接合并或重复旧计时实验。新工具精确 HEAD 须独立审核后才运行。
-2. **#933 当前头 `10b1bf03` 的 canonical run40644131003 已核实 success。** fast/extended、X64/Arm64 allocation、10.0.2/10.0.13 producer/native 与 enabled-TLS jobs 均成功；还需独立读取原始 native companion/完整库存，不能由 job 绿灯推断性能接受。#931 前置和 #933 feature performance 仍阻断合并；最终发布门禁仍未完成。
+1. **#931 默认 PGO 对照 run40646151477 已独立复核：12 进程 / 354648 ticks 完整，Client-only 方向混合、inconclusive；原全产品 NoGo 不变。** 先读 [独立报告与可复算输出](doc/3.0-release-handoff/reviews/931-pgo-40646151477/INDEPENDENT-REVIEW.md)，再读 #732 三臂与 #931 FullOpts 结果。实际 TCP Tier1 的重复 `hasNext` 支持下一项 **R1-only、有界非计时机制比较**，不支持直接合并或重复旧计时实验。本地 R1 非计时尝试已完成，但缺少 Runtime/Server 两个目标的优化 Tier1，完整门禁 Failed；不得用部分重复分支消失宣称接受。随后已审核的同计划工具在 hosted run40681832353 收集成功；原始四目标证据的独立裁决仍须单独确认，不由 workflow success 宣布性能接受。
+2. **#933 当前头 `10b1bf03` 的 canonical run40644131003 已核实 success。** fast/extended、X64/Arm64 allocation、10.0.2/10.0.13 producer/native 与 enabled-TLS jobs 均成功；[原始证据已独立审计](doc/3.0-release-handoff/reviews/933-canonical-40644131003/AUDIT.md)：Unit2439/Integration557、对称 companion 完整，但不是全293文件的新源码批准或性能接受。#931 前置和 #933 feature performance 仍阻断合并；最终发布门禁仍未完成。
 3. **按对照结果选择下一项产品修改。** #931 已有最小 loop-exit 隔离实验；#732 有完整 facts-once 的 M0/M1 和条件化备选。先读技术决策树，保留原所有权、异常、CTS、ALC 与公开 SPI 条件，不凭直觉重写。
 4. **独立审核最终候选，再按依赖合入 dev。** 产品代码、测试和证据必须对应正在合并的 SHA。#931 与 #933 当前仍是 Draft；原 #775 完整 Binding/receipt 范围仍未完成，不能用受限 maintenance 能力关闭它。
 5. **最后冻结 release candidate，完成完整门禁，再 dev → main、重验 main SHA、tag/NuGet。** 完整性能矩阵远大于 smoke，必须按分片计划执行并汇总。不能把一次诊断、一个平台或零分配结果当作完整发布验收。
 
-云端接手的最新执行边界和工具缺口见 [接手进度](doc/3.0-release-handoff/cloud-takeover-status.md)。旧实验附录中的“待审核/未推送”叙述是当时记录，以当前总表及精确远端事实为准。
+云端接手的工具初检见 [接手进度](doc/3.0-release-handoff/cloud-takeover-status.md)，后续 R1 失败门禁、#933 原始证据审计和 #732 诊断见 [最新进度](doc/3.0-release-handoff/cloud-followup-status.md)。旧实验附录中的“待审核/未推送”叙述是当时记录，以当前总表及精确远端事实为准。
 
 ## 已经完成的工作
 
-本轮目标中已合并 #936、#937、#938、#939、#940、#718、#941、#942、#951、#952、#943、#953、#954；#691 已关闭。当前已合并基线为 `80965d5de2bd7bc4979bb36f3f2811493ade4fd0`（含 #954；继续查询远端以获得最新值）。
+本轮目标中已合并 #936、#937、#938、#939、#940、#718、#941、#942、#951、#952、#943、#953、#954；#691 已关闭。当前 dev 为 `a2e2fd91473668317fde37ba238b8a7c0ec8728c`（#957 撤回交接文档后，完整tree与含 #954 的产品/工具基线 `80965d5` 相同；交接仅保留独立分支，继续查询远端）。
 
 API inventory 和 302 类型 / 3397 decision IDs 的分类台账已合入。台账仍保留固定来源及 `proposal-not-approved` 发布状态：最终 #732/#931/#933 的声明差异、真实九包对比和冻结 HEAD 验收还要完成，#805 继续 open。
 

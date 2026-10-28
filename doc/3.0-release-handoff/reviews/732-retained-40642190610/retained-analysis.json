@@ -1,0 +1,386 @@
+{
+  "processes": 36,
+  "samples": 720,
+  "calls": 1440000,
+  "drift": {
+    "all": {
+      "I/T": {
+        "n": 36,
+        "sampleMeanMedianUs": [
+          148.94807600000001,
+          162.1736365,
+          161.92627750000003,
+          162.4291525,
+          151.84419050000002
+        ],
+        "firstSlowerThanLast": 18,
+        "firstLastMedianRatio": 1.001159739550553,
+        "gcCounts": [
+          36,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 2423.7776
+      },
+      "P/T": {
+        "n": 36,
+        "sampleMeanMedianUs": [
+          117.86655725,
+          122.13508300000001,
+          105.67433750000001,
+          95.58156,
+          87.974219
+        ],
+        "firstSlowerThanLast": 35,
+        "firstLastMedianRatio": 1.3512831610694107,
+        "gcCounts": [
+          72,
+          39,
+          3
+        ],
+        "allocationMedianBytes": 2236.2276
+      },
+      "I/U": {
+        "n": 36,
+        "sampleMeanMedianUs": [
+          83.5931405,
+          78.93202525,
+          75.05708075000001,
+          75.26936325,
+          74.47314425
+        ],
+        "firstSlowerThanLast": 33,
+        "firstLastMedianRatio": 1.1029433698225009,
+        "gcCounts": [
+          0,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 1128.3616000000002
+      },
+      "P/U": {
+        "n": 36,
+        "sampleMeanMedianUs": [
+          69.11010525,
+          70.34741724999999,
+          68.00494725,
+          68.45278775,
+          67.5216595
+        ],
+        "firstSlowerThanLast": 25,
+        "firstLastMedianRatio": 1.0316285739278346,
+        "gcCounts": [
+          0,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 856.3163999999999
+      }
+    },
+    "O": {
+      "I/T": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          147.9569315,
+          163.07231675,
+          162.2025225,
+          167.77138025,
+          149.56242275
+        ],
+        "firstSlowerThanLast": 5,
+        "firstLastMedianRatio": 0.9724660182631295,
+        "gcCounts": [
+          12,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 2423.2208
+      },
+      "P/T": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          118.18211174999999,
+          123.109725,
+          101.39950125000001,
+          94.91884725,
+          86.07876875
+        ],
+        "firstSlowerThanLast": 12,
+        "firstLastMedianRatio": 1.4215558478574803,
+        "gcCounts": [
+          24,
+          15,
+          3
+        ],
+        "allocationMedianBytes": 2234.1924
+      },
+      "I/U": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          82.15124775000001,
+          78.93202525,
+          78.00882725,
+          74.36937449999999,
+          74.59287425
+        ],
+        "firstSlowerThanLast": 11,
+        "firstLastMedianRatio": 1.084957519828523,
+        "gcCounts": [
+          0,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 1128.3852000000002
+      },
+      "P/U": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          69.27582849999999,
+          69.5755635,
+          68.00494725,
+          69.00866325,
+          67.55460925
+        ],
+        "firstSlowerThanLast": 8,
+        "firstLastMedianRatio": 1.0116349511009552,
+        "gcCounts": [
+          0,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 856.3364
+      }
+    },
+    "A": {
+      "I/T": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          150.82709800000003,
+          162.936574,
+          160.035099,
+          161.44519524999998,
+          133.58820275
+        ],
+        "firstSlowerThanLast": 7,
+        "firstLastMedianRatio": 1.1157914852123403,
+        "gcCounts": [
+          12,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 2422.306
+      },
+      "P/T": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          115.2210595,
+          111.61577750000001,
+          99.47201899999999,
+          94.10932925,
+          83.51027525
+        ],
+        "firstSlowerThanLast": 11,
+        "firstLastMedianRatio": 1.3435377748813817,
+        "gcCounts": [
+          24,
+          12,
+          0
+        ],
+        "allocationMedianBytes": 2234.1876
+      },
+      "I/U": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          83.5931405,
+          78.02167275,
+          73.23670225000001,
+          75.09237325000001,
+          74.33719025
+        ],
+        "firstSlowerThanLast": 11,
+        "firstLastMedianRatio": 1.1160508072780946,
+        "gcCounts": [
+          0,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 1128.3688000000002
+      },
+      "P/U": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          69.11010525,
+          69.91180574999998,
+          68.0661595,
+          67.63880850000001,
+          67.41931600000001
+        ],
+        "firstSlowerThanLast": 7,
+        "firstLastMedianRatio": 1.0365400786859993,
+        "gcCounts": [
+          0,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 856.3276000000001
+      }
+    },
+    "B": {
+      "I/T": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          150.5234945,
+          159.42545125,
+          161.15042124999997,
+          157.81556875,
+          154.858563
+        ],
+        "firstSlowerThanLast": 6,
+        "firstLastMedianRatio": 0.9981605534693476,
+        "gcCounts": [
+          12,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 2424.7664
+      },
+      "P/T": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          128.10732275,
+          126.402372,
+          112.07783950000001,
+          96.851854,
+          98.40717225
+        ],
+        "firstSlowerThanLast": 12,
+        "firstLastMedianRatio": 1.3292531448722236,
+        "gcCounts": [
+          24,
+          12,
+          0
+        ],
+        "allocationMedianBytes": 2237.8692
+      },
+      "I/U": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          86.90448900000001,
+          80.04586474999999,
+          76.18764300000001,
+          76.162642,
+          74.6449035
+        ],
+        "firstSlowerThanLast": 11,
+        "firstLastMedianRatio": 1.1880094876766245,
+        "gcCounts": [
+          0,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 1128.3188
+      },
+      "P/U": {
+        "n": 12,
+        "sampleMeanMedianUs": [
+          68.90056175000001,
+          72.739497,
+          67.99319324999999,
+          67.19289875000001,
+          66.85231974999999
+        ],
+        "firstSlowerThanLast": 10,
+        "firstLastMedianRatio": 1.0467336391063846,
+        "gcCounts": [
+          0,
+          0,
+          0
+        ],
+        "allocationMedianBytes": 856.3008
+      }
+    }
+  },
+  "sampleDurationMs": {
+    "min": 117.77072199999999,
+    "max": 391.69100000000003,
+    "median": 172.395946
+  },
+  "recordedAnalysisKeys": [
+    "profile",
+    "processes",
+    "comparisons",
+    "completedCalls"
+  ],
+  "pairs": [
+    "OO",
+    "OA",
+    "AB",
+    "BB",
+    "BO",
+    "AA",
+    "BA",
+    "AO",
+    "OB",
+    "BO",
+    "OA",
+    "AB",
+    "AA",
+    "OB",
+    "BB",
+    "BA",
+    "AO",
+    "OO"
+  ],
+  "independentRecalculation": {
+    "B/O": {
+      "noise": {
+        "T": 0.22122325206339302,
+        "U": 0.08797959691251439
+      },
+      "decisions": {
+        "T": "inconclusive",
+        "U": "inconclusive"
+      },
+      "meanGM": 1.0191221303303852,
+      "p99GM": 1.0537540200965323,
+      "adverseTimedP99PairIndices": [
+        4,
+        8
+      ]
+    },
+    "B/A": {
+      "noise": {
+        "T": 0.22122325206339302,
+        "U": 0.09504729776676041
+      },
+      "decisions": {
+        "T": "inconclusive",
+        "U": "inconclusive"
+      },
+      "meanGM": 1.0109137301000377,
+      "p99GM": 1.0330544858565338,
+      "adverseTimedP99PairIndices": [
+        2,
+        6,
+        11
+      ]
+    },
+    "A/O": {
+      "noise": {
+        "T": 0.11289409099984607,
+        "U": 0.09504729776676041
+      },
+      "decisions": {
+        "T": "inconclusive",
+        "U": "inconclusive"
+      },
+      "meanGM": 1.001740972436624,
+      "p99GM": 1.0148279182189728,
+      "adverseTimedP99PairIndices": [
+        1,
+        10,
+        16
+      ]
+    }
+  }
+}

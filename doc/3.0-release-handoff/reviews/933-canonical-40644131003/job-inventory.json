@@ -1,0 +1,258 @@
+{
+  "source": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs/40644131003/jobs?per_page=100",
+  "verifiedAtUtc": "2026-10-28T11:36:35Z",
+  "total_count": 35,
+  "returnedJobs": 35,
+  "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c",
+  "counts": {
+    "success": 27,
+    "skipped": 8
+  },
+  "jobs": [
+    {
+      "id": 122668892028,
+      "name": "fast",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892286,
+      "name": "Reader allocation oracle (Arm64)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892290,
+      "name": "Enabled TLS maintenance evidence (10.0.2)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892292,
+      "name": "TCP, Builder and logger external consumer compatibility",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892299,
+      "name": "producer-cost-evidence / Producer TLS/native evidence (10.0.2)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892363,
+      "name": "Queued dispatch source and native evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892365,
+      "name": "allocation-gate",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892377,
+      "name": "Enabled TLS maintenance evidence (10.0.13)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892387,
+      "name": "macOS system Bash 3.2 matrix regression",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892395,
+      "name": "extended",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892410,
+      "name": "maintenance-prefix-proof",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892501,
+      "name": "Reader allocation oracle (X64)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892664,
+      "name": "codec-compatibility / produce (linux-x64, ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892682,
+      "name": "codec-compatibility / produce (macos-x64, macos-15-intel)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892726,
+      "name": "codec-compatibility / produce (macos-arm64, macos-14)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892787,
+      "name": "codec-compatibility / produce (linux-arm64, ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892810,
+      "name": "codec-compatibility / produce (windows-arm64, windows-11-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668892850,
+      "name": "codec-compatibility / produce (windows-x64, windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668893119,
+      "name": "producer-cost-evidence / Producer TLS/native evidence (10.0.13)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668893774,
+      "name": "codec-compatibility / browser-coreclr-produce",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122668893888,
+      "name": "codec-compatibility / browser-produce",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669334164,
+      "name": "codec-compatibility / verify (windows-arm64, windows-11-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669334178,
+      "name": "codec-compatibility / verify (windows-x64, windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669334212,
+      "name": "codec-compatibility / verify (macos-x64, macos-15-intel)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669334281,
+      "name": "codec-compatibility / verify (macos-arm64, macos-14)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669334287,
+      "name": "codec-compatibility / verify (linux-arm64, ubuntu-24.04-arm)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669334310,
+      "name": "codec-compatibility / verify (linux-x64, ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669335970,
+      "name": "codec-compatibility / browser-coreclr-desktop-verify",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669336035,
+      "name": "codec-compatibility / browser-desktop-verify",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669336347,
+      "name": "codec-compatibility / browser-coreclr-verify",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669336528,
+      "name": "codec-compatibility / browser-verify",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669336625,
+      "name": "codec-compatibility / browser-coreclr-evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122669336756,
+      "name": "codec-compatibility / browser-evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122670103460,
+      "name": "codec-compatibility / summary",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    },
+    {
+      "id": 122670301860,
+      "name": "extended-summary",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "10b1bf03881337c0801d6ff24318bb479747ca6c"
+    }
+  ]
+}

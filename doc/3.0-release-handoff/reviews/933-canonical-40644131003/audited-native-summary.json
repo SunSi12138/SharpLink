@@ -1,0 +1,53 @@
+{
+  "10.0.2": {
+    "artifact_id": 12797276953,
+    "source_head": "10b1bf03881337c0801d6ff24318bb479747ca6c",
+    "primary_launches": 16,
+    "companion_launches": 2,
+    "paired_tier_rows": 60,
+    "all_native_rows": 202,
+    "incomplete_rows": [],
+    "primary_gaps": [],
+    "allocation_windows": 40,
+    "limits": "No elapsed-time measurements, throughput-equivalence budget or native-equality gate. Whole-process allocations include transport, scheduling and overlapping one-way server work. PGO promotion is accelerated; all samples and native variants are retained."
+  },
+  "10.0.13": {
+    "artifact_id": 12796678268,
+    "source_head": "10b1bf03881337c0801d6ff24318bb479747ca6c",
+    "primary_launches": 16,
+    "companion_launches": 2,
+    "paired_tier_rows": 60,
+    "all_native_rows": 202,
+    "incomplete_rows": [
+      {
+        "SourceGroup": "runtime-10.0.13",
+        "Arm": "baseline",
+        "Mode": "pgo",
+        "Tier": "Tier0",
+        "Target": "InvokeClientStreamingCoreAsync",
+        "FooterCount": 0
+      },
+      {
+        "SourceGroup": "runtime-10.0.13",
+        "Arm": "baseline",
+        "Mode": "pgo",
+        "Tier": "Tier1",
+        "Target": "OnRegistered",
+        "FooterCount": 2
+      }
+    ],
+    "primary_gaps": [
+      {
+        "Kind": "shapes",
+        "Target": "OnRegistered",
+        "Mode": "pgo",
+        "Tier": "Tier1",
+        "MissingArms": [
+          "baseline"
+        ]
+      }
+    ],
+    "allocation_windows": 40,
+    "limits": "No elapsed-time measurements, throughput-equivalence budget or native-equality gate. Whole-process allocations include transport, scheduling and overlapping one-way server work. PGO promotion is accelerated; all samples and native variants are retained."
+  }
+}

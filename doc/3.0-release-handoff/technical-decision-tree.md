@@ -159,7 +159,7 @@ metadata 是 public SPI。读取/验证 metadata 在 `_registrationGate` 外，�
 
 **当前最小接受组：**四个新增 codec retirement/competing-publication 用例，既有 referenced-codec owner/hash/adopt negatives；`QueuedFixtureFailureMustRemoveReplacementManifestFromCatalog` 要保留原失败实例、catalog 清除、下一 server 可建。完整当前头 hosted inventory 必须保持 2439 regular unit（2444 discovery 含 5 Explicit）、557 integration；不是降低 collector 预期跳过失败。
 
-native 10.0.2 `OnRegistered` primary Tier1 缺失的处理是同源、对称 shapes-only companion；primary 缺失继续列出，不能拿 Tier0 或另一版本顶替。companion 两臂完整 Tier1 是其 gate；其 allocation window 与 primary 分开。10.0.2/10.0.13 均需实际 Linux x64 证据。producer Unary/Retry +16-byte PGO frame 与 stream-entry 成本仍需最终候选的接受，不由“无新 per-call table”抹除。
+历史 native 10.0.2 `OnRegistered` primary Tier1 缺失的处理是同源、对称 shapes-only companion；当前头10b的[原始证据审计](reviews/933-canonical-40644131003/AUDIT.md)确认10.0.2 primary gap为空，而10.0.13 baseline OnRegistered PGO Tier1 primary gap保留，两runtime的对称companion均完整。primary 缺失继续列出，不能拿 Tier0 或另一版本顶替。companion 两臂完整 Tier1 是其 gate；其 allocation window 与 primary 分开。10.0.2/10.0.13 均需实际 Linux x64 证据。producer Unary/Retry +16-byte PGO frame 与 stream-entry 成本仍需最终候选的接受，不由“无新 per-call table”抹除。
 
 若上述当前头 gates 通过，只推进限定 #933，**不关闭完整 #775**。若失败属于 actual product correctness，先重现一个最小失败并返回原 owner；若 native inventory 不完整，则补既定 capture 缺口，不篡改 reader/producer门槛。并发 adoption 真正改变 catalog 应保持冲突失败，不能继续扩大 retirement allowance。
 
