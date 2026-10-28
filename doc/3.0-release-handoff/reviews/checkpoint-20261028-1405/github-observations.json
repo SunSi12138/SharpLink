@@ -1,0 +1,294 @@
+{
+  "observedAtUtc": "2026-10-28T14:06:00Z",
+  "scope": "Read-only GitHub API observations; run success is not raw-evidence or product acceptance.",
+  "devHandoffPathsAbsent": {
+    "tree": "dd92a580a0a0b934a6571a54d0194c02e7a782d2",
+    "recursiveTreeTruncated": false,
+    "matchingPaths": []
+  },
+  "observations": [
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/branches/dev",
+      "name": "dev",
+      "head": "e3808b65e694bf1ed250d55fa2ad48a6ef88d285",
+      "tree": "dd92a580a0a0b934a6571a54d0194c02e7a782d2"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/branches/codex/3-release-handoff",
+      "name": "codex/3-release-handoff",
+      "head": "98ea64cab08190615e7022d5964fae40ec6c5bff",
+      "tree": "70a95931a7ac764a48138516e4807849935ccff6"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/branches/codex/3-release-evidence",
+      "name": "codex/3-release-evidence",
+      "head": "f55d291f5fa1ee4c5807e4b448718e60405fd960",
+      "tree": "d8ecfc13308e42eb59c0856e8fa15d629605a6ab"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/pulls/961",
+      "number": 961,
+      "head": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+      "base": "e3808b65e694bf1ed250d55fa2ad48a6ef88d285",
+      "state": "open",
+      "draft": false,
+      "merged": false,
+      "html_url": "https://github.com/SunSi12138/SharpLink/pull/961"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/pulls/962",
+      "number": 962,
+      "head": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+      "base": "e3808b65e694bf1ed250d55fa2ad48a6ef88d285",
+      "state": "open",
+      "draft": false,
+      "merged": false,
+      "html_url": "https://github.com/SunSi12138/SharpLink/pull/962"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs/40698598415",
+      "id": 40698598415,
+      "name": "Real-version Protocol v2 Process Gate",
+      "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "updated_at": "2026-10-28T13:41:58Z",
+      "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698598415"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs/40698356754",
+      "id": 40698356754,
+      "name": "PR Release Mobile Wiring",
+      "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+      "status": "completed",
+      "conclusion": "success",
+      "run_attempt": 1,
+      "updated_at": "2026-10-28T14:01:21Z",
+      "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698356754"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs/40697027111",
+      "id": 40697027111,
+      "name": "PR Extended",
+      "head_sha": "3a9445f9a9c1db5fc90453a6f579c2597973e409",
+      "status": "completed",
+      "conclusion": "failure",
+      "run_attempt": 1,
+      "updated_at": "2026-10-28T13:34:40Z",
+      "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40697027111"
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs?head_sha=b7a42bb2c994d2b7472d404e686ed7020d58f418&per_page=100",
+      "total_count": 10,
+      "runs": [
+        {
+          "id": 40698687994,
+          "name": "PR Fast",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698687994"
+        },
+        {
+          "id": 40698378929,
+          "name": "Packaged Trim and NativeAOT",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378929"
+        },
+        {
+          "id": 40698378759,
+          "name": "PR Fast",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378759"
+        },
+        {
+          "id": 40698378679,
+          "name": "Generated Stream Snapshot Ownership",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378679"
+        },
+        {
+          "id": 40698378874,
+          "name": "API Inventory",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378874"
+        },
+        {
+          "id": 40698378763,
+          "name": "CodeQL",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378763"
+        },
+        {
+          "id": 40698378900,
+          "name": "Send Credit Terminal Accounting",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378900"
+        },
+        {
+          "id": 40698378669,
+          "name": "RPC Session Flush Performance Evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378669"
+        },
+        {
+          "id": 40698378662,
+          "name": "Send Credit Lease Race",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378662"
+        },
+        {
+          "id": 40698378796,
+          "name": "PR Package Smoke",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "b7a42bb2c994d2b7472d404e686ed7020d58f418",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698378796"
+        }
+      ]
+    },
+    {
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs?head_sha=ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1&per_page=100",
+      "total_count": 9,
+      "runs": [
+        {
+          "id": 40698598415,
+          "name": "Real-version Protocol v2 Process Gate",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698598415"
+        },
+        {
+          "id": 40698598679,
+          "name": "PR Extended",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698598679"
+        },
+        {
+          "id": 40698585051,
+          "name": "PR Fast",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698585051"
+        },
+        {
+          "id": 40698356919,
+          "name": "Real-version Protocol v2 Process Gate",
+          "status": "completed",
+          "conclusion": "skipped",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698356919"
+        },
+        {
+          "id": 40698356741,
+          "name": "PR Fast",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698356741"
+        },
+        {
+          "id": 40698356738,
+          "name": "Packaged Trim and NativeAOT",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698356738"
+        },
+        {
+          "id": 40698356756,
+          "name": "CodeQL",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698356756"
+        },
+        {
+          "id": 40698356945,
+          "name": "API Inventory",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698356945"
+        },
+        {
+          "id": 40698356754,
+          "name": "PR Release Mobile Wiring",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+          "run_attempt": 1,
+          "html_url": "https://github.com/SunSi12138/SharpLink/actions/runs/40698356754"
+        }
+      ]
+    }
+  ],
+  "laterObservations": [
+    {
+      "observedAtUtc": "2026-10-28T14:19:32Z",
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/pulls/962",
+      "number": 962,
+      "head": "ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1",
+      "state": "closed",
+      "merged": false,
+      "closed_at": "2026-10-28T14:18:45Z",
+      "scopeDecision": "3.x intentional breaking upgrade; 2.0.3 interoperability not required;2.0.3 remains performance baseline; historical evidence retained"
+    },
+    {
+      "observedAtUtc": "2026-10-28T14:24:06Z",
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/pulls/961",
+      "number": 961,
+      "head": "1a76e1b858b9b306f8d09ed6f85bc3c5319e2da5",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "observedAtUtc": "2026-10-28T14:24:18Z",
+      "url": "https://api.github.com/repos/SunSi12138/SharpLink/actions/runs/40704347751",
+      "id": 40704347751,
+      "head_sha": "1a76e1b858b9b306f8d09ed6f85bc3c5319e2da5",
+      "status": "completed",
+      "conclusion": "success",
+      "updated_at": "2026-10-28T14:19:47Z"
+    }
+  ]
+}

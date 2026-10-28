@@ -1,0 +1,50 @@
+INDEPENDENT RAW EVIDENCE REVIEW — PASS
+PR #962; exact remote HEAD ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1
+Run 40698598415 / job 122851943176 / artifact 12820562311
+
+Artifact ZIP SHA256:
+4986e5a06af5abdc896c4478939ffd7322fd69acd41b1e7eac3b52475e3a781b
+Decoded original job-log SHA256:
+20e6f87da8202634fa3501040a27056e4e1ce1a6e3812607c197615114dea834
+
+Independent offline recalculation: 74 extracted files byte-identical to ZIP;
+32 hosted harness tests; all nine actual process pairs pass; 18 process exit0;
+Requests [5,5,5,5,5,0,0,0,0]. No controller/relay errors or pending frame bytes.
+Both real-version directions preserve all five shapes, including OneWay.
+Four negative controls explicitly report FailedPrecondition naming actual local
+and remote wire hashes; zero business Request frames, not timeout/ABI confusion.
+
+Candidate packages: Abstractions, Runtime, Client, Server, Sdk 3.0.0,
+all source commit ba4fe43c40621c91deedfaadbbdbd3e70f5b78d1, isolated local feed.
+Candidate and synthetic peers use packaged Generator 3.0.0 / generated API5 /
+ABI sharplink-3.0-api5-owner-bound-unsafe-blit-v1.
+Published peers: same five packages 2.0.3, official nuget.org source, source commit
+4f9295ffb37ce68985051c11bfd9afc0e23166f3, own packaged Generator 2.0.3 / API4 /
+ABI sharplink-2.0-api4-rpcchannel-codec-provider-v1.
+Published package, DLL and Generator hashes match independently reviewed prior
+NuGet evidence. Full per-package hashes and identities are in report.json.
+All 18 process-loaded identities agree with their peer provenance and isolated
+DLL paths. Generated sources match previously verified baseline byte-for-byte.
+Base wire hash bc503b816dda21e47e0bf31a47af4fa1 is equal across real versions;
+synthetic hash 58431fa13a58e326f6ace132b63eb359 differs with the same ContractId
+-5732964459686761383. Protocol2/minor4 retained.
+
+Official current CI snapshot independently observed 2026-10-28 14:06:42 UTC:
+wire40698598415, Extended40698598679, Fast40698585051, Trim/AOT40698356738,
+CodeQL40698356756, Inventory40698356945, Mobile40698356754 all success.
+Earlier Draft wire40698356919 skipped; superseded Fast40698356741 cancelled.
+Official artifact metadata independently observed by 14:07:18 UTC confirms
+artifact ID, exact head and SHA256 digest above. This is a historical snapshot,
+not a claim to have refreshed remote CI during persistence.
+
+Scope: hosted Ubuntu24.04/Linuxx64 SDK10.0.114/runtime10.0.14, not local SDK102.
+Do not extrapolate this raw wire review to untested OS, performance or full
+Release Gate. Other gate conclusions above are metadata status, not raw audits.
+No product code or CI rerun, download, GitHub approval or merge was performed.
+Host package binaries are not uploaded; actual-loaded byte hashes and provenance
+are checked from raw logs/report and published hashes against prior NuGet evidence.
+
+Reproducible offline review: verify.py
+Actual independent recalculation output: output.log
+Machine-readable verdict, identities and CI snapshot: report.json
+The script modifies only its own independent-review/report.json; never raw files.

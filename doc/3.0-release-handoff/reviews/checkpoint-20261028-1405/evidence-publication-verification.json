@@ -1,0 +1,87 @@
+{
+  "verdict": "PASS",
+  "remoteHead": "f55d291f5fa1ee4c5807e4b448718e60405fd960",
+  "parent": "2b298cb18c0d098f709861507cb6ee8023458a75",
+  "tree": "d8ecfc13308e42eb59c0856e8fa15d629605a6ab",
+  "reviewedLocalCommit": "14aec5390a0b174d70cff53f3ecc781873ecae97",
+  "fetchedHeadVerified": true,
+  "archiveBytes": 34353133,
+  "archiveSha256": "892b8cfcfcc50da4cf22b4046ea0228ba31f2ecde04c783421760df3288ba23b",
+  "partsVerified": 11,
+  "membersVerified": 611,
+  "previousArchives": [
+    {
+      "path": "archives/931-original-48.tar.gz",
+      "bytes": 13184736,
+      "sha256": "d2bddd26a4405cd4320589198164ec55f15894f205a3c4a4ac6b46f867a033a5",
+      "unchanged": true
+    },
+    {
+      "path": "archives/931-fullopts-12.tar.gz",
+      "bytes": 13523894,
+      "sha256": "953a7723162c29949586c5c51447e8d582d210a2bb02608aa548fd8700da8214",
+      "unchanged": true
+    },
+    {
+      "path": "archives/732-hosted-three-arm-36.tar.gz",
+      "bytes": 22049598,
+      "sha256": "7b0287879a28ce3645fabf924484cdc8dc7f2372813793309e21a81775cf442a",
+      "unchanged": true
+    },
+    {
+      "path": "archives/931-pgo-12.tar.gz",
+      "bytes": 13939897,
+      "sha256": "34210a62a927ac8e3c9168c8a3e9e4d884998fad4826fc8c94895b09f281afe7",
+      "unchanged": true
+    },
+    {
+      "path": "archives/732-m0-original.tar.gz",
+      "bytes": 12009784,
+      "sha256": "4ccd85c4a9c0a31b51fa66275b51fc7bec67c3f808dbbffd43f9bfd0a935e2f2",
+      "unchanged": true
+    },
+    {
+      "path": "archives/732-m1-local.tar.gz",
+      "bytes": 5669157,
+      "sha256": "e1d0d4ac071df4f16654d25ea97dbccb8be5e00d39c8625f7270fe7a1bd231f1",
+      "unchanged": true
+    },
+    {
+      "path": "archives/931-r1-loop-exit.tar.gz",
+      "bytes": 6483351,
+      "sha256": "b1e73d631c7fa2111d603914cd901c342f89128d246c2cb813b0a7a3e34cc444",
+      "unchanged": true
+    },
+    {
+      "path": "archives/933-repair-40636189267.tar.gz",
+      "bytes": 8400289,
+      "sha256": "5cdacb0b33b09e3250bcef6caafdd3131715fbef543038b61ca10d761692ae6f",
+      "unchanged": true
+    },
+    {
+      "path": "archives/workflow-logs.tar.gz",
+      "bytes": 45255,
+      "sha256": "8317dc23651f77cca9dcd4f98500a7a681a2921bf9646887332f9c272bf31a73",
+      "unchanged": true
+    },
+    {
+      "path": "archives/release-status-logs.tar.gz",
+      "bytes": 63687,
+      "sha256": "85c0012c2b88734d6f41ff9a5dc13c25ff6dc95832e3d024aab270ec59dc89c9",
+      "unchanged": true
+    },
+    {
+      "path": "archives/r1-cloud-native-20261028.tar.gz",
+      "bytes": 3325186,
+      "sha256": "d38f97ee440ddd639e15a9e47774c8981584a374c85ccbecaa9adcbbc03c36cf",
+      "unchanged": true
+    },
+    {
+      "path": "archives/r1-hosted-native-40681832353.tar.gz",
+      "bytes": 3369522,
+      "sha256": "03e8e6f4bb7479f1df0943a08d3072e7a91164c76856d5d0834594e8faa66a27",
+      "unchanged": true
+    }
+  ],
+  "productAcceptance": "R1 No-Go unchanged; evidence retention only"
+}

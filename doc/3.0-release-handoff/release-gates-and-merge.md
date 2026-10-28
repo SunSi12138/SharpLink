@@ -1,5 +1,7 @@
 # SharpLink 3.0 发布门禁与合并执行手册
 
+**当前范围覆盖规则（2026-10-28 14:18 UTC）：用户明确 3.x 是破坏性升级，允许 API/ABI/wire 变化，不要求 2.x↔3.x 互通；#962 不采纳、不合并，该跨版本门禁不再是 release blocker。此规则优先于旧快照里的“真正双版本 wire 待补”说法。3.x 自身正确性、完整功能及迁移说明仍须验收，breaking 不授权功能缩水；官方 2.0.3 仍作性能基线。**
+
 状态：**尚未达到发布条件**。本手册基于 2026-10-28 14:05（Asia/Shanghai）只读检查，入口为 `artifacts/release-readiness/2026-10-28/progress.json`，当时 dev 为 `eec9524aa21251a1d548f33e363dd4c51094cb14`。后续状态以 root 更新的交接总表、远端 PR head 和实际工件为准。
 
 目标仍是完成 SharpLink 3.0 的原定验收并真实发布。订阅到期是交接期限，不是允许跳过门禁的发布期限。所有以下命令均是待执行步骤；本次只编写手册，没有运行重型门禁、推送、合并或打标签。
@@ -155,16 +157,19 @@ done
 
 失败下一步：先查看具体 IL warning 或缺失 factory/ABI metadata，再区分 ProjectReference/PackageReference 的 props/targets 导入；禁止加全局 suppression 或将 PublishAot/PublishTrimmed 置 false。
 
-### 4.4 ABI、wire 与 codec 兼容
+### 4.4 当前版本 ABI、wire 与 codec 正确性（不要求跨 major 互通）
 
 ```bash
 bash eng/verify-generated-abi-mixing.sh
+# 当前 dev 中此旧名字的脚本实际是同版本进程正确性，继续保留；不是 2.x↔3.x 互通要求。
 bash eng/verify-protocol-v2-cross-version.sh
 ```
 
 ABI 输出 `artifacts/generated-abi-mixing`：当前与已发布 **1.1.1** 的两个混包负向组合必须被合法版本/ABI诊断拒绝，且同版本正向控件先成功。它不单独证明 2.0.3/API4→API5 行为。完整 Unit/Integration 中 `GeneratedManifestLocatorTests`、stale descriptor、`Api4BinaryFixtureIntegrationTests`、ALC 拒绝与释放测试另保留。
 
-**已发现覆盖名实差异**：`verify-protocol-v2-cross-version.sh` 当前仅使用本次包构建 server/client，输出 `CLIENT_PASS`/`SERVER_PASS`；未装载真正 2.0.3 peer。它证明当前同版本真实进程 wire 路径，不能报告为 2.0.3↔3.0 跨版本通过。最终 wire 兼容承诺若包含此边界，需补真正双版本进程/期望拒绝控件并独立审核；这是待交付门禁，不存在可在此直接调用的现成完整脚本。
+**历史名称与当前范围**：原 `verify-protocol-v2-cross-version.sh` 只证明当前同版本进程路径，不能称为真正 2.0.3↔3.0 验证。后续 #962 已补齐并获得 Linux 独立 raw/CI PASS，原始正负证据保留；用户现明确不需要跨 major 互通，因此不采纳、不合并 #962，也不将此互通作为发布门禁。应验证当前 3.x 自身 wire/codec/版本诊断的正确性，并准确记录 breaking 变化与迁移要求，不要求维持旧 API/ABI/wire 身份或历史偶然执行行为。
+
+**精确待调整项，不先删正确性门禁**：固定 dev `e3808b65e694bf1ed250d55fa2ad48a6ef88d285` 的 `.github/workflows/release-gate.yml:217–218` 将这一步命名为 `Verify Protocol v2 Cross-version Matrix`，但 `eng/verify-protocol-v2-cross-version.sh:37–38` 的 server/client 都使用 `current-bin`。下一步独立审查并更正这个误导性名字/说明，保留当前 3.x 真实进程 RPC 与合法/非法输入正确性；此次仅更新交接，没有改工作流。该步骤未发现真实 2.x 互通硬检查。`compare-published-api.py` 的差异是审计/迁移资料，不要求无 breaking diff。混包拒绝、stale descriptor、ALC、协议输入测试应按防止错误加载/错误执行的真实正确性目的审查，而非要求旧 API4 正向互通；如后续精确源码审核发现确有只为 2.x 正向兼容而阻塞的断言，单独列出文件/用例、独立审核后调整，不能改预期刷绿或删除 3.x 自身 API/包一致性、Trim/AOT、取消、资源与安全覆盖。
 
 Codec CI：`codec-compatibility.yml` 6 个 desktop producer × 6 consumer，summary 必须收齐六份消费者报告；`codec-servicing-compatibility.yml` 精确 baseline/latest SDK/runtime 2×2；mobile required 为 Android x64 与 iOS CoreCLR x64，arm64 iOS 是实验臂；Browser Mono/CoreCLR 也是 continue-on-error 的实验事实。下载原报告，不能由 workflow 总绿推断实验臂成功或支持范围扩大。失败读 producer manifest 的 SDK/runtime/ABI 与首个 fixture 分类，不能把 raw-layout 不兼容改成成功。
 
@@ -298,6 +303,6 @@ NuGet Trusted Publishing policy 的 owner/repo/workflow=`release-gate.yml`/envir
 ## 9. 交给下一位执行者的最短起步
 
 1. 读 root 最新总交接与 progress.json；查询 #931/#933/#754、工具PR的新head，不重跑旧失败。
-2. 将本手册当前“待收口”事项放到计划顶部：#775原范围决策/实现、真正双版本wire证据、full矩阵分片调度/资源与 #954 工具验收、三OS packaged trim wiring（缺失项需各自受审后使用）。
+2. 将本手册当前“待收口”事项放到计划顶部：#775原范围决策/实现、3.x自身正确性与breaking迁移说明、full矩阵分片调度/资源与 #954 工具验收、三OS packaged trim wiring（缺失项需各自受审后使用）。
 3. 沿 #931→#933、#732专项→整合→最终台账顺序推进；现有owner保留原始数据和诊断职责。
 4. 冻结后按门禁跑；任何产品修复导致SHA改变，都重建对应最终发布证据。记录完成状态和下一诊断动作，不提前宣称ready。
