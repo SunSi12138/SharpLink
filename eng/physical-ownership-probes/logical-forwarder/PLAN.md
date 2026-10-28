@@ -51,7 +51,7 @@ After that review, a single child commit on `codex/logical-forwarder-performance
 ```
 Workflow is restricted to that branch and REQUEST path, exact commit message, first run attempt only. Guard checks repository/ref/event, clean request checkout, single parent, parent SHA/tree, only-REQUEST diff, fixed sources/campaign. No workflow_dispatch, rerun, force push, merge, release or PR creation is part of this plan. Future new experiments require distinct review/request; this is a scoped request guard, not an access-control boundary against a maintainer intentionally editing the workflow.
 
-All artifacts, build failures and incomplete results upload with run SHA/id/attempt. Driver creates fresh output; no reuse of old campaign directories. First C# build and actual experiment have not run at tool submission. If a tool bug appears, preserve failure and get a new exact tool review before any replacement campaign.
+After Configure isolated paths creates the artifact directory, collected build failures and incomplete results upload with run SHA/id/attempt. Checkout or initial request-guard failures occur before that directory exists: only GitHub step logs are guaranteed for those early failures, and the always-upload step may report no files. Driver creates fresh output; no reuse of old campaign directories. First C# build and actual experiment have not run at tool submission. If a tool bug appears, preserve failure and get a new exact tool review before any replacement campaign.
 
 ## Offline checks
 

@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   full-product:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/logical-forwarder-performance-validation' && github.run_attempt == 1 && github.event.head_commit.message == 'run: logical-forwarder paired diagnostic LF1'
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/codex/logical-forwarder-performance-validation' && github.run_attempt == 1 && github.event.head_commit.message == 'run: logical-forwarder paired diagnostic LF1'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
