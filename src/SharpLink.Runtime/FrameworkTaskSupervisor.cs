@@ -9,7 +9,7 @@ internal enum TaskObservationMode : byte
     ExternallyObserved
 }
 
-internal sealed class FrameworkTaskRegistration
+internal sealed class FrameworkTaskRegistration : FrameworkOperationRegistration
 {
     internal FrameworkTaskRegistration(
         FrameworkTaskSupervisor supervisor,
@@ -18,26 +18,15 @@ internal sealed class FrameworkTaskRegistration
         TaskObservationMode observationMode,
         Func<Exception, bool> shutdownExpectedExceptionClassifier,
         long sequence)
+        : base(supervisor, operation, observationMode, shutdownExpectedExceptionClassifier)
     {
-        Supervisor = supervisor;
         Task = task;
-        Operation = operation;
-        ObservationMode = observationMode;
-        ShutdownExpectedExceptionClassifier = shutdownExpectedExceptionClassifier;
         Sequence = sequence;
     }
 
-    internal FrameworkTaskSupervisor Supervisor { get; }
-
     internal Task Task { get; }
-
-    internal string Operation { get; }
-
-    internal TaskObservationMode ObservationMode { get; }
-
-    internal Func<Exception, bool> ShutdownExpectedExceptionClassifier { get; }
-
-    internal long Sequence { get; }
+    internal override object Identity => Task;
+    internal override TaskStatus Status => Task.Status;
 }
 
 internal sealed record FrameworkTaskDiagnosticSnapshot(
@@ -66,7 +55,7 @@ internal sealed class FrameworkTaskSupervisor
     private const int MaximumSnapshotOperations = 32;
 
     private readonly Lock _gate = new();
-    private readonly Dictionary<Task, FrameworkTaskRegistration> _active =
+    private readonly Dictionary<object, FrameworkOperationRegistration> _active =
         new(ReferenceEqualityComparer.Instance);
     private readonly List<ExceptionDispatchInfo> _failures = [];
     private readonly Action<string, Exception>? _unexpectedFaultObserver;
@@ -229,7 +218,7 @@ internal sealed class FrameworkTaskSupervisor
                 operations[index++] = new FrameworkTaskDiagnosticSnapshot(
                     registration.Operation,
                     registration.ObservationMode,
-                    registration.Task.Status);
+                    registration.Status);
             }
 
             return new FrameworkTaskSupervisorSnapshot(
@@ -249,33 +238,59 @@ internal sealed class FrameworkTaskSupervisor
         }
     }
 
+    internal void RegisterOperation(FrameworkOperationRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        if (!ReferenceEquals(registration.Supervisor, this))
+            throw new ArgumentException("The operation belongs to another supervisor.", nameof(registration));
+        ArgumentException.ThrowIfNullOrWhiteSpace(registration.Operation);
+        ArgumentNullException.ThrowIfNull(registration.ShutdownExpectedExceptionClassifier);
+        if (!Enum.IsDefined(registration.ObservationMode))
+            throw new ArgumentOutOfRangeException(nameof(registration));
+        lock (_gate)
+        {
+            if (_drainStarted && _active.Count == 0)
+            {
+                _rejectedRegistrations++;
+                throw new InvalidOperationException(
+                    $"Framework task '{registration.Operation}' cannot be registered after supervisor drain has completed.");
+            }
+            if (registration.Sequence != 0 || _active.ContainsKey(registration.Identity))
+                throw new InvalidOperationException($"Framework task '{registration.Operation}' is already registered with this supervisor.");
+            registration.Sequence = ++_nextSequence;
+            _active.Add(registration.Identity, registration);
+            _totalTracked++;
+            if (_sealed)
+                _lateRegistrations++;
+        }
+    }
+
     private void Complete(FrameworkTaskRegistration registration, Task completedTask)
+        => CompleteOperation(registration, (Exception?)completedTask.Exception ??
+            (registration.ObservationMode == TaskObservationMode.FrameworkOwned && completedTask.IsCanceled
+                ? new TaskCanceledException(completedTask)
+                : null));
+
+    internal void CompleteOperation(FrameworkOperationRegistration registration, Exception? failure)
     {
         List<Exception>? unexpected = null;
         TaskCompletionSource<bool>? drained = null;
         lock (_gate)
         {
-            if (!_active.Remove(completedTask))
+            if (!_active.Remove(registration.Identity))
                 return;
 
-            if (registration.ObservationMode == TaskObservationMode.FrameworkOwned)
+            if (registration.ObservationMode == TaskObservationMode.FrameworkOwned && failure is not null)
             {
-                if (completedTask.Exception is { } aggregate)
+                if (failure is AggregateException aggregate)
                 {
                     foreach (var exception in aggregate.Flatten().InnerExceptions)
                         RecordFailureLocked(registration, exception, ref unexpected);
                 }
-                else if (completedTask.IsCanceled)
+                else
                 {
-                    RecordFailureLocked(
-                        registration,
-                        new TaskCanceledException(completedTask),
-                        ref unexpected);
+                    RecordFailureLocked(registration, failure, ref unexpected);
                 }
-            }
-            else
-            {
-                _ = completedTask.Exception;
             }
 
             if (_sealed && _active.Count == 0)
@@ -300,7 +315,7 @@ internal sealed class FrameworkTaskSupervisor
     }
 
     private void RecordFailureLocked(
-        FrameworkTaskRegistration registration,
+        FrameworkOperationRegistration registration,
         Exception exception,
         ref List<Exception>? unexpected)
     {

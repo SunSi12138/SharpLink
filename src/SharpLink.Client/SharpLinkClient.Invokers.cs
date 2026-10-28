@@ -159,9 +159,7 @@ internal sealed partial class SharpLinkClient
         CancellationToken cancellationToken)
     {
         var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable);
-        TrackFrameworkTask(
-            StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken),
-            "ServerStreamingInvoker");
+        StartServerStreamingInvoker(dispatcher, method, request, requestCodec, control, cancellationToken);
         return dispatcher;
     }
 
@@ -850,61 +848,6 @@ internal sealed partial class SharpLinkClient
         finally
         {
             producerLease.Dispose();
-        }
-    }
-
-    private async Task StartServerStreamingInvokerAsync<TRequest, TResponse>(
-        PooledAsyncStreamDispatcher<TResponse> dispatcher,
-        RpcMethodDescriptor method,
-        TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        ResolvedCallControl control,
-        CancellationToken cancellationToken)
-    {
-        var registrationLease = dispatcher.RetainForRegistration();
-        ClientConnection? connection = null;
-        var requestId = 0L;
-        try
-        {
-            var registration = await PrepareGeneratedServerStreamAsync(
-                dispatcher,
-                PendingCallKind.ServerStreaming,
-                method,
-                control,
-                cancellationToken,
-                captureTerminalSignal: control.Deadline.HasValue).ConfigureAwait(false);
-            connection = registration.Connection;
-            requestId = registration.RequestId;
-            try
-            {
-                await SendRpcCall(
-                    connection.Session,
-                    method.ContractId,
-                    method.MethodId,
-                    requestId,
-                    cancellationToken.CanBeCanceled || control.Deadline.HasValue
-                        ? ProtocolV2FrameFlags.Cancellable
-                        : ProtocolV2FrameFlags.None,
-                    request,
-                    requestCodec,
-                    control.Deadline,
-                    control.Metadata,
-                    observeEmission: control.Deadline.HasValue,
-                    cancellationToken: registration.TerminalSignal?.Token ?? CancellationToken.None,
-                    publicationTable: connection.PendingCalls).ConfigureAwait(false);
-            }
-            finally
-            {
-                registration.TerminalSignal?.StopObservingTerminal();
-            }
-        }
-        catch (Exception exception)
-        {
-            CompleteFailedGeneratedStream(dispatcher, connection, requestId, exception);
-        }
-        finally
-        {
-            dispatcher.ReleaseRegistrationRetention(registrationLease);
         }
     }
 
