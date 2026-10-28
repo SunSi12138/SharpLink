@@ -43,7 +43,7 @@ processes retain default adaptive tiering and the unchanged original warmup.
 - Actual local macOS arm64/.NET10.0.11 preflight: both arms completed exactly
   4352 RPCs, exit0, all four required real-path Tier1 targets captured.
 - `local-verification.json`, both raw proof JSON, host outcomes, logs and native
-  listings are in the original host directory `/Users/sunsi/.codex/worktrees/physical-ownership-performance-tools/SharpLink/artifacts/client-pgo-local-smoke/`; cloud readers use the evidence archive index in `cloud-resources.md`. No timed process was executed locally.
+  listings are in the original host directory `/Users/sunsi/.codex/worktrees/physical-ownership-performance-tools/SharpLink/artifacts/client-pgo-local-smoke/`; cloud readers use the formal hosted preflight in the `931-pgo-12` archive listed in `cloud-resources.md`; this historical local-verification file is not mirrored. No timed process was executed locally.
 - Local runtime/CPU arrangement is not hosted private10.0.13 acceptance. The
   formal gate must pass on its actual runner. No push or dispatch by this owner.
 
