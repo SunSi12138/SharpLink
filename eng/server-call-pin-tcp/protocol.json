@@ -1,0 +1,103 @@
+{
+  "schema": 5,
+  "purpose": "Finite incremental unified server-call-pin comparison candidate/base; not official-version target evidence or release acceptance",
+  "sdk": "10.0.102",
+  "runtime": "10.0.14",
+  "topology": "hosted ubuntu24.04; one process containing loopback TCP client and server; one worker; same two allowed logical CPUs selected on distinct guest-reported (socket,core)",
+  "affinity": "smallest allowed online CPU, then smallest allowed online CPU on a different guest (socket,core); stop if mapping unavailable",
+  "isolationClaim": "None; retain guest core/socket/SMT and cgroup observations; no physical-core isolation claim",
+  "modes": [
+    "static-intercepted",
+    "dynamic-intercepted"
+  ],
+  "items": [
+    1,
+    100
+  ],
+  "pairsPerCell": 6,
+  "timedProcesses": 48,
+  "warmupSeconds": 3,
+  "measureSeconds": 6,
+  "workers": 1,
+  "connectionPoolMin": 1,
+  "connectionPoolMax": 1,
+  "heartbeatSeconds": 3600,
+  "requestTimeout": "disabled",
+  "clientInterceptors": 1,
+  "serverInterceptors": 0,
+  "qpsTargetRatio": [
+    11,
+    10
+  ],
+  "p99TargetRatio": [
+    4,
+    5
+  ],
+  "quantile": "nearest rank ceil(n*p), exact integer rational rank, no floating-point percentile rank",
+  "pairOrder": "Odd pair baseline then candidate; even pair candidate then baseline; six pairs/cell (three ABBA blocks); four scenarios rotated modulo four by pair index",
+  "failurePolicy": "retain every planned slot and all raw failures; no replacement, exclusion, retry, adaptive stop or claim from incomplete evidence",
+  "releaseBoundary": "Incremental unified server-call-pin candidate afad64bf versus dd0dcacd baseline only. Four representative intercepted normal-completion stream cells. Ordinary no-CT paths are tracked, not legacy fallback. Previously observed adverse legacy-fallback mechanism result remains a known limitation; no fallback TCP controls added. Dynamic module-retirement correctness is required before TCP. GenerationControl and AOT are outside this campaign. No official NuGet 2.0.3 comparison, original target, full parity or release-acceptance claim.",
+  "interopBoundary": "Both same-version3.0.0 endpoints and own Generator/API5; no endpoint or generated-assembly mixing.",
+  "executionHost": "hosted ubuntu24.04",
+  "aggregation": "Per cell median of six paired candidate/baseline QPS and P99 ratios; additionally recorded process-wide (client + server + runtime) double CPU microseconds/operation and allocated bytes/operation paired absolute values, ratios and median ratios. CPU/allocation are descriptive, no new target thresholds; allocated bytes are not object counts; exact rational ratios represent the recorded decimal values, not independent raw CPU-tick or allocation-census reconstruction. No operation pooling, best round, cross-cell global pass or incomplete-input target observations.",
+  "coldPolicy": "Eight strict-cleanup processes (both arms x four cells) and eight symmetric normal-validate processes must pass before timing. Each of 48 fresh normal-measure processes repeats normal-only controls. No cancellation/failure/early-exit probe in timed processes.",
+  "campaign": "server-call-pin-unified-64tcp-PIN1",
+  "strictProcesses": 8,
+  "normalProcesses": 8,
+  "processTimeoutSeconds": 120,
+  "cleanupGuardSeconds": 15,
+  "evidencePolicy": "Raw ticks, reports, traces, build logs and all failures stay runner-local; no artifact upload, commit, comment, raw log dump or evidence publication. Independent same-job offline validator emits bounded per-cell QPS/P99 ratios, CPU/allocation paired absolute metrics and ratios, and failure status only. Ephemeral samples cannot support downstream independent recomputation.",
+  "phaseSchema": [
+    "strict-cleanup",
+    "normal-validate",
+    "normal-measure"
+  ],
+  "dependencyPolicy": {
+    "buildClosure": "Four identical private10.0.12 dependency DLLs copied to both prepared snapshots; these are build closure, not asserted runtime load origins.",
+    "executionClosure": "Exactly four pinned Microsoft dependency identities from private Microsoft.AspNetCore.App10.0.14, common to both arms; all product and fixture assemblies remain own-arm only.",
+    "policySource": "c1b4d73b922183364065a4460c6b7bce8829e9a7:eng/official-cleanup-diagnostic/identity.py",
+    "checks": [
+      "exactNameClosure",
+      "absolutePath",
+      "SHA256",
+      "MVID",
+      "productVersion",
+      "onDiskFrameworkHash",
+      "completeNonDynamicAssemblyCensus",
+      "archiveDerivedFrameworkAllowlist",
+      "canonicalNoSymlinkPaths"
+    ],
+    "remainingFrameworkClosure": "Every other loaded non-dynamic assembly must match canonical path and SHA256 derived independently from the two fixed SHA512-verified private runtime14 archives; unknown, inserted or symlinked DLLs rejected. Collection and hashing occur outside all timing windows."
+  },
+  "baselineSource": "dd0dcacd8edf9552e9face66f4a6473b258428b2",
+  "baselineTree": "410fdb911cf7120ccabbbd10c820b0c9a73d9223",
+  "candidateSource": "afad64bff23d81f3f4a110606822d939d0ac2d3e",
+  "candidateTree": "dfd3618edb53d8664262bdfceca0c15bfb528e58",
+  "baselineVersion": "3.0.0",
+  "candidateVersion": "3.0.0",
+  "baselineApi": 5,
+  "candidateApi": 5,
+  "totalProcesses": 64,
+  "targetInterpretation": "QPS1.10/P99.80 markers apply only to incremental candidate/baseline ratios; reaching them cannot establish the original goal versus officialNuGet2.0.3.",
+  "ordinaryUnitGate": {
+    "requirement": "Both arms execute their complete freshly discovered ordinary corpus exactly once under Core-only runtime14 before any TCP. Exact UID equality and zero skips/failures/cancellations/timeouts/flaky passes; no rebuild after shared-product freeze.",
+    "arms": {
+      "baseline": {
+        "rawUids": 2316,
+        "ordinaryUids": 2311
+      },
+      "candidate": {
+        "rawUids": 2331,
+        "ordinaryUids": 2326,
+        "pinUids": 15
+      }
+    },
+    "explicitWorkerUids": 5,
+    "explicitWorkerClasses": 4,
+    "scope": "Only the existing five source-reviewed Explicit worker UIDs excluded. Ordinary TCP/UDS functional tests included.",
+    "dynamicModuleRetirement": "Both arms must freshly discover and execute the exact actual dynamic module-retirement integration UID, not module-configured mechanism substitution.",
+    "runtimeDomain": "Private Microsoft.NETCore.App 10.0.14 only, separately installed from dual-framework TCP host.",
+    "record": "Both TCP driver and validator require two-arm unit-gate.json with tool/source/tree, frozen-product hash equality, UID digest equality and actual runtime14 allocation-child and dynamic-retirement witnesses."
+  },
+  "preparationPolicy": "One aggregate graph build per arm for canonical unit/integration outputs; identical shared product bytes frozen once (nine-DLL closure: five product DLLs plus four support12 DLLs, and own Generator). No pack/rebuild. Fixtures compile with explicit frozen references and own Generator. Before any TCP, actual compiled/evaluated metadata, all snapshots and correctness records must match the single protocol source/tree identities. NuGetAudit=true/all and all warnings strict; fresh writable CLI/HTTP/scratch/XDG directories before first build."
+}

@@ -1,0 +1,17 @@
+[
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.EscapedInboundWrapperKeepsLookupOwnershipAfterCallRetirement(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.EscapedInboundWrapperKeepsLookupOwnershipAfterCallRetirement(System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.MappingAndPublicationFaultsRetainPinThroughPhysicalWorkAndReleaseIt(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.MappingAndPublicationFaultsRetainPinThroughPhysicalWorkAndReleaseIt(System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.PinnedCallRejectsNextMoveAfterUnlinkAtTerminalOrExactDeadline(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.PinnedCallRejectsNextMoveAfterUnlinkAtTerminalOrExactDeadline(System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.PinnedTerminalPreventsEnumeratorFactoryEntry(System.Int32).1.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.PinnedTerminalPreventsEnumeratorFactoryEntry(System.Int32).2.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.PinnedTerminalPreventsEnumeratorFactoryEntry(System.Int32).3.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.PinnedTerminalPreventsEnumeratorFactoryEntry(System.Int32).4.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.RemovedCallCannotRecycleUntilPhysicalMoveAndDisposalBothFinish(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.RemovedCallCannotRecycleUntilPhysicalMoveAndDisposalBothFinish(System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.UnifiedWrappersKeepOneReceiverTypeAndBaselineFieldShape.1.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.UnpinnedPumpStillFindsStateCreatedAfterEnumeratorEntry(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.ServerGeneratedOutboundCallPinTests.1.1.UnpinnedPumpStillFindsStateCreatedAfterEnumeratorEntry(System.Boolean).2.1.0"
+]

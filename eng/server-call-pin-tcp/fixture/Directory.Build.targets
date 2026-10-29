@@ -1,0 +1,14 @@
+<Project>
+  <Target Name="ValidateComparisonArm" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(Arm)' != 'BASELINE' and '$(Arm)' != 'CANDIDATE'" Text="Arm must explicitly be BASELINE or CANDIDATE." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(SourceTree)', '\A[0-9a-f]{40}\z'))" Text="SourceTree must be the explicit frozen 40-character lowercase tree identity." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(ProductCommit)', '\A[0-9a-f]{40}\z'))" Text="ProductCommit must be the explicit frozen 40-character lowercase source identity." />
+    <Error Condition="'$(LibraryRoot)' == ''" Text="LibraryRoot must be the independently materialized package arm." />
+    <Error Condition="'%(Reference.HintPath)' != '' and !Exists('%(Reference.HintPath)')" Text="Frozen arm library missing: %(Reference.HintPath)." />
+  </Target>
+  <!-- Record the compiler's actual inputs, not merely the requested HintPaths. -->
+  <Target Name="RecordFrozenReferences" BeforeTargets="CoreCompile">
+    <WriteLinesToFile File="$(IntermediateOutputPath)references.txt" Lines="@(ReferencePathWithRefAssemblies->'%(FullPath)')" Overwrite="true" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)resolved-references.txt" Lines="@(ReferencePath->'%(FullPath)')" Overwrite="true" />
+  </Target>
+</Project>

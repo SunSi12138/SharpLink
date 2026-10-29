@@ -1,0 +1,21 @@
+{
+  "schema": 2,
+  "base_uid_sha256": "1b611713106649f5bff4345bc0d9d03d2572b2dc7ab1cbde76a6fda693784dc5",
+  "new_uid_sha256": "92f332aeed16898218c25de69cb63e5b3ac773de0ab2db40baef73d758ad9330",
+  "explicit_file_sha256": "ac77302bb313b2dce67f6f7b3009130f79e7ae033bb3a4182bb9f1e78dbd0366",
+  "arms": {
+    "baseline": {
+      "raw_count": 2316,
+      "raw_uid_sha256": "1b611713106649f5bff4345bc0d9d03d2572b2dc7ab1cbde76a6fda693784dc5",
+      "ordinary_count": 2311,
+      "ordinary_uid_sha256": "0310cd7491a0c60e186466af5b4b72a3187008b3fb86ccbaf408a393b31860a6"
+    },
+    "candidate": {
+      "raw_count": 2331,
+      "raw_uid_sha256": "cea649624e7ece3292230eeb1b97d9a1a35eef85f664b152efd7ad34c7af02c1",
+      "ordinary_count": 2326,
+      "ordinary_uid_sha256": "7c9ed5388d56af16fc323ea24615f13fe3e27b4086ee029671cc97c03eae0f4e"
+    }
+  },
+  "provenance": "Reviewed original2310 exact UID list plus six source-reviewed cleanup UIDs; candidate adds fifteen exact pin UIDs. Every remote arm must freshly discover and match this complete list before execution; local construction is not execution evidence."
+}

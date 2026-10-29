@@ -1,0 +1,31 @@
+<Project>
+  <!-- Self-contained fixture: never inherit the checkout arm's product/version properties. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Optimize>true</Optimize>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <IsPackable>false</IsPackable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>obj/generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="Arm" Value="$([System.String]::Copy('$(Arm)').ToLowerInvariant())" />
+    <AssemblyMetadata Include="SourceTree" Value="$(SourceTree)" />
+    <AssemblyMetadata Include="ExpectedProductCommit" Value="$(ProductCommit)" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Reference Include="Microsoft.Extensions.DependencyInjection"><HintPath>$(LibraryRoot)/Microsoft.Extensions.DependencyInjection.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions"><HintPath>$(LibraryRoot)/Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions"><HintPath>$(LibraryRoot)/Microsoft.Extensions.Logging.Abstractions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Threading.RateLimiting"><HintPath>$(LibraryRoot)/System.Threading.RateLimiting.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpLink.Abstractions"><HintPath>$(LibraryRoot)/SharpLink.Abstractions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpLink.Runtime"><HintPath>$(LibraryRoot)/SharpLink.Runtime.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpLink.Client"><HintPath>$(LibraryRoot)/SharpLink.Client.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpLink.Server"><HintPath>$(LibraryRoot)/SharpLink.Server.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpLink.Sdk"><HintPath>$(LibraryRoot)/SharpLink.Sdk.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+</Project>
