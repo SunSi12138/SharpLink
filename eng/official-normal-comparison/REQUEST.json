@@ -1,4 +1,12 @@
 {
-  "state": "review-required",
-  "campaign": "official203-candidate3d76-60tcp-O203N2"
+  "state": "authorized",
+  "campaign": "official203-candidate3d76-60tcp-O203N2",
+  "reviewedToolCommit": "edd9e2d372eeea7a6d14e3763468e256116b5102",
+  "reviewedToolTree": "2b2d8b680573cc94772774f93c00fe848291b56d",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "officialSource": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+  "officialVersion": "2.0.3",
+  "devSource": "3d76a3a8b55a37e24c62a073fe588cff3d3867be",
+  "devTree": "1c24da3af090acd4d6cdbfb005a9e3bd95304e3a"
 }
