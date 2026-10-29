@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class DateTimeOffsetCodec : IRpcCodec<DateTimeOffset>
+internal sealed class DateTimeOffsetCodec : IRpcCodec<DateTimeOffset>, IStreamPageFixedSizeCodec
 {
     internal static readonly DateTimeOffsetCodec Instance = new();
     private const int Size = 10;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in DateTimeOffset value, IBufferWriter<byte> writer)
@@ -43,10 +45,12 @@ internal sealed class DateTimeOffsetCodec : IRpcCodec<DateTimeOffset>
     }
 }
 
-internal sealed class NullableDateTimeOffsetCodec : IRpcCodec<DateTimeOffset?>
+internal sealed class NullableDateTimeOffsetCodec : IRpcCodec<DateTimeOffset?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableDateTimeOffsetCodec Instance = new();
     private const int Size = 11;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in DateTimeOffset? value, IBufferWriter<byte> writer)

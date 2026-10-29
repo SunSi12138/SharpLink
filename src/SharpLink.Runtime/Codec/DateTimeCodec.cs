@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class DateTimeCodec : IRpcCodec<DateTime>
+internal sealed class DateTimeCodec : IRpcCodec<DateTime>, IStreamPageFixedSizeCodec
 {
     internal static readonly DateTimeCodec Instance = new();
     private const int Size = 8;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in DateTime value, IBufferWriter<byte> writer)
@@ -29,10 +31,12 @@ internal sealed class DateTimeCodec : IRpcCodec<DateTime>
 }
 
 
-internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>
+internal sealed class NullableDateTimeCodec : IRpcCodec<DateTime?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableDateTimeCodec Instance = new();
     private const int Size = 9; // 1 byte Tag + 8 bytes DateTime
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in DateTime? value, IBufferWriter<byte> writer)

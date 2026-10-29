@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class TimeOnlyCodec : IRpcCodec<TimeOnly>
+internal sealed class TimeOnlyCodec : IRpcCodec<TimeOnly>, IStreamPageFixedSizeCodec
 {
     internal static readonly TimeOnlyCodec Instance = new();
     private const int Size = 8;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in TimeOnly value, IBufferWriter<byte> writer)
@@ -29,10 +31,12 @@ internal sealed class TimeOnlyCodec : IRpcCodec<TimeOnly>
     }
 }
 
-internal sealed class NullableTimeOnlyCodec : IRpcCodec<TimeOnly?>
+internal sealed class NullableTimeOnlyCodec : IRpcCodec<TimeOnly?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableTimeOnlyCodec Instance = new();
     private const int Size = 9;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in TimeOnly? value, IBufferWriter<byte> writer)

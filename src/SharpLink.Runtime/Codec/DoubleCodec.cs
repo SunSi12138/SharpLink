@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class DoubleCodec : IRpcCodec<double>
+internal sealed class DoubleCodec : IRpcCodec<double>, IStreamPageFixedSizeCodec
 {
     internal static readonly DoubleCodec Instance = new();
     private const int Size = 8;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in double value, IBufferWriter<byte> writer) { Unsafe.WriteUnaligned(ref MemoryMarshal.GetReference(writer.GetSpan(Size)), value); writer.Advance(Size); }
@@ -20,10 +22,12 @@ internal sealed class DoubleCodec : IRpcCodec<double>
     }
 }
 
-internal sealed class NullableDoubleCodec : IRpcCodec<double?>
+internal sealed class NullableDoubleCodec : IRpcCodec<double?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableDoubleCodec Instance = new();
     private const int Size = 9; // 1 byte Tag + 8 bytes Value
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in double? value, IBufferWriter<byte> writer)

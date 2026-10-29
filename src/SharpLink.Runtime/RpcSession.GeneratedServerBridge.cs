@@ -55,8 +55,10 @@ internal sealed partial class RpcSession
             throw;
         }
         var cleanupTransferred = false;
+        EncodedStreamPageWriter? pageWriter = null;
         try
         {
+            pageWriter = TryCreateEncodedStreamPageWriter(codec, out var pageEncodedBytes);
             var exactSizeCodec = codec as IRpcSizedCodec<T>;
             if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
                 exactSizeCodec = null;
@@ -82,7 +84,7 @@ internal sealed partial class RpcSession
                         {
                             var terminal = CreateGeneratedStreamDeadlineExceededException();
                             cleanupTransferred = true;
-                            var owner = SharpLinkPhysicalWork.CreateOwner(terminal, lifetimeCancellation);
+                            var owner = SharpLinkPhysicalWork.CreateStreamOwner(terminal, lifetimeCancellation, pageWriter);
                             owner.Track(CompleteAbandonedGeneratedStreamAsync(moveNextTask, enumerator, lifetimeCancellation, owner));
                             throw terminal;
                         }
@@ -93,7 +95,7 @@ internal sealed partial class RpcSession
                         // an exception instance that arbitrary user code could reuse elsewhere.
                         var terminal = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
                         cleanupTransferred = true;
-                        var owner = SharpLinkPhysicalWork.CreateCarrierOwner(terminal, exception, lifetimeCancellation);
+                        var owner = SharpLinkPhysicalWork.CreateStreamCarrierOwner(terminal, exception, lifetimeCancellation, pageWriter);
                         owner.Track(CompleteAbandonedGeneratedStreamAsync(moveNextTask, enumerator, lifetimeCancellation, owner));
                         throw terminal;
                     }
@@ -111,15 +113,13 @@ internal sealed partial class RpcSession
                         "A non-nullable RPC stream response was null.");
                 }
 
-                var send = SendGeneratedStreamChunkAsync(
-                    requestId,
-                    streamId,
-                    item,
-                    codec,
-                    exactSizeCodec,
-                    deadline,
-                    deadlineTimeProvider,
-                    lifetimeCancellation.Token);
+                var send = pageWriter is not null
+                    ? SendEncodedStreamPageChunkAsync(
+                        requestId, streamId, item, codec, pageWriter, pageEncodedBytes,
+                        deadline, deadlineTimeProvider, lifetimeCancellation.Token)
+                    : SendGeneratedStreamChunkAsync(
+                        requestId, streamId, item, codec, exactSizeCodec,
+                        deadline, deadlineTimeProvider, lifetimeCancellation.Token);
                 if (!deadline.HasValue || deadlineTimeProvider is null || send.IsCompletedSuccessfully)
                 {
                     await send.ConfigureAwait(false);
@@ -137,7 +137,7 @@ internal sealed partial class RpcSession
                         {
                             var terminal = CreateGeneratedStreamDeadlineExceededException();
                             cleanupTransferred = true;
-                            var owner = SharpLinkPhysicalWork.CreateOwner(terminal, lifetimeCancellation);
+                            var owner = SharpLinkPhysicalWork.CreateStreamOwner(terminal, lifetimeCancellation, pageWriter);
                             owner.Track(CompleteAbandonedGeneratedStreamAsync(sendTask, enumerator, lifetimeCancellation, owner));
                             throw terminal;
                         }
@@ -148,7 +148,7 @@ internal sealed partial class RpcSession
                         // an exception instance that arbitrary user code could reuse elsewhere.
                         var terminal = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
                         cleanupTransferred = true;
-                        var owner = SharpLinkPhysicalWork.CreateCarrierOwner(terminal, exception, lifetimeCancellation);
+                        var owner = SharpLinkPhysicalWork.CreateStreamCarrierOwner(terminal, exception, lifetimeCancellation, pageWriter);
                         owner.Track(CompleteAbandonedGeneratedStreamAsync(sendTask, enumerator, lifetimeCancellation, owner));
                         throw terminal;
                     }
@@ -157,7 +157,9 @@ internal sealed partial class RpcSession
             }
 
             ThrowIfGeneratedStreamDeadlineExpired(deadline, deadlineTimeProvider);
-            SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
+            if (pageWriter is null || !TrySendEncodedStreamPageComplete(
+                    requestId, streamId, pageWriter, deadline, deadlineTimeProvider))
+                SendGeneratedStreamComplete(requestId, streamId, deadline, deadlineTimeProvider);
         }
         catch (SharpLinkException exception) when (
             !cleanupTransferred && exception.Code == SharpLinkErrorCode.DeadlineExceeded &&
@@ -169,7 +171,7 @@ internal sealed partial class RpcSession
             var terminal = new SharpLinkException(
                 exception.Code, exception.DetailCode, exception.Message, exception);
             cleanupTransferred = true;
-            var owner = SharpLinkPhysicalWork.CreateCarrierOwner(terminal, exception, lifetimeCancellation);
+            var owner = SharpLinkPhysicalWork.CreateStreamCarrierOwner(terminal, exception, lifetimeCancellation, pageWriter);
             owner.Track(CompleteAbandonedGeneratedStreamAsync(
                 Task.FromException(exception), enumerator, lifetimeCancellation, owner));
             throw terminal;
@@ -182,7 +184,7 @@ internal sealed partial class RpcSession
             // An unassociated application cancellation retains ordinary disposal precedence.
             var terminal = SharpLinkPhysicalWork.CreateCancellationTerminal(exception);
             cleanupTransferred = true;
-            var owner = SharpLinkPhysicalWork.CreateCarrierOwner(terminal, exception, lifetimeCancellation);
+            var owner = SharpLinkPhysicalWork.CreateStreamCarrierOwner(terminal, exception, lifetimeCancellation, pageWriter);
             owner.Track(CompleteAbandonedGeneratedStreamAsync(
                 Task.FromException(exception), enumerator, lifetimeCancellation, owner));
             throw terminal;
@@ -191,6 +193,7 @@ internal sealed partial class RpcSession
         {
             if (!cleanupTransferred)
             {
+                var disposalTransferred = false;
                 try
                 {
                     TryCancelGeneratedLifetime(lifetimeCancellation);
@@ -198,14 +201,24 @@ internal sealed partial class RpcSession
                 }
                 catch (Exception exception)
                 {
-                    // A disposal terminal can carry unfinished nested work. Transfer only its
-                    // linked lifetime; the enumerator has already been disposed exactly once.
-                    if (SharpLinkPhysicalWork.TransferLifetime(exception, lifetimeCancellation) is { } terminal)
+                    // Disposal may carry unfinished nested work. Both the linked source and
+                    // the producer page follow that descendant's full physical completion group.
+                    if (SharpLinkPhysicalWork.TransferStreamLifetime(
+                            exception, lifetimeCancellation, pageWriter) is { } terminal)
+                    {
+                        disposalTransferred = true;
                         throw terminal;
-                    lifetimeCancellation.Dispose();
+                    }
                     throw;
                 }
-                lifetimeCancellation.Dispose();
+                finally
+                {
+                    if (!disposalTransferred)
+                    {
+                        try { lifetimeCancellation.Dispose(); }
+                        finally { pageWriter?.Dispose(); }
+                    }
+                }
             }
         }
     }

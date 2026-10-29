@@ -397,48 +397,52 @@ internal sealed partial class RpcSession
     {
         try
         {
-            if (Volatile.Read(ref _terminal) is { } terminal)
-                throw terminal.Exception;
-
-            var length = packet.WrittenCount;
-            if (length == 0)
-            {
-                if (allowEmpty)
-                    return;
-                throw new InvalidOperationException("Only an internal flush marker may be empty.");
-            }
-            if (length < ProtocolV2Constants.HeaderBytes)
-                throw new InvalidOperationException("Outbound frame is shorter than the protocol header.");
-
-            var protocolState = Volatile.Read(ref _protocolState);
-            if (protocolState.Phase is RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal &&
-                Volatile.Read(ref _terminal) is { } phaseTerminal)
-            {
-                throw phaseTerminal.Exception;
-            }
-            var maxFramePayloadBytes = protocolState.Options?.MaxFramePayloadBytes ??
-                RuntimeContext.Protocol.MaxFramePayloadBytes;
-            var payloadLength = length - ProtocolV2Constants.HeaderBytes;
-            if (payloadLength > maxFramePayloadBytes)
-            {
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.ResourceExhausted,
-                    $"Outbound frame payload exceeds the negotiated {maxFramePayloadBytes}-byte limit.");
-            }
-
-            var span = packet.WrittenSpan;
-            if (span[0] != ProtocolV2Constants.Magic)
-                throw new InvalidOperationException("Outbound frame has an invalid protocol magic byte.");
-            EnsureOutboundFrameAllowed(protocolState.Phase, (ProtocolV2FrameType)span[5]);
-            var encodedPayloadLength = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(1, sizeof(int)));
-            if (encodedPayloadLength != payloadLength)
-                throw new InvalidOperationException("Outbound frame payload length does not match its header.");
+            ValidateOutboundFrame(packet.WrittenSpan, allowEmpty);
         }
         catch
         {
             RuntimeContext.Buffers.Return(packet);
             throw;
         }
+    }
+
+    private void ValidateOutboundFrame(ReadOnlySpan<byte> span, bool allowEmpty)
+    {
+        if (Volatile.Read(ref _terminal) is { } terminal)
+            throw terminal.Exception;
+
+        var length = span.Length;
+        if (length == 0)
+        {
+            if (allowEmpty)
+                return;
+            throw new InvalidOperationException("Only an internal flush marker may be empty.");
+        }
+        if (length < ProtocolV2Constants.HeaderBytes)
+            throw new InvalidOperationException("Outbound frame is shorter than the protocol header.");
+
+        var protocolState = Volatile.Read(ref _protocolState);
+        if (protocolState.Phase is RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal &&
+            Volatile.Read(ref _terminal) is { } phaseTerminal)
+        {
+            throw phaseTerminal.Exception;
+        }
+        var maxFramePayloadBytes = protocolState.Options?.MaxFramePayloadBytes ??
+            RuntimeContext.Protocol.MaxFramePayloadBytes;
+        var payloadLength = length - ProtocolV2Constants.HeaderBytes;
+        if (payloadLength > maxFramePayloadBytes)
+        {
+            throw new SharpLinkException(
+                SharpLinkErrorCode.ResourceExhausted,
+                $"Outbound frame payload exceeds the negotiated {maxFramePayloadBytes}-byte limit.");
+        }
+
+        if (span[0] != ProtocolV2Constants.Magic)
+            throw new InvalidOperationException("Outbound frame has an invalid protocol magic byte.");
+        EnsureOutboundFrameAllowed(protocolState.Phase, (ProtocolV2FrameType)span[5]);
+        var encodedPayloadLength = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(1, sizeof(int)));
+        if (encodedPayloadLength != payloadLength)
+            throw new InvalidOperationException("Outbound frame payload length does not match its header.");
     }
 
     internal long QueuedSendBytes => Volatile.Read(ref _pump)?.QueuedBytes ?? 0;

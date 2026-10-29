@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class DecimalCodec : IRpcCodec<decimal>
+internal sealed class DecimalCodec : IRpcCodec<decimal>, IStreamPageFixedSizeCodec
 {
     internal static readonly DecimalCodec Instance = new();
     private const int Size = 16;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in decimal value, IBufferWriter<byte> writer)
@@ -29,10 +31,12 @@ internal sealed class DecimalCodec : IRpcCodec<decimal>
     }
 }
 
-internal sealed class NullableDecimalCodec : IRpcCodec<decimal?>
+internal sealed class NullableDecimalCodec : IRpcCodec<decimal?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableDecimalCodec Instance = new();
     private const int Size = 17;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in decimal? value, IBufferWriter<byte> writer)

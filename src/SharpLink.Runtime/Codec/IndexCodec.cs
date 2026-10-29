@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class IndexCodec : IRpcCodec<Index>
+internal sealed class IndexCodec : IRpcCodec<Index>, IStreamPageFixedSizeCodec
 {
     internal static readonly IndexCodec Instance = new();
     private const int Size = 4;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in Index value, IBufferWriter<byte> writer)
@@ -26,10 +28,12 @@ internal sealed class IndexCodec : IRpcCodec<Index>
         return Unsafe.ReadUnaligned<Index>(ref MemoryMarshal.GetReference(temp));
     }
 }
-internal sealed class NullableIndexCodec : IRpcCodec<Index?>
+internal sealed class NullableIndexCodec : IRpcCodec<Index?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableIndexCodec Instance = new();
     private const int Size = 5; // 1 Tag + 4 Value
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in Index? value, IBufferWriter<byte> writer)

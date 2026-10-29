@@ -7,11 +7,12 @@ internal interface IRequestEmissionFailureObserver
 }
 
 /// <summary>
-/// Transfers one encoded frame and its backing writer to the session send pump.
-/// Only the pump may return the owner after the frame has been flushed or drained.
+/// Transfers one encoded frame and its backing writer or held page reference to the send pump.
+/// Only the pump may release the owner after physical output has finished or the frame is drained.
 /// </summary>
 internal readonly struct OwnedFrame
 {
+    private readonly object _owner;
     private readonly object? _completionState;
 
     internal OwnedFrame(
@@ -21,7 +22,7 @@ internal readonly struct OwnedFrame
         bool isProtocolProgress,
         IRequestEmissionFailureObserver? failureObserver = null)
     {
-        Owner = owner;
+        _owner = owner;
         Memory = owner.WrittenMemory;
         Length = owner.WrittenCount;
         ForceFlush = forceFlush;
@@ -30,7 +31,34 @@ internal readonly struct OwnedFrame
         _completionState = (object?)flushCompletion ?? failureObserver;
     }
 
-    public IRpcByteBufferWriter Owner { get; }
+    // Consumes one reference already acquired by the producer. Do not AddRef here:
+    // admission and every failure/drain path transfer or release that same reference.
+    internal OwnedFrame(
+        EncodedStreamPage page,
+        int offset,
+        int length,
+        bool forceFlush = false,
+        TaskCompletionSource<bool>? flushCompletion = null,
+        bool isProtocolProgress = false)
+    {
+        _owner = page;
+        Memory = page.Buffer.AsMemory(offset, length);
+        Length = length;
+        ForceFlush = forceFlush;
+        IsProtocolProgress = isProtocolProgress;
+        _completionState = flushCompletion;
+    }
+
+    // A shared owner slot keeps legacy unary frame size unchanged. Page-specific
+    // offset discovery happens only while considering an already-page-backed batch.
+    public IRpcByteBufferWriter? Owner => _owner as IRpcByteBufferWriter;
+
+    public EncodedStreamPage? Page => _owner as EncodedStreamPage;
+
+    public int PageOffset
+        => System.Runtime.InteropServices.MemoryMarshal.TryGetArray(Memory, out var segment)
+            ? segment.Offset
+            : throw new InvalidOperationException("Encoded stream pages require array-backed memory.");
 
     public ReadOnlyMemory<byte> Memory { get; }
 

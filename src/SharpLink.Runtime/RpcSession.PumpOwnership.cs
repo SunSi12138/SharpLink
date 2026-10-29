@@ -34,7 +34,8 @@ internal sealed partial class RpcSession
                 RuntimeContext.TimeProvider,
                 _lifetimeToken,
                 ReturnBuffer,
-                FaultAfterSendPumpFailure);
+                FaultAfterSendPumpFailure,
+                _transport as IStreamPageTransport);
             Volatile.Write(ref _pump, pump);
             if (Volatile.Read(ref _terminal) is { } terminal)
             {

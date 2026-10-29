@@ -9,6 +9,34 @@ internal interface IQuiescentPumpFaultDisposal
     ValueTask DisposeAfterPumpFaultAsync(Exception exception);
 }
 
+/// <summary>
+/// Opt-in physical page output, used only by the sole session send pump after its prior
+/// output has completed. Implementations must not complete until the memory is no longer in use.
+/// </summary>
+internal interface IStreamPageTransport
+{
+    ValueTask WriteStreamPageAsync(ReadOnlyMemory<byte> memory, CancellationToken token);
+}
+
+// Only the built-in plaintext TCP factory/listener instantiate this capability.
+// TLS, Unix-domain sockets and user-provided streams retain the pipeline copy-and-flush path.
+internal sealed class SocketStreamTransportConnection : StreamTransportConnection, IStreamPageTransport
+{
+    private readonly NetworkStream _networkStream;
+
+    internal SocketStreamTransportConnection(
+        NetworkStream stream,
+        EndPoint? localEndPoint = null,
+        EndPoint? remoteEndPoint = null)
+        : base(stream, localEndPoint, remoteEndPoint)
+    {
+        _networkStream = stream;
+    }
+
+    public ValueTask WriteStreamPageAsync(ReadOnlyMemory<byte> memory, CancellationToken token)
+        => _networkStream.WriteAsync(memory, token);
+}
+
 internal class StreamTransportConnection : ITransportConnection, IQuiescentPumpFaultDisposal
 {
     internal const int ReadBufferBytes = 16 * 1024;

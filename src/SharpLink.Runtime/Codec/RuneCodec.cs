@@ -2,10 +2,12 @@ using System.Text;
 
 namespace SharpLink.Runtime;
 
-internal sealed class RuneCodec : IRpcCodec<Rune>
+internal sealed class RuneCodec : IRpcCodec<Rune>, IStreamPageFixedSizeCodec
 {
     internal static readonly RuneCodec Instance = new();
     private const int Size = 4;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in Rune value, IBufferWriter<byte> writer)
@@ -31,10 +33,12 @@ internal sealed class RuneCodec : IRpcCodec<Rune>
     }
 }
 
-internal sealed class NullableRuneCodec : IRpcCodec<Rune?>
+internal sealed class NullableRuneCodec : IRpcCodec<Rune?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableRuneCodec Instance = new();
     private const int Size = 5; // 1 Tag + 4 Value
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in Rune? value, IBufferWriter<byte> writer)

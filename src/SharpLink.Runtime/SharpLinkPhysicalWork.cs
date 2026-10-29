@@ -14,16 +14,29 @@ internal static class SharpLinkPhysicalWork
             : new OperationCanceledException(exception.Message, exception, exception.CancellationToken);
 
     internal static PhysicalOwner CreateOwner(Exception terminalException, CancellationTokenSource? lifetime = null)
-        => CreateOwnerCore(terminalException, lifetime, logicalException: null);
+        => CreateOwnerCore(terminalException, lifetime, logicalException: null, retainedPageWriter: null);
 
     internal static PhysicalOwner CreateCarrierOwner(
         Exception terminalException, Exception originalException, CancellationTokenSource? lifetime = null)
-        => CreateOwnerCore(terminalException, lifetime, GetLogicalException(originalException));
+        => CreateOwnerCore(terminalException, lifetime, GetLogicalException(originalException), retainedPageWriter: null);
+
+    // Distinct stream entry points preserve the existing ownership API and keep page
+    // resources out of ordinary call handoffs (including baseline-compatible probes).
+    internal static PhysicalOwner CreateStreamOwner(
+        Exception terminalException, CancellationTokenSource? lifetime,
+        EncodedStreamPageWriter? retainedPageWriter)
+        => CreateOwnerCore(terminalException, lifetime, logicalException: null, retainedPageWriter);
+
+    internal static PhysicalOwner CreateStreamCarrierOwner(
+        Exception terminalException, Exception originalException, CancellationTokenSource? lifetime,
+        EncodedStreamPageWriter? retainedPageWriter)
+        => CreateOwnerCore(terminalException, lifetime, GetLogicalException(originalException), retainedPageWriter);
 
     private static PhysicalOwner CreateOwnerCore(
-        Exception terminalException, CancellationTokenSource? lifetime, Exception? logicalException)
+        Exception terminalException, CancellationTokenSource? lifetime, Exception? logicalException,
+        EncodedStreamPageWriter? retainedPageWriter)
     {
-        var owner = new PhysicalOwner(lifetime);
+        var owner = new PhysicalOwner(lifetime, retainedPageWriter);
         // Registration precedes scheduling even when the cleanup's first continuation runs early.
         Failures.Add(terminalException, new FailureAssociation(owner, logicalException));
         return owner;
@@ -48,6 +61,15 @@ internal static class SharpLinkPhysicalWork
     }
 
     internal static Exception? TransferLifetime(Exception exception, CancellationTokenSource? lifetime, bool cancelLifetime = true)
+        => TransferLifetimeCore(exception, lifetime, cancelLifetime, retainedPageWriter: null);
+
+    internal static Exception? TransferStreamLifetime(
+        Exception exception, CancellationTokenSource? lifetime, EncodedStreamPageWriter? retainedPageWriter)
+        => TransferLifetimeCore(exception, lifetime, cancelLifetime: true, retainedPageWriter);
+
+    private static Exception? TransferLifetimeCore(
+        Exception exception, CancellationTokenSource? lifetime, bool cancelLifetime,
+        EncodedStreamPageWriter? retainedPageWriter)
     {
         if (!Failures.TryGetValue(exception, out _))
             return null;
@@ -59,7 +81,7 @@ internal static class SharpLinkPhysicalWork
             SharpLinkException failure => new SharpLinkException(failure.Code, failure.DetailCode, failure.Message, failure),
             _ => new Exception(exception.Message, exception)
         };
-        var owner = CreateCarrierOwner(terminal, exception, lifetime);
+        var owner = CreateOwnerCore(terminal, lifetime, GetLogicalException(exception), retainedPageWriter);
         owner.Track(CompleteLifetimeAsync(owner, exception, lifetime, cancelLifetime));
         return terminal;
     }
@@ -85,18 +107,21 @@ internal static class SharpLinkPhysicalWork
     {
         private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private CancellationTokenSource? _lifetime;
+        private EncodedStreamPageWriter? _retainedPageWriter;
         private CompletionGroup _group;
         private DependencyWait? _waiting;
         private bool _tracked;
         private bool _cleanupFinished;
 
-        internal PhysicalOwner(CancellationTokenSource? lifetime)
+        internal PhysicalOwner(CancellationTokenSource? lifetime, EncodedStreamPageWriter? retainedPageWriter = null)
         {
             _lifetime = lifetime;
+            _retainedPageWriter = retainedPageWriter;
             _group = new CompletionGroup(this);
         }
 
         internal Task Completion => _completion.Task;
+
         internal void Track(Task work)
         {
             lock (DependencyGate)
@@ -168,10 +193,23 @@ internal static class SharpLinkPhysicalWork
             await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
             // No member can add another dependency after its local cleanup finished. This closed
             // group cannot enter another cycle while lifetime sources are disposed outside the gate.
+            // Finish ALL linked-source disposals before returning ANY producer page.
+            // Disposal can join an in-progress cancellation callback in another SCC member.
+            // Completion is a physical join, not a second public terminal: isolate cleanup
+            // faults so one terminated cleanup cannot strand the rest of the closed group.
             foreach (var member in finished)
             {
-                member._lifetime?.Dispose();
+                var lifetime = member._lifetime;
                 member._lifetime = null;
+                try { lifetime?.Dispose(); }
+                catch { /* Preserve the already-selected terminal and finish the whole group. */ }
+            }
+            foreach (var member in finished)
+            {
+                var pageWriter = member._retainedPageWriter;
+                member._retainedPageWriter = null;
+                try { pageWriter?.Dispose(); }
+                catch { /* Framework page release is single-shot even if pool cleanup faults. */ }
             }
             lock (DependencyGate)
                 finished[0]._group.Members.Clear();

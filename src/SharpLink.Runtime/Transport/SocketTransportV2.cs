@@ -94,7 +94,9 @@ public sealed class SocketClientTransportFactory : IClientTransportFactory
             await socket.ConnectAsync(_remoteEndPoint, connectCts.Token).ConfigureAwait(false);
             var stream = new NetworkStream(socket, ownsSocket: true);
             if (_tlsOptions is null)
-                return new StreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint);
+                return socket.AddressFamily is AddressFamily.InterNetwork or AddressFamily.InterNetworkV6
+                    ? new SocketStreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint)
+                    : new StreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint);
 
             var connection = new TlsStreamTransportConnection(
                 stream,
@@ -324,7 +326,9 @@ public sealed class SocketServerTransportListener : IServerTransportListener
             SocketTransportSocketFactory.ApplyOptions(socket, _options);
             var stream = new NetworkStream(socket, ownsSocket: true);
             return _tlsOptions is null
-                ? new StreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint)
+                ? socket.AddressFamily is AddressFamily.InterNetwork or AddressFamily.InterNetworkV6
+                    ? new SocketStreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint)
+                    : new StreamTransportConnection(stream, socket.LocalEndPoint, socket.RemoteEndPoint)
                 : new TlsStreamTransportConnection(
                     stream,
                     _tlsOptions,

@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class RangeCodec : IRpcCodec<Range>
+internal sealed class RangeCodec : IRpcCodec<Range>, IStreamPageFixedSizeCodec
 {
     internal static readonly RangeCodec Instance = new();
     private const int Size = 8;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in Range value, IBufferWriter<byte> writer)
@@ -27,10 +29,12 @@ internal sealed class RangeCodec : IRpcCodec<Range>
     }
 }
 
-internal sealed class NullableRangeCodec : IRpcCodec<Range?>
+internal sealed class NullableRangeCodec : IRpcCodec<Range?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableRangeCodec Instance = new();
     private const int Size = 9; // 1 Tag + 8 Value
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in Range? value, IBufferWriter<byte> writer)

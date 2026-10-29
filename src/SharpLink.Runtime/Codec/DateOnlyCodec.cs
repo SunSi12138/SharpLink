@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
+internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>, IStreamPageFixedSizeCodec
 {
     internal static readonly DateOnlyCodec Instance = new();
     private const int Size = 4; // DateOnly 内部是 int (DayNumber)
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in DateOnly value, IBufferWriter<byte> writer)
@@ -32,10 +34,12 @@ internal sealed class DateOnlyCodec : IRpcCodec<DateOnly>
     }
 }
 
-internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>
+internal sealed class NullableDateOnlyCodec : IRpcCodec<DateOnly?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableDateOnlyCodec Instance = new();
     private const int Size = 5; // 1 Tag + 4 Value
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in DateOnly? value, IBufferWriter<byte> writer)

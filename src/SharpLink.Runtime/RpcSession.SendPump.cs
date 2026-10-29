@@ -21,6 +21,7 @@ internal sealed partial class RpcSession
         private const int ProgressReserveDivisor = 512;
 
         private readonly PipeWriter _output;
+        private readonly IStreamPageTransport? _streamPageTransport;
         private readonly RpcSessionFlushPolicyState _flushPolicyState;
         private readonly Action _flushPolicyChanged;
         private readonly int _maxQueuedBytes;
@@ -52,12 +53,14 @@ internal sealed partial class RpcSession
             TimeProvider timeProvider,
             CancellationToken sessionCancellation,
             Action<IRpcByteBufferWriter> returnBuffer,
-            Action<Exception> onTransportFaulted)
+            Action<Exception> onTransportFaulted,
+            IStreamPageTransport? streamPageTransport = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(flushPolicyState);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxQueuedBytes);
             _output = output;
+            _streamPageTransport = streamPageTransport;
             _flushPolicyState = flushPolicyState;
             _maxQueuedBytes = maxQueuedBytes;
             _normalQueueLimit = maxQueuedBytes - ComputeProgressReserveBytes(maxQueuedBytes);
@@ -233,8 +236,8 @@ internal sealed partial class RpcSession
                         pending.Add(frame);
                         // The frame already carries the wire TimeBudget stamped once by the
                         // producer, so the pump never samples, rewrites, or compacts a
-                        // process-local deadline. It only coalesces the batch's frames into one
-                        // output span at flush time.
+                        // process-local deadline. At the same flush boundary it either writes
+                        // one contiguous page slice or coalesces all frames into one output span.
                         bytesAccumulated += frame.Length;
 
                         var flushPolicy = _flushPolicyState.Capture();
@@ -363,12 +366,51 @@ internal sealed partial class RpcSession
             if (pending.Count == 0)
                 return;
 
-            WritePendingBatch(pending);
-            var flush = _output.FlushAsync(_sessionCancellation);
-            var result = await flush.ConfigureAwait(false);
-            if (result.IsCanceled || result.IsCompleted)
-                throw CreateTransportClosedException();
+            if (_streamPageTransport is not null && TryGetContiguousPageBatch(pending, out var memory))
+            {
+                // Count attempted bytes at the same boundary as the legacy path. Await the
+                // physical write, not a logically cancelled wrapper: its page references and
+                // the sole-output authority remain held until the transport no longer uses it.
+                SharpLinkTelemetry.RecordSentBytes(memory.Length);
+                await _streamPageTransport.WriteStreamPageAsync(memory, _sessionCancellation)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                // Never split a mixed/fragmented/marker batch into extra writes. The prior
+                // pipeline flush has physically completed before any later direct page write.
+                WritePendingBatch(pending);
+                var flush = _output.FlushAsync(_sessionCancellation);
+                var result = await flush.ConfigureAwait(false);
+                if (result.IsCanceled || result.IsCompleted)
+                    throw CreateTransportClosedException();
+            }
             ReleaseBatch(pending, exception: null);
+        }
+
+        private static bool TryGetContiguousPageBatch(
+            List<OwnedFrame> pending,
+            out ReadOnlyMemory<byte> memory)
+        {
+            memory = default;
+            var first = pending[0];
+            var page = first.Page;
+            if (page is null || first.Length == 0)
+                return false;
+
+            var start = first.PageOffset;
+            var end = checked(start + first.Length);
+            for (var index = 1; index < pending.Count; index++)
+            {
+                var frame = pending[index];
+                // Page owners are never reused. Reference identity is the generation check;
+                // sharing an ArrayPool buffer is insufficient to establish one page lifetime.
+                if (!ReferenceEquals(frame.Page, page) || frame.Length == 0 || frame.PageOffset != end)
+                    return false;
+                end = checked(end + frame.Length);
+            }
+            memory = page.Buffer.AsMemory(start, end - start);
+            return true;
         }
 
         private async ValueTask<bool> WaitForMoreUntilFlushBoundaryAsync(
@@ -491,7 +533,7 @@ internal sealed partial class RpcSession
                 : BinaryPrimitives.ReadInt64LittleEndian(frame.Memory.Span.Slice(7, sizeof(long)));
             try
             {
-                _returnBuffer(frame.Owner);
+                ReturnUnreserved(frame);
             }
             finally
             {
@@ -513,7 +555,10 @@ internal sealed partial class RpcSession
 
         private void ReturnUnreserved(OwnedFrame frame, Exception? exception = null)
         {
-            _returnBuffer(frame.Owner);
+            if (frame.Page is { } page)
+                page.Release();
+            else
+                _returnBuffer(frame.Owner!);
         }
 
         public long QueuedBytes => Volatile.Read(ref _queuedBytes);

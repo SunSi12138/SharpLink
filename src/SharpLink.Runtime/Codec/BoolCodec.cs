@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class BoolCodec : IRpcCodec<bool>
+internal sealed class BoolCodec : IRpcCodec<bool>, IStreamPageFixedSizeCodec
 {
     internal static readonly BoolCodec Instance = new();
     private const int Size = 1;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in bool value, IBufferWriter<byte> writer)
@@ -27,10 +29,12 @@ internal sealed class BoolCodec : IRpcCodec<bool>
     }
 }
 
-internal sealed class NullableBoolCodec : IRpcCodec<bool?>
+internal sealed class NullableBoolCodec : IRpcCodec<bool?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableBoolCodec Instance = new();
     private const int Size = 1;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     // 0xFF (255) = Null
     // 0 = False

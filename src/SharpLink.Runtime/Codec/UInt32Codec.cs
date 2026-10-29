@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class UInt32Codec : IRpcCodec<uint>
+internal sealed class UInt32Codec : IRpcCodec<uint>, IStreamPageFixedSizeCodec
 {
     internal static readonly UInt32Codec Instance = new();
     private const int Size = 4;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in uint value, IBufferWriter<byte> writer)
@@ -26,10 +28,12 @@ internal sealed class UInt32Codec : IRpcCodec<uint>
     }
 }
 
-internal sealed class NullableUInt32Codec : IRpcCodec<uint?>
+internal sealed class NullableUInt32Codec : IRpcCodec<uint?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableUInt32Codec Instance = new();
     private const int Size = 5;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in uint? value, IBufferWriter<byte> writer)

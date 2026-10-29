@@ -1,9 +1,11 @@
 namespace SharpLink.Runtime;
 
-internal sealed class HalfCodec : IRpcCodec<Half>
+internal sealed class HalfCodec : IRpcCodec<Half>, IStreamPageFixedSizeCodec
 {
     internal static readonly HalfCodec Instance = new();
     private const int Size = 2;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in Half value, IBufferWriter<byte> writer)
@@ -27,10 +29,12 @@ internal sealed class HalfCodec : IRpcCodec<Half>
     }
 }
 
-internal sealed class NullableHalfCodec : IRpcCodec<Half?>
+internal sealed class NullableHalfCodec : IRpcCodec<Half?>, IStreamPageFixedSizeCodec
 {
     internal static readonly NullableHalfCodec Instance = new();
     private const int Size = 3;
+
+    int IStreamPageFixedSizeCodec.EncodedBytes => Size;
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Serialize(in Half? value, IBufferWriter<byte> writer)
     {
