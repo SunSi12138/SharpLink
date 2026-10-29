@@ -203,68 +203,132 @@ double Us(long ticks) => ticks * 1e6 / Stopwatch.Frequency;
 double? Percentile(int numerator, int denominator) => operations == 0 ? null
     : Us(latencies[checked((int)(((long)operations * numerator + denominator - 1) / denominator - 1))]);
 string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
-var dlls = Directory.GetFiles(AppContext.BaseDirectory, "*.dll");
-var names = dlls.Select(Path.GetFileNameWithoutExtension).ToHashSet(StringComparer.Ordinal);
-var loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies()
-    .Where(assembly => !assembly.IsDynamic && (names.Contains(assembly.GetName().Name) || assembly.GetName().Name!.StartsWith("SharpLink.", StringComparison.Ordinal)))
-    .Select(assembly => new { name = assembly.GetName().Name, location = assembly.Location,
-        productVersion = FileVersionInfo.GetVersionInfo(assembly.Location).ProductVersion,
-        mvid = assembly.ManifestModule.ModuleVersionId, sha256 = Hash(assembly.Location) }).ToArray();
-// Establish shutdown/disposal before publishing a success artifact.
+string CanonicalAssemblyFile(string location)
+{
+    if (string.IsNullOrEmpty(location) || !Path.IsPathFullyQualified(location))
+        throw new InvalidOperationException("Every non-dynamic assembly must have an absolute disk location.");
+    var fullPath = Path.GetFullPath(location);
+    if (!File.Exists(fullPath))
+        throw new InvalidOperationException("Loaded assembly file is missing.");
+    // Reject links on the file AND every ancestor. Merely normalizing '..' does
+    // not prove an assembly stayed inside its declared package/runtime root.
+    for (string? component = fullPath; component is not null; component = Path.GetDirectoryName(component))
+        if ((File.GetAttributes(component) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("Loaded assembly path contains a symbolic link or reparse point.");
+    return fullPath;
+}
+// Establish shutdown/disposal before publishing a success artifact. Identity
+// capture is after the timed window and shutdown, never in the measured path.
 await client.StopAsync();
 await server.StopAsync(TimeSpan.Zero);
 await client.DisposeAsync();
 await server.DisposeAsync();
-long ReadAffinity()
+var dlls = Directory.GetFiles(AppContext.BaseDirectory, "*.dll").Select(CanonicalAssemblyFile).ToArray();
+// Force both framework representatives to load before taking the inventory.
+var frameworkLocations = new[]
 {
-    if (OperatingSystem.IsLinux())
-    {
-        using var currentProcess = Process.GetCurrentProcess();
-        return currentProcess.ProcessorAffinity.ToInt64();
-    }
-    throw new PlatformNotSupportedException("This fixture requires Linux affinity evidence.");
-}
-var elapsedSeconds = (double)elapsedTicks / Stopwatch.Frequency;
-var result = new
-{
-    schemaVersion = 2, arm = ArmAdapter.Name, expectedSource = ArmAdapter.Revision,
-    sourceRevision = ArmAdapter.Revision, apiVersion = ArmAdapter.GeneratedApi, phase,
-    mode, itemCount, workers, generatedManifest, correctness, strictCleanupExecuted, normalCorrectness,
-    beforeWarmupDrain, afterWorkDrain, logicalPathProof,
-    shutdownCompleted = true, disposeCompleted = true,
-    transport = "tcp-loopback", sameVersionServerClient = true,
-    connectionPoolMin = 1, connectionPoolMax = 1, readyConnections = 1,
-    requestTimeout = "disabled", heartbeatIntervalSeconds = 3600, heartbeatTimeoutSeconds = 7200,
-    serverInterceptors = 0, clientInterceptors = 1, channelType, streamType, wrapperTypes,
-    interceptorObserved = interceptor.Observed, port, warmupSeconds, requestedSeconds = seconds,
-    elapsedTicks, stopwatchFrequency = Stopwatch.Frequency, elapsedSeconds, operations,
-    operationsPerSecond = operations == 0 ? (double?)null : operations / elapsedSeconds,
-    itemsPerSecond = operations == 0 ? (double?)null : (double)operations * itemCount / elapsedSeconds,
-    meanUs = operations == 0 ? (double?)null : latencies.Average(Us),
-    p50Us = Percentile(1, 2), p95Us = Percentile(95, 100), p99Us = Percentile(99, 100), p999Us = Percentile(999, 1000), maxUs = Percentile(1, 1),
-    allocatedBytesPerOperation = operations == 0 ? (double?)null : (double)allocated / operations,
-    cpuUsPerOperation = operations == 0 ? (double?)null : cpuUs / operations, gc0, gc1, gc2,
-    validationFailures = 0, runtimeVersion = Environment.Version.ToString(),
-    runtime = RuntimeInformation.FrameworkDescription, os = RuntimeInformation.OSDescription,
-    architecture = RuntimeInformation.ProcessArchitecture.ToString(), processorCount = Environment.ProcessorCount,
-    processorAffinity = ReadAffinity(), serverGc = GCSettings.IsServerGC,
-    tieredCompilation = Environment.GetEnvironmentVariable("DOTNET_TieredCompilation") ?? "default",
-    tieredPgo = Environment.GetEnvironmentVariable("DOTNET_TieredPGO") ?? "default",
-    readyToRun = Environment.GetEnvironmentVariable("DOTNET_ReadyToRun") ?? "default",
-    frameworkLocations = new[] { typeof(object).Assembly.Location, typeof(Microsoft.AspNetCore.Builder.WebApplication).Assembly.Location },
-    loadedAssemblies, binaryHashes = dlls.ToDictionary(path => Path.GetFileName(path)!, Hash),
-    timestampUtc = DateTimeOffset.UtcNow
+    CanonicalAssemblyFile(typeof(object).Assembly.Location),
+    CanonicalAssemblyFile(typeof(Microsoft.AspNetCore.Builder.WebApplication).Assembly.Location)
 };
+var snapshotAssemblyNames = new HashSet<string>(StringComparer.Ordinal)
+{
+    "SharpLink.Abstractions", "SharpLink.Client", "SharpLink.Runtime", "SharpLink.Sdk", "SharpLink.Server",
+    "PhysicalTcpProbe", "ScalarStreamModule", "Microsoft.Extensions.DependencyInjection.Abstractions",
+    "Microsoft.Extensions.DependencyInjection", "Microsoft.Extensions.Logging.Abstractions", "System.Threading.RateLimiting"
+};
+// Materialize raw samples in memory only. Serialization may load assemblies;
+// those must be present in the final stable inventory before any record is saved.
+string? rawTicksJson = null;
 if (measuring)
 {
     var rawTicks = new { schemaVersion = 2, arm = ArmAdapter.Name, mode, itemCount,
         stopwatchFrequency = Stopwatch.Frequency, measurementStartTick = started,
         measurementEndTick = ended, elapsedTicks, workers, operations,
         samples = Enumerable.Range(0, workers).Select(worker => new { worker, durationTicks = samples[worker].Take(counts[worker]).ToArray() }).ToArray() };
-    File.WriteAllText(args[7], JsonSerializer.Serialize(rawTicks));
+    rawTicksJson = JsonSerializer.Serialize(rawTicks);
 }
-var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
-File.WriteAllText(output, json);
+
+var allLoaded = new Dictionary<Assembly, LoadedAssemblyIdentity>();
+// Reflection, metadata and JSON helpers can load assemblies. Rebuild only the
+// identity/metadata record until serialization leaves the exact non-dynamic set
+// unchanged. Workload, timing and endpoint shutdown above are never repeated.
+for (var inventoryRound = 0; ; inventoryRound++)
+{
+    if (inventoryRound == 16)
+        throw new InvalidOperationException("Loaded assembly inventory did not stabilize.");
+    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+    {
+        if (assembly.IsDynamic || allLoaded.ContainsKey(assembly))
+            continue;
+        var name = assembly.GetName().Name
+            ?? throw new InvalidOperationException("Loaded assembly has no simple name.");
+        var location = CanonicalAssemblyFile(assembly.Location);
+        allLoaded.Add(assembly, new LoadedAssemblyIdentity(name, location,
+            FileVersionInfo.GetVersionInfo(location).ProductVersion,
+            assembly.ManifestModule.ModuleVersionId, Hash(location)));
+    }
+    var completeInventory = allLoaded.Values.OrderBy(identity => identity.name, StringComparer.Ordinal).ToArray();
+    if (completeInventory.Select(identity => identity.name).Distinct(StringComparer.Ordinal).Count() != completeInventory.Length)
+        throw new InvalidOperationException("Duplicate simple names across loaded assembly identity sets.");
+    var loadedAssemblies = completeInventory.Where(identity => snapshotAssemblyNames.Contains(identity.name)).ToArray();
+    // Intentionally retain unknown names here. The independent validator must reject
+    // anything outside the SHA512-archive-derived private-framework allowlist.
+    var frameworkAssemblies = completeInventory.Where(identity => !snapshotAssemblyNames.Contains(identity.name))
+        .Select(identity => new { identity.name, identity.location, identity.sha256 }).ToArray();
+    var loadedAssemblyCount = completeInventory.Length;
+    if (loadedAssemblyCount != loadedAssemblies.Length + frameworkAssemblies.Length)
+        throw new InvalidOperationException("Loaded assembly partition is incomplete.");
+    long ReadAffinity()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            using var currentProcess = Process.GetCurrentProcess();
+            return currentProcess.ProcessorAffinity.ToInt64();
+        }
+        throw new PlatformNotSupportedException("This fixture requires Linux affinity evidence.");
+    }
+    var elapsedSeconds = (double)elapsedTicks / Stopwatch.Frequency;
+    var result = new
+    {
+        schemaVersion = 2, arm = ArmAdapter.Name, expectedSource = ArmAdapter.Revision,
+        sourceRevision = ArmAdapter.Revision, apiVersion = ArmAdapter.GeneratedApi, phase,
+        mode, itemCount, workers, generatedManifest, correctness, strictCleanupExecuted, normalCorrectness,
+        beforeWarmupDrain, afterWorkDrain, logicalPathProof,
+        shutdownCompleted = true, disposeCompleted = true,
+        transport = "tcp-loopback", sameVersionServerClient = true,
+        connectionPoolMin = 1, connectionPoolMax = 1, readyConnections = 1,
+        requestTimeout = "disabled", heartbeatIntervalSeconds = 3600, heartbeatTimeoutSeconds = 7200,
+        serverInterceptors = 0, clientInterceptors = 1, channelType, streamType, wrapperTypes,
+        interceptorObserved = interceptor.Observed, port, warmupSeconds, requestedSeconds = seconds,
+        elapsedTicks, stopwatchFrequency = Stopwatch.Frequency, elapsedSeconds, operations,
+        operationsPerSecond = operations == 0 ? (double?)null : operations / elapsedSeconds,
+        itemsPerSecond = operations == 0 ? (double?)null : (double)operations * itemCount / elapsedSeconds,
+        meanUs = operations == 0 ? (double?)null : latencies.Average(Us),
+        p50Us = Percentile(1, 2), p95Us = Percentile(95, 100), p99Us = Percentile(99, 100), p999Us = Percentile(999, 1000), maxUs = Percentile(1, 1),
+        allocatedBytesPerOperation = operations == 0 ? (double?)null : (double)allocated / operations,
+        cpuUsPerOperation = operations == 0 ? (double?)null : cpuUs / operations, gc0, gc1, gc2,
+        validationFailures = 0, runtimeVersion = Environment.Version.ToString(),
+        runtime = RuntimeInformation.FrameworkDescription, os = RuntimeInformation.OSDescription,
+        architecture = RuntimeInformation.ProcessArchitecture.ToString(), processorCount = Environment.ProcessorCount,
+        processorAffinity = ReadAffinity(), serverGc = GCSettings.IsServerGC,
+        tieredCompilation = Environment.GetEnvironmentVariable("DOTNET_TieredCompilation") ?? "default",
+        tieredPgo = Environment.GetEnvironmentVariable("DOTNET_TieredPGO") ?? "default",
+        readyToRun = Environment.GetEnvironmentVariable("DOTNET_ReadyToRun") ?? "default",
+        frameworkLocations, loadedAssemblies, frameworkAssemblies, loadedAssemblyCount, binaryHashes = dlls.ToDictionary(path => Path.GetFileName(path)!, Hash),
+        timestampUtc = DateTimeOffset.UtcNow
+    };
+    var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
+    // The final check is after all metadata and BOTH JSON serializers have run.
+    // Exact equality catches omissions as well as an unexpected unload; records are
+    // never dropped to make an unstable inventory pass.
+    var actualLoaded = AppDomain.CurrentDomain.GetAssemblies().Where(assembly => !assembly.IsDynamic).ToArray();
+    if (actualLoaded.Length != allLoaded.Count || actualLoaded.Any(assembly => !allLoaded.ContainsKey(assembly)))
+        continue;
+    if (rawTicksJson is not null)
+        File.WriteAllText(args[7], rawTicksJson);
+    File.WriteAllText(output, json);
+    break;
+}
 Console.WriteLine($"PROBE_OK arm={ArmAdapter.Name} phase={phase} mode={mode} items={itemCount}");
 
 sealed class PassThrough : ISharpLinkClientInterceptor
@@ -276,3 +340,6 @@ sealed class PassThrough : ISharpLinkClientInterceptor
         return next(context);
     }
 }
+
+internal sealed record LoadedAssemblyIdentity(
+    string name, string location, string? productVersion, Guid mvid, string sha256);

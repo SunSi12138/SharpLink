@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "purpose": "Finite normal-completion diagnostic distance to QPS +10% and P99 -20%; not final release acceptance",
   "officialSource": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
   "devSource": "3d76a3a8b55a37e24c62a073fe588cff3d3867be",
@@ -47,7 +47,7 @@
   "executionHost": "hosted ubuntu24.04",
   "aggregation": "Per cell median of six paired dev/official QPS ratios and separately six paired P99 ratios. Retain all six ratios and exact rational metrics. No operation pooling, no best round, no cross-cell global pass. All4 cells mandatory; any failed/missing input blocks target observations.",
   "coldPolicy": "Four dedicated candidate-only strict-cleanup processes and eight symmetric normal-validate processes must pass before timing. Each of 48 fresh normal-measure processes repeats normal-only controls; no failure/cancellation/early-exit probes in either arm timed process.",
-  "campaign": "official203-candidate3d76-60tcp-O203N2",
+  "campaign": "official203-candidate3d76-60tcp-O203N3",
   "devTree": "1c24da3af090acd4d6cdbfb005a9e3bd95304e3a",
   "strictProcesses": 4,
   "normalProcesses": 8,
@@ -65,5 +65,23 @@
     "strict-cleanup",
     "normal-validate",
     "normal-measure"
-  ]
+  ],
+  "dependencyPolicy": {
+    "buildClosure": "Four identical private10.0.12 dependency DLLs copied to both prepared snapshots; these are build closure, not asserted runtime load origins.",
+    "executionClosure": "Exactly four pinned Microsoft dependency identities from private Microsoft.AspNetCore.App10.0.14, common to both arms; all product and fixture assemblies remain own-arm only.",
+    "policySource": "c1b4d73b922183364065a4460c6b7bce8829e9a7:eng/official-cleanup-diagnostic/identity.py",
+    "checks": [
+      "exactNameClosure",
+      "absolutePath",
+      "SHA256",
+      "MVID",
+      "productVersion",
+      "onDiskFrameworkHash",
+      "completeNonDynamicAssemblyCensus",
+      "archiveDerivedFrameworkAllowlist",
+      "canonicalNoSymlinkPaths"
+    ],
+    "remainingFrameworkClosure": "Every other loaded non-dynamic assembly must match canonical path and SHA256 derived independently from the two fixed SHA512-verified private runtime14 archives; unknown, inserted or symlinked DLLs rejected. Collection and hashing occur outside all timing windows."
+  },
+  "supersedesCampaign": "official203-candidate3d76-60tcp-O203N2"
 }

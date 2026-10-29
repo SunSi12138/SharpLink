@@ -2,6 +2,8 @@
 import json
 import math
 import re
+from collections import Counter
+from identity import IDENTITY_CODES, IdentityError, framework_policy as materialize_framework_policy, validate_policy, validate_loaded, archive_framework_policy, validate_framework_assemblies
 from pathlib import Path
 from fractions import Fraction
 from common import strict_json, ARMS, CONTRACT, PRODUCTS, inventory, median, nearest_rank, rational, schedule, write, ROOT, source_inventory, gate_schedule
@@ -11,9 +13,55 @@ CHECKS = ('orderedValues', 'count', 'errorBeforeFirstItem', 'errorAfterFirstItem
           'clientCleanup', 'postFailureRecovery')
 
 
+CHECK_REASON_CODES = {
+    'Wrong source':'source_identity',
+    'Wrong executing runtime':'runtime_identity',
+    'Wrong generated API':'generated_manifest',
+    'Incomplete independent generated manifest':'generated_manifest',
+    'Wrong independently generated manifest':'generated_manifest',
+    'Strict cleanup incomplete':'cleanup_gate',
+    'Normal eligibility incomplete':'cleanup_gate',
+    'beforeWarmupDrain incomplete':'cleanup_gate',
+    'afterWorkDrain incomplete':'cleanup_gate',
+    'Executed snapshot hashes differ':'snapshot_identity',
+    'Framework escaped private runtime':'framework_location',
+    'Incomplete loaded assembly census':'loaded_census',
+}
+
+
+class CheckError(ValueError):
+    def __init__(self, message):
+        self.code = CHECK_REASON_CODES.get(message, 'validation_check')
+        super().__init__(message)
+
+
+REASON_CODES = IDENTITY_CODES | frozenset(CHECK_REASON_CODES.values()) | frozenset({'missing_input', 'input_read', 'malformed_input',
+                                        'validation_check', 'inventory_mismatch', 'not_attempted_declaration'})
+
+
+def failure_reason(error):
+    """Only internal fixed tokens may be emitted; arbitrary exception text stays local."""
+    if isinstance(error, CheckError):
+        return error.code if error.code in REASON_CODES else 'validation_check'
+    if isinstance(error, IdentityError):
+        return error.code if error.code in IDENTITY_CODES else 'validation_check'
+    if isinstance(error, FileNotFoundError): return 'missing_input'
+    if isinstance(error, OSError): return 'input_read'
+    if isinstance(error, (KeyError, TypeError, json.JSONDecodeError)): return 'malformed_input'
+    return 'validation_check'
+
+
+def reason_counts(failures, inventory_errors):
+    counts = Counter()
+    for failure in failures + inventory_errors:
+        code = failure.get('reasonCode', 'inventory_mismatch')
+        counts[code if code in REASON_CODES else 'validation_check'] += 1
+    return dict(sorted(counts.items()))
+
+
 def require(condition, message):
     if not condition:
-        raise ValueError(message)
+        raise CheckError(message)
 
 
 NORMAL_CHECKS = ('orderedValues', 'count', 'producerFinally', 'serverCleanup', 'clientCleanup', 'physicalDrain')
@@ -22,7 +70,7 @@ DRAIN_COUNTS = dict(logicalInvocations=0, activeClientCalls=0, activeClientStrea
                     activeServerCalls=0, normalStarted=1, normalCompleted=1, normalActive=0)
 
 
-def validate_sample(data, slot, prepared, manifest, runtime, phase='normal-measure'):
+def validate_sample(data, slot, prepared, manifest, runtime, framework_policy=None, archive_policy=None, phase='normal-measure'):
     arm = slot['arm']
     require(data['arm'] == {'official': 'official-2.0.3', 'dev': 'candidate-3d76a3a8'}[arm], 'Wrong arm')
     require(phase in PHASES and data['phase'] == phase, 'Wrong phase')
@@ -51,22 +99,17 @@ def validate_sample(data, slot, prepared, manifest, runtime, phase='normal-measu
     require(type(rpc_hash) is str and re.fullmatch(r'[0-9a-f]{32}', rpc_hash) is not None and
             rpc_hash != '0' * 32, 'Missing or malformed RPC assembly identity')
     require(all(data.get(k) == 'default' for k in ('tieredCompilation', 'tieredPgo', 'readyToRun')), 'Changed CLR tiering/PGO/R2R')
-    require(len(data['frameworkLocations']) == 2 and all(Path(p).is_relative_to(runtime.parent / 'shared') and '10.0.14' in Path(p).parts for p in data['frameworkLocations']), 'Framework escaped private runtime')
+    require(data['frameworkLocations'] == [str(runtime.parent / 'shared/Microsoft.NETCore.App/10.0.14/System.Private.CoreLib.dll'), str(runtime.parent / 'shared/Microsoft.AspNetCore.App/10.0.14/Microsoft.AspNetCore.dll')], 'Framework escaped private runtime')
     require((data['transport'], data['connectionPoolMin'], data['connectionPoolMax'], data['readyConnections'],
              data['requestTimeout'], data['heartbeatIntervalSeconds'], data['clientInterceptors'], data['serverInterceptors']) ==
             ('tcp-loopback', 1, 1, 1, 'disabled', 3600, 1, 0), 'Functional configuration changed')
     expected_dlls = {k: v for k, v in manifest['arms'][arm]['snapshot'].items() if k.endswith('.dll')}
     require(data['binaryHashes'] == expected_dlls, 'Executed snapshot hashes differ')
-    loaded = data['loadedAssemblies']
-    names = [a['name'] for a in loaded]
-    required = {f'SharpLink.{n}' for n in ('Abstractions', 'Client', 'Runtime', 'Server')} | {'PhysicalTcpProbe', 'ScalarStreamModule'}
-    require(required <= set(names) and len(names) == len(set(names)), 'Missing/duplicate loaded identity')
-    for a in loaded:
-        path = Path(a['location'])
-        require(path.parent == prepared / arm and path.name in expected_dlls and bool(a['mvid']), 'Assembly escaped snapshot')
-        require(a['sha256'] == expected_dlls[path.name], 'Loaded assembly hash mismatch')
-        if a['name'].startswith('SharpLink.'):
-            require(a['productVersion'].split('+')[-1] == CONTRACT[f'{arm}Source'], 'Product provenance mismatch')
+    validate_loaded(data['loadedAssemblies'], arm, prepared, expected_dlls,
+                    CONTRACT[f'{arm}Source'], framework_policy, runtime)
+    validate_framework_assemblies(data['frameworkAssemblies'], runtime, archive_policy)
+    all_names = [a['name'] for a in data['loadedAssemblies'] + data['frameworkAssemblies']]
+    require(type(data['loadedAssemblyCount']) is int and data['loadedAssemblyCount'] == len(all_names) == len(set(all_names)), 'Incomplete loaded assembly census')
     require(type(data['validationFailures']) is int and data['validationFailures'] == 0, 'Functional failure')
     require(type(data['strictCleanupExecuted']) is bool and data['strictCleanupExecuted'] == (phase == 'strict-cleanup'), 'Wrong strict cleanup execution')
     if phase == 'strict-cleanup':
@@ -225,7 +268,7 @@ def phase_census(root):
     return {'phases':result, 'notAttemptedDeclaration':declaration_status}
 
 
-def summarize(root, prepared, runtime):
+def summarize(root, prepared, runtime, archives_dir=None):
     manifest = strict_json((root / 'prepared.json').read_text())
     require(manifest['contract'] == CONTRACT, 'Contract mismatch')
     results, failures, inventory_errors = {}, [], []
@@ -237,7 +280,22 @@ def summarize(root, prepared, runtime):
         for arm in ARMS:
             require(inventory(prepared / arm) == manifest['arms'][arm]['snapshot'], 'Prepared snapshot inventory drift')
     except (OSError, ValueError, KeyError, TypeError) as error:
-        inventory_errors.append({'kind': 'prepared-integrity', 'error': str(error)})
+        inventory_errors.append({'kind': 'prepared-integrity', 'error': str(error), 'reasonCode': failure_reason(error)})
+    execution_policy = None
+    try:
+        execution_policy = strict_json((root / 'framework-policy.json').read_text())
+        validate_policy(execution_policy, runtime)
+        require(execution_policy == materialize_framework_policy(runtime), 'Framework execution policy differs from actual fixed runtime files')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        inventory_errors.append({'kind':'framework-policy', 'error':str(error), 'reasonCode':failure_reason(error)})
+        execution_policy = None
+    archive_policy = None
+    try:
+        archive_policy = strict_json((root / 'framework-archive-policy.json').read_text())
+        require(archive_policy == archive_framework_policy(runtime, archives_dir), 'Framework archive policy differs from verified runtime archives')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        inventory_errors.append({'kind':'framework-archive-policy', 'error':str(error), 'reasonCode':failure_reason(error)})
+        archive_policy = None
     affinity = []
     try:
         topology = strict_json((root / 'topology-selection.json').read_text())
@@ -248,7 +306,7 @@ def summarize(root, prepared, runtime):
         expected_plan = frozen_plan()
         require(strict_json((root / 'phase-schedule.json').read_text()) == expected_plan, 'Phase schedule drift')
     except (OSError, ValueError, KeyError, TypeError) as error:
-        inventory_errors.append({'kind': 'schedule/topology', 'error': str(error)})
+        inventory_errors.append({'kind': 'schedule/topology', 'error': str(error), 'reasonCode': failure_reason(error)})
     for directory, phase, arms, start in [('strict', 'strict-cleanup', ('dev',), 0),
                                           ('normal', 'normal-validate', ARMS, 4)]:
         expected_preflight = {f'{mode}-n{count}-{arm}' for count in CONTRACT['items']
@@ -265,7 +323,7 @@ def summarize(root, prepared, runtime):
             gate = strict_json((root / (directory + '-gate.json')).read_text())
             require(gate == {'status': 'Passed', 'failures': []}, 'Dedicated gate missing/failed')
         except (OSError, ValueError, KeyError, TypeError) as error:
-            inventory_errors.append({'kind': directory + '-gate', 'error': str(error)})
+            inventory_errors.append({'kind': directory + '-gate', 'error': str(error), 'reasonCode': failure_reason(error)})
         index = start
         for count in CONTRACT['items']:
             for mode in CONTRACT['modes']:
@@ -276,9 +334,9 @@ def summarize(root, prepared, runtime):
                         host = strict_json((root / directory / f'{name}.host.json').read_text())
                         validate_host(host, slot, prepared, runtime, root, phase, index)
                         data = strict_json((root / directory / f'{name}.json').read_text())
-                        validate_sample(data, slot, prepared, manifest, runtime, phase=phase)
+                        validate_sample(data, slot, prepared, manifest, runtime, framework_policy=execution_policy, archive_policy=archive_policy, phase=phase)
                     except (OSError, ValueError, KeyError, TypeError) as error:
-                        inventory_errors.append({'kind': directory + '-sample', 'slot': name, 'error': str(error)})
+                        inventory_errors.append({'kind': directory + '-sample', 'slot': name, 'error': str(error), 'reasonCode': failure_reason(error)})
                     index += 1
     expected = {s['id'] for s in schedule()}
     for kind, paths in [('raw', root.glob('runs/*.json')), ('ticks', root.glob('ticks/*.json')), ('host', root.glob('runs/*.host.json'))]:
@@ -291,13 +349,13 @@ def summarize(root, prepared, runtime):
             host = strict_json((root / 'runs' / f'{name}.host.json').read_text())
             validate_host(host, dict(slot, affinity=affinity), prepared, runtime, root, 'normal-measure', index)
             data = strict_json((root / 'runs' / f'{name}.json').read_text())
-            validate_sample(data, dict(slot, affinity=affinity), prepared, manifest, runtime)
+            validate_sample(data, dict(slot, affinity=affinity), prepared, manifest, runtime, framework_policy=execution_policy, archive_policy=archive_policy)
             results[name] = exact_metrics(data, strict_json((root / 'ticks' / f'{name}.json').read_text()))
         except (OSError, ValueError, KeyError, TypeError) as error:
-            failures.append({'slot': name, 'error': str(error)})
+            failures.append({'slot': name, 'error': str(error), 'reasonCode': failure_reason(error)})
     census = phase_census(root)
     if census['notAttemptedDeclaration'] == 'invalid':
-        inventory_errors.append({'kind':'not-attempted-declaration', 'error':'Malformed declaration'})
+        inventory_errors.append({'kind':'not-attempted-declaration', 'error':'Malformed declaration', 'reasonCode':'not_attempted_declaration'})
     rows = []
     for count in CONTRACT['items']:
         for mode in CONTRACT['modes']:
@@ -320,7 +378,7 @@ def summarize(root, prepared, runtime):
                            p99TargetGapPercentagePoints=rational((latency - Fraction(4, 5)) * 100),
                            observedMedianTargetsReached=qps >= Fraction(11, 10) and latency <= Fraction(4, 5))
             rows.append(row)
-    summary = dict(census=census, status='Invalid' if failures or inventory_errors else 'DescriptiveOnly',
+    summary = dict(failureReasonCounts=reason_counts(failures, inventory_errors), census=census, status='Invalid' if failures or inventory_errors else 'DescriptiveOnly',
                    decisionBoundary=CONTRACT['releaseBoundary'], failures=failures, inventoryErrors=inventory_errors,
                    rawExactMetrics={n: {k: rational(v) for k, v in ms.items()} for n, ms in results.items()}, cells=rows,
                    inference='Six pairs per cell, no confidence/causal/final acceptance claim; all cells reported separately, no pooled quantiles or hiding unfavorable cells.')
@@ -335,6 +393,10 @@ def print_summary(result):
     print(f"expectedSources official={CONTRACT['officialSource']} API={CONTRACT['officialApi']}"
           f" candidate={CONTRACT['devSource']} API={CONTRACT['devApi']} runtime={CONTRACT['runtime']}"
           f" allSampleIdentitiesVerified={result['status'] == 'DescriptiveOnly'}")
+    safe_reasons = result.get('failureReasonCounts', {})
+    if safe_reasons:
+        print('failureReasons ' + ' '.join(f'{code}={safe_reasons[code]}' for code in sorted(REASON_CODES)
+              if type(safe_reasons.get(code)) is int and safe_reasons[code] > 0))
     for row in result.get('census', {}).get('phases', []):
         if row.get('phase') not in PHASES:
             continue
@@ -369,13 +431,14 @@ if __name__ == '__main__':
     p.add_argument('--input', type=Path, required=True)
     p.add_argument('--prepared', type=Path, required=True)
     p.add_argument('--runtime-dotnet', type=Path, required=True)
+    p.add_argument('--runtime-archives', type=Path, required=True)
     a = p.parse_args()
     try:
-        result = summarize(a.input.resolve(), a.prepared.resolve(), a.runtime_dotnet.resolve())
+        result = summarize(a.input.resolve(), a.prepared.resolve(), a.runtime_dotnet.resolve(), a.runtime_archives.resolve())
     except (OSError, ValueError, KeyError, TypeError) as error:
         if a.input.is_dir():
             write(a.input / 'validator-failure.json', {'status':'Invalid', 'error':repr(error)})
-        print('NORMAL_COMPARISON Invalid validator-input-failure; no target conclusion')
+        print('NORMAL_COMPARISON Invalid validator-input-failure reason=' + failure_reason(error) + '; no target conclusion')
         raise SystemExit(1)
     print_summary(result)
     raise SystemExit(result['status'] == 'Invalid')

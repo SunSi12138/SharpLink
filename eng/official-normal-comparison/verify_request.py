@@ -9,9 +9,9 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUEST = 'eng/official-normal-comparison/REQUEST.json'
-BRANCH = 'refs/heads/validation/official203-normal-no-evidence-20261029'
-MESSAGE = 'run: official203 normal comparison O203N2'
-CAMPAIGN = 'official203-candidate3d76-60tcp-O203N2'
+BRANCH = 'refs/heads/validation/official203-normal-no-evidence-20261029-r2'
+MESSAGE = 'run: official203 normal comparison O203N3'
+CAMPAIGN = 'official203-candidate3d76-60tcp-O203N3'
 REPOSITORY = 'SunSi12138/SharpLink'
 OFFICIAL = '4f9295ffb37ce68985051c11bfd9afc0e23166f3'
 DEV = '3d76a3a8b55a37e24c62a073fe588cff3d3867be'

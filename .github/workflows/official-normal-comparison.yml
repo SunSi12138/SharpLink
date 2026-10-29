@@ -2,20 +2,20 @@ name: Official 2.0.3 finite normal comparison (no uploads)
 
 on:
   push:
-    branches: [validation/official203-normal-no-evidence-20261029]
+    branches: [validation/official203-normal-no-evidence-20261029-r2]
     paths: ['eng/official-normal-comparison/REQUEST.json']
 
 permissions:
   contents: read
 
 concurrency:
-  group: official203-normal-O203N2
+  group: official203-normal-O203N3
   cancel-in-progress: false
 
 jobs:
   normal-comparison:
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/validation/official203-normal-no-evidence-20261029' && github.run_attempt == 1 && github.event.head_commit.message == 'run: official203 normal comparison O203N2'
+      github.event_name == 'push' && github.ref == 'refs/heads/validation/official203-normal-no-evidence-20261029-r2' && github.run_attempt == 1 && github.event.head_commit.message == 'run: official203 normal comparison O203N3'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -164,12 +164,12 @@ jobs:
           if verified['request']['rootRelease'] != 'authorized' or verified['request']['reviewStatus'] != 'PASS':
               raise RuntimeError('Root release/review assertion absent')
           record = {'noOtherClrBuildTest': True,
-                    'owner': 'root-authorized O203N2 hosted job',
+                    'owner': 'root-authorized O203N3 hosted job',
                     'timestampUtc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     'requestCommit': verified['requestCommit'],
                     'reviewedToolCommit': verified['reviewedToolCommit'],
                     'runId': os.environ['GITHUB_RUN_ID'], 'attempt': 1,
-                    'campaign': 'official203-candidate3d76-60tcp-O203N2',
+                    'campaign': 'official203-candidate3d76-60tcp-O203N3',
                     'scope': 'this dedicated hosted job; no physical isolation claim'}
           (root / 'quiet-window.json').write_text(json.dumps(record, indent=2) + '\n')
           PY
@@ -183,6 +183,7 @@ jobs:
           python3 eng/official-normal-comparison/run.py \
             --prepared "$DIAGNOSTIC_ROOT/prepared" \
             --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --runtime-archives "$DIAGNOSTIC_ROOT/runtime-install" \
             --reviewed-tool-sha "$REVIEWED_TOOL_SHA" \
             --quiet-window-record "$DIAGNOSTIC_ROOT/quiet-window.json" \
             --output "$DIAGNOSTIC_ROOT/evidence" > "$DIAGNOSTIC_ROOT/driver.log" 2>&1
@@ -196,7 +197,8 @@ jobs:
             python3 tools/eng/official-normal-comparison/validate.py \
               --input "$DIAGNOSTIC_ROOT/evidence" \
               --prepared "$DIAGNOSTIC_ROOT/prepared" \
-              --runtime-dotnet "$PRIVATE_RUNTIME/dotnet"
+              --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+              --runtime-archives "$DIAGNOSTIC_ROOT/runtime-install"
           else
             echo 'COMPARISON_INVALID preparation or execution incomplete; no metrics accepted'
             exit 1

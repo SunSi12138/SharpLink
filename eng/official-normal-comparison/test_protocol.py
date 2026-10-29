@@ -5,9 +5,22 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+from identity import FRAMEWORK, FRAMEWORK_PRODUCT_VERSION, IdentityError
 from common import ARMS, CONTRACT, ROOT, median, nearest_rank, schedule, select_cpus, strict_json, inventory, write, source_inventory, gate_schedule
 from prepare import materialize, package_identity
 from validate import CHECKS, NORMAL_CHECKS, DRAIN_COUNTS, exact_metrics, summarize, validate_sample
+
+
+def fixed_framework_policy(runtime=Path('/runtime/dotnet')):
+    return {name:dict(path=str(runtime.parent/'shared/Microsoft.AspNetCore.App/10.0.14'/(name+'.dll')),
+                      sha256=sha, mvid=mvid, productVersion=FRAMEWORK_PRODUCT_VERSION)
+            for name,(sha,mvid) in FRAMEWORK.items()}
+
+
+def synthetic_archive_policy(*_args):
+    return {'shared/Microsoft.NETCore.App/10.0.14/System.Private.CoreLib.dll':'1'*64,
+            'shared/Microsoft.AspNetCore.App/10.0.14/Microsoft.AspNetCore.dll':'2'*64}
 
 
 class ProtocolTests(unittest.TestCase):
@@ -65,6 +78,7 @@ class ProtocolTests(unittest.TestCase):
         prepared = Path('/prepared')
         files = {n + '.dll': n for n in ('SharpLink.Abstractions', 'SharpLink.Client', 'SharpLink.Runtime',
                                         'SharpLink.Sdk', 'SharpLink.Server', 'PhysicalTcpProbe', 'ScalarStreamModule')}
+        files.update({name+'.dll':'private12-reference-'+name for name in FRAMEWORK})
         version = CONTRACT[arm + 'Source']
         data = dict(arm={'official': 'official-2.0.3', 'dev': 'candidate-3d76a3a8'}[arm], phase='normal-measure', schemaVersion=2, strictCleanupExecuted=False,
                     sourceRevision=version, expectedSource=version, apiVersion=CONTRACT[arm+'Api'],
@@ -76,7 +90,7 @@ class ProtocolTests(unittest.TestCase):
                         abi={'official':'sharplink-2.0-api4-rpcchannel-codec-provider-v1',
                              'dev':'sharplink-3.0-api5-owner-bound-unsafe-blit-v1'}[arm]),
                     tieredCompilation='default', tieredPgo='default', readyToRun='default',
-                    frameworkLocations=['/runtime/shared/Microsoft.NETCore.App/10.0.14/core.dll', '/runtime/shared/Microsoft.AspNetCore.App/10.0.14/asp.dll'],
+                    frameworkLocations=['/runtime/shared/Microsoft.NETCore.App/10.0.14/System.Private.CoreLib.dll', '/runtime/shared/Microsoft.AspNetCore.App/10.0.14/Microsoft.AspNetCore.dll'],
                     transport='tcp-loopback', connectionPoolMin=1, connectionPoolMax=1, readyConnections=1,
                     requestTimeout='disabled', heartbeatIntervalSeconds=3600, clientInterceptors=1, serverInterceptors=0,
                     binaryHashes=files, validationFailures=0, correctness={}, normalCorrectness={k: True for k in NORMAL_CHECKS}, beforeWarmupDrain=DRAIN_COUNTS.copy(), afterWorkDrain=DRAIN_COUNTS.copy(),
@@ -86,13 +100,20 @@ class ProtocolTests(unittest.TestCase):
                     logicalPathProof=dict(generalLogicalObserved=True, physicalDispatcherObserved=True, observedBeforeWarmup=True,
                                           clientActivityListeners=False, clientCallsEnabled=False, telemetryWrapperObserved=False, completionOwnedObserved=False),
                     warmupSeconds=3, requestedSeconds=6, operations=100, elapsedTicks=10000, stopwatchFrequency=1000)
-        data['loadedAssemblies'] = [dict(name=n[:-4], location=str(prepared / arm / n), mvid='nonempty', sha256=h,
+        data['loadedAssemblies'] = [dict(name=n[:-4], location=str(prepared / arm / n), mvid='01234567-89ab-cdef-0123-456789abcdef', sha256=h,
                                         productVersion='test+'+version) for n,h in files.items()]
+        policy = fixed_framework_policy()
+        for assembly in data['loadedAssemblies']:
+            if assembly['name'] in FRAMEWORK:
+                entry=policy[assembly['name']]
+                assembly.update(location=entry['path'],sha256=entry['sha256'],mvid=entry['mvid'],productVersion=entry['productVersion'])
+        data['frameworkAssemblies'] = [dict(name=Path(p).stem, location=str(Path('/runtime')/p), sha256=h) for p,h in synthetic_archive_policy().items()]
+        data['loadedAssemblyCount'] = len(data['loadedAssemblies']) + len(data['frameworkAssemblies'])
         if mode == 'dynamic-intercepted':
             data.update(channelType='SharpLink.Client.SharpLinkModuleRpcChannel', streamType='InvokeServerStreamingDeferred')
         manifest = {'arms': {arm: {'snapshot': files}}}
         slot = dict(arm=arm, mode=mode, items=1, affinity=[0,2])
-        return data, slot, prepared, manifest, Path('/runtime/dotnet')
+        return data, slot, prepared, manifest, Path('/runtime/dotnet'), policy, synthetic_archive_policy()
 
     def test_each_arm_positive_paths(self):
         for arm in ARMS:
@@ -126,7 +147,9 @@ class ProtocolTests(unittest.TestCase):
         for text in ('{"arm": "official", "arm": "dev"}', '{"operations": NaN}', '{"x": Infinity}'):
             with self.assertRaises(ValueError): strict_json(text)
 
-    def test_full_synthetic_campaign_and_failure_suppression(self):
+    @patch('validate.archive_framework_policy', side_effect=synthetic_archive_policy)
+    @patch('validate.materialize_framework_policy', side_effect=fixed_framework_policy)
+    def test_full_synthetic_campaign_and_failure_suppression(self, _disk_policy, _archive_policy):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td); root = base / 'run'; prepared = base / 'prepared'
             root.mkdir(); prepared.mkdir()
@@ -140,6 +163,8 @@ class ProtocolTests(unittest.TestCase):
                 manifest['arms'][arm] = {'snapshot': inventory(prepared / arm)}
             write(prepared / 'prepared.json', manifest); write(root / 'prepared.json', manifest)
             write(root / 'topology-selection.json', dict(mapping='0,0,0,Y\n1,0,0,Y\n2,1,0,Y\n', allowed=[0,1,2], selected=[0,2]))
+            write(root / 'framework-policy.json', fixed_framework_policy())
+            write(root / 'framework-archive-policy.json', synthetic_archive_policy())
             write(root / 'strict-gate.json', dict(status='Passed', failures=[]))
             write(root / 'normal-gate.json', dict(status='Passed', failures=[]))
             write(root / 'schedule.json', schedule())
@@ -153,6 +178,7 @@ class ProtocolTests(unittest.TestCase):
                 data['itemCount'] = items
                 data['binaryHashes'] = manifest['arms'][arm]['snapshot']
                 for a in data['loadedAssemblies']:
+                    if a['name'] in FRAMEWORK: continue
                     name = a['name'] + '.dll'
                     a['location'] = str(prepared / arm / name)
                     a['sha256'] = data['binaryHashes'][name]
@@ -202,7 +228,7 @@ class ProtocolTests(unittest.TestCase):
                 result = summarize(root, prepared, Path('/runtime/dotnet'))
                 self.assertEqual('Invalid', result['status'])
                 self.assertFalse(any('observedMedianTargetsReached' in row for row in result['cells']))
-            for path in [root/'ticks'/(failed+'.json'), root/'normal'/'static-intercepted-n1-official.json',
+            for path in [root/'framework-archive-policy.json', root/'framework-policy.json', root/'ticks'/(failed+'.json'), root/'normal'/'static-intercepted-n1-official.json',
                          root/'strict'/'static-intercepted-n1-dev.json']:
                 original=path.read_text(); path.unlink(); rejects(); path.write_text(original)
             for directory in ('strict','normal','runs','ticks'):
@@ -214,6 +240,9 @@ class ProtocolTests(unittest.TestCase):
                 ('prepared.json', lambda v:v.update(fixturePurpose='cleanup-diagnostic')),
                 ('prepared.json', lambda v:v.update(toolSourceHashes={})),
                 ('prepared.json', lambda v:v.update(fixtureSourceHashes={})),
+                ('framework-archive-policy.json',lambda v:v.update({'shared/Microsoft.NETCore.App/10.0.14/Foo.dll':'f'*64})),
+                ('framework-policy.json',lambda v:v[next(iter(v))].update(sha256='wrong')),
+                ('framework-policy.json',lambda v:v[next(iter(v))].update(path='/unapproved/runtime/dependency.dll')),
                 ('strict-gate.json', lambda v:v.update(status='Failed')),
                 ('normal-gate.json', lambda v:v.update(status='Failed')),
                 ('runs/'+failed+'.host.json',lambda v:v.update(launchIndex=13)),
@@ -221,6 +250,14 @@ class ProtocolTests(unittest.TestCase):
                 ('ticks/'+failed+'.json',lambda v:v.update(schemaVersion=1))]:
                 path=root/filename; original=path.read_text(); changed=strict_json(original); mutation(changed)
                 write(path,changed); rejects(); path.write_text(original)
+            # Disk policy materialization is the ONLY patched boundary; fixed policy validation
+            # and all loaded assembly/sample checks above remain real throughout this test.
+            _disk_policy.side_effect=IdentityError('framework_disk_hash','PRIVATE_DISK_FAILURE')
+            result=summarize(root,prepared,Path('/runtime/dotnet'))
+            self.assertEqual('Invalid',result['status'])
+            self.assertEqual(1,result['failureReasonCounts']['framework_disk_hash'])
+            self.assertFalse(any('observedMedianTargetsReached' in row for row in result['cells']))
+            _disk_policy.side_effect=fixed_framework_policy
 
     def test_missing_all_retains_every_slot(self):
         with tempfile.TemporaryDirectory() as td:

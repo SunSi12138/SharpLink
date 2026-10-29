@@ -9,6 +9,7 @@ import subprocess
 import time
 from common import strict_json, ARMS, CONTRACT, ROOT, inventory, schedule, gate_schedule, select_cpus, source_inventory, write
 from validate import validate_sample
+from identity import framework_policy, archive_framework_policy
 
 
 def observation():
@@ -90,6 +91,7 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--reviewed-tool-sha', required=True)
     p.add_argument('--quiet-window-record', type=Path, required=True)
+    p.add_argument('--runtime-archives', type=Path, required=True)
     a = p.parse_args()
     sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     dirty = subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip()
@@ -113,6 +115,11 @@ def main():
         raise ValueError('Runtime installation must contain exactly both private 10.0.14 frameworks')
     if subprocess.check_output([runtime, '--list-sdks'], text=True).strip():
         raise ValueError('Use runtime-only private installation')
+    # Build-copy12 is not the runtime-loaded dependency closure: AspNet14 wins
+    # host version resolution. Verify the exact fixed shared-framework identities
+    # before any process, without relaxing own-arm product/fixture provenance.
+    dependency_policy = framework_policy(runtime)
+    archive_policy = archive_framework_policy(runtime, a.runtime_archives.resolve(strict=True))
     os_release = Path('/etc/os-release').read_text()
     if 'ID=ubuntu' not in os_release or 'VERSION_ID="24.04"' not in os_release or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('This protocol requires hosted ubuntu24.04; no local substitution')
@@ -128,6 +135,8 @@ def main():
     write(output / 'schedule.json', schedule())
     write(output / 'phase-schedule.json', plan)
     write(output / 'prepared.json', manifest)
+    write(output / 'framework-policy.json', dependency_policy)
+    write(output / 'framework-archive-policy.json', archive_policy)
     write(output / 'before.json', observation())
     write(output / 'topology-selection.json', {'mapping': mapping, 'allowed': sorted(os.sched_getaffinity(0)), 'selected': affinity, 'claim': 'guest topology only; physical isolation unknown'})
     env = {k: v for k, v in os.environ.items() if not k.startswith(('DOTNET_', 'COMPlus_', 'GITHUB_', 'TUNIT_', 'TESTINGPLATFORM_'))}
@@ -149,7 +158,8 @@ def main():
                 if host['status'] != 'success' or not host['processGroupQuiescent']:
                     raise ValueError('Process failed, timed out or retained a descendant')
                 validate_sample(strict_json((directory / f"{slot['id']}.json").read_text()),
-                                dict(slot, affinity=affinity), prepared, manifest, runtime, phase=phase)
+                                dict(slot, affinity=affinity), prepared, manifest, runtime, phase=phase,
+                                framework_policy=dependency_policy, archive_policy=archive_policy)
             except (OSError, ValueError, KeyError, TypeError) as error:
                 phase_failures.append({'slot': slot['id'], 'phase': phase, 'error': str(error)})
             write(output / 'failures.json', failures + phase_failures)

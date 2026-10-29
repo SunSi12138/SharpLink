@@ -8,7 +8,8 @@ import tempfile
 import json
 import test_protocol
 from common import CONTRACT
-from validate import CHECKS, NORMAL_CHECKS, DRAIN_COUNTS, exact_metrics, frozen_plan, phase_census, print_summary, validate_host, validate_sample
+from identity import IdentityError
+from validate import CHECKS, NORMAL_CHECKS, DRAIN_COUNTS, exact_metrics, frozen_plan, phase_census, failure_reason, reason_counts, print_summary, CheckError, validate_host, validate_sample
 
 
 class ValidationTests(unittest.TestCase):
@@ -125,6 +126,19 @@ class ValidationTests(unittest.TestCase):
             args = self.host(); args[0]['command'][index] += 'tampered'
             with self.subTest(index=index), self.assertRaises(ValueError): validate_host(*args)
 
+    def test_fixed_check_reason_codes_do_not_include_details(self):
+        for message, code in [('Wrong source','source_identity'), ('Wrong executing runtime','runtime_identity'),
+                              ('Wrong independently generated manifest','generated_manifest'),
+                              ('beforeWarmupDrain incomplete','cleanup_gate'),
+                              ('SECRET exception /private/path','validation_check')]:
+            self.assertEqual(code, failure_reason(CheckError(message)))
+
+    def test_loaded_census_and_framework_representatives_are_exact(self):
+        for field, value in [('loadedAssemblyCount', 0), ('loadedAssemblyCount', True),
+                             ('frameworkLocations', ['/runtime/shared/../escaped/10.0.14/a.dll']*2)]:
+            args=self.sample(); args[0][field]=value
+            with self.subTest(field=field), self.assertRaises(ValueError): validate_sample(*args)
+
     def test_summary_never_prints_private_fields_or_metrics_when_invalid(self):
         secret = 'SECRET_RAW_TICK_COMMAND_ENV_PATH'
         result = dict(status='Invalid',failures=[secret], inventoryErrors=[secret], rawExactMetrics=secret,
@@ -189,6 +203,22 @@ class ValidationTests(unittest.TestCase):
             census=phase_census(root)
             self.assertEqual('invalid',census['notAttemptedDeclaration'])
             self.assertEqual(0,census['phases'][2]['notAttemptedDeclared'])
+
+    def test_failure_reason_summary_never_echoes_exception_paths_or_arbitrary_codes(self):
+        secret='PRIVATE_PATH_RAW_EXCEPTION_DO_NOT_PRINT'
+        error=IdentityError('framework_loaded_identity',secret)
+        self.assertEqual('framework_loaded_identity',failure_reason(error))
+        self.assertEqual('missing_input',failure_reason(FileNotFoundError(secret)))
+        self.assertEqual('validation_check',failure_reason(ValueError(secret)))
+        failures=[dict(error=secret,reasonCode=failure_reason(error)),dict(error=secret,reasonCode=secret)]
+        counts=reason_counts(failures,[])
+        self.assertEqual({'framework_loaded_identity':1,'validation_check':1},counts)
+        counts[secret]=42
+        stream=io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            print_summary(dict(status='Invalid',failures=failures,inventoryErrors=[],cells=[],failureReasonCounts=counts))
+        self.assertNotIn(secret,stream.getvalue())
+        self.assertIn('framework_loaded_identity=1',stream.getvalue())
 
     def test_summary_only_ordinary_metrics_when_valid(self):
         ratio = dict(numerator=1, denominator=1, decimal=1.0)
