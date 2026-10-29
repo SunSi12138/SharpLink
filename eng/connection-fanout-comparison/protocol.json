@@ -1,0 +1,95 @@
+{
+  "schema": 4,
+  "purpose": "Finite incremental connection cancellation fanout comparison candidate/base; not original official-version target evidence or release acceptance",
+  "sdk": "10.0.102",
+  "runtime": "10.0.14",
+  "topology": "hosted ubuntu24.04; one process containing loopback TCP client and server; one worker; same two allowed logical CPUs selected on distinct guest-reported (socket,core)",
+  "affinity": "smallest allowed online CPU, then smallest allowed online CPU on a different guest (socket,core); stop if mapping unavailable",
+  "isolationClaim": "None; retain guest core/socket/SMT and cgroup observations; no physical-core isolation claim",
+  "modes": [
+    "static-intercepted",
+    "dynamic-intercepted"
+  ],
+  "items": [
+    1,
+    100
+  ],
+  "pairsPerCell": 4,
+  "timedProcesses": 32,
+  "warmupSeconds": 3,
+  "measureSeconds": 6,
+  "workers": 1,
+  "connectionPoolMin": 1,
+  "connectionPoolMax": 1,
+  "heartbeatSeconds": 3600,
+  "requestTimeout": "disabled",
+  "clientInterceptors": 1,
+  "serverInterceptors": 0,
+  "qpsTargetRatio": [
+    11,
+    10
+  ],
+  "p99TargetRatio": [
+    4,
+    5
+  ],
+  "quantile": "nearest rank ceil(n*p), exact integer rational rank, no floating-point percentile rank",
+  "pairOrder": "odd pair baseline then candidate; even pair candidate then baseline; four pairs/cell (two ABBA blocks); scenarios rotated by pair index",
+  "failurePolicy": "retain every planned slot and all raw failures; no replacement, exclusion, retry, adaptive stop or claim from incomplete evidence",
+  "releaseBoundary": "Incremental connection cancellation fanout candidate b3cf84da versus correctness baseline3d76 only; neither encoded-page nor outbound-lease candidates nor official NuGet2.0.3. Both retain independent call cancellation sources and strict physical cleanup ownership. Four representative normal-completion stream cells; no original official-version target, full parity or release-acceptance claim.",
+  "interopBoundary": "Both same-version3.0.0 endpoints and own Generator/API5; no endpoint or generated-assembly mixing.",
+  "executionHost": "hosted ubuntu24.04",
+  "aggregation": "Per cell median of four paired candidate/baseline QPS and P99 ratios; additionally recorded process-wide (client + server + runtime) double CPU microseconds/operation and allocated bytes/operation paired absolute values, ratios and median ratios. CPU/allocation are descriptive, no new target thresholds; allocated bytes are not object counts; exact rational ratios represent the recorded decimal values, not independent raw CPU-tick or allocation-census reconstruction. No operation pooling, best round, cross-cell global pass or incomplete-input target observations.",
+  "coldPolicy": "Eight strict-cleanup processes (both arms x four cells) and eight symmetric normal-validate processes must pass before timing. Each of32 fresh normal-measure processes repeats normal-only controls. No cancellation/failure/early-exit probe in timed processes.",
+  "campaign": "connectionfanout-base3d76-48tcp-CF1",
+  "strictProcesses": 8,
+  "normalProcesses": 8,
+  "processTimeoutSeconds": 120,
+  "cleanupGuardSeconds": 15,
+  "evidencePolicy": "Raw ticks, reports, traces, build logs and all failures stay runner-local; no artifact upload, commit, comment, raw log dump or evidence publication. Independent same-job offline validator emits bounded per-cell QPS/P99 ratios, CPU/allocation paired absolute metrics and ratios, and failure status only. Ephemeral samples cannot support downstream independent recomputation.",
+  "phaseSchema": [
+    "strict-cleanup",
+    "normal-validate",
+    "normal-measure"
+  ],
+  "dependencyPolicy": {
+    "buildClosure": "Four identical private10.0.12 dependency DLLs copied to both prepared snapshots; these are build closure, not asserted runtime load origins.",
+    "executionClosure": "Exactly four pinned Microsoft dependency identities from private Microsoft.AspNetCore.App10.0.14, common to both arms; all product and fixture assemblies remain own-arm only.",
+    "policySource": "c1b4d73b922183364065a4460c6b7bce8829e9a7:eng/official-cleanup-diagnostic/identity.py",
+    "checks": [
+      "exactNameClosure",
+      "absolutePath",
+      "SHA256",
+      "MVID",
+      "productVersion",
+      "onDiskFrameworkHash",
+      "completeNonDynamicAssemblyCensus",
+      "archiveDerivedFrameworkAllowlist",
+      "canonicalNoSymlinkPaths"
+    ],
+    "remainingFrameworkClosure": "Every other loaded non-dynamic assembly must match canonical path and SHA256 derived independently from the two fixed SHA512-verified private runtime14 archives; unknown, inserted or symlinked DLLs rejected. Collection and hashing occur outside all timing windows."
+  },
+  "baselineSource": "3d76a3a8b55a37e24c62a073fe588cff3d3867be",
+  "baselineTree": "1c24da3af090acd4d6cdbfb005a9e3bd95304e3a",
+  "candidateSource": "b3cf84da2853b8dc8d107a03755d3e415988485d",
+  "candidateTree": "010116dd13bd0d5ed7cfe24771c69dc7e6b075f9",
+  "baselineVersion": "3.0.0",
+  "candidateVersion": "3.0.0",
+  "baselineApi": 5,
+  "candidateApi": 5,
+  "totalProcesses": 48,
+  "targetInterpretation": "QPS1.10/P99.80 markers apply only to incremental candidate/baseline ratios; reaching them cannot establish the original goal versus officialNuGet2.0.3.",
+  "ordinaryUnitGate": {
+    "candidateSource": "b3cf84da2853b8dc8d107a03755d3e415988485d",
+    "candidateTree": "010116dd13bd0d5ed7cfe24771c69dc7e6b075f9",
+    "requirement": "Before any TCP process, build exact remote candidate, freshly discover every UID, execute the complete ordinary corpus exactly once under runtime14, and validate exact result UID equality with zero skips/failures/cancellations/timeouts/flaky passes. Preserve every output locally. No full ordinary test execution is implied by local UID discovery.",
+    "rawUids": 2331,
+    "ordinaryUids": 2326,
+    "explicitWorkerUids": 5,
+    "explicitWorkerClasses": 4,
+    "scope": "Only the five source-reviewed Explicit worker UIDs are excluded; ordinary TCP/UDS functional tests remain included.",
+    "record": "Both TCP driver and independent validator require unit-gate.json with this tool revision, frozen UID digests, actual runtime14 and both allocation-child runtime14 witnesses.",
+    "diagnostics": "Normal CI failure counts, public test names and bounded sanitized assertion summaries are permitted. Raw reports, test output streams, full traces and performance ticks remain local; every result validation layer has a distinct reason.",
+    "temporaryDirectory": "Short unique system-temp directory with a checked UTF8 pathname budget for unchanged ordinary UDS fixtures; never nest TMPDIR under diagnostic root; retain failures and local linkage."
+  }
+}
