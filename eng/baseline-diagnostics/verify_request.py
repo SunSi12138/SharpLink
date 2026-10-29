@@ -9,9 +9,9 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUEST = 'eng/baseline-diagnostics/REQUEST.json'
-BRANCH = 'refs/heads/validation/baseline-eventpipe-no-evidence-20261029-r2'
-MESSAGE = 'run: baseline EventPipe diagnostic DG2'
-CAMPAIGN = 'baseline3d76-eventpipe-DG2'
+BRANCH = 'refs/heads/validation/baseline-eventpipe-no-evidence-20261029-r3'
+MESSAGE = 'run: baseline EventPipe diagnostic DG3'
+CAMPAIGN = 'baseline3d76-eventpipe-DG3'
 REPOSITORY = 'SunSi12138/SharpLink'
 BASELINE = '3d76a3a8b55a37e24c62a073fe588cff3d3867be'
 BASELINE_TREE = '1c24da3af090acd4d6cdbfb005a9e3bd95304e3a'

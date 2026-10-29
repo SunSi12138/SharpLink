@@ -35,8 +35,8 @@ internal static class TraceAdapter
     }
     internal static Observation? Normalize(TraceEvent e)
     {
-        Observation Make(string kind,int instance=0,int number=0,long amount=0,string category="unknown",Marker? marker=null)
-            =>new(kind,e.TimeStampRelativeMSec,e.ProcessID,e.ThreadID,instance,number,amount,category,marker);
+        Observation Make(string kind,int instance=0,int number=0,long amount=0,string category="unknown",Marker? marker=null,MethodLeaf? leaf=null)
+            =>new(kind,e.TimeStampRelativeMSec,e.ProcessID,e.ThreadID,instance,number,amount,category,marker,leaf);
         try
         {
             if(e.ProviderName==PhaseProvider)
@@ -52,7 +52,7 @@ internal static class TraceAdapter
                 var stack=e.CallStack(); int depth=0;
                 for(;stack is not null && depth<1024;stack=stack.Caller,depth++)frames.Add(stack.CodeAddress.FullMethodName);
                 if(stack is not null)return Make("malformed");
-                return Make("managed-sample",category:Aggregator.Classify(frames));
+                return Make("managed-sample",category:Aggregator.Classify(frames),leaf:MethodSamples.Inspect(frames));
             }
             if(e.ProviderName!="Microsoft-Windows-DotNETRuntime")return null;
             return e switch {

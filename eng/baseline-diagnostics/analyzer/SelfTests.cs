@@ -61,6 +61,7 @@ internal static class SelfTests
             Test(()=> {var v=Valid();v[0]=v[0] with{Marker=Mark(99)};Invalid(v,"marker-measurement");});
             Test(()=> {var v=Valid();v[^1]=v[^1] with{Marker=Mark(20101)};Invalid(v,"marker-measurement");});
             count+=MetadataSelfTests.Run();
+            count+=MethodSamplesSelfTests.Run();
             Console.WriteLine($"ANALYZER_SELF_TEST_PASS tests={count}");return 0;
         }
         catch(Exception) {Console.WriteLine($"ANALYZER_SELF_TEST_FAIL completed={count}");return 1;}

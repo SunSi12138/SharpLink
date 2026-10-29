@@ -111,6 +111,8 @@ class SummaryTests(unittest.TestCase):
         for k in ('lostEvents','unknownStacks','unmatchedEvents','outsideWindowEvents','otherProcessEvents',
             'unknownEvents','externalThreadSamples','sampleErrors','allocationTickSamples','allocationTickReportedBytes'):v[k]=0
         for k in ('gcPauses','contention','waitHandle'):v[k]=dict(count=0,durationMilliseconds=0)
+        v['methodSamples']=dict(windowValid=True,leafMethods=[],frameworkLeafWithSharpLinkAncestorSamples=0,**{k:0 for k in summary.METHOD_EXCLUDED})
+        v['unmatchedBreakdown']={key:0 for key in summary.UNMATCHED_KEYS}
         return v
 
     def test_bounded_categories_only_no_raw_fields(self):
@@ -140,10 +142,12 @@ class SummaryTests(unittest.TestCase):
     def test_invalid_window_withholds_aggregates_unknown_coverage_preserves_observations(self):
         v=self.sample();v.update(status='Incomplete',failures=['marker-cardinality'])
         v['managedThreadTimeSamples']['sharplink-stream']=123
+        v['methodSamples']['windowValid']=False
         text='\n'.join(summary.render(v))
         self.assertIn('DIAGNOSTIC_WINDOW unavailable',text)
         self.assertNotIn('MANAGED_THREAD_TIME_SAMPLES',text);self.assertNotIn('GC_PAUSE',text)
         v.update(failures=['unknown-coverage'],coverage='Partial',unknownStacks=1)
+        v['methodSamples'].update(windowValid=True,unavailableLeafSamples=124)
         v['managedThreadTimeSamples']['unknown']=1
         text='\n'.join(summary.render(v))
         self.assertIn('sharplink-stream=123',text);self.assertIn('unknown=1',text)

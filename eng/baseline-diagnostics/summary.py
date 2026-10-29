@@ -2,6 +2,7 @@
 """Only finite allowlisted diagnostic aggregates; no raw trace, stack, payload or report dump."""
 import argparse
 import math
+import re
 from pathlib import Path
 from common import CONTRACT, SOURCE, strict_json
 
@@ -19,9 +20,60 @@ HOST_REASONS = {'EARLY_EXIT','READY_TIMEOUT','READY_SCHEMA','READY_IDENTITY','TA
 PHASES = {'SETUP','RUNTIME','TOOLS','HOST','CONTROL','TRACE','ANALYSIS','MARKER'}
 
 def number(v, integer=False):
-    if type(v) not in ((int,) if integer else (int,float)) or not math.isfinite(v) or v<0 or v>9223372036854775807:
+    if type(v) not in ((int,) if integer else (int,float)) or v<0 or v>9223372036854775807 or not math.isfinite(v):
         raise ValueError('SUMMARY_NUMBER')
     return v
+
+METHOD_KEYS = {'windowValid','leafMethods','frameworkLeafWithSharpLinkAncestorSamples',
+    'unavailableLeafSamples','nonAllowlistedLeafSamples','rejectedNameSamples','omittedAllowedSamples'}
+METHOD_EXCLUDED = ('unavailableLeafSamples','nonAllowlistedLeafSamples','rejectedNameSamples','omittedAllowedSamples')
+METHOD_NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_`]*(?:[.+][A-Za-z_][A-Za-z0-9_`]*)+$')
+UNMATCHED_KINDS = ('gc','pause','contention','wait')
+UNMATCHED_ENDS = ('start','stop')
+UNMATCHED_REGIONS = ('before','inside','after','unavailable')
+UNMATCHED_KEYS = {f'{k}:{e}:{r}' for k in UNMATCHED_KINDS for e in UNMATCHED_ENDS for r in UNMATCHED_REGIONS}
+
+def method_lines(analysis, valid_window):
+    value=analysis['methodSamples']
+    if type(value) is not dict or set(value)!=METHOD_KEYS or type(value['windowValid']) is not bool or value['windowValid']!=valid_window:
+        raise ValueError('SUMMARY_METHOD_SCHEMA')
+    methods=value['leafMethods']
+    if type(methods) is not list or len(methods)>12: raise ValueError('SUMMARY_METHOD_LIMIT')
+    rows=[]
+    for row in methods:
+        if type(row) is not dict or set(row)!={'method','samples'}: raise ValueError('SUMMARY_METHOD_SCHEMA')
+        name=row['method'];count=number(row['samples'],True)
+        if (type(name) is not str or not 3<=len(name)<=160 or not name.startswith(('System.','Microsoft.','SharpLink.')) or
+            not METHOD_NAME.fullmatch(name) or any(re.search(r'(?:^|_)0x[0-9a-fA-F]+(?:$|_)',part) for part in re.split(r'[.+]',name)) or count==0):
+            raise ValueError('SUMMARY_METHOD_NAME')
+        rows.append((name,count))
+    if len({name for name,_ in rows})!=len(rows) or rows!=sorted(rows,key=lambda row:(-row[1],row[0])):
+        raise ValueError('SUMMARY_METHOD_ORDER')
+    excluded={key:number(value[key],True) for key in METHOD_EXCLUDED}
+    ancestor=number(value['frameworkLeafWithSharpLinkAncestorSamples'],True)
+    selected=sum(count for _,count in rows)
+    if not valid_window:
+        if rows or any(excluded.values()) or ancestor: raise ValueError('SUMMARY_METHOD_WINDOW')
+        return []
+    managed=sum(number(v,True) for v in analysis['managedThreadTimeSamples'].values())
+    if selected+sum(excluded.values())!=managed or ancestor>selected+excluded['omittedAllowedSamples']:
+        raise ValueError('SUMMARY_METHOD_CENSUS')
+    lines=['WINDOW_METHOD_SAMPLES first-resolved-leaf normalized-identifier sampled-thread-time-not-CPU selectedLeafSamples='+str(selected)+' '+
+        ' '.join(key+'='+str(excluded[key]) for key in METHOD_EXCLUDED)+
+        ' frameworkLeafWithSharpLinkAncestorSamples='+str(ancestor)]
+    lines += ['METHOD_SAMPLE method='+name+' samples='+str(count) for name,count in rows]
+    return lines
+
+def unmatched_lines(analysis, valid_window):
+    values=analysis['unmatchedBreakdown']
+    if type(values) is not dict or set(values)!=UNMATCHED_KEYS: raise ValueError('SUMMARY_UNMATCHED_SCHEMA')
+    counts={key:number(value,True) for key,value in values.items()}
+    if sum(counts.values())!=number(analysis['unmatchedEvents'],True): raise ValueError('SUMMARY_UNMATCHED_CENSUS')
+    if any(value and (key.endswith(':unavailable') if valid_window else not key.endswith(':unavailable')) for key,value in counts.items()):
+        raise ValueError('SUMMARY_UNMATCHED_WINDOW')
+    return ['UNMATCHED_INTERPRETATION parser-pairing accounting; region belongs to observed endpoint; outside-window endpoints do not waive Incomplete'] + ['UNMATCHED_ENDPOINTS kind='+kind+' '+
+        ' '.join('missing-'+end+'-observed-'+region+'='+str(counts[f'{kind}:{end}:{region}'])
+                 for end in UNMATCHED_ENDS for region in UNMATCHED_REGIONS) for kind in UNMATCHED_KINDS]
 
 def render(analysis):
     if type(analysis) is not dict or type(analysis.get('schema')) is not int or analysis.get('schema')!=1 or analysis.get('status') not in ('Complete','Incomplete'):
@@ -43,8 +95,11 @@ def render(analysis):
         'NORMALIZED_TRACE_EVENTS '+' '.join(k+'='+str(number(counts[k],True)) for k in NORMALIZED_KINDS)]
     invalid_window={'invalid-pid','marker-cardinality','marker-identity','marker-measurement',
                     'window-boundary','malformed-or-reversed-event'}
-    if invalid_window.intersection(failures):
-        return [status_line,*observations,'DIAGNOSTIC_WINDOW unavailable; no window aggregates accepted',
+    valid_window=not invalid_window.intersection(failures)
+    endpoints=unmatched_lines(analysis,valid_window)
+    methods=method_lines(analysis,valid_window)
+    if not valid_window:
+        return [status_line,*observations,*endpoints,'DIAGNOSTIC_WINDOW unavailable; no window aggregates accepted',
             'TRACE_DIAGNOSTIC lostEvents='+str(number(analysis['lostEvents'],True))+
             ' unmatchedEvents='+str(number(analysis['unmatchedEvents'],True))]
     if analysis.get('sourceRevision')!=SOURCE or analysis.get('scenario')!='baseline-static-n100-work20s':
@@ -62,6 +117,7 @@ def render(analysis):
     values=analysis['managedThreadTimeSamples']
     if set(values)!=set(CATEGORIES): raise ValueError('SUMMARY_CATEGORIES')
     lines += ['MANAGED_THREAD_TIME_SAMPLES '+' '.join(k+'='+str(number(values[k],True)) for k in CATEGORIES)]
+    lines += methods + endpoints
     for label,key in (('GC_PAUSE','gcPauses'),('MONITOR_CONTENTION','contention'),('WAITHANDLE_WAIT','waitHandle')):
         v=analysis[key]
         if set(v)!={'count','durationMilliseconds'}: raise ValueError('SUMMARY_INTERVAL')

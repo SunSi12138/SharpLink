@@ -9,7 +9,7 @@ internal sealed record ExpectedTiming(long StartTick, long StopTick, long Freque
 }
 internal sealed record Marker(string Source, string Variant, string Mode, int Items, int Seconds, string Window, long Tick);
 internal sealed record Observation(string Kind, double Milliseconds, int Pid, int Thread = 1, int Instance = 0,
-    int Number = 0, long Amount = 0, string Category = "unknown", Marker? Marker = null);
+    int Number = 0, long Amount = 0, string Category = "unknown", Marker? Marker = null, MethodLeaf? Leaf = null);
 internal sealed record Interval(int Count, double DurationMilliseconds);
 internal sealed record DiagnosticSummary(int Schema, string Status, string Coverage, string[] Failures,
     string SourceRevision, string Scenario, double WindowMilliseconds, long LostEvents, long UnknownStacks,
@@ -18,6 +18,7 @@ internal sealed record DiagnosticSummary(int Schema, string Status, string Cover
     long AllocationTickSamples, long AllocationTickReportedBytes, Dictionary<string,long> GcStartsByGeneration,
     Interval GcPauses, Interval Contention, Interval WaitHandle, Dictionary<string,long> CensoredIntervals,
     MarkerCensus MarkerCensus, Dictionary<string,long> NormalizedEventCounts,
+    MethodSampleSummary MethodSamples, Dictionary<string,long> UnmatchedBreakdown,
     string Interpretation = "Sampled managed thread-time counts, not CPU percentages. Allocation ticks are samples, not exact allocated bytes. GC pause, contention and wait durations can overlap; never add them or infer CPU time.");
 internal static class Aggregator
 {
@@ -41,6 +42,16 @@ internal static class Aggregator
         var span = end - begin;
         if (!double.IsFinite(span) || span < 20000 || span > 25000 ||
             (starts.Length == 1 && stops.Length == 1 && starts[0].Marker?.Tick >= stops[0].Marker?.Tick)) failures.Add("window-boundary");
+        bool methodWindowValid = !failures.Overlaps(["invalid-pid","marker-cardinality","marker-identity","marker-measurement","window-boundary"]);
+        var methods = new MethodSampleAccumulator(methodWindowValid);
+        var unmatchedBreakdown = (from kind in new[]{"gc","pause","contention","wait"}
+            from missing in new[]{"start","stop"} from location in new[]{"before","inside","after","unavailable"}
+            select $"{kind}:{missing}:{location}").ToDictionary(k=>k,_=>0L);
+        void Missing(string kind,string missing,Observation existing)
+        {
+            string location=!methodWindowValid?"unavailable":existing.Milliseconds<begin?"before":existing.Milliseconds>end?"after":"inside";
+            unmatchedBreakdown[$"{kind}:{missing}:{location}"]++;
+        }
         var categories = Categories.ToDictionary(k => k, _ => 0L);
         var generations = new[] {"gen0","gen1","gen2"}.ToDictionary(k => k,_ => 0L);
         long outside=0, otherPid=0, unknown=0, unmatched=0, external=0, errors=0, allocations=0, bytes=0;
@@ -67,7 +78,7 @@ internal static class Aggregator
                 var key=(kind,kind is "gc" or "pause"?0:e.Thread,e.Instance,kind=="gc"?(int)e.Amount:0);
                 if(e.Kind.EndsWith("start",StringComparison.Ordinal))
                 {
-                    if(!active.TryAdd(key,e)){unmatched++;failures.Add("unmatched-events");}
+                    if(!active.TryAdd(key,e)){unmatched++;Missing(kind,"stop",e);failures.Add("unmatched-events");}
                     if(kind=="gc" && inside)
                     { if(e.Number is <0 or >2)failures.Add("malformed-generation");else generations["gen"+e.Number]++; }
                 }
@@ -79,13 +90,14 @@ internal static class Aggregator
                     if(whollyInside&&kind!="gc"&&(kind!="pause"||start.Number is 1 or 6))
                     {var old=intervals[kind];intervals[kind]=new(old.Count+1,old.DurationMilliseconds+e.Milliseconds-start.Milliseconds);}
                 }
-                else {unmatched++;failures.Add("unmatched-events");}
+                else {unmatched++;Missing(kind,"start",e);failures.Add("unmatched-events");}
                 continue;
             }
             if(!inside)continue;
             switch (e.Kind)
             {
                 case "managed-sample":
+                    methods.Add(e.Leaf);
                     if (!categories.ContainsKey(e.Category)) { failures.Add("malformed-category"); categories["unknown"]++; }
                     else categories[e.Category]++;
                     break;
@@ -98,14 +110,27 @@ internal static class Aggregator
                 default: unknown++; break;
             }
         }
+        foreach(var entry in active)Missing(entry.Key.Kind,"stop",entry.Value);
         unmatched+=active.Count;
         if(unmatched>0)failures.Add("unmatched-events");
         if(categories.Values.Sum()+external+errors==0)failures.Add("missing-samples");
         if(categories["unknown"]>0 || unknown>0)failures.Add("unknown-coverage");
+        if(failures.Contains("malformed-or-reversed-event"))
+        {
+            methods=new MethodSampleAccumulator(false);
+            foreach(var kind in new[]{"gc","pause","contention","wait"})
+            foreach(var missing in new[]{"start","stop"})
+            {
+                long total=0;
+                foreach(var region in new[]{"before","inside","after","unavailable"})
+                {var key=$"{kind}:{missing}:{region}";total+=unmatchedBreakdown[key];unmatchedBreakdown[key]=0;}
+                unmatchedBreakdown[$"{kind}:{missing}:unavailable"]=total;
+            }
+        }
         return new(1,failures.Count==0?"Complete":"Incomplete",categories["unknown"]+unknown>0?"Partial":"Classified",
             failures.Order().ToArray(),Source,"baseline-static-n100-work20s",double.IsFinite(span)&&span>0?span:0,
             Math.Max(0,lost),categories["unknown"],unmatched,outside,otherPid,unknown,categories,external,errors,allocations,bytes,
-            generations,intervals["pause"],intervals["contention"],intervals["wait"],censored,census??MarkerCensus.FromNormalized(events),MarkerCheck.EventCounts(events));
+            generations,intervals["pause"],intervals["contention"],intervals["wait"],censored,census??MarkerCensus.FromNormalized(events),MarkerCheck.EventCounts(events),methods.Finish(),unmatchedBreakdown);
     }
     internal static string Classify(IEnumerable<string> frames)
     {
