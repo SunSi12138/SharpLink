@@ -1,0 +1,153 @@
+name: Exact-source Linux package gates (no uploads)
+
+on:
+  push:
+    branches: ['validation/linux-package-no-upload-20261029']
+    paths: ['eng/linux-package-validation/request.json']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-package-no-upload-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-package:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/validation/linux-package-no-upload-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Checkout request and reviewed tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+          path: tools
+      - name: Validate request-only trigger and offline reject controls
+        id: provenance
+        run: |
+          python3 tools/eng/linux-package-validation/test_gate.py
+          python3 tools/eng/linux-package-validation/gate.py --tools-root tools
+      - name: Checkout immutable candidate separately
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.provenance.outputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: candidate
+      - name: Verify candidate SHA tree and clean checkout
+        id: source
+        run: python3 tools/eng/linux-package-validation/gate.py --tools-root tools --source-root candidate
+      - name: Check preinstalled native prerequisites without system changes
+        run: |
+          set -euo pipefail
+          command -v clang
+          command -v ld
+          command -v unzip
+          command -v pkg-config
+          clang --version
+          ld --version
+          pkg-config --modversion zlib
+          printf '#include <zlib.h>\nint main(void){return zlibVersion()==0;}\n' | clang -x c - -lz -o "$RUNNER_TEMP/sharplink-native-prerequisite"
+          "$RUNNER_TEMP/sharplink-native-prerequisite"
+      - name: Install exact official SHA512-verified SDK102
+        id: setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="$RUNNER_TEMP/linux-package-sdk-${{ github.run_id }}-${{ github.run_attempt }}"
+          test ! -e "$SDK_ROOT" && test ! -L "$SDK_ROOT"
+          mkdir "$SDK_ROOT"
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.102/dotnet-sdk-10.0.102-linux-x64.tar.gz --output "$SDK_ROOT/sdk.tar.gz"
+          echo '7adf40e8e5547970391cfbe474c3874c6918ce3575ac398f376c78502134e1c8a2fa3da9aca281fdaeda81671f56c851ebe9e74c5b57c5a298bd45deba63565d  '"$SDK_ROOT/sdk.tar.gz" | sha512sum --check
+          tar -xzf "$SDK_ROOT/sdk.tar.gz" -C "$SDK_ROOT"
+          {
+            echo "DOTNET=$SDK_ROOT/dotnet"
+            echo "DOTNET_ROOT=$SDK_ROOT"
+            echo "DOTNET_ROOT_X64=$SDK_ROOT"
+            echo "DOTNET_HOST_PATH=$SDK_ROOT/dotnet"
+            echo "NUGET_PACKAGES=$RUNNER_TEMP/linux-package-nuget-${{ github.run_id }}-${{ github.run_attempt }}"
+            echo "NUGET_HTTP_CACHE_PATH=$RUNNER_TEMP/linux-package-http-${{ github.run_id }}-${{ github.run_attempt }}"
+          } >> "$GITHUB_ENV"
+          echo "$SDK_ROOT" >> "$GITHUB_PATH"
+          cd candidate
+          test "$("$SDK_ROOT/dotnet" --version)" = 10.0.102
+          "$SDK_ROOT/dotnet" --info
+      - name: Verify existing packaged and identity reject controls
+        id: fixtures
+        working-directory: candidate
+        run: |
+          python3 -m unittest discover -s eng/tests -p test_packaged_trim_smoke.py -v
+          python3 -m unittest discover -s eng/tests -p test_verify_package_identities.py -v
+      - name: Pack exact source once in this job
+        id: pack
+        working-directory: candidate
+        run: dotnet pack Sharplink.slnx -c Release -o artifacts/nuget -v minimal
+      - name: Verify all nine package and symbol contracts
+        id: packages
+        working-directory: candidate
+        run: |
+          bash eng/verify-packages.sh artifacts/nuget 3.0.0
+          bash eng/verify-hosting-package-dependency.sh artifacts/nuget
+          bash eng/verify-abstractions-package-dependency.sh artifacts/nuget
+      - name: Verify actual packaged API and calibrated release versions
+        id: api
+        if: ${{ !cancelled() && steps.packages.outcome == 'success' }}
+        working-directory: candidate
+        run: |
+          api_exit=0
+          bash eng/verify-public-api.sh artifacts/nuget 3.0.0 || api_exit=$?
+          if [ "$api_exit" -ne 0 ]; then
+            cat artifacts/public-api/current/public-api.diff || true
+          fi
+          python3 eng/verify-release-versions.py
+          exit "$api_exit"
+      - name: Inventory exact source and mechanically validate existing API proposal
+        id: ledger
+        if: ${{ !cancelled() && steps.packages.outcome == 'success' }}
+        working-directory: candidate
+        run: |
+          python3 eng/run-api-inventory.py --output artifacts/api-inventory/linux-package
+          # No rebind: stale source identity must remain a failing ledger gate.
+          python3 eng/verify-api-decision-ledger.py artifacts/api-inventory/linux-package
+      - name: Publish and execute three isolated native package consumers
+        id: consumers
+        if: ${{ !cancelled() && steps.packages.outcome == 'success' }}
+        working-directory: candidate
+        run: python3 eng/run-packaged-trim-smoke.py --rid linux-x64
+      - name: Log bounded package assembly and native pack identities
+        id: identities
+        if: ${{ !cancelled() && steps.packages.outcome == 'success' }}
+        run: python3 tools/eng/linux-package-validation/summary.py candidate
+      - name: Recheck unchanged candidate and tools after all reached gates
+        id: final_source
+        if: ${{ always() && steps.source.outcome == 'success' }}
+        run: python3 tools/eng/linux-package-validation/gate.py --tools-root tools --source-root candidate
+      - name: Fail-closed bounded result summary
+        if: always()
+        env:
+          PROVENANCE: ${{ steps.source.outcome }}
+          FIXTURES: ${{ steps.fixtures.outcome }}
+          PACK: ${{ steps.pack.outcome }}
+          PACKAGES: ${{ steps.packages.outcome }}
+          API: ${{ steps.api.outcome }}
+          LEDGER: ${{ steps.ledger.outcome }}
+          CONSUMERS: ${{ steps.consumers.outcome }}
+          IDENTITIES: ${{ steps.identities.outcome }}
+          FINAL_SOURCE: ${{ steps.final_source.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          names = ('PROVENANCE','FIXTURES','PACK','PACKAGES','API','LEDGER','CONSUMERS','IDENTITIES','FINAL_SOURCE')
+          results = {name: os.environ[name] for name in names}
+          print('LINUX_PACKAGE_GATES ' + json.dumps(results, sort_keys=True))
+          print('Linux only; no performance, final release, multi-host identical artifact, or semantic API approval claim.')
+          raise SystemExit(0 if all(value == 'success' for value in results.values()) else 1)
+          PY
+      # No upload/download artifact, cache-save, publication or failed-output cleanup.
