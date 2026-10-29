@@ -1,7 +1,8 @@
 namespace SharpLink.Server;
 
 /// <summary>
-/// Two infrastructure registrations per connection. Publication uses the existing map stripe
+/// Two infrastructure registrations per connection cover exactly matching call sources.
+/// Unmatched sources keep per-call registrations. Publication uses the existing map stripe
 /// ordering plus a token recheck; only cancellation scans the call table. Invocation CTSs and
 /// module registrations remain private to each call.
 /// </summary>
@@ -49,6 +50,12 @@ internal sealed class ServerConnectionCallCancellation : IDisposable
         }
     }
 
+    internal bool CoversServerStopping(CancellationToken token)
+        => token.CanBeCanceled && token == _serverStopping;
+
+    internal bool CoversConnectionClosed(CancellationToken token)
+        => token.CanBeCanceled && token == _connectionClosed;
+
     /// <summary>
     /// The factory owns this newly rented generation until return; no invocation/queue has yet
     /// received its token. Existing states must not be republished. Late noncooperative tracking
@@ -57,6 +64,8 @@ internal sealed class ServerConnectionCallCancellation : IDisposable
     internal void Publish(ServerCallCancellationState call, ServerCallDeadlineScheduler deadlines)
     {
         var lease = call.CaptureLease(call.RequestId);
+        var shareServer = call.UsesSharedInfrastructureSource(this, ServerCallCancellationReason.ServerStopping);
+        var shareConnection = call.UsesSharedInfrastructureSource(this, ServerCallCancellationReason.ConnectionClosed);
         var acquired = false;
         var ownsGeneration = true;
         Exception? publicationFailure = null;
@@ -64,8 +73,8 @@ internal sealed class ServerConnectionCallCancellation : IDisposable
         {
             _calls.Set(lease.RequestId, call);
             deadlines.Register(call);
-            var serverStopped = _serverStopping.IsCancellationRequested;
-            var connectionClosed = _connectionClosed.IsCancellationRequested;
+            var serverStopped = shareServer && _serverStopping.IsCancellationRequested;
+            var connectionClosed = shareConnection && _connectionClosed.IsCancellationRequested;
             if (!serverStopped && !connectionClosed)
                 return;
 
@@ -126,7 +135,8 @@ internal sealed class ServerConnectionCallCancellation : IDisposable
                 continue;
             try
             {
-                lease.State.TryCancel(reason);
+                if (lease.State.UsesSharedInfrastructureSource(this, reason))
+                    lease.State.TryCancel(reason);
             }
             catch (Exception exception)
             {

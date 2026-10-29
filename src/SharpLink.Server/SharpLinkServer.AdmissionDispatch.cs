@@ -502,7 +502,8 @@ internal sealed partial class SharpLinkServer
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
-            supportsCooperativeCancellation: true);
+            supportsCooperativeCancellation: true,
+            connection.InfrastructureCancellation);
         connection.InfrastructureCancellation.Publish(callState, connection.DeadlineScheduler);
         return callState;
     }

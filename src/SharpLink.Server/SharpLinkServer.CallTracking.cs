@@ -22,7 +22,8 @@ internal sealed partial class SharpLinkServer
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
-            supportsCooperativeCancellation);
+            supportsCooperativeCancellation,
+            connection.InfrastructureCancellation);
         if (admissionLease is not null)
             callState.AttachAdmissionLease(admissionLease);
         connection.InfrastructureCancellation.Publish(callState, connection.DeadlineScheduler);
@@ -48,7 +49,8 @@ internal sealed partial class SharpLinkServer
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
-            supportsCooperativeCancellation: true);
+            supportsCooperativeCancellation: true,
+            connection.InfrastructureCancellation);
         connection.InfrastructureCancellation.Publish(callState, connection.DeadlineScheduler);
         return callState;
     }
@@ -72,7 +74,8 @@ internal sealed partial class SharpLinkServer
             serverLoopToken,
             _forceStopCts.Token,
             moduleDrainingToken,
-            supportsCooperativeCancellation: false);
+            supportsCooperativeCancellation: false,
+            connection.InfrastructureCancellation);
         connection.InfrastructureCancellation.Publish(callState, connection.DeadlineScheduler);
         return callState;
     }

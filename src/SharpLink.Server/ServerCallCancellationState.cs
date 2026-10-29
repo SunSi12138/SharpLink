@@ -73,6 +73,8 @@ internal sealed class ServerCallCancellationState : IDisposable
     private IRpcByteBufferWriter? _payloadOwner;
     private ServerDecodedBytesPermit? _decodedBytesPermit;
     private TimeProvider? _timeProvider;
+    private ServerConnectionCallCancellation? _infrastructureOwner;
+    private byte _sharedInfrastructureSources;
 
     private ServerCallCancellationState()
     {
@@ -123,19 +125,21 @@ internal sealed class ServerCallCancellationState : IDisposable
         CancellationToken moduleDrainingToken,
         bool supportsCooperativeCancellation)
         => RentCore(requestId, deadline, timeProvider, connectionClosedToken, serverStoppingToken,
-            moduleDrainingToken, supportsCooperativeCancellation, connectionTracked: false);
+            moduleDrainingToken, supportsCooperativeCancellation, infrastructureOwner: null);
 
     internal static ServerCallCancellationState RentConnectionTracked(
         long requestId, RpcDeadline deadline, TimeProvider timeProvider,
         CancellationToken connectionClosedToken, CancellationToken serverStoppingToken,
-        CancellationToken moduleDrainingToken, bool supportsCooperativeCancellation)
+        CancellationToken moduleDrainingToken, bool supportsCooperativeCancellation,
+        ServerConnectionCallCancellation? infrastructureOwner)
         => RentCore(requestId, deadline, timeProvider, connectionClosedToken, serverStoppingToken,
-            moduleDrainingToken, supportsCooperativeCancellation, connectionTracked: true);
+            moduleDrainingToken, supportsCooperativeCancellation, infrastructureOwner);
 
     private static ServerCallCancellationState RentCore(
         long requestId, RpcDeadline deadline, TimeProvider timeProvider,
         CancellationToken connectionClosedToken, CancellationToken serverStoppingToken,
-        CancellationToken moduleDrainingToken, bool supportsCooperativeCancellation, bool connectionTracked)
+        CancellationToken moduleDrainingToken, bool supportsCooperativeCancellation,
+        ServerConnectionCallCancellation? infrastructureOwner)
     {
         ArgumentNullException.ThrowIfNull(timeProvider);
         if (!Pool.TryPop(out var state))
@@ -160,6 +164,10 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._serverStoppingRegistration = default;
         state._connectionClosedRegistration = default;
         state._moduleDrainingRegistration = default;
+        state._sharedInfrastructureSources = (byte)(
+            (infrastructureOwner?.CoversServerStopping(serverStoppingToken) == true ? 1 : 0) |
+            (infrastructureOwner?.CoversConnectionClosed(connectionClosedToken) == true ? 2 : 0));
+        state._infrastructureOwner = state._sharedInfrastructureSources != 0 ? infrastructureOwner : null;
         state._invocationCancellation = null;
         try
         {
@@ -174,33 +182,32 @@ internal sealed class ServerCallCancellationState : IDisposable
                             ServerCallCancellationReason.ModuleDraining),
                     state);
             }
+            // Only an exactly matching, cancellable source is covered by the connection.
+            // Distinct (even linked) tokens retain their original per-call registration.
             // Preserve module -> server -> connection ordering for already-canceled sources.
-            if (connectionTracked)
+            if ((state._sharedInfrastructureSources & 1) != 0)
             {
-                // Publish checks again after map insertion to cover cancellation during Rent.
                 if (serverStoppingToken.IsCancellationRequested)
                     state.InvokeCancellation(ServerCallCancellationReason.ServerStopping);
+            }
+            else if (serverStoppingToken.CanBeCanceled)
+            {
+                state._serverStoppingRegistration = serverStoppingToken.UnsafeRegister(
+                    static callbackState =>
+                        ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                            ServerCallCancellationReason.ServerStopping), state);
+            }
+            if ((state._sharedInfrastructureSources & 2) != 0)
+            {
                 if (connectionClosedToken.IsCancellationRequested)
                     state.InvokeCancellation(ServerCallCancellationReason.ConnectionClosed);
             }
-            else
+            else if (connectionClosedToken.CanBeCanceled)
             {
-                if (serverStoppingToken.CanBeCanceled)
-                {
-                    state._serverStoppingRegistration = serverStoppingToken.UnsafeRegister(
-                        static callbackState =>
-                            ((ServerCallCancellationState)callbackState!).InvokeCancellation(
-                                ServerCallCancellationReason.ServerStopping),
-                        state);
-                }
-                if (connectionClosedToken.CanBeCanceled)
-                {
-                    state._connectionClosedRegistration = connectionClosedToken.UnsafeRegister(
-                        static callbackState =>
-                            ((ServerCallCancellationState)callbackState!).InvokeCancellation(
-                                ServerCallCancellationReason.ConnectionClosed),
-                        state);
-                }
+                state._connectionClosedRegistration = connectionClosedToken.UnsafeRegister(
+                    static callbackState =>
+                        ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                            ServerCallCancellationReason.ConnectionClosed), state);
             }
             return state;
         }
@@ -210,6 +217,14 @@ internal sealed class ServerCallCancellationState : IDisposable
             throw;
         }
     }
+
+    internal bool UsesSharedInfrastructureSource(
+        ServerConnectionCallCancellation owner, ServerCallCancellationReason reason)
+        => ReferenceEquals(_infrastructureOwner, owner) &&
+           (reason == ServerCallCancellationReason.ServerStopping
+               ? (_sharedInfrastructureSources & 1) != 0
+               : reason == ServerCallCancellationReason.ConnectionClosed &&
+                 (_sharedInfrastructureSources & 2) != 0);
 
     internal void AttachAdmissionProgramUse(AdmissionProgram admissionProgram)
     {
@@ -437,6 +452,10 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     private void ReturnCore()
     {
+        // No external generation users remain. Clear the owner before potentially throwing
+        // physical cleanup so a cleanup failure cannot retain the whole connection registry.
+        _infrastructureOwner = null;
+        _sharedInfrastructureSources = 0;
         _moduleDrainingRegistration.Dispose();
         _connectionClosedRegistration.Dispose();
         _serverStoppingRegistration.Dispose();

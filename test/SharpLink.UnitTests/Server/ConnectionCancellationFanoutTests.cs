@@ -25,7 +25,7 @@ public class ConnectionCancellationFanoutTests
         {
             for (var id = 1; id <= 100; id++)
             {
-                var state = Rent(id, server.Token, connection.Token);
+                var state = Rent(id, server.Token, connection.Token, owner: fanout);
                 states.Add(state);
                 fanout.Publish(state, deadlines);
             }
@@ -55,7 +55,7 @@ public class ConnectionCancellationFanoutTests
         using var continueSnapshot = new ManualResetEventSlim();
         using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token,
             capture: () => { var result = Snapshot(calls); snapshotEntered.Set(); Wait(continueSnapshot); return result; });
-        var state = Rent(1, server.Token, connection.Token);
+        var state = Rent(1, server.Token, connection.Token, owner: fanout);
         var cancel = Task.Run(() => (stopServer ? server : connection).Cancel());
         try
         {
@@ -80,7 +80,7 @@ public class ConnectionCancellationFanoutTests
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, clock);
         using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token);
         var state = Rent(2, server.Token, connection.Token, clock: clock,
-            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock));
+            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock), owner: fanout);
         clock.OnTimestamp = () => { afterSet.Set(); Wait(resume); };
         var publish = Task.Run(() => fanout.Publish(state, deadlines));
         try
@@ -94,21 +94,26 @@ public class ConnectionCancellationFanoutTests
     }
 
     [Test]
-    public void AlreadyCanceledSourceOrderingAndExpiredDeadlineRemainUnchanged()
+    [Arguments(false)]
+    [Arguments(true)]
+    public void AlreadyCanceledSourceOrderingAndExpiredDeadlineRemainUnchanged(bool shared)
     {
         using var server = new CancellationTokenSource();
         using var connection = new CancellationTokenSource();
         using var module = new CancellationTokenSource();
         server.Cancel(); connection.Cancel();
-        using (var state = Rent(1, server.Token, connection.Token))
+        using var fanout = new ServerConnectionCallCancellation(new StripedLongMap<ServerCallCancellationState>(),
+            server.Token, connection.Token);
+        var owner = shared ? fanout : null;
+        using (var state = Rent(1, server.Token, connection.Token, owner: owner))
             Ensure(state.Reason == ServerCallCancellationReason.ServerStopping, "already canceled server precedes connection");
         module.Cancel();
-        using (var state = Rent(2, server.Token, connection.Token, module.Token))
+        using (var state = Rent(2, server.Token, connection.Token, module.Token, owner: owner))
             Ensure(state.Reason == ServerCallCancellationReason.ModuleDraining, "already canceled module remains first");
         var time = new ManualTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), time);
         time.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
-        using var expired = Rent(3, server.Token, connection.Token, module.Token, time, deadline);
+        using var expired = Rent(3, server.Token, connection.Token, module.Token, time, deadline, owner: owner);
         Ensure(expired.Reason == ServerCallCancellationReason.DeadlineExceeded, "expired deadline promotes every new terminal claim");
     }
 
@@ -120,7 +125,7 @@ public class ConnectionCancellationFanoutTests
         var calls = new StripedLongMap<ServerCallCancellationState>();
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
         using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token);
-        var state = Rent(1, server.Token, connection.Token, cooperative: false);
+        var state = Rent(1, server.Token, connection.Token, cooperative: false, owner: fanout);
         try
         {
             Ensure(!state.InvocationToken.CanBeCanceled, "late tracking must not invent a new user token");
@@ -139,9 +144,9 @@ public class ConnectionCancellationFanoutTests
         var calls = new StripedLongMap<ServerCallCancellationState>();
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
         using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token);
-        var a = Rent(1, server.Token, connection.Token, module.Token);
-        var b = Rent(2, server.Token, connection.Token);
-        var c = Rent(3, server.Token, connection.Token);
+        var a = Rent(1, server.Token, connection.Token, module.Token, owner: fanout);
+        var b = Rent(2, server.Token, connection.Token, owner: fanout);
+        var c = Rent(3, server.Token, connection.Token, owner: fanout);
         try
         {
             fanout.Publish(a, deadlines); fanout.Publish(b, deadlines); fanout.Publish(c, deadlines);
@@ -165,7 +170,7 @@ public class ConnectionCancellationFanoutTests
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
         using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token,
             capture: () => { var result = Snapshot(calls); captured.Set(); Wait(resume); return result; });
-        var old = Rent(7, server.Token, connection.Token);
+        var old = Rent(7, server.Token, connection.Token, owner: fanout);
         var oldToken = old.InvocationToken;
         fanout.Publish(old, deadlines);
         var cancel = Task.Run(connection.Cancel);
@@ -191,13 +196,15 @@ public class ConnectionCancellationFanoutTests
         using var resume = new ManualResetEventSlim();
         var calls = new StripedLongMap<ServerCallCancellationState>();
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
-        var a = Rent(1, source.Token, CancellationToken.None);
-        var b = Rent(2, source.Token, CancellationToken.None);
+        var snapshot = new List<ServerCallCancellationLease>();
+        using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
+            capture: () => snapshot);
+        var a = Rent(1, source.Token, CancellationToken.None, owner: fanout);
+        var b = Rent(2, source.Token, CancellationToken.None, owner: fanout);
         var buffers = new SharpLinkBufferWriterPool(new BufferWriterPoolOptions());
         a.AttachPayloadOwner(buffers, buffers.Rent());
         var bLease = b.CaptureLease(2);
-        using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
-            capture: () => new List<ServerCallCancellationLease> { a.CaptureLease(1), bLease });
+        snapshot.Add(a.CaptureLease(1)); snapshot.Add(bLease);
         fanout.Publish(a, deadlines); fanout.Publish(b, deadlines);
         using var registration = a.InvocationToken.Register(() => { entered.Set(); Wait(resume); });
         var cancel = Task.Run(source.Cancel);
@@ -219,10 +226,12 @@ public class ConnectionCancellationFanoutTests
         using var source = new CancellationTokenSource();
         var calls = new StripedLongMap<ServerCallCancellationState>();
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
-        var a = Rent(1, source.Token, CancellationToken.None);
-        var b = Rent(2, source.Token, CancellationToken.None);
+        var snapshot = new List<ServerCallCancellationLease>();
         using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
-            capture: () => new List<ServerCallCancellationLease> { a.CaptureLease(1), b.CaptureLease(2) });
+            capture: () => snapshot);
+        var a = Rent(1, source.Token, CancellationToken.None, owner: fanout);
+        var b = Rent(2, source.Token, CancellationToken.None, owner: fanout);
+        snapshot.Add(a.CaptureLease(1)); snapshot.Add(b.CaptureLease(2));
         fanout.Publish(a, deadlines); fanout.Publish(b, deadlines);
         using var registration = a.InvocationToken.Register(() =>
         {
@@ -257,7 +266,7 @@ public class ConnectionCancellationFanoutTests
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
         using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
             capture: () => throw new InvalidOperationException("injected snapshot failure"));
-        var state = Rent(1, source.Token, CancellationToken.None); var lease = state.CaptureLease(1);
+        var state = Rent(1, source.Token, CancellationToken.None, owner: fanout); var lease = state.CaptureLease(1);
         fanout.Publish(state, deadlines);
         Throws(source.Cancel);
         Ensure(state.Reason == ServerCallCancellationReason.None, "capture failure must not pretend full notification");
@@ -272,12 +281,14 @@ public class ConnectionCancellationFanoutTests
         var clock = new ProbeTimeProvider();
         var calls = new StripedLongMap<ServerCallCancellationState>();
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, clock);
-        var a = Rent(1, source.Token, CancellationToken.None, clock: clock,
-            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock));
-        var b = Rent(2, source.Token, CancellationToken.None);
-        var aLease = a.CaptureLease(1);
+        var snapshot = new List<ServerCallCancellationLease>();
         using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
-            capture: () => new List<ServerCallCancellationLease> { aLease, b.CaptureLease(2) });
+            capture: () => snapshot);
+        var a = Rent(1, source.Token, CancellationToken.None, clock: clock,
+            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock), owner: fanout);
+        var b = Rent(2, source.Token, CancellationToken.None, owner: fanout);
+        var aLease = a.CaptureLease(1);
+        snapshot.Add(aLease); snapshot.Add(b.CaptureLease(2));
         fanout.Publish(a, deadlines); fanout.Publish(b, deadlines);
         clock.OnTimestamp = () => throw new InvalidOperationException("injected timestamp failure");
         Throws(source.Cancel);
@@ -295,7 +306,7 @@ public class ConnectionCancellationFanoutTests
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, clock);
         using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None);
         var state = Rent(1, source.Token, CancellationToken.None, clock: clock,
-            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock));
+            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock), owner: fanout);
         var lease = state.CaptureLease(1);
         clock.OnTimestamp = () => throw new InvalidOperationException("injected publication failure");
         Throws(() => fanout.Publish(state, deadlines));
@@ -303,15 +314,20 @@ public class ConnectionCancellationFanoutTests
     }
 
     [Test]
-    public void RentFailureRemovesModuleRegistrationBeforeRethrowing()
+    [Arguments(false)]
+    [Arguments(true)]
+    public void RentFailureRemovesModuleRegistrationBeforeRethrowing(bool shared)
     {
         using var source = new CancellationTokenSource(); source.Cancel();
         using var module = new CancellationTokenSource();
+        using var fanout = new ServerConnectionCallCancellation(new StripedLongMap<ServerCallCancellationState>(),
+            source.Token, CancellationToken.None);
         var clock = new ProbeTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromHours(1), clock);
         var calls = 0;
         clock.OnTimestamp = () => { calls++; throw new InvalidOperationException("injected rent failure"); };
-        Throws(() => Rent(1, source.Token, CancellationToken.None, module.Token, clock, deadline));
+        Throws(() => Rent(1, source.Token, CancellationToken.None, module.Token, clock, deadline,
+            owner: shared ? fanout : null));
         var before = calls; module.Cancel();
         Ensure(calls == before, "failed Rent must unregister module callback, not leave an ownerless pooled state");
     }
@@ -326,7 +342,7 @@ public class ConnectionCancellationFanoutTests
         using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
             capture: () => new List<ServerCallCancellationLease>());
         var state = Rent(1, source.Token, CancellationToken.None, clock: clock,
-            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock));
+            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock), owner: fanout);
         var lease = state.CaptureLease(1);
         var timestamps = 0;
         clock.OnTimestamp = () =>
@@ -349,7 +365,7 @@ public class ConnectionCancellationFanoutTests
         using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
             capture: () => new List<ServerCallCancellationLease>());
         var state = Rent(1, source.Token, CancellationToken.None, clock: clock,
-            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock));
+            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock), owner: fanout);
         ServerCallCancellationState? next = null;
         clock.OnTimestamp = () =>
         {
@@ -393,7 +409,7 @@ public class ConnectionCancellationFanoutTests
         var calls = new StripedLongMap<ServerCallCancellationState>();
         using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
         using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token);
-        var state = Rent(1, server.Token, connection.Token);
+        var state = Rent(1, server.Token, connection.Token, owner: fanout);
         try
         {
             fanout.Publish(state, deadlines); server.Cancel();
@@ -408,7 +424,7 @@ public class ConnectionCancellationFanoutTests
     {
         using var source = new CancellationTokenSource();
         var connection = CreateConnection(source.Token);
-        var call = Rent(1, source.Token, connection.ConnectionToken);
+        var call = Rent(1, source.Token, connection.ConnectionToken, owner: connection.InfrastructureCancellation);
         connection.InfrastructureCancellation.Publish(call, connection.DeadlineScheduler);
         var completed = false;
         using var registration = call.InvocationToken.Register(() =>
@@ -429,7 +445,7 @@ public class ConnectionCancellationFanoutTests
         var connection = CreateConnection(CancellationToken.None);
         var clock = new ProbeTimeProvider();
         var call = Rent(1, CancellationToken.None, connection.ConnectionToken, clock: clock,
-            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock));
+            deadline: RpcDeadline.Create(TimeSpan.FromHours(1), clock), owner: connection.InfrastructureCancellation);
         var lease = call.CaptureLease(1);
         connection.InfrastructureCancellation.Publish(call, connection.DeadlineScheduler);
         clock.OnTimestamp = () => throw new InvalidOperationException("injected close notification failure");
@@ -441,6 +457,131 @@ public class ConnectionCancellationFanoutTests
         Remove(connection.CallCancellations, call);
         Ensure(!lease.TryAcquire(), "failed close notification must release the call lease");
         await connection.ServiceCleanupTask.WaitAsync(Watchdog);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public void DistinctSourceKeepsPerCallRegistrationAndIgnoresUnsubscribedFanout(bool distinctServer)
+    {
+        using var server = new CancellationTokenSource();
+        using var connection = new CancellationTokenSource();
+        using var other = new CancellationTokenSource();
+        var calls = new StripedLongMap<ServerCallCancellationState>();
+        using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
+        var callbacks = new List<Action>();
+        using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token,
+            register: (_, callback, state) => { callbacks.Add(() => callback(state)); return default; });
+        var call = Rent(1, distinctServer ? other.Token : server.Token,
+            distinctServer ? connection.Token : other.Token, owner: fanout);
+        try
+        {
+            fanout.Publish(call, deadlines);
+            callbacks[distinctServer ? 0 : 1]();
+            Ensure(call.Reason == ServerCallCancellationReason.None && !call.InvocationToken.IsCancellationRequested,
+                "unsubscribed connection infrastructure source must not manufacture a call cancellation");
+            other.Cancel();
+            Ensure(call.InvocationToken.IsCancellationRequested && call.Reason == (distinctServer
+                ? ServerCallCancellationReason.ServerStopping : ServerCallCancellationReason.ConnectionClosed),
+                "distinct source's original registration must observe late cancellation");
+        }
+        finally { Remove(calls, call); }
+    }
+
+    [Test]
+    public void NoneSourcesStayUnsubscribedEvenWhenOwnerSourcesAreAlreadyCanceled()
+    {
+        using var server = new CancellationTokenSource(); server.Cancel();
+        using var connection = new CancellationTokenSource(); connection.Cancel();
+        var calls = new StripedLongMap<ServerCallCancellationState>();
+        using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
+        var callbacks = new List<Action>();
+        using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token,
+            register: (_, callback, state) => { callbacks.Add(() => callback(state)); return default; });
+        var call = Rent(1, CancellationToken.None, CancellationToken.None, owner: fanout);
+        try
+        {
+            fanout.Publish(call, deadlines); callbacks[0](); callbacks[1]();
+            Ensure(call.Reason == ServerCallCancellationReason.None && !call.InvocationToken.IsCancellationRequested,
+                "neither postpublication check nor cold fanout may replace explicit None with owner tokens");
+        }
+        finally { Remove(calls, call); }
+    }
+
+    [Test]
+    public void LinkedButDifferentTokenIsNotTreatedAsShared()
+    {
+        using var source = new CancellationTokenSource();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(source.Token);
+        var calls = new StripedLongMap<ServerCallCancellationState>();
+        using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
+        var callbacks = new List<Action>();
+        using var fanout = new ServerConnectionCallCancellation(calls, CancellationToken.None, source.Token,
+            register: (_, callback, state) => { callbacks.Add(() => callback(state)); return default; });
+        var call = Rent(1, CancellationToken.None, linked.Token, owner: fanout);
+        try
+        {
+            fanout.Publish(call, deadlines); callbacks[0]();
+            Ensure(!call.InvocationToken.IsCancellationRequested, "linked is not token identity equality");
+            linked.Cancel();
+            Ensure(call.Reason == ServerCallCancellationReason.ConnectionClosed, "independent linked CTS cancellation must remain subscribed");
+        }
+        finally { Remove(calls, call); }
+    }
+
+    [Test]
+    public void DifferentOwnerWithIdenticalTokensCannotFanoutOrPostcheckThisCall()
+    {
+        using var source = new CancellationTokenSource();
+        var calls = new StripedLongMap<ServerCallCancellationState>();
+        using var deadlines = new ServerCallDeadlineScheduler(calls, 8, TimeProvider.System);
+        var firstCallbacks = new List<Action>(); var secondCallbacks = new List<Action>();
+        using var first = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
+            register: (_, callback, state) => { firstCallbacks.Add(() => callback(state)); return default; });
+        using var second = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None,
+            register: (_, callback, state) => { secondCallbacks.Add(() => callback(state)); return default; });
+        var call = Rent(1, source.Token, CancellationToken.None, owner: first);
+        try
+        {
+            source.Cancel(); second.Publish(call, deadlines); secondCallbacks[0]();
+            Ensure(call.Reason == ServerCallCancellationReason.None, "matching tokens do not authorize a different owner");
+            firstCallbacks[0]();
+            Ensure(call.Reason == ServerCallCancellationReason.ServerStopping, "owning connection retains its subscription");
+        }
+        finally { Remove(calls, call); }
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public void AlreadyCanceledFallbackRetainsSourceReason(bool distinctServer)
+    {
+        using var server = new CancellationTokenSource();
+        using var connection = new CancellationTokenSource();
+        using var other = new CancellationTokenSource(); other.Cancel();
+        var calls = new StripedLongMap<ServerCallCancellationState>();
+        using var fanout = new ServerConnectionCallCancellation(calls, server.Token, connection.Token);
+        using var call = Rent(1, distinctServer ? other.Token : server.Token,
+            distinctServer ? connection.Token : other.Token, owner: fanout);
+        Ensure(call.Reason == (distinctServer ? ServerCallCancellationReason.ServerStopping :
+            ServerCallCancellationReason.ConnectionClosed), "fallback preserves Rent's immediate cancellation semantics");
+    }
+
+    [Test]
+    public void PooledStateClearsPriorOwnerAndSourceMaskBeforeReuse()
+    {
+        using var source = new CancellationTokenSource();
+        var calls = new StripedLongMap<ServerCallCancellationState>();
+        using var fanout = new ServerConnectionCallCancellation(calls, source.Token, CancellationToken.None);
+        var old = Rent(1, source.Token, CancellationToken.None, owner: fanout);
+        Ensure(old.UsesSharedInfrastructureSource(fanout, ServerCallCancellationReason.ServerStopping), "shared source recorded");
+        old.Dispose();
+        Ensure(!old.UsesSharedInfrastructureSource(fanout, ServerCallCancellationReason.ServerStopping), "returned state must release owner reference/mask");
+        using var next = Rent(1, CancellationToken.None, CancellationToken.None);
+        Ensure(ReferenceEquals(old, next) && !next.UsesSharedInfrastructureSource(fanout, ServerCallCancellationReason.ServerStopping),
+            "next generation must not inherit the previous owner's subscription");
+        source.Cancel();
+        Ensure(next.Reason == ServerCallCancellationReason.None, "old owner cannot cancel new unregistered generation");
     }
 
     private static ServerConnectionState CreateConnection(CancellationToken server)
@@ -456,9 +597,10 @@ public class ConnectionCancellationFanoutTests
     }
 
     private static ServerCallCancellationState Rent(long id, CancellationToken server, CancellationToken connection,
-        CancellationToken module = default, TimeProvider? clock = null, RpcDeadline deadline = default, bool cooperative = true)
+        CancellationToken module = default, TimeProvider? clock = null, RpcDeadline deadline = default, bool cooperative = true,
+        ServerConnectionCallCancellation? owner = null)
         => ServerCallCancellationState.RentConnectionTracked(id, deadline, clock ?? TimeProvider.System,
-            connection, server, module, cooperative);
+            connection, server, module, cooperative, owner);
     private static List<ServerCallCancellationLease> Snapshot(StripedLongMap<ServerCallCancellationState> calls)
         => calls.CaptureEntries(static (id, state) => state.CaptureLease(id));
     private static void Remove(StripedLongMap<ServerCallCancellationState> calls, ServerCallCancellationState state)
