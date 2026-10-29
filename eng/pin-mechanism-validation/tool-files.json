@@ -1,0 +1,12 @@
+[
+  ".github/workflows/server-call-pin-mechanism-no-upload.yml",
+  "eng/pin-mechanism-validation/fixture/module/Contract.cs",
+  "eng/pin-mechanism-validation/fixture/module/Module.csproj",
+  "eng/pin-mechanism-validation/fixture/worker/Program.cs",
+  "eng/pin-mechanism-validation/fixture/worker/Worker.csproj",
+  "eng/pin-mechanism-validation/identity/Identity.csproj",
+  "eng/pin-mechanism-validation/identity/Program.cs",
+  "eng/pin-mechanism-validation/run.py",
+  "eng/pin-mechanism-validation/test_validation.py",
+  "eng/pin-mechanism-validation/tool-files.json"
+]
