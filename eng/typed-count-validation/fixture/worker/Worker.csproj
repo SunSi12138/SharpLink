@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><AssemblyName>SharpLink.Benchmarks</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <SourceTree Condition="'$(Arm)' == 'baseline'">410fdb911cf7120ccabbbd10c820b0c9a73d9223</SourceTree>
+    <SourceTree Condition="'$(Arm)' == 'candidate'">b3e94d0c00a6e581944e98ffe7e971660f21b2e4</SourceTree>
+    <DiagnosticCommit Condition="'$(Arm)' == 'baseline'">628048df6c7d23e0d1a008dff1abceff4a35ad84</DiagnosticCommit>
+    <DiagnosticCommit Condition="'$(Arm)' == 'candidate'">bf033991b3d43bf40b71101d73646576c4221bda</DiagnosticCommit>
+    <DiagnosticTree Condition="'$(Arm)' == 'baseline'">b09a6fb55fc5eebc2c1feb5de821390aeb281ec7</DiagnosticTree>
+    <DiagnosticTree Condition="'$(Arm)' == 'candidate'">64732f4b4721a7d5a532a8dd0b2940d5d3b67fa6</DiagnosticTree>
+  </PropertyGroup>
+  <Target Name="ValidateInputs" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(ProductRoot)' == '' or '$(SourceTree)' == ''" Text="ProductRoot and Arm=baseline|candidate are required." />
+  </Target>
+  <ItemGroup>
+    <AssemblyMetadata Include="DiagnosticCommit" Value="$(DiagnosticCommit)" /><AssemblyMetadata Include="DiagnosticTree" Value="$(DiagnosticTree)" />
+    <AssemblyMetadata Include="Arm" Value="$(Arm)" /><AssemblyMetadata Include="SourceTree" Value="$(SourceTree)" />
+    <ProjectReference Include="$(ProductRoot)/src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="$(ProductRoot)/src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="$(ProductRoot)/src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="../module/Module.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

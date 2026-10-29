@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><AssemblyName>ScalarStreamModule</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(ProductRoot)/src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="$(ProductRoot)/src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+    <ProjectReference Include="$(ProductRoot)/src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="RecordOwnAnalyzers" BeforeTargets="CoreCompile">
+    <Error Condition="'$(ProductRoot)' == ''" Text="ProductRoot is required." />
+    <WriteLinesToFile File="$(IntermediateOutputPath)analyzers.txt" Lines="@(Analyzer->'%(FullPath)')" Overwrite="true" />
+  </Target>
+</Project>

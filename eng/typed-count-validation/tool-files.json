@@ -1,0 +1,10 @@
+[
+  ".github/workflows/typed-window-counts-no-upload.yml",
+  "eng/typed-count-validation/fixture/module/Contract.cs",
+  "eng/typed-count-validation/fixture/module/Module.csproj",
+  "eng/typed-count-validation/fixture/worker/Program.cs",
+  "eng/typed-count-validation/fixture/worker/Worker.csproj",
+  "eng/typed-count-validation/run.py",
+  "eng/typed-count-validation/test_validation.py",
+  "eng/typed-count-validation/tool-files.json"
+]
