@@ -368,7 +368,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         private readonly ServiceProvider _serviceProvider;
         private string? _expectedServerStopFailure;
 
-        private DynamicHarness(
+        internal DynamicHarness(
             ISharpLinkServer server,
             ISharpLinkClient client,
             int port,

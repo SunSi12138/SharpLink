@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>StaticStreamCleanupProbe</AssemblyName></PropertyGroup>
+  <!-- No module reference: dynamic registration must happen after client/server builders. -->
+  <ItemGroup>
+    <ProjectReference Include="../../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+    <ProjectReference Include="../../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../../src/SharpLink.Server/SharpLink.Server.csproj" />
+  </ItemGroup>
+</Project>

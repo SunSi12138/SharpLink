@@ -1,0 +1,71 @@
+name: Static stream full-unit validation (no evidence upload)
+
+on:
+  push:
+    branches: ['validation/static-stream-unit-no-evidence-20261029']
+    paths: ['eng/static-stream-unit-validation/request.json']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-stream-unit-no-evidence-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-unit:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/validation/static-stream-unit-no-evidence-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - name: Check out request-only release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+          path: release
+      - name: Exercise validator negative controls
+        run: python3 release/eng/static-stream-unit-validation/test_validation.py
+      - name: Verify exact reviewed parent and source tree
+        id: provenance
+        run: python3 release/eng/static-stream-unit-validation/provenance.py --release-root release
+      - name: Check out only the reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.provenance.outputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: candidate
+      - name: Verify candidate checkout before any build or test
+        id: source_gate
+        run: python3 release/eng/static-stream-unit-validation/provenance.py --release-root release --source-root candidate
+      - name: Set up pinned SDK
+        id: setup
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.102'
+      - name: Build and validate the entire fresh unit UID census
+        run: python3 candidate/eng/static-stream-unit-validation/run.py --release-root release --source-root candidate
+      - name: Run the new same-source real-TCP correctness matrix
+        if: ${{ !cancelled() && steps.source_gate.outcome == 'success' && steps.setup.outcome == 'success' }}
+        run: |
+          python3 release/eng/static-stream-unit-validation/provenance.py --release-root release --source-root candidate
+          tcp_exit=0
+          python3 candidate/eng/static-stream-cleanup-regression/run.py --extended || tcp_exit=$?
+          provenance_exit=0
+          python3 release/eng/static-stream-unit-validation/provenance.py --release-root release --source-root candidate || provenance_exit=$?
+          if [ "$tcp_exit" -ne 0 ]; then
+            exit "$tcp_exit"
+          fi
+          exit "$provenance_exit"
+      - name: Remove ephemeral local unit logs and reports
+        if: always()
+        run: find "$RUNNER_TEMP" -maxdepth 1 -type d -name 'static-stream-unit-*' -exec rm -rf -- {} +
+      # Intentionally no artifact, evidence, report, raw-log, or trace upload step.
+      # run.py deletes its private runner-temp reports on success and failure.

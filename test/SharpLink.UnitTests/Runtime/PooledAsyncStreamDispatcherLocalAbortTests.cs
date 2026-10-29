@@ -124,47 +124,62 @@ public class PooledAsyncStreamDispatcherLocalAbortTests
         var enumerator = dispatcher.GetAsyncEnumerator();
         await dispatcher.DispatchAsync(Encode(41));
 
-        var delivery = Task.Run(async () =>
-            await enumerator.MoveNextAsync().ConfigureAwait(false));
-        await deliveryEntered.Task;
+        await LongRunningTestWorker.Run(() =>
+        {
+            Task<bool>? delivery = null;
+            Task? abort = null;
+            try
+            {
+                delivery = LongRunningTestWorker.RunAsync(() => enumerator.MoveNextAsync().AsTask());
+                LongRunningTestWorker.WaitForPhase(deliveryEntered.Task, TimeSpan.FromSeconds(5));
 
-        var terminal = new SharpLinkException(
-            SharpLinkErrorCode.DeadlineExceeded,
-            "test deadline");
-        var localAbort = (IStreamLocalAbortDispatcher)dispatcher;
-        var abortEnteringDispatcher = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        dispatcher.SetBeforeProducerOperationAcquireForTests(
-            () => abortEnteringDispatcher.TrySetResult());
-        var abort = LongRunningTestWorker.Run(() => localAbort.CompleteLocalAbort(terminal));
+                var terminal = new SharpLinkException(
+                    SharpLinkErrorCode.DeadlineExceeded,
+                    "test deadline");
+                var localAbort = (IStreamLocalAbortDispatcher)dispatcher;
+                var abortEnteringDispatcher = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                dispatcher.SetBeforeProducerOperationAcquireForTests(
+                    () => abortEnteringDispatcher.TrySetResult());
+                abort = LongRunningTestWorker.Run(() => localAbort.CompleteLocalAbort(terminal));
 
-        // Wait for CompleteLocalAbort to enter the dispatch-acquire path while the delivery
-        // callback still owns publication. This replaces a wall-clock sleep that only guessed
-        // that the competing worker had been scheduled.
-        await abortEnteringDispatcher.Task;
-        var abortWaitedForPublication = !abort.IsCompleted;
-        dispatcher.SetBeforeProducerOperationAcquireForTests(null);
+                // Wait for CompleteLocalAbort to enter the dispatch-acquire path while the delivery
+                // callback still owns publication. This replaces a wall-clock sleep that only guessed
+                // that the competing worker had been scheduled.
+                LongRunningTestWorker.WaitForPhase(abortEnteringDispatcher.Task, TimeSpan.FromSeconds(5));
+                var abortWaitedForPublication = !abort.IsCompleted;
+                dispatcher.SetBeforeProducerOperationAcquireForTests(null);
 
-        releaseDelivery.Set();
-        var delivered = await delivery;
-        await abort;
+                releaseDelivery.Set();
+                var delivered = LongRunningTestWorker.WaitForPhase(delivery, TimeSpan.FromSeconds(5));
+                LongRunningTestWorker.WaitForPhase(abort, TimeSpan.FromSeconds(5));
 
-        Ensure(abortWaitedForPublication,
-            "a local terminal must not complete while an owned item is still publishing Current or receive credit");
-        Ensure(delivered && enumerator.Current == 41,
-            "the item that acquired publication ownership first must finish before the local terminal wins");
-        Ensure(Volatile.Read(ref creditedBytes) == 4,
-            "the winning delivery must publish its receive credit exactly once");
+                Ensure(abortWaitedForPublication,
+                    "a local terminal must not complete while an owned item is still publishing Current or receive credit");
+                Ensure(delivered && enumerator.Current == 41,
+                    "the item that acquired publication ownership first must finish before the local terminal wins");
+                Ensure(Volatile.Read(ref creditedBytes) == 4,
+                    "the winning delivery must publish its receive credit exactly once");
 
-        var failure = await CaptureFailureAsync(enumerator.MoveNextAsync().AsTask());
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
-            "the local terminal must close every delivery after the already-owned item");
+                var failure = LongRunningTestWorker.WaitForPhase(CaptureFailureAsync(enumerator.MoveNextAsync().AsTask()), TimeSpan.FromSeconds(5));
+                Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
+                    "the local terminal must close every delivery after the already-owned item");
 
-        localAbort.RetireLocalAbortBuffer();
-        Ensure(Volatile.Read(ref creditedBytes) == 4,
-            "retirement must not return credit twice for an item that already published");
-        await enumerator.DisposeAsync();
-        PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+                localAbort.RetireLocalAbortBuffer();
+                Ensure(Volatile.Read(ref creditedBytes) == 4,
+                    "retirement must not return credit twice for an item that already published");
+            }
+            finally
+            {
+                // Neither the publication owner nor its controller depends on the shared pool.
+                releaseDelivery.Set();
+                dispatcher.SetBeforeProducerOperationAcquireForTests(null);
+                if (delivery is not null) LongRunningTestWorker.Join(delivery, TimeSpan.FromSeconds(5));
+                if (abort is not null) LongRunningTestWorker.Join(abort, TimeSpan.FromSeconds(5));
+                LongRunningTestWorker.WaitForPhase(enumerator.DisposeAsync().AsTask(), TimeSpan.FromSeconds(5));
+                PooledAsyncStreamDispatcher<int>.ClearPoolForTests();
+            }
+        });
     }
 
     [Test]
