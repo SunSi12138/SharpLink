@@ -122,7 +122,22 @@ internal sealed class ServerCallCancellationState : IDisposable
         CancellationToken serverStoppingToken,
         CancellationToken moduleDrainingToken,
         bool supportsCooperativeCancellation)
+        => RentCore(requestId, deadline, timeProvider, connectionClosedToken, serverStoppingToken,
+            moduleDrainingToken, supportsCooperativeCancellation, connectionTracked: false);
+
+    internal static ServerCallCancellationState RentConnectionTracked(
+        long requestId, RpcDeadline deadline, TimeProvider timeProvider,
+        CancellationToken connectionClosedToken, CancellationToken serverStoppingToken,
+        CancellationToken moduleDrainingToken, bool supportsCooperativeCancellation)
+        => RentCore(requestId, deadline, timeProvider, connectionClosedToken, serverStoppingToken,
+            moduleDrainingToken, supportsCooperativeCancellation, connectionTracked: true);
+
+    private static ServerCallCancellationState RentCore(
+        long requestId, RpcDeadline deadline, TimeProvider timeProvider,
+        CancellationToken connectionClosedToken, CancellationToken serverStoppingToken,
+        CancellationToken moduleDrainingToken, bool supportsCooperativeCancellation, bool connectionTracked)
     {
+        ArgumentNullException.ThrowIfNull(timeProvider);
         if (!Pool.TryPop(out var state))
             state = new ServerCallCancellationState();
         else
@@ -145,37 +160,55 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._serverStoppingRegistration = default;
         state._connectionClosedRegistration = default;
         state._moduleDrainingRegistration = default;
-        state._invocationCancellation = supportsCooperativeCancellation
-            ? new CancellationTokenSource()
-            : null;
-        if (moduleDrainingToken.CanBeCanceled)
+        state._invocationCancellation = null;
+        try
         {
-            state._moduleDrainingRegistration = moduleDrainingToken.UnsafeRegister(
-                static callbackState =>
-                    ((ServerCallCancellationState)callbackState!).InvokeCancellation(
-                        ServerCallCancellationReason.ModuleDraining),
-                state);
+            state._invocationCancellation = supportsCooperativeCancellation
+                ? new CancellationTokenSource()
+                : null;
+            if (moduleDrainingToken.CanBeCanceled)
+            {
+                state._moduleDrainingRegistration = moduleDrainingToken.UnsafeRegister(
+                    static callbackState =>
+                        ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                            ServerCallCancellationReason.ModuleDraining),
+                    state);
+            }
+            // Preserve module -> server -> connection ordering for already-canceled sources.
+            if (connectionTracked)
+            {
+                // Publish checks again after map insertion to cover cancellation during Rent.
+                if (serverStoppingToken.IsCancellationRequested)
+                    state.InvokeCancellation(ServerCallCancellationReason.ServerStopping);
+                if (connectionClosedToken.IsCancellationRequested)
+                    state.InvokeCancellation(ServerCallCancellationReason.ConnectionClosed);
+            }
+            else
+            {
+                if (serverStoppingToken.CanBeCanceled)
+                {
+                    state._serverStoppingRegistration = serverStoppingToken.UnsafeRegister(
+                        static callbackState =>
+                            ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                                ServerCallCancellationReason.ServerStopping),
+                        state);
+                }
+                if (connectionClosedToken.CanBeCanceled)
+                {
+                    state._connectionClosedRegistration = connectionClosedToken.UnsafeRegister(
+                        static callbackState =>
+                            ((ServerCallCancellationState)callbackState!).InvokeCancellation(
+                                ServerCallCancellationReason.ConnectionClosed),
+                        state);
+                }
+            }
+            return state;
         }
-        // Register server shutdown before connection closure so forced server shutdown has a
-        // deterministic reason when both tokens have already been canceled.
-        if (serverStoppingToken.CanBeCanceled)
+        catch
         {
-            state._serverStoppingRegistration = serverStoppingToken.UnsafeRegister(
-                static callbackState =>
-                    ((ServerCallCancellationState)callbackState!).InvokeCancellation(
-                        ServerCallCancellationReason.ServerStopping),
-                state);
+            state.Dispose();
+            throw;
         }
-        if (connectionClosedToken.CanBeCanceled)
-        {
-            state._connectionClosedRegistration = connectionClosedToken.UnsafeRegister(
-                static callbackState =>
-                    ((ServerCallCancellationState)callbackState!).InvokeCancellation(
-                        ServerCallCancellationReason.ConnectionClosed),
-                state);
-        }
-
-        return state;
     }
 
     internal void AttachAdmissionProgramUse(AdmissionProgram admissionProgram)

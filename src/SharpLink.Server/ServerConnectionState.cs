@@ -39,7 +39,8 @@ internal sealed class ServerConnectionState
         StripedLongMap<ServerCallCancellationState> callCancellations,
         CancellationToken serverToken,
         TimeProvider timeProvider,
-        int maxConcurrentCalls = 1024
+        int maxConcurrentCalls = 1024,
+        CancellationToken serverStoppingToken = default
 #if DEBUG
         , Action? afterLocalCallAdmission = null
 #endif
@@ -53,8 +54,26 @@ internal sealed class ServerConnectionState
             CallCancellations,
             maxConcurrentCalls,
             _timeProvider);
-        _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
-        _connectionToken = _connectionCancellation.Token;
+        try
+        {
+            _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
+            _connectionToken = _connectionCancellation.Token;
+            InfrastructureCancellation = new ServerConnectionCallCancellation(
+                CallCancellations, serverStoppingToken, _connectionToken);
+        }
+        catch (Exception initializationFailure)
+        {
+            try
+            {
+                try { DeadlineScheduler.Dispose(); }
+                finally { _connectionCancellation?.Dispose(); }
+            }
+            catch (Exception cleanupFailure)
+            {
+                throw new AggregateException(initializationFailure, cleanupFailure);
+            }
+            throw;
+        }
 #if DEBUG
         _afterLocalCallAdmission = afterLocalCallAdmission;
 #endif
@@ -91,6 +110,8 @@ internal sealed class ServerConnectionState
     internal StripedLongMap<ServerCallCancellationState> CallCancellations { get; }
 
     internal ServerCallDeadlineScheduler DeadlineScheduler { get; }
+
+    internal ServerConnectionCallCancellation InfrastructureCancellation { get; }
 
     internal CancellationToken ConnectionToken => _connectionToken;
 
@@ -426,6 +447,7 @@ internal sealed class ServerConnectionState
         }
         try
         {
+            InfrastructureCancellation.Dispose();
             _connectionCancellation.Dispose();
         }
         catch (Exception exception)

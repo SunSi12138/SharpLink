@@ -495,7 +495,7 @@ internal sealed partial class SharpLinkServer
         CancellationToken moduleDrainingToken,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap)
     {
-        var callState = ServerCallCancellationState.Rent(
+        var callState = ServerCallCancellationState.RentConnectionTracked(
             requestId,
             deadline,
             _runtimeContext.TimeProvider,
@@ -503,8 +503,7 @@ internal sealed partial class SharpLinkServer
             _forceStopCts.Token,
             moduleDrainingToken,
             supportsCooperativeCancellation: true);
-        requestCancellationMap.Set(requestId, callState);
-        connection.DeadlineScheduler.Register(callState);
+        connection.InfrastructureCancellation.Publish(callState, connection.DeadlineScheduler);
         return callState;
     }
 

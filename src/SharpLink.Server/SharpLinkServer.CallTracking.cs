@@ -15,7 +15,7 @@ internal sealed partial class SharpLinkServer
         if (!supportsCooperativeCancellation && !moduleDrainingToken.CanBeCanceled && admissionLease is null)
             return null;
 
-        var callState = ServerCallCancellationState.Rent(
+        var callState = ServerCallCancellationState.RentConnectionTracked(
             requestId,
             deadline,
             _runtimeContext.TimeProvider,
@@ -25,8 +25,7 @@ internal sealed partial class SharpLinkServer
             supportsCooperativeCancellation);
         if (admissionLease is not null)
             callState.AttachAdmissionLease(admissionLease);
-        requestCancellationMap.Set(requestId, callState);
-        connection.DeadlineScheduler.Register(callState);
+        connection.InfrastructureCancellation.Publish(callState, connection.DeadlineScheduler);
         return callState;
     }
 
@@ -42,7 +41,7 @@ internal sealed partial class SharpLinkServer
         if (callState is not null)
             return callState;
 
-        callState = ServerCallCancellationState.Rent(
+        callState = ServerCallCancellationState.RentConnectionTracked(
             requestId,
             deadline,
             _runtimeContext.TimeProvider,
@@ -50,8 +49,7 @@ internal sealed partial class SharpLinkServer
             _forceStopCts.Token,
             moduleDrainingToken,
             supportsCooperativeCancellation: true);
-        requestCancellationMap.Set(requestId, callState);
-        connection.DeadlineScheduler.Register(callState);
+        connection.InfrastructureCancellation.Publish(callState, connection.DeadlineScheduler);
         return callState;
     }
 
@@ -67,7 +65,7 @@ internal sealed partial class SharpLinkServer
         if (callState is not null)
             return callState;
 
-        callState = ServerCallCancellationState.Rent(
+        callState = ServerCallCancellationState.RentConnectionTracked(
             requestId,
             deadline,
             _runtimeContext.TimeProvider,
@@ -75,8 +73,7 @@ internal sealed partial class SharpLinkServer
             _forceStopCts.Token,
             moduleDrainingToken,
             supportsCooperativeCancellation: false);
-        requestCancellationMap.Set(requestId, callState);
-        connection.DeadlineScheduler.Register(callState);
+        connection.InfrastructureCancellation.Publish(callState, connection.DeadlineScheduler);
         return callState;
     }
 

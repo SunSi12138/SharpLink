@@ -57,7 +57,8 @@ internal sealed partial class SharpLinkServer
                 callCancellations,
                 cancellationToken,
                 _runtimeContext.TimeProvider,
-                _maxConcurrentCallsPerConnection);
+                _maxConcurrentCallsPerConnection,
+                serverStoppingToken: _forceStopCts.Token);
             connectionState.MarkSessionLoopStarted();
             connection = null;
             await ReplaceConnectionAsync(connectionState).ConfigureAwait(false);

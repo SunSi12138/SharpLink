@@ -215,6 +215,20 @@ internal sealed class StripedLongMap<TValue> where TValue : class
         return true;
     }
 
+    /// <summary>Cold-path complete snapshot; never invokes application callbacks under a stripe lock.</summary>
+    internal List<TSnapshot> CaptureEntries<TSnapshot>(Func<long, TValue, TSnapshot> capture)
+    {
+        ArgumentNullException.ThrowIfNull(capture);
+        var snapshot = new List<TSnapshot>();
+        for (var index = 0; index < _maps.Length; index++)
+        {
+            lock (_locks[index])
+                foreach (var entry in _maps[index])
+                    snapshot.Add(capture(entry.Key, entry.Value));
+        }
+        return snapshot;
+    }
+
     private int GetStripe(long key)
     {
         var hash = unchecked((int)(key ^ (key >> 32)));
