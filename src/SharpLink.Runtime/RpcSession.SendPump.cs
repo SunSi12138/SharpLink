@@ -41,6 +41,9 @@ internal sealed partial class RpcSession
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
+        // Pump-thread-only metadata for the already selected batch. Normal frame drains
+        // do not inspect eligibility; data-only flushes take the original copy path.
+        private int _pendingCoalescibleWindowUpdateCount;
 
         internal bool IsStopRequested => Volatile.Read(ref _stopped) != 0;
         internal bool HasPendingIdleWait => _wakeup.HasPendingIdleWait;
@@ -322,6 +325,8 @@ internal sealed partial class RpcSession
                    _progressQueue.Reader.TryRead(out var frame))
             {
                 pending.Add(frame);
+                if (frame.IsCoalescibleWindowUpdate)
+                    _pendingCoalescibleWindowUpdateCount++;
                 drained = true;
                 drainedCount++;
                 if (_flushPolicyState.Capture().FlushEveryFrame)
@@ -338,6 +343,12 @@ internal sealed partial class RpcSession
         /// </summary>
         private void WritePendingBatch(List<OwnedFrame> pending)
         {
+            if (_pendingCoalescibleWindowUpdateCount > 1)
+            {
+                WriteCoalescedWindowUpdateBatch(pending);
+                return;
+            }
+
             var length = 0;
             for (var index = 0; index < pending.Count; index++)
                 length = checked(length + pending[index].Length);
@@ -466,6 +477,7 @@ internal sealed partial class RpcSession
             for (var index = 0; index < pending.Count; index++)
                 CompleteReserved(pending[index], exception, completeFlushWaiter: true);
             pending.Clear();
+            _pendingCoalescibleWindowUpdateCount = 0;
         }
 
         private void DrainQueuedFrames(Exception exception)

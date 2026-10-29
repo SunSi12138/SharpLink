@@ -181,6 +181,15 @@ internal sealed partial class RpcSession
     internal void SendPacket(
         IRpcByteBufferWriter packet,
         IRequestEmissionFailureObserver? failureObserver = null)
+        => SendPacketCore(packet, failureObserver, isCoalescibleWindowUpdate: false);
+
+    internal void SendWindowUpdatePacket(IRpcByteBufferWriter packet)
+        => SendPacketCore(packet, failureObserver: null, isCoalescibleWindowUpdate: true);
+
+    private void SendPacketCore(
+        IRpcByteBufferWriter packet,
+        IRequestEmissionFailureObserver? failureObserver,
+        bool isCoalescibleWindowUpdate)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -201,7 +210,8 @@ internal sealed partial class RpcSession
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
         var result = GetOrCreatePumpOrReturn(packet)
-            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null, failureObserver));
+            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null,
+                failureObserver, isCoalescibleWindowUpdate));
         if (result == SendEnqueueResult.Full)
         {
             throw SharpLinkResourceExhaustion.Create(
@@ -350,13 +360,15 @@ internal sealed partial class RpcSession
         IRpcByteBufferWriter packet,
         bool forceFlush,
         TaskCompletionSource<bool>? flushCompletion,
-        IRequestEmissionFailureObserver? failureObserver = null)
+        IRequestEmissionFailureObserver? failureObserver = null,
+        bool isCoalescibleWindowUpdate = false)
         => new(
             packet,
             forceFlush,
             flushCompletion,
             IsProtocolProgressFrame(packet.WrittenSpan),
-            failureObserver);
+            failureObserver,
+            isCoalescibleWindowUpdate);
 
     private static void ObserveAbandonedFlushCompletion(Task flushCompletion)
         => _ = ObserveAbandonedFlushCompletionAsync(flushCompletion);

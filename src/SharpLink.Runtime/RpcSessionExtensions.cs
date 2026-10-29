@@ -288,7 +288,7 @@ internal static class RpcSessionExtensions
                 ProtocolV2PayloadCodec.WriteWindowUpdate(writer, update);
                 writer.EndPacket(token);
                 ownsWriter = false;
-                session.SendPacket(writer);
+                session.SendWindowUpdatePacket(writer);
             }
             finally
             {

@@ -13,19 +13,25 @@ internal interface IRequestEmissionFailureObserver
 internal readonly struct OwnedFrame
 {
     private readonly object? _completionState;
+    private readonly byte _flags;
+    private const byte ForceFlushFlag = 1;
+    private const byte ProtocolProgressFlag = 2;
+    private const byte CoalescibleWindowUpdateFlag = 4;
 
     internal OwnedFrame(
         IRpcByteBufferWriter owner,
         bool forceFlush,
         TaskCompletionSource<bool>? flushCompletion,
         bool isProtocolProgress,
-        IRequestEmissionFailureObserver? failureObserver = null)
+        IRequestEmissionFailureObserver? failureObserver = null,
+        bool isCoalescibleWindowUpdate = false)
     {
         Owner = owner;
         Memory = owner.WrittenMemory;
         Length = owner.WrittenCount;
-        ForceFlush = forceFlush;
-        IsProtocolProgress = isProtocolProgress;
+        _flags = (byte)((forceFlush ? ForceFlushFlag : 0) |
+            (isProtocolProgress ? ProtocolProgressFlag : 0) |
+            (isCoalescibleWindowUpdate ? CoalescibleWindowUpdateFlag : 0));
 
         _completionState = (object?)flushCompletion ?? failureObserver;
     }
@@ -36,7 +42,7 @@ internal readonly struct OwnedFrame
 
     public int Length { get; }
 
-    public bool ForceFlush { get; }
+    public bool ForceFlush => (_flags & ForceFlushFlag) != 0;
 
     /// <summary>
     /// True when the frame carries protocol progress (ping/pong, window
@@ -44,7 +50,11 @@ internal readonly struct OwnedFrame
     /// drains progress frames against a small reserved byte headroom and a
     /// bounded priority burst so stream saturation cannot starve them.
     /// </summary>
-    public bool IsProtocolProgress { get; }
+    public bool IsProtocolProgress => (_flags & ProtocolProgressFlag) != 0;
+
+    // Only the runtime's receive-credit emitter opts in. Canonical-looking arbitrary
+    // packets are not sufficient provenance: duplicate credits need not compose.
+    internal bool IsCoalescibleWindowUpdate => (_flags & CoalescibleWindowUpdateFlag) != 0;
 
     public TaskCompletionSource<bool>? FlushCompletion
         => _completionState as TaskCompletionSource<bool>;
