@@ -1,0 +1,20 @@
+[
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.AlreadySelectedTerminalPreventsEnumeratorCreation.1.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.EnumeratorCreationFailureRetainsNestedPhysicalWorkAndReleasesLease(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.EnumeratorCreationFailureRetainsNestedPhysicalWorkAndReleasesLease(System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.EveryItemChecksPinnedStateEvenAfterLookupRemoval(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.EveryItemChecksPinnedStateEvenAfterLookupRemoval(System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.NormalCompletionRetainsGenerationUntilDisposalFinishes(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.NormalCompletionRetainsGenerationUntilDisposalFinishes(System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.NormalItemsAndMissingStateFallbackPreserveCompletion(System.Int32, System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.NormalItemsAndMissingStateFallbackPreserveCompletion(System.Int32, System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.NormalItemsAndMissingStateFallbackPreserveCompletion(System.Int32, System.Boolean).3.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.NormalItemsAndMissingStateFallbackPreserveCompletion(System.Int32, System.Boolean).4.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.RejectedLeaseAcquisitionPreservesAmbientDeadlineFallback.1.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.TerminalRetainsGenerationThroughHeldMoveAndDispose(System.Boolean, System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.TerminalRetainsGenerationThroughHeldMoveAndDispose(System.Boolean, System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.TerminalRetainsGenerationThroughHeldMoveAndDispose(System.Boolean, System.Boolean).3.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.TerminalRetainsGenerationThroughHeldMoveAndDispose(System.Boolean, System.Boolean).4.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.TrackedApplicationFailurePreservesMapperAndSingleWireTerminal.1.1.0",
+  "SharpLink.UnitTests.Server.OutboundGeneratedCallLeaseTests.1.1.TrackedModuleDrainPublishesOnceBeforePhysicalCleanupAndSkipsMapper.1.1.0"
+]
