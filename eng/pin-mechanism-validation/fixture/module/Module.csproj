@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><AssemblyName>PinStreamModule</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>3.0.0</Version><AssemblyVersion>3.0.0.0</AssemblyVersion><FileVersion>3.0.0.0</FileVersion>
+    <NuGetAudit>true</NuGetAudit><NuGetAuditMode>all</NuGetAuditMode><Deterministic>true</Deterministic>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>obj/generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="SharpLink.Abstractions"><HintPath>$(FrozenProductBin)/SharpLink.Abstractions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpLink.Runtime"><HintPath>$(FrozenProductBin)/SharpLink.Runtime.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpLink.Server"><HintPath>$(FrozenProductBin)/SharpLink.Server.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="SharpLink.Sdk"><HintPath>$(FrozenProductBin)/SharpLink.Sdk.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection"><HintPath>$(FrozenProductBin)/Microsoft.Extensions.DependencyInjection.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions"><HintPath>$(FrozenProductBin)/Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions"><HintPath>$(FrozenProductBin)/Microsoft.Extensions.Logging.Abstractions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Threading.RateLimiting"><HintPath>$(FrozenProductBin)/System.Threading.RateLimiting.dll</HintPath><Private>true</Private></Reference>
+    <Analyzer Include="$(FrozenGenerator)" />
+  </ItemGroup>
+  <Target Name="RecordOwnAnalyzers" BeforeTargets="CoreCompile">
+    <Error Condition="'$(FrozenProductBin)' == '' or '$(FrozenGenerator)' == ''" Text="FrozenProductBin and FrozenGenerator are required." />
+    <WriteLinesToFile File="$(IntermediateOutputPath)references.txt" Lines="@(ReferencePathWithRefAssemblies->'%(FullPath)')" Overwrite="true" />
+    <WriteLinesToFile File="$(IntermediateOutputPath)analyzers.txt" Lines="@(Analyzer->'%(FullPath)')" Overwrite="true" />
+  </Target>
+</Project>
