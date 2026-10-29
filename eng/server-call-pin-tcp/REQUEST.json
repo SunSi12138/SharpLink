@@ -1,0 +1,12 @@
+{
+  "state": "authorized",
+  "campaign": "server-call-pin-unified-64tcp-PIN1",
+  "reviewedToolCommit": "c0e08d92411e35269059bdd5a1f1fece69079c67",
+  "reviewedToolTree": "1b1863864efd4920bab42f920d12124f72a260a7",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "baselineSource": "dd0dcacd8edf9552e9face66f4a6473b258428b2",
+  "baselineTree": "410fdb911cf7120ccabbbd10c820b0c9a73d9223",
+  "candidateSource": "afad64bff23d81f3f4a110606822d939d0ac2d3e",
+  "candidateTree": "dfd3618edb53d8664262bdfceca0c15bfb528e58"
+}
