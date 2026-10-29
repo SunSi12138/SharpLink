@@ -1,4 +1,12 @@
 {
-  "state": "review-required",
-  "campaign": "connectionfanout-base3d76-48tcp-CF2"
+  "state": "authorized",
+  "campaign": "connectionfanout-base3d76-48tcp-CF2",
+  "reviewedToolCommit": "98f8af7d54e5455943c43f3328826bc24d28c1bc",
+  "reviewedToolTree": "01d6729e53f8ceedab7b920c9deff6e801910f64",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "baselineSource": "3d76a3a8b55a37e24c62a073fe588cff3d3867be",
+  "baselineTree": "1c24da3af090acd4d6cdbfb005a9e3bd95304e3a",
+  "candidateSource": "279fdb2a93736eb25bec948c3acd65f2ed4830d9",
+  "candidateTree": "9b10700c8626f6f51953273df0187680e8f766d6"
 }
