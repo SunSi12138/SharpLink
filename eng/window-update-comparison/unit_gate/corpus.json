@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "source_sha": "0e1fe885d24044fae759c1c57b27ac44e3a0db4e",
+  "source_tree": "1f3b62dfc8091cec71054a8afbf2cc0be94f1bf1",
+  "base_uid_sha256": "0819e2735a69178168a5542028fb7e91f6d31786f2515f1dc95f46012e4a08e9",
+  "new_uid_sha256": "21f85ac33f649b96d4812f85e179526670fa021ac6014b79ac1eaf0a06c1bded",
+  "raw_count": 2349,
+  "raw_uid_sha256": "9315fc20cc0893ee58f2b97ddeecb6adff5c424a68872b9e8825446925b95d0c",
+  "ordinary_count": 2344,
+  "ordinary_uid_sha256": "2e5feec7acb7f0be90706b77820043128d56d6cd7984a448d962787c5a4287f3",
+  "explicit_file_sha256": "ac77302bb313b2dce67f6f7b3009130f79e7ae033bb3a4182bb9f1e78dbd0366",
+  "new_uids_provenance": "One fresh --list-tests json against already-built local535e1da6dc3eb790833c58d5bcd21497ed2b581b, tree1f3b62dfc8091cec71054a8afbf2cc0be94f1bf1 identical to remote0e1fe885d24044fae759c1c57b27ac44e3a0db4e, SDK10.0.102/runtime10.0.2; UID input only, not hosted runtime14 execution evidence."
+}

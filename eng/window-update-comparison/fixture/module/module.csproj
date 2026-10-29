@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><AssemblyName>ScalarStreamModule</AssemblyName></PropertyGroup>
+  <ItemGroup><Analyzer Include="$(GeneratorPath)" /></ItemGroup>
+  <Target Name="RequireOwnGenerator" BeforeTargets="CoreCompile">
+    <Error Condition="'$(GeneratorPath)' == '' or !Exists('$(GeneratorPath)')" Text="An explicit own-arm SDK generator is required." />
+    <WriteLinesToFile File="$(BaseIntermediateOutputPath)analyzers.txt" Lines="@(Analyzer->'%(FullPath)')" Overwrite="true" />
+  </Target>
+</Project>
