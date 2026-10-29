@@ -1,4 +1,4 @@
-"""Offline CF1 scope guards: preserve the successful OL2 harness, not its candidate."""
+"""Offline CF2 scope guards: preserve the successful OL2 harness, not its candidate."""
 import json
 from pathlib import Path
 import unittest
@@ -9,8 +9,8 @@ class CampaignReuseTests(unittest.TestCase):
         previous=json.loads((ROOT.parent/'outbound-lease-comparison/protocol.json').read_text())
         self.assertEqual(previous['campaign'],'outboundlease-base3d76-48tcp-OL2')
         self.assertEqual(previous['candidateSource'],'fbfd5590372ca0cad9766c3cf7e509055c3874f1')
-        self.assertEqual(CONTRACT['campaign'],'connectionfanout-base3d76-48tcp-CF1')
-        self.assertEqual(CONTRACT['candidateSource'],'b3cf84da2853b8dc8d107a03755d3e415988485d')
+        self.assertEqual(CONTRACT['campaign'],'connectionfanout-base3d76-48tcp-CF2')
+        self.assertEqual(CONTRACT['candidateSource'],'279fdb2a93736eb25bec948c3acd65f2ed4830d9')
         self.assertNotIn('supersedesCampaign',CONTRACT)
         for key in ('runtime','sdk','modes','items','pairsPerCell','timedProcesses','warmupSeconds',
                     'measureSeconds','workers','connectionPoolMin','connectionPoolMax','heartbeatSeconds',
@@ -27,7 +27,7 @@ class CampaignReuseTests(unittest.TestCase):
             if not p.is_file():continue
             expected=p.read_text()
             if p.name=='ArmAdapter.cs':
-                expected=expected.replace('fbfd5590372ca0cad9766c3cf7e509055c3874f1','b3cf84da2853b8dc8d107a03755d3e415988485d').replace('fbfd5590','b3cf84da')
+                expected=expected.replace('fbfd5590372ca0cad9766c3cf7e509055c3874f1','279fdb2a93736eb25bec948c3acd65f2ed4830d9').replace('fbfd5590','279fdb2a')
             self.assertEqual((new/p.relative_to(old)).read_text(),expected,str(p))
 
     def test_full_finite_schedule_kept(self):
@@ -43,6 +43,6 @@ class CampaignReuseTests(unittest.TestCase):
         from unit_gate.provenance import read_corpus
         raw,ordinary,_=read_corpus(ROOT/'unit_gate')
         self.assertEqual((len(raw),len(ordinary)),(CONTRACT['ordinaryUnitGate']['rawUids'],CONTRACT['ordinaryUnitGate']['ordinaryUids']))
-        self.assertEqual((len(raw),len(ordinary)),(2331,2326))
+        self.assertEqual((len(raw),len(ordinary)),(2341,2336))
 
 if __name__=='__main__':unittest.main()

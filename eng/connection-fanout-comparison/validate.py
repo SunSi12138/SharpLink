@@ -85,7 +85,7 @@ def validate_unit_gate_record(record, tool_revision):
 
 def validate_sample(data, slot, prepared, manifest, runtime, framework_policy=None, archive_policy=None, phase='normal-measure'):
     arm = slot['arm']
-    require(data['arm'] == {'baseline': 'baseline-3d76a3a8', 'candidate': 'candidate-b3cf84da'}[arm], 'Wrong arm')
+    require(data['arm'] == {'baseline': 'baseline-3d76a3a8', 'candidate': 'candidate-279fdb2a'}[arm], 'Wrong arm')
     require(phase in PHASES and data['phase'] == phase, 'Wrong phase')
     require(data['schemaVersion'] == 2 and type(data['schemaVersion']) is int, 'Wrong sample schema')
     require(data['sourceRevision'] == data['expectedSource'] == CONTRACT[f'{arm}Source'], 'Wrong source')

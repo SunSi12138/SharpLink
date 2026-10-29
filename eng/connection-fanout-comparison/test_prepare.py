@@ -11,8 +11,8 @@ from prepare import materialize, package_identity, pin_runtime, verify_source, p
 ARMS = ('baseline', 'candidate')
 PINS = {'baselineSource': '3d76a3a8b55a37e24c62a073fe588cff3d3867be',
         'baselineTree': '1c24da3af090acd4d6cdbfb005a9e3bd95304e3a',
-        'candidateSource': 'b3cf84da2853b8dc8d107a03755d3e415988485d',
-        'candidateTree': '010116dd13bd0d5ed7cfe24771c69dc7e6b075f9'}
+        'candidateSource': '279fdb2a93736eb25bec948c3acd65f2ed4830d9',
+        'candidateTree': '9b10700c8626f6f51953273df0187680e8f766d6'}
 
 
 class PreparationTests(unittest.TestCase):
@@ -128,7 +128,7 @@ class PreparationTests(unittest.TestCase):
     def test_fixture_arm_contract_and_no_candidate_only_strict_guard(self):
         root = Path(__file__).parent
         adapter = (root/'fixture/probe/ArmAdapter.cs').read_text()
-        for label in ('baseline-3d76a3a8', 'candidate-b3cf84da'):
+        for label in ('baseline-3d76a3a8', 'candidate-279fdb2a'):
             self.assertIn(label, adapter)
         self.assertIn('GeneratedApi = 5;', adapter)
         self.assertNotIn('GeneratedApi = 4;', adapter)

@@ -1,4 +1,4 @@
-"""CF1 offline recorded CPU/allocation metric checks; no product execution."""
+"""CF2 offline recorded CPU/allocation metric checks; no product execution."""
 import contextlib
 import copy
 from fractions import Fraction

@@ -2,20 +2,20 @@ name: Connection fanout incremental TCP comparison (no uploads)
 
 on:
   push:
-    branches: [validation/connection-fanout-tcp-no-evidence-20261029]
+    branches: [validation/connection-fanout-tcp-no-evidence-20261029-r2]
     paths: ['eng/connection-fanout-comparison/REQUEST.json']
 
 permissions:
   contents: read
 
 concurrency:
-  group: connectionfanout-tcp-CF1
+  group: connectionfanout-tcp-CF2
   cancel-in-progress: false
 
 jobs:
   normal-comparison:
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/validation/connection-fanout-tcp-no-evidence-20261029' && github.run_attempt == 1 && github.event.head_commit.message == 'run: connection fanout TCP comparison CF1'
+      github.event_name == 'push' && github.ref == 'refs/heads/validation/connection-fanout-tcp-no-evidence-20261029-r2' && github.run_attempt == 1 && github.event.head_commit.message == 'run: connection fanout TCP comparison CF2'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -85,7 +85,7 @@ jobs:
       - name: Checkout exact independently reviewed candidate product
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: b3cf84da2853b8dc8d107a03755d3e415988485d
+          ref: 279fdb2a93736eb25bec948c3acd65f2ed4830d9
           path: sources/candidate
           persist-credentials: false
       - name: Install exact separate SDK102 and runtime14 with SHA512 verification
@@ -179,12 +179,12 @@ jobs:
           if verified['request']['rootRelease'] != 'authorized' or verified['request']['reviewStatus'] != 'PASS':
               raise RuntimeError('Root release/review assertion absent')
           record = {'noOtherClrBuildTest': True,
-                    'owner': 'root-authorized CF1 hosted job',
+                    'owner': 'root-authorized CF2 hosted job',
                     'timestampUtc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     'requestCommit': verified['requestCommit'],
                     'reviewedToolCommit': verified['reviewedToolCommit'],
                     'runId': os.environ['GITHUB_RUN_ID'], 'attempt': 1,
-                    'campaign': 'connectionfanout-base3d76-48tcp-CF1',
+                    'campaign': 'connectionfanout-base3d76-48tcp-CF2',
                     'scope': 'this dedicated hosted job; no physical isolation claim'}
           (root / 'quiet-window.json').write_text(json.dumps(record, indent=2) + '\n')
           PY

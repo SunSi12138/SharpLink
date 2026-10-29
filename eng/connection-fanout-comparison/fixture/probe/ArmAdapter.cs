@@ -9,8 +9,8 @@ internal static class ArmAdapter
     public const string Name = "baseline-3d76a3a8";
     public const string Revision = "3d76a3a8b55a37e24c62a073fe588cff3d3867be";
 #elif CANDIDATE
-    public const string Name = "candidate-b3cf84da";
-    public const string Revision = "b3cf84da2853b8dc8d107a03755d3e415988485d";
+    public const string Name = "candidate-279fdb2a";
+    public const string Revision = "279fdb2a93736eb25bec948c3acd65f2ed4830d9";
 #else
 #error Select Arm=BASELINE or Arm=CANDIDATE.
 #endif

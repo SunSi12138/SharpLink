@@ -9,14 +9,14 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUEST = 'eng/connection-fanout-comparison/REQUEST.json'
-BRANCH = 'refs/heads/validation/connection-fanout-tcp-no-evidence-20261029'
-MESSAGE = 'run: connection fanout TCP comparison CF1'
-CAMPAIGN = 'connectionfanout-base3d76-48tcp-CF1'
+BRANCH = 'refs/heads/validation/connection-fanout-tcp-no-evidence-20261029-r2'
+MESSAGE = 'run: connection fanout TCP comparison CF2'
+CAMPAIGN = 'connectionfanout-base3d76-48tcp-CF2'
 REPOSITORY = 'SunSi12138/SharpLink'
 BASELINE = '3d76a3a8b55a37e24c62a073fe588cff3d3867be'
-CANDIDATE = 'b3cf84da2853b8dc8d107a03755d3e415988485d'
+CANDIDATE = '279fdb2a93736eb25bec948c3acd65f2ed4830d9'
 BASELINE_TREE = '1c24da3af090acd4d6cdbfb005a9e3bd95304e3a'
-CANDIDATE_TREE = '010116dd13bd0d5ed7cfe24771c69dc7e6b075f9'
+CANDIDATE_TREE = '9b10700c8626f6f51953273df0187680e8f766d6'
 DORMANT = {'state': 'review-required', 'campaign': CAMPAIGN}
 
 

@@ -97,12 +97,12 @@ class ProtocolTests(unittest.TestCase):
                                         'SharpLink.Sdk', 'SharpLink.Server', 'PhysicalTcpProbe', 'ScalarStreamModule')}
         files.update({name+'.dll':'private12-reference-'+name for name in FRAMEWORK})
         version = CONTRACT[arm + 'Source']
-        data = dict(arm={'baseline': 'baseline-3d76a3a8', 'candidate': 'candidate-b3cf84da'}[arm], phase='normal-measure', schemaVersion=2, strictCleanupExecuted=False,
+        data = dict(arm={'baseline': 'baseline-3d76a3a8', 'candidate': 'candidate-279fdb2a'}[arm], phase='normal-measure', schemaVersion=2, strictCleanupExecuted=False,
                     sourceRevision=version, expectedSource=version, apiVersion=CONTRACT[arm+'Api'],
                     mode=mode, itemCount=1, workers=1, runtimeVersion='10.0.14', processorCount=2,
                     processorAffinity=5, sameVersionServerClient=True, shutdownCompleted=True, disposeCompleted=True,
                     generatedManifest=dict(api=CONTRACT[arm+'Api'], sourceRevision=version,
-                        arm={'baseline':'baseline-3d76a3a8','candidate':'candidate-b3cf84da'}[arm], protocol=2,
+                        arm={'baseline':'baseline-3d76a3a8','candidate':'candidate-279fdb2a'}[arm], protocol=2,
                         generator=CONTRACT[arm+'Version'], rpcAssemblyHash='1'*32,
                         abi={'baseline':'sharplink-3.0-api5-owner-bound-unsafe-blit-v1',
                              'candidate':'sharplink-3.0-api5-owner-bound-unsafe-blit-v1'}[arm]),
@@ -151,7 +151,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_exact_incremental_source_contract(self):
         self.assertEqual('3d76a3a8b55a37e24c62a073fe588cff3d3867be',CONTRACT['baselineSource'])
-        self.assertEqual('b3cf84da2853b8dc8d107a03755d3e415988485d',CONTRACT['candidateSource'])
+        self.assertEqual('279fdb2a93736eb25bec948c3acd65f2ed4830d9',CONTRACT['candidateSource'])
         self.assertEqual((5,5),(CONTRACT['baselineApi'],CONTRACT['candidateApi']))
         self.assertEqual(('3.0.0','3.0.0'),(CONTRACT['baselineVersion'],CONTRACT['candidateVersion']))
         self.assertNotIn('knownNegative',CONTRACT)

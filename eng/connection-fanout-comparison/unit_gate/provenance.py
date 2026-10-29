@@ -7,9 +7,9 @@ import subprocess
 from .scope import explicit_workers, ordinary_uids
 from .validate import require, strict_json, unique_uids, uid_digest
 
-SOURCE = 'b3cf84da2853b8dc8d107a03755d3e415988485d'
-TREE = '010116dd13bd0d5ed7cfe24771c69dc7e6b075f9'
-NEW_CLASSES = {'SharpLink.UnitTests.Server.ConnectionCancellationFanoutTests.': 21}
+SOURCE = '279fdb2a93736eb25bec948c3acd65f2ed4830d9'
+TREE = '9b10700c8626f6f51953273df0187680e8f766d6'
+NEW_CLASSES = {'SharpLink.UnitTests.Server.ConnectionCancellationFanoutTests.': 31}
 
 
 def verify_source(root: Path, git_output=None):
@@ -32,7 +32,7 @@ def read_corpus(tool: Path):
     base = unique_uids(strict_json((tool / 'expected-base-uids.json').read_text()), 'baseline corpus')
     new = unique_uids(strict_json((tool / 'new-uids.json').read_text()), 'new discovered corpus')
     classes = Counter(next((name for name in NEW_CLASSES if uid.startswith(name)), '<unknown>') for uid in new)
-    require(len(new) == 21 and classes == NEW_CLASSES, 'wrong new-21 class identities/counts')
+    require(len(new) == 31 and classes == NEW_CLASSES, 'wrong new-31 class identities/counts')
     require(not set(base).intersection(new), 'new corpus overlaps baseline')
     require(uid_digest(base) == manifest.get('base_uid_sha256'), 'baseline corpus digest mismatch')
     require(uid_digest(new) == manifest.get('new_uid_sha256'), 'new corpus digest mismatch')

@@ -45,10 +45,10 @@ def children_report():
 class UnitGateTests(unittest.TestCase):
     def test_exact_actual_frozen_census(self):
         raw, ordinary, workers = provenance.read_corpus(TOOL)
-        self.assertEqual((len(raw), len(ordinary), len(workers)), (2331, 2326, 5))
+        self.assertEqual((len(raw), len(ordinary), len(workers)), (2341, 2336, 5))
         self.assertEqual(len({w['type_name'] for w in workers}), 4)
-        self.assertEqual(uid_digest(raw), '8e25ad53bf75db03f6af1132be186e72237aa624d657e82333e85383156799b8')
-        self.assertEqual(uid_digest(ordinary), '09a4e04f77e68d6f69467ffeef4e23a43a3debc870220eff63b52c299a721529')
+        self.assertEqual(uid_digest(raw), '72033fd45042989ba0057539168d29425e1427d404174f98bbafab04acb982f7')
+        self.assertEqual(uid_digest(ordinary), '66ecaed8c7b504a3287ad25c8ce3888744cd58da4e40617aeb3d8ca36348a204')
 
     def test_result_pass(self):
         self.assertEqual(validate_run(UIDS, report(), 0)['passed'], 2)
@@ -86,7 +86,7 @@ class UnitGateTests(unittest.TestCase):
             with self.assertRaises(GateError): discovery_uids(value)
         with self.assertRaises(GateError): strict_json('{"x":1,"x":2}')
 
-    def test_wrong_expected21_count_identity_digest_and_duplicate(self):
+    def test_wrong_expected31_count_identity_digest_and_duplicate(self):
         for mutation in ('missing', 'extra', 'wrong', 'digest', 'duplicate'):
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -107,7 +107,7 @@ class UnitGateTests(unittest.TestCase):
             for name in ('corpus.json', 'expected-base-uids.json', 'new-uids.json', 'explicit-workers.json'):
                 shutil.copyfile(TOOL / name, root / name)
             new = json.loads((root / 'new-uids.json').read_text())
-            # Keep 21 distinct UIDs, but shift one case outside the reviewed class.
+            # Keep 31 distinct UIDs, but shift one case outside the reviewed class.
             first = next(iter(provenance.NEW_CLASSES))
             second = 'SharpLink.UnitTests.Server.UnreviewedFanoutTests.'
             index = next(i for i, uid in enumerate(new) if uid.startswith(first))
@@ -147,7 +147,7 @@ class UnitGateTests(unittest.TestCase):
         value = valid_record(); self.assertIs(record.validate_record(value, 'a' * 40), value)
         for key, bad in [('candidateSource', 'b' * 40), ('candidateTree', 'b' * 40),
             ('toolRevision', 'bad'), ('runtime', '10.0.2'), ('sdk', '10.0.400'), ('status', 'failed'),
-            ('rawCount', 2330), ('ordinaryCount', 2325), ('executedCount', 2325), ('passedCount', True),
+            ('rawCount', 2340), ('ordinaryCount', 2335), ('executedCount', 2335), ('passedCount', True),
             ('rawUidSha256', 'c' * 64), ('ordinaryUidSha256', 'c' * 64), ('executedUidSha256', 'c' * 64),
             ('skippedCount', 1), ('cancelledCount', 1), ('timedOutCount', 1), ('failedCount', 1), ('flakyCount', 1)]:
             value = valid_record(); value[key] = bad
