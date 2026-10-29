@@ -7,7 +7,7 @@ internal interface IRequestEmissionFailureObserver
 }
 
 /// <summary>
-/// Transfers one encoded frame and its backing writer to the session send pump.
+/// Transfers one encoded frame or trusted typed credit to the session send pump.
 /// Only the pump may return the owner after the frame has been flushed or drained.
 /// </summary>
 internal readonly struct OwnedFrame
@@ -30,7 +30,21 @@ internal readonly struct OwnedFrame
         _completionState = (object?)flushCompletion ?? failureObserver;
     }
 
-    public IRpcByteBufferWriter Owner { get; }
+    internal OwnedFrame(OutgoingWindowUpdate windowUpdate)
+    {
+        Owner = null;
+        Memory = default;
+        Length = OutgoingWindowUpdate.FrameBytes;
+        ForceFlush = false;
+        IsProtocolProgress = true;
+        _completionState = windowUpdate;
+    }
+
+    public IRpcByteBufferWriter? Owner { get; }
+
+    internal OutgoingWindowUpdate WindowUpdate
+        => _completionState as OutgoingWindowUpdate ??
+           throw new InvalidOperationException("The frame does not own a typed WindowUpdate.");
 
     public ReadOnlyMemory<byte> Memory { get; }
 

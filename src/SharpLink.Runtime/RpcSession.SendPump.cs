@@ -357,10 +357,9 @@ internal sealed partial class RpcSession
         }
 
         /// <summary>
-        /// Copies every frame the batch still owns into one output span before the flush.
-        /// Serializing at flush time keeps the transport segments large instead of emitting one
-        /// span per arriving frame; the frames have already been serialized with their wire
-        /// TimeBudget, so this copy inspects no deadline.
+        /// Writes every owned frame into one output span before the flush. Ordinary frames
+        /// retain their producer-stamped wire TimeBudget and are copied without inspecting a
+        /// deadline. Trusted typed credit notifications are serialized directly into that span.
         /// </summary>
         private void WritePendingBatch(List<OwnedFrame> pending)
         {
@@ -377,7 +376,10 @@ internal sealed partial class RpcSession
                 var frame = pending[index];
                 if (frame.Length == 0)
                     continue;
-                frame.Memory.Span.CopyTo(destination[offset..]);
+                if (frame.Owner is not null)
+                    frame.Memory.Span.CopyTo(destination[offset..]);
+                else
+                    frame.WindowUpdate.WriteTo(destination[offset..]);
                 offset += frame.Length;
             }
             _output.Advance(offset);
@@ -565,7 +567,7 @@ internal sealed partial class RpcSession
             }
             try
             {
-                _returnBuffer(frame.Owner);
+                ReturnFrameOwner(frame);
             }
             catch (Exception cleanupFailure)
             {
@@ -604,7 +606,15 @@ internal sealed partial class RpcSession
 
         private void ReturnUnreserved(OwnedFrame frame, Exception? exception = null)
         {
-            _returnBuffer(frame.Owner);
+            ReturnFrameOwner(frame);
+        }
+
+        private void ReturnFrameOwner(OwnedFrame frame)
+        {
+            if (frame.Owner is { } owner)
+                _returnBuffer(owner);
+            else
+                frame.WindowUpdate.Return();
         }
 
         public long QueuedBytes => Volatile.Read(ref _queuedBytes);

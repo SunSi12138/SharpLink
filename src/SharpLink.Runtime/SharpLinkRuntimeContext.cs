@@ -10,6 +10,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     private readonly HashSet<RpcGeneratedManifestRegistration> _manifestRegistrations = [];
     private readonly Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> _manifestCodecProviders = [];
     private int _disposed;
+    private OutgoingWindowUpdatePool? _windowUpdatePool;
 
     internal SharpLinkRuntimeContext(
         SharpLinkRuntimeOptions options,
@@ -95,6 +96,28 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
 
     IRpcBufferWriterPool IRpcRuntimeContext.Buffers => Buffers;
     internal RuntimeConcurrencyOptions Concurrency { get; }
+
+    internal OutgoingWindowUpdatePool WindowUpdatePool
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            var pool = Volatile.Read(ref _windowUpdatePool);
+            if (pool is null)
+            {
+                var candidate = new OutgoingWindowUpdatePool();
+                pool = Interlocked.CompareExchange(ref _windowUpdatePool, candidate, null) ?? candidate;
+            }
+            // Dispose can win after its first pool snapshot but before publication.
+            // Seal that late pool here rather than retaining nodes after disposal.
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                pool.Dispose();
+                throw new ObjectDisposedException(nameof(SharpLinkRuntimeContext));
+            }
+            return pool;
+        }
+    }
 
     /// <summary>
     /// Gets the application-owned time source used for monotonic runtime scheduling.
@@ -285,6 +308,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
+        Volatile.Read(ref _windowUpdatePool)?.Dispose();
         RpcGeneratedManifestRegistration[] registrations;
         lock (_registrationGate)
         {

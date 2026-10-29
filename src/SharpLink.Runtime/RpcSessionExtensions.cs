@@ -274,28 +274,7 @@ internal static class RpcSessionExtensions
         }
 
         internal void SendWindowUpdate(long requestId, ushort streamId, int credit)
-        {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(credit);
-            var writer = session.RentFrameWriter();
-            var ownsWriter = true;
-            try
-            {
-                var token = writer.BeginPacket(
-                    ProtocolV2FrameType.WindowUpdate,
-                    ProtocolV2FrameFlags.None,
-                    unchecked((ulong)requestId));
-                var update = new ProtocolV2WindowUpdate(streamId, checked((uint)credit));
-                ProtocolV2PayloadCodec.WriteWindowUpdate(writer, update);
-                writer.EndPacket(token);
-                ownsWriter = false;
-                session.SendPacket(writer);
-            }
-            finally
-            {
-                if (ownsWriter)
-                    session.RuntimeContext.Buffers.Return(writer);
-            }
-        }
+            => session.SendWindowUpdateCredit(requestId, streamId, credit);
     }
 
     private static async ValueTask SendTimestampFrameWithBackpressureAsync(
