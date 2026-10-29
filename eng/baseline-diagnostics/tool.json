@@ -1,0 +1,10 @@
+{
+  "id": "dotnet-trace",
+  "version": "10.0.750501",
+  "source": "ad724c4b85e7ae775e42f393c6e95a7557a57954",
+  "url": "https://api.nuget.org/v3-flatcontainer/dotnet-trace/10.0.750501/dotnet-trace.10.0.750501.nupkg",
+  "sha512": "6c7705c36ba90eb86447ddb449ef15d1f817d7d90b2c0d3e0a19ff3435a22df8b20a4038fdbeb394fb6ba012493c22e35351966f2ca7bb0477ab1b857a1ba7db",
+  "payloadPrefix": "tools/net8.0/any/",
+  "payloadFiles": 53,
+  "collectorHost": "private runtime14, command-line roll-forward Major for the net8 collector only; target remains Disable"
+}
