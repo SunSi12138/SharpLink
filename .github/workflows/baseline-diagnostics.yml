@@ -2,18 +2,18 @@ name: Baseline EventPipe DiagnosticOnly (no uploads)
 'on':
   push:
     branches:
-    - validation/baseline-eventpipe-no-evidence-20261029
+    - validation/baseline-eventpipe-no-evidence-20261029-r2
     paths:
     - eng/baseline-diagnostics/REQUEST.json
 permissions:
   contents: read
 concurrency:
-  group: baseline-eventpipe-DG1
+  group: baseline-eventpipe-DG2
   cancel-in-progress: false
 jobs:
   diagnostic:
-    if: 'github.event_name == ''push'' && github.ref == ''refs/heads/validation/baseline-eventpipe-no-evidence-20261029'' && github.run_attempt == 1 && github.event.head_commit.message == ''run: baseline
-      EventPipe diagnostic DG1'''
+    if: 'github.event_name == ''push'' && github.ref == ''refs/heads/validation/baseline-eventpipe-no-evidence-20261029-r2'' && github.run_attempt == 1 && github.event.head_commit.message == ''run: baseline
+      EventPipe diagnostic DG2'''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -163,16 +163,16 @@ jobs:
         if verified['request']['rootRelease'] != 'authorized' or verified['request']['reviewStatus'] != 'PASS':
             raise RuntimeError('Root release/review assertion absent')
         record = {'noOtherClrBuildTest': True,
-                  'owner': 'root-authorized DG1 hosted job',
+                  'owner': 'root-authorized DG2 hosted job',
                   'timestampUtc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                   'requestCommit': verified['requestCommit'],
                   'reviewedToolCommit': verified['reviewedToolCommit'],
                   'runId': os.environ['GITHUB_RUN_ID'], 'attempt': 1,
-                  'campaign': 'baseline3d76-eventpipe-DG1',
+                  'campaign': 'baseline3d76-eventpipe-DG2',
                   'scope': 'this dedicated hosted job; no physical isolation claim'}
         (root / 'quiet-window.json').write_text(json.dumps(record, indent=2) + '\n')
         PY
-    - name: Two fresh baseline processes control then trace DiagnosticOnly
+    - name: Synthetic marker roundtrip gate then two fresh baseline processes DiagnosticOnly
       shell: bash
       env:
         REVIEWED_TOOL_SHA: ${{ steps.request.outputs.reviewed_tool_sha }}

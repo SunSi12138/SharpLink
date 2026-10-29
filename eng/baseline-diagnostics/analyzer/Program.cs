@@ -8,9 +8,10 @@ internal static class Program
     {
         if(args.SequenceEqual(new[]{"--self-test"}))return SelfTests.Run();
         string? output=null;
+        bool markerCheck=args.Length>0&&args[0]=="--marker-check";
         try
         {
-            if(args.Length!=12 || args[0]!="--trace" || args[2]!="--output" || args[4]!="--expected-pid" ||
+            if(args.Length!=12 || args[0] is not ("--trace" or "--marker-check") || args[2]!="--output" || args[4]!="--expected-pid" ||
                args[6]!="--start-tick" || args[8]!="--stop-tick" || args[10]!="--frequency")return 64;
             output=Path.GetFullPath(args[3]);
             var trace=Path.GetFullPath(args[1]);
@@ -20,19 +21,27 @@ internal static class Program
                 !long.TryParse(args[9],NumberStyles.None,CultureInfo.InvariantCulture,out var stopTick) ||
                 !long.TryParse(args[11],NumberStyles.None,CultureInfo.InvariantCulture,out var frequency))return 64;
             var expectedTiming=new ExpectedTiming(startTick,stopTick,frequency);
-            if(!expectedTiming.IsValid)return 64;
+            if(!(markerCheck?expectedTiming.IsValidFor(500,5000):expectedTiming.IsValid))return 64;
             Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-            var summary=TraceAdapter.Read(trace,output+".etlx",pid,expectedTiming);
+            object summary=markerCheck
+                ?MarkerCheck.Analyze(TraceAdapter.ReadEvents(trace,output+".etlx"),pid,expectedTiming)
+                :TraceAdapter.Read(trace,output+".etlx",pid,expectedTiming);
+            string status=summary is MarkerSummary smoke?smoke.Status:((DiagnosticSummary)summary).Status;
             File.WriteAllText(output,JsonSerializer.Serialize(summary,Json));
             // No trace payloads, stack names, addresses, filenames or exceptions on stdout/stderr.
-            Console.WriteLine(summary.Status=="Complete"?"ANALYZER_COMPLETE":"ANALYZER_INCOMPLETE");
-            return summary.Status=="Complete"?0:2;
+            Console.WriteLine(status=="Complete"?"ANALYZER_COMPLETE":"ANALYZER_INCOMPLETE");
+            return status=="Complete"?0:2;
         }
         catch(Exception)
         {
             if(output is not null && !File.Exists(output))
             {
-                try { File.WriteAllText(output,JsonSerializer.Serialize(Aggregator.Analyze([],1,0,new ExpectedTiming(1,20001,1000)) with { Failures=["parse-failure"] },Json)); }
+                try {
+                    object failure=markerCheck
+                        ?new MarkerSummary(1,"synthetic-marker-check","Incomplete",["parse-failure"],new MarkerCensus(),0,0,0,false,false)
+                        :Aggregator.Analyze([],1,0,new ExpectedTiming(1,20001,1000)) with { Failures=["parse-failure"] };
+                    File.WriteAllText(output,JsonSerializer.Serialize(failure,Json));
+                }
                 catch(Exception) { /* No exception data leaves this local parser. */ }
             }
             Console.WriteLine("ANALYZER_INCOMPLETE"); return 2;

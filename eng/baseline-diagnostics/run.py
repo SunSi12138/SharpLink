@@ -34,6 +34,10 @@ def command_for(runtime, prepared, variant, slot, affinity, collector):
     target = target_command(runtime, prepared, variant, slot, affinity)
     if variant == 'control': return target
     require(variant == 'trace', 'VARIANT')
+    return collector_command(runtime, collector, slot, target)
+
+
+def collector_command(runtime, collector, slot, target):
     providers = ('Microsoft-DotNETCore-SampleProfiler:0:4,'
                  'Microsoft-Windows-DotNETRuntime:' + CONTRACT['traceKeywords'] + ':5,'
                  'SharpLink-DiagnosticPhase:0x1:4')
@@ -102,6 +106,29 @@ def execute(command, variant, slot, env, affinity):
     return record
 
 
+def run_marker_gate(runtime, analyzer, collector, slot, env, affinity, sha):
+    # One standalone no-SharpLink process. The same collector flags, private runtime,
+    # shared marker source, actual adapter and handshake precede ANY product launch.
+    from marker_gate import validate_emitter, validate_analysis, render_marker
+    slot.mkdir()
+    target=list(map(str,['taskset','-c',','.join(map(str,affinity)),runtime,'exec',
+        analyzer.parent/'marker-bin/MarkerSmoke.dll',slot/'result.json',slot/'ready.json',slot/'go']))
+    host=execute(collector_command(runtime,collector,slot,target),'trace',slot,env,affinity)
+    require(host['status']=='success' and host['processGroupQuiescent'], 'MARKER_HOST')
+    sample=validate_emitter(strict_json((slot/'result.json').read_text()),host['targetPid'])
+    command=list(map(str,[runtime,analyzer/'BaselineDiagnostics.Analyzer.dll','--marker-check',
+        slot/'trace.nettrace','--output',slot/'analysis.json','--expected-pid',sample['pid'],
+        '--start-tick',sample['startTick'],'--stop-tick',sample['stopTick'],'--frequency',sample['frequency']]))
+    with (slot/'analysis.log').open('xb') as stream:
+        code=subprocess.run(command,env=env,stdout=stream,stderr=subprocess.STDOUT,timeout=180).returncode
+    analysis=strict_json((slot/'analysis.json').read_text())
+    for line in render_marker(analysis):print(line,flush=True)
+    require(code==0, 'MARKER_ANALYZER_EXIT')
+    validate_analysis(analysis)
+    write(slot/'validated.json',dict(status='MARKER_ROUNDTRIP_PASSED',toolRevision=sha,pid=sample['pid']))
+    print('MARKER_GATE_PASS standaloneNoSharpLink=true productSlotsStarted=0',flush=True)
+
+
 def main():
     p = argparse.ArgumentParser()
     for name in ('prepared', 'runtime-dotnet', 'runtime-archives', 'collector', 'collector-package',
@@ -134,7 +161,8 @@ def main():
         verify_collector(a.collector_package, a.collector)
         sealed = strict_json((a.analyzer.parent / 'analyzer-manifest.json').read_text())
         require(sealed['toolRevision'] == sha and sealed['toolSourceHashes'] == source_inventory()
-                and sealed['snapshot'] == inventory(a.analyzer), 'ANALYZER_IDENTITY')
+                and sealed['snapshot'] == inventory(a.analyzer)
+                and sealed['markerSnapshot'] == inventory(a.analyzer.parent / 'marker-bin'), 'ANALYZER_IDENTITY')
         phase = 'HOST'
         osrelease = Path('/etc/os-release').read_text()
         require('ID=ubuntu' in osrelease and 'VERSION_ID="24.04"' in osrelease and
@@ -154,6 +182,11 @@ def main():
             DOTNET_EventPipeThreadSamplingRate=CONTRACT['sampleIntervalEnvironment'], SHARPLINK_BENCHMARK_SHA=SOURCE)
         write(output / 'launch.json', {'toolRevision': sha, 'contract': CONTRACT, 'affinity': affinity,
             'claim': 'same guest affinity; collector overhead and physical isolation unknown', 'quiet': quiet})
+        phase = 'MARKER'
+        run_marker_gate(runtime, a.analyzer, a.collector, output / 'marker', env, affinity, sha)
+        verify_collector(a.collector_package, a.collector)
+        require(sealed['snapshot'] == inventory(a.analyzer) and sealed['markerSnapshot'] == inventory(a.analyzer.parent / 'marker-bin'), 'POST_MARKER_TOOLS')
+        require(source_inventory() == manifest['toolSourceHashes'], 'POST_MARKER_SOURCE')
         from fixture_validation import validate_result
         completed = {}
         for variant in CONTRACT['variants']:

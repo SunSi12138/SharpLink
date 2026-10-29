@@ -313,18 +313,3 @@ sealed class PassThrough : ISharpLinkClientInterceptor
 
 internal sealed record LoadedAssemblyIdentity(
     string name, string location, string? productVersion, Guid mvid, string sha256);
-
-[EventSource(Name = "SharpLink-DiagnosticPhase")]
-internal sealed class DiagnosticPhase : EventSource
-{
-    internal static readonly DiagnosticPhase Log = new();
-    private DiagnosticPhase() { }
-
-    [Event(1, Level = EventLevel.Informational, Opcode = EventOpcode.Info)]
-    public void WorkStart(string sourceRevision, string variant, string mode, int itemCount, int workSeconds, string window, long timestamp)
-        => WriteEvent(1, sourceRevision, variant, mode, itemCount, workSeconds, window, timestamp);
-
-    [Event(2, Level = EventLevel.Informational, Opcode = EventOpcode.Info)]
-    public void WorkStop(string sourceRevision, string variant, string mode, int itemCount, int workSeconds, string window, long timestamp)
-        => WriteEvent(2, sourceRevision, variant, mode, itemCount, workSeconds, window, timestamp);
-}

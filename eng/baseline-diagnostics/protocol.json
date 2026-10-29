@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "campaign": "baseline3d76-eventpipe-DG1",
+  "campaign": "baseline3d76-eventpipe-DG2",
   "purpose": "DiagnosticOnly",
   "source": "3d76a3a8b55a37e24c62a073fe588cff3d3867be",
   "tree": "1c24da3af090acd4d6cdbfb005a9e3bd95304e3a",
@@ -24,6 +24,7 @@
   "traceFileLimitBytes": 536870912,
   "traceKeywords": "0x40040034019",
   "markers": "SharpLink-DiagnosticPhase",
+  "markerPreflight": {"processes": 1, "workSeconds": 1, "productReferences": false, "requiredBeforeProduct": true, "keyword": "0x1"},
   "claims": {
     "cpu": "Process CPU total including target-side diagnostic cost, not per-stack CPU attribution",
     "samples": "Managed sampled-thread-time categories, not on-CPU percentages",

@@ -24,8 +24,16 @@ def main():
             stdout=log,stderr=subprocess.STDOUT,check=True,timeout=60)
     config=build/'BaselineDiagnostics.Analyzer.runtimeconfig.json'; data=strict_json(config.read_text())
     data['runtimeOptions']['framework']['version']=CONTRACT['runtime'];data['runtimeOptions']['rollForward']='Disable';write(config,data)
+    marker=output/'marker-bin'
+    with (output/'marker-build.log').open('xb') as log:
+        subprocess.run([str(a.dotnet),'build',str(ROOT/'marker_smoke/MarkerSmoke.csproj'),
+            '-c','Release','-m:1','-nr:false','--disable-build-servers','-p:UseSharedCompilation=false',
+            '-p:NuGetAudit=false','-o',str(marker)],env=env,
+            stdout=log,stderr=subprocess.STDOUT,check=True,timeout=600)
+    config=marker/'MarkerSmoke.runtimeconfig.json'; data=strict_json(config.read_text())
+    data['runtimeOptions']['framework']['version']=CONTRACT['runtime'];data['runtimeOptions']['rollForward']='Disable';write(config,data)
     sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=REPO,text=True).strip()
-    write(output/'analyzer-manifest.json',dict(toolRevision=sha,toolSourceHashes=source_inventory(),snapshot=inventory(build)))
+    write(output/'analyzer-manifest.json',dict(toolRevision=sha,toolSourceHashes=source_inventory(),snapshot=inventory(build),markerSnapshot=inventory(marker)))
     print('ANALYZER_BUILD_SELFTEST_PASS; synthetic-only; no target execution')
 
 if __name__=='__main__': main()

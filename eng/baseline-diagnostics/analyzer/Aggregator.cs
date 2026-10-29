@@ -3,8 +3,9 @@ namespace BaselineDiagnostics;
 // Normalized input is shared by the real TraceEvent adapter and synthetic controls.
 internal sealed record ExpectedTiming(long StartTick, long StopTick, long Frequency)
 {
-    internal bool IsValid => StartTick>0 && StopTick>StartTick && Frequency>0 &&
-        1000.0*(StopTick-StartTick)/Frequency is >=20000 and <=25000;
+    internal bool IsValid => IsValidFor(20000,25000);
+    internal bool IsValidFor(double minimum,double maximum) => StartTick>0 && StopTick>StartTick && Frequency>0 &&
+        1000.0*(StopTick-StartTick)/Frequency>=minimum && 1000.0*(StopTick-StartTick)/Frequency<=maximum;
 }
 internal sealed record Marker(string Source, string Variant, string Mode, int Items, int Seconds, string Window, long Tick);
 internal sealed record Observation(string Kind, double Milliseconds, int Pid, int Thread = 1, int Instance = 0,
@@ -16,12 +17,13 @@ internal sealed record DiagnosticSummary(int Schema, string Status, string Cover
     Dictionary<string,long> ManagedThreadTimeSamples, long ExternalThreadSamples, long SampleErrors,
     long AllocationTickSamples, long AllocationTickReportedBytes, Dictionary<string,long> GcStartsByGeneration,
     Interval GcPauses, Interval Contention, Interval WaitHandle, Dictionary<string,long> CensoredIntervals,
+    MarkerCensus MarkerCensus, Dictionary<string,long> NormalizedEventCounts,
     string Interpretation = "Sampled managed thread-time counts, not CPU percentages. Allocation ticks are samples, not exact allocated bytes. GC pause, contention and wait durations can overlap; never add them or infer CPU time.");
 internal static class Aggregator
 {
     internal const string Source = "3d76a3a8b55a37e24c62a073fe588cff3d3867be";
     internal static readonly string[] Categories = ["sharplink-stream", "sharplink-dispatch", "sharplink-transport", "sharplink-other", "serialization", "task-scheduling", "runtime-wait", "runtime-other", "other-managed", "unknown"];
-    internal static DiagnosticSummary Analyze(IReadOnlyList<Observation> events, int pid, long lost, ExpectedTiming expectedTiming, bool truncated = false)
+    internal static DiagnosticSummary Analyze(IReadOnlyList<Observation> events, int pid, long lost, ExpectedTiming expectedTiming, bool truncated = false, MarkerCensus? census = null)
     {
         var failures = new HashSet<string>();
         if (pid <= 0) failures.Add("invalid-pid");
@@ -103,7 +105,7 @@ internal static class Aggregator
         return new(1,failures.Count==0?"Complete":"Incomplete",categories["unknown"]+unknown>0?"Partial":"Classified",
             failures.Order().ToArray(),Source,"baseline-static-n100-work20s",double.IsFinite(span)&&span>0?span:0,
             Math.Max(0,lost),categories["unknown"],unmatched,outside,otherPid,unknown,categories,external,errors,allocations,bytes,
-            generations,intervals["pause"],intervals["contention"],intervals["wait"],censored);
+            generations,intervals["pause"],intervals["contention"],intervals["wait"],censored,census??MarkerCensus.FromNormalized(events),MarkerCheck.EventCounts(events));
     }
     internal static string Classify(IEnumerable<string> frames)
     {

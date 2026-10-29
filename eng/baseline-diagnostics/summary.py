@@ -11,7 +11,12 @@ FAILURES = {'invalid-pid','lost-or-truncated','marker-cardinality','marker-ident
     'malformed-or-reversed-event','malformed-event','malformed-category','sample-error',
     'malformed-allocation','malformed-generation','unmatched-events','missing-samples','parse-failure',
     'unknown-coverage','marker-measurement'}
-PHASES = {'SETUP','RUNTIME','TOOLS','HOST','CONTROL','TRACE','ANALYSIS'}
+NORMALIZED_KINDS = ('work-start','work-stop','managed-sample','external-sample','sample-error',
+    'allocation','gc-start','gc-stop','pause-start','pause-stop','contention-start','contention-stop',
+    'wait-start','wait-stop','malformed','other')
+HOST_REASONS = {'EARLY_EXIT','READY_TIMEOUT','READY_SCHEMA','READY_IDENTITY','TARGET_PROCESS_GROUP',
+    'TARGET_AFFINITY','PROCESS_TIMEOUT','TRACE_SIZE','FINAL_TRACE_SIZE','PROCESS_EXIT','DESCENDANT_LEAK'}
+PHASES = {'SETUP','RUNTIME','TOOLS','HOST','CONTROL','TRACE','ANALYSIS','MARKER'}
 
 def number(v, integer=False):
     if type(v) not in ((int,) if integer else (int,float)) or not math.isfinite(v) or v<0 or v>9223372036854775807:
@@ -27,10 +32,19 @@ def render(analysis):
     status_line='DIAGNOSTIC_ANALYSIS status='+analysis['status']+' reasons='+(','.join(sorted(set(failures))) or 'none')
     if 'parse-failure' in failures:
         return [status_line]  # Decoder failure has no observations, not measured zero cost.
+    from marker_gate import CENSUS, EXPECTED_CENSUS
+    census=analysis['markerCensus']; counts=analysis['normalizedEventCounts']
+    if type(census) is not dict or set(census)!=set(CENSUS) or type(counts) is not dict or set(counts)!=set(NORMALIZED_KINDS):
+        raise ValueError('SUMMARY_CENSUS')
+    if analysis['status']=='Complete' and (census!=EXPECTED_CENSUS or counts['work-start']!=1 or counts['work-stop']!=1):
+        raise ValueError('SUMMARY_COMPLETENESS')
+    observations=['MARKER_CENSUS provider=matched-expected ID1=start ID2=stop '+
+        ' '.join(k+'='+str(number(census[k],True)) for k in CENSUS),
+        'NORMALIZED_TRACE_EVENTS '+' '.join(k+'='+str(number(counts[k],True)) for k in NORMALIZED_KINDS)]
     invalid_window={'invalid-pid','marker-cardinality','marker-identity','marker-measurement',
                     'window-boundary','malformed-or-reversed-event'}
     if invalid_window.intersection(failures):
-        return [status_line,'DIAGNOSTIC_WINDOW unavailable; no window aggregates accepted',
+        return [status_line,*observations,'DIAGNOSTIC_WINDOW unavailable; no window aggregates accepted',
             'TRACE_DIAGNOSTIC lostEvents='+str(number(analysis['lostEvents'],True))+
             ' unmatchedEvents='+str(number(analysis['unmatchedEvents'],True))]
     if analysis.get('sourceRevision')!=SOURCE or analysis.get('scenario')!='baseline-static-n100-work20s':
@@ -43,6 +57,7 @@ def render(analysis):
             'unknownEvents','externalThreadSamples','sampleErrors','allocationTickSamples','allocationTickReportedBytes')
     lines=['DIAGNOSTIC_ANALYSIS status='+analysis['status']+' coverage='+analysis['coverage']+
         ' reasons='+(','.join(sorted(set(failures))) or 'none')]
+    lines += observations
     lines += ['DIAGNOSTIC_COUNTS '+' '.join(k+'='+str(number(analysis[k],True)) for k in counts)]
     values=analysis['managedThreadTimeSamples']
     if set(values)!=set(CATEGORIES): raise ValueError('SUMMARY_CATEGORIES')
@@ -63,6 +78,18 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--input',type=Path,required=True);a=p.parse_args()
     incomplete=False
     print('BASELINE_DIAGNOSTIC DiagnosticOnly source='+SOURCE+' runtime=10.0.14 mode=static-intercepted n=100')
+    from marker_gate import render_marker
+    for slot in ('marker','control','trace'):
+        try:
+            host=strict_json((a.input/slot/'host.json').read_text())
+            if host.get('status')=='failed':
+                reason=host.get('detail')
+                print('PROCESS_FAILURE slot='+slot+' reason='+(reason if type(reason) is str and reason in HOST_REASONS else 'HOST_OR_OS_FAILURE'))
+        except (OSError,ValueError,TypeError,KeyError): pass
+    try:
+        for line in render_marker(strict_json((a.input/'marker/analysis.json').read_text())): print(line)
+    except (OSError,ValueError,TypeError,KeyError):
+        print('MARKER_ROUNDTRIP status=unavailable-or-invalid');incomplete=True
     for variant in CONTRACT['variants']:
         try:
             host=strict_json((a.input/variant/'host.json').read_text())

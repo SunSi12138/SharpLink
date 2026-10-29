@@ -105,6 +105,9 @@ class SummaryTests(unittest.TestCase):
             scenario='baseline-static-n100-work20s',managedThreadTimeSamples={k:0 for k in summary.CATEGORIES},
             censoredIntervals={k:0 for k in ('gc','pause','contention','wait')},
             gcStartsByGeneration={k:0 for k in ('gen0','gen1','gen2')})
+        v['markerCensus']=dict(__import__('marker_gate').EXPECTED_CENSUS)
+        v['normalizedEventCounts']={k:0 for k in summary.NORMALIZED_KINDS}
+        v['normalizedEventCounts'].update({'work-start':1,'work-stop':1})
         for k in ('lostEvents','unknownStacks','unmatchedEvents','outsideWindowEvents','otherProcessEvents',
             'unknownEvents','externalThreadSamples','sampleErrors','allocationTickSamples','allocationTickReportedBytes'):v[k]=0
         for k in ('gcPauses','contention','waitHandle'):v[k]=dict(count=0,durationMilliseconds=0)
@@ -112,7 +115,7 @@ class SummaryTests(unittest.TestCase):
 
     def test_bounded_categories_only_no_raw_fields(self):
         v=self.sample();v.update(stack='SECRET',exception='SECRET',path='/private/SECRET')
-        text='\n'.join(summary.render(v));self.assertNotIn('SECRET',text);self.assertLess(len(text),2500)
+        text='\n'.join(summary.render(v));self.assertNotIn('SECRET',text);self.assertLess(len(text),3500)
         self.assertIn('MANAGED_THREAD_TIME_SAMPLES',text);self.assertNotIn('cpuPercent',text)
 
     def test_bad_scalar_schema_and_unknown_reasons_rejected(self):
