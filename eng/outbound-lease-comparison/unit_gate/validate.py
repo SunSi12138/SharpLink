@@ -71,7 +71,10 @@ def check_summary(summary: object, count: int, label: str) -> None:
 
 
 def validate_run(discovered: list[str], report: dict, exit_code: int,
-                 timed_out: bool = False) -> dict:
+                 timed_out: bool = False, on_stage=None) -> dict:
+    stage = on_stage if on_stage is not None else lambda _: None
+    stage('RESULT_SCHEMA')
+    require(isinstance(report, dict), 'invalid result document')
     expected = unique_uids(discovered, 'discovery')
     require(not timed_out, 'test process timed out')
     require(type(report.get('schemaVersion')) is int and report['schemaVersion'] == 1,
@@ -88,10 +91,12 @@ def validate_run(discovered: list[str], report: dict, exit_code: int,
         require(isinstance(group, dict) and isinstance(group.get('tests'), list), 'invalid result group')
         require(all(isinstance(t, dict) for t in group['tests']), 'invalid result tests')
         tests.extend(group['tests'])
+    stage('RESULT_UID')
     executed = unique_uids([t.get('id') for t in tests], 'execution')
     require(executed == expected,
             f"UID census mismatch: missing={len(set(expected) - set(executed))} "
             f"unexpected={len(set(executed) - set(expected))}")
+    stage('RESULT_TEST_STATUS')
     require(all(isinstance(t.get('status'), str) for t in tests), 'missing result status')
     statuses = Counter(t['status'] for t in tests)
     # Deliberately no known-failure, platform, UDS, skipped, or retry exemption.
@@ -102,9 +107,11 @@ def validate_run(discovered: list[str], report: dict, exit_code: int,
         names = [str(t.get('displayName', '<unnamed>')).replace('\n', ' ')[:160] for t in bad[:12]]
         raise GateError(f"non-passing results: {kinds}; examples={json.dumps(names, ensure_ascii=True)}; "
                         f"exit={exit_code}")
+    stage('RESULT_COUNTERS')
     check_summary(report.get('summary'), len(expected), 'run')
     for group in groups:
         check_summary(group.get('summary'), len(group['tests']), 'group')
+    stage('RESULT_EXIT')
     require(exit_code == 0, f'test process exit={exit_code}')
     return {'discovered': len(expected), 'executed': len(executed),
             'passed': len(tests), 'failed_or_skipped': 0,

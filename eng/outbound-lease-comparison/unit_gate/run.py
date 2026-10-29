@@ -19,6 +19,8 @@ if __package__ in (None, ''):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from unit_gate.provenance import SOURCE, TREE, read_corpus, verify_source
 from unit_gate.record import expected_record, validate_record
+from unit_gate.temp_paths import create_short_temp
+from unit_gate.diagnostics import emit_diagnostics
 from unit_gate.scope import verify_explicit_sources
 from unit_gate.validate import (GateError, discovery_uids, read_report, require,
                                 strict_json, uid_digest, validate_run)
@@ -64,13 +66,13 @@ def host_inventory(sdk_host: Path, runtime_host: Path, root, env, output):
         require(actual == expected, 'host inventory mismatch')
 
 
-def private_test_environment(env, host: Path, output: Path):
+def private_test_environment(env, host: Path, short_temp: Path):
     value = {k: v for k, v in env.items()
              if not k.startswith(('GITHUB_', 'TUNIT_', 'TESTINGPLATFORM_'))}
     value.update(CI='true', DOTNET_ROOT=str(host.parent), DOTNET_ROOT_X64=str(host.parent),
         DOTNET_HOST_PATH=str(host), DOTNET_ROLL_FORWARD='Disable',
         PATH=str(host.parent) + os.pathsep + env.get('PATH', ''),
-        TMPDIR=str(output / 'tmp'), TESTINGPLATFORM_TELEMETRY_OPTOUT='1')
+        TMPDIR=str(short_temp), TESTINGPLATFORM_TELEMETRY_OPTOUT='1')
     return value
 
 
@@ -141,17 +143,26 @@ def run(args):
     require(not output.exists() and not output.is_relative_to(source), 'output must be new and outside source')
     output.mkdir(parents=True)
     phase = 'SOURCE'
+    report, ordinary = None, []
+    test_exit, test_timed, diagnostic_emitted = None, False, False
+    def set_phase(value):
+        nonlocal phase
+        phase = value
     try:
         verify_source(source, output / 'source.log')
+        phase = 'TOOL'
         tool_revision = tool_identity()
+        phase = 'CORPUS'
         raw, ordinary, workers = read_corpus(TOOL)
         print(f'UNIT_SOURCE sha={SOURCE} tree={TREE}', flush=True)
         env = {k: v for k, v in os.environ.items()
                if not k.startswith(('TUNIT_', 'TESTINGPLATFORM_', 'GITHUB_'))}
-        for name in ('cli-home', 'http-cache', 'scratch', 'tmp'):
+        for name in ('cli-home', 'http-cache', 'scratch'):
             (output / name).mkdir()
+        phase = 'SHORT_TEMP'
+        short_temp = create_short_temp(output)
         env.update(DOTNET_CLI_HOME=str(output / 'cli-home'), NUGET_HTTP_CACHE_PATH=str(output / 'http-cache'),
-            NUGET_SCRATCH=str(output / 'scratch'), TMPDIR=str(output / 'tmp'),
+            NUGET_SCRATCH=str(output / 'scratch'), TMPDIR=str(short_temp),
             NUGET_PACKAGES=env.get('NUGET_PACKAGES', str(output / 'packages')),
             DOTNET_PROCESSOR_COUNT='4', DOTNET_CLI_TELEMETRY_OPTOUT='1',
             TESTINGPLATFORM_TELEMETRY_OPTOUT='1', PYTHONDONTWRITEBYTECODE='1',
@@ -174,7 +185,7 @@ def run(args):
         require(all(name in hashes for name in ('SharpLink.UnitTests.dll', 'SharpLink.Server.dll',
             'SharpLink.Runtime.dll', 'SharpLink.Client.dll', 'allocation-probe/SharpLink.ReadOwnershipAllocationProbe.dll')),
             'built execution closure incomplete')
-        test_env = private_test_environment(env, args.runtime_dotnet, output)
+        test_env = private_test_environment(env, args.runtime_dotnet, short_temp)
         phase = 'DISCOVERY'
         code, timed = execute([str(args.runtime_dotnet), str(assembly), '--list-tests', 'json'],
             source, test_env, 180, output / 'discovery.json')
@@ -193,34 +204,47 @@ def run(args):
             '--no-ansi', '--progress', 'off', '--show-stdout', 'None', '--show-stderr', 'None',
             '--show-test-results', 'failed,skipped', '--report-html', '--report-html-filename', str(output / 'results.html'),
             '--results-directory', str(output / 'results')], source, test_env, 1260, output / 'execution.log')
-        require(not timed, 'ordinary test process timed out')
-        phase = 'RESULT'
+        test_exit, test_timed = code, timed
+        phase = 'RESULT_REPORT_DISCOVERY'
         reports = list(output.glob('*.tunit-report.json'))
         require(len(reports) == 1, 'missing or ambiguous final report')
+        phase = 'RESULT_REPORT_PARSE'
         report = read_report(reports[0])
+        emit_diagnostics(report, ordinary, code, timed)
+        diagnostic_emitted = True
+        phase = 'EXECUTION_TIMEOUT'
+        require(not timed, 'ordinary test process timed out')
+        phase = 'RESULT_RUNTIME'
         require_runtime(report)
-        result = validate_run(ordinary, report, code, timed)
+        result = validate_run(ordinary, report, code, timed, on_stage=set_phase)
+        phase = 'RESULT_CHILD'
         witnesses = allocation_children(report)
+        phase = 'RESULT_BINARY'
         require(hashes == inventory(assembly.parent), 'test execution closure changed')
+        phase = 'RESULT_SOURCE'
         verify_source(source, output / 'source.log')
+        phase = 'RESULT_TOOL'
         require(tool_identity() == tool_revision, 'unit tooling changed during gate')
+        phase = 'RESULT_RECORD'
         summary = {'status': 'passed', 'source': SOURCE, 'tree': TREE, 'sdk': '10.0.102',
             'runtime': RUNTIME, 'census': census, 'result': result, 'allocation_children': witnesses,
             'assembly_sha256': hashes}
-        (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         gate_record = expected_record(tool_revision)
         gate_record.update(assemblySha256=hashes, allocationChildren=witnesses,
             executedCount=result['executed'], executedUidSha256=result['uid_sha256'], passedCount=result['passed'])
         validate_record(gate_record)
+        (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         # This consumable success marker is absent for every failure/timeout/partial run.
         (output / 'unit-gate.json').write_text(json.dumps(gate_record, indent=2) + '\n')
         print('UNIT_GATE_PASS ' + json.dumps({'ordinary': len(ordinary), 'executed': result['executed'],
             'passed': result['passed'], 'failed': 0, 'skipped': 0, 'cancelled': 0,
             'runtime': RUNTIME, 'allocation_children': len(witnesses)}, sort_keys=True), flush=True)
         return 0
-    except (GateError, OSError, ValueError, subprocess.SubprocessError) as error:
+    except (GateError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
         (output / 'failure.json').write_text(json.dumps({'reason': phase, 'exception_type': type(error).__name__,
             'detail': str(error)}, indent=2) + '\n')
+        if test_exit is not None and not diagnostic_emitted:
+            emit_diagnostics(report, ordinary, test_exit, test_timed)
         print(f'UNIT_GATE_FAIL reason={phase}', flush=True)
         return 1
 

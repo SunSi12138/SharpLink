@@ -195,7 +195,12 @@ class UnitGateTests(unittest.TestCase):
 
     def test_orchestrator_success_only_marker_and_failure_retention_without_clr(self):
         raw, ordinary, workers = provenance.read_corpus(TOOL)
-        for mutation in ('pass', 'missing_uid', 'skipped', 'runtime', 'timeout', 'build_failure'):
+        reasons = {'missing_uid': 'RESULT_UID', 'skipped': 'RESULT_TEST_STATUS',
+            'runtime': 'RESULT_RUNTIME', 'timeout': 'EXECUTION_TIMEOUT', 'build_failure': 'BUILD',
+            'missing_report': 'RESULT_REPORT_DISCOVERY', 'malformed_report': 'RESULT_REPORT_PARSE',
+            'child': 'RESULT_CHILD', 'schema': 'RESULT_SCHEMA', 'groups': 'RESULT_SCHEMA',
+            'counters': 'RESULT_COUNTERS', 'exit': 'RESULT_EXIT'}
+        for mutation in ('pass', *reasons):
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary); source = root / 'source'; source.mkdir(); output = root / 'raw'
                 assembly = source / run.ASSEMBLY
@@ -214,9 +219,14 @@ class UnitGateTests(unittest.TestCase):
                     if test['id'] in children: test.update(children[test['id']])
                 value['summary'] = summary
                 value['groups'] = [{'summary': dict(summary), 'tests': tests}]
+                if mutation == 'schema': value['schemaVersion'] = 'invalid'
+                if mutation == 'groups': value['groups'] = [None]
+                if mutation == 'counters': value['summary']['total'] += 1
                 if mutation == 'missing_uid': tests.pop()
                 if mutation == 'skipped': tests[0]['status'] = 'skipped'
                 if mutation == 'runtime': value['runtimeVersion'] = '.NET 10.0.2'
+                if mutation == 'child':
+                    for test in tests: test.pop('output', None)
 
                 def fake_execute(command, cwd, env, timeout, log):
                     log.write_text('RAW_DETAIL_SHOULD_REMAIN_LOCAL')
@@ -231,14 +241,18 @@ class UnitGateTests(unittest.TestCase):
                     elif '--list-tests' in command:
                         log.write_text(json.dumps(discovery))
                     else:
-                        (output / 'results.tunit-report.json').write_text(json.dumps(value))
+                        if mutation != 'missing_report':
+                            (output / 'results.tunit-report.json').write_text(
+                                '{malformed RAW_SECRET' if mutation == 'malformed_report' else json.dumps(value))
                         if mutation == 'timeout': return -9, True
+                        if mutation == 'exit': return 2, False
                     return 0, False
 
                 args = SimpleNamespace(source=source, output=output, dotnet=Path('/sdk/dotnet'), runtime_dotnet=Path('/runtime/dotnet'))
                 stdout = io.StringIO()
                 with patch.object(run, 'execute', side_effect=fake_execute), patch.object(run, 'host_inventory'), \
                      patch.object(run, 'verify_source'), patch.object(run, 'tool_identity', return_value='a' * 40), \
+                     patch.object(run, 'create_short_temp', return_value=Path('/tmp/unit-fixture')), \
                      contextlib.redirect_stdout(stdout):
                     result = run.run(args)
                 self.assertNotIn('RAW_DETAIL_SHOULD_REMAIN_LOCAL', stdout.getvalue())
@@ -250,7 +264,8 @@ class UnitGateTests(unittest.TestCase):
                     self.assertEqual(result, 1)
                     self.assertFalse((output / 'unit-gate.json').exists())
                     self.assertTrue((output / 'failure.json').exists())
-                    self.assertIn('UNIT_GATE_FAIL reason=', stdout.getvalue())
+                    self.assertIn('UNIT_GATE_FAIL reason=' + reasons[mutation], stdout.getvalue())
+                    self.assertNotIn('RAW_SECRET', stdout.getvalue())
 
 
 if __name__ == '__main__': unittest.main()

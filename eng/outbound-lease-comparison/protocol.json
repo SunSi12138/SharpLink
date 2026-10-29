@@ -41,7 +41,7 @@
   "executionHost": "hosted ubuntu24.04",
   "aggregation": "Per cell median of four paired candidate/baseline QPS ratios and separately four P99 ratios. All four ratios and exact metrics retained locally. No operation pooling, best round, cross-cell global pass or incomplete-input target observations.",
   "coldPolicy": "Eight strict-cleanup processes (both arms x four cells) and eight symmetric normal-validate processes must pass before timing. Each of32 fresh normal-measure processes repeats normal-only controls. No cancellation/failure/early-exit probe in timed processes.",
-  "campaign": "outboundlease-base3d76-48tcp-OL1",
+  "campaign": "outboundlease-base3d76-48tcp-OL2",
   "strictProcesses": 8,
   "normalProcesses": 8,
   "processTimeoutSeconds": 120,
@@ -88,6 +88,9 @@
     "explicitWorkerUids": 5,
     "explicitWorkerClasses": 4,
     "scope": "Only the five source-reviewed Explicit worker UIDs are excluded; ordinary TCP/UDS functional tests remain included.",
-    "record": "Both TCP driver and independent validator require unit-gate.json with this tool revision, frozen UID digests, actual runtime14 and both allocation-child runtime14 witnesses."
-  }
+    "record": "Both TCP driver and independent validator require unit-gate.json with this tool revision, frozen UID digests, actual runtime14 and both allocation-child runtime14 witnesses.",
+    "diagnostics": "Normal CI failure counts, public test names and bounded sanitized assertion summaries are permitted. Raw reports, test output streams, full traces and performance ticks remain local; every result validation layer has a distinct reason.",
+    "temporaryDirectory": "Short unique system-temp directory with a checked UTF8 pathname budget for unchanged ordinary UDS fixtures; never nest TMPDIR under diagnostic root; retain failures and local linkage."
+  },
+  "supersedesCampaign": "outboundlease-base3d76-48tcp-OL1"
 }

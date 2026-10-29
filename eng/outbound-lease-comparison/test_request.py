@@ -116,7 +116,7 @@ class RequestTests(unittest.TestCase):
     def test_workflow_is_narrow_and_contains_required_gates(self):
         path = Path(__file__).resolve().parents[2] / '.github/workflows/outbound-lease-comparison.yml'
         text = path.read_text()
-        self.assertIn('branches: [validation/outbound-lease-tcp-no-evidence-20261029]', text)
+        self.assertIn('branches: [validation/outbound-lease-tcp-no-evidence-20261029-r2]', text)
         self.assertIn("paths: ['eng/outbound-lease-comparison/REQUEST.json']", text)
         self.assertNotIn('workflow_dispatch', text)
         self.assertNotIn('pull_request:', text)

@@ -9,9 +9,9 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUEST = 'eng/outbound-lease-comparison/REQUEST.json'
-BRANCH = 'refs/heads/validation/outbound-lease-tcp-no-evidence-20261029'
-MESSAGE = 'run: outbound lease TCP comparison OL1'
-CAMPAIGN = 'outboundlease-base3d76-48tcp-OL1'
+BRANCH = 'refs/heads/validation/outbound-lease-tcp-no-evidence-20261029-r2'
+MESSAGE = 'run: outbound lease TCP comparison OL2'
+CAMPAIGN = 'outboundlease-base3d76-48tcp-OL2'
 REPOSITORY = 'SunSi12138/SharpLink'
 BASELINE = '3d76a3a8b55a37e24c62a073fe588cff3d3867be'
 CANDIDATE = 'fbfd5590372ca0cad9766c3cf7e509055c3874f1'
