@@ -117,7 +117,7 @@ public class TlsTransportIntegrationTests
     }
 
     [Test]
-    public async Task MutualTlsShouldRejectMissingOrUnexpectedAndAcceptExpectedClientCertificate()
+    public async Task MutualTlsShouldRejectMissingAndAcceptExpectedClientCertificate()
     {
         using var serverCertificate = CreateCertificate("localhost", serverAuthentication: true);
         using var clientCertificate = CreateCertificate("sharplink-client", serverAuthentication: false);
@@ -149,6 +149,80 @@ public class TlsTransportIntegrationTests
         await using var client = CreateClient(server.Port, clientOptions);
         await client.ConnectAsync();
         Ensure(await client.Get<ITlsIntegrationService>().AddAsync(2, 3) == 5, "mutual TLS RPC");
+    }
+
+    [Test]
+    public async Task MutualTlsShouldRejectPresentedUnexpectedClientCertificateAndRecoverWithExpectedCertificate()
+    {
+        using var serverCertificate = CreateCertificate("localhost", serverAuthentication: true);
+        // Both client certificates are valid self-signed certificates with the same
+        // subject and client-auth EKU. The existing server policy pins the exact
+        // certificate, not a subject/issuer or the machine's trusted-root store.
+        using var expectedCertificate = CreateCertificate("sharplink-client", serverAuthentication: false);
+        using var unexpectedCertificate = CreateCertificate("sharplink-client", serverAuthentication: false);
+        var unexpectedHash = unexpectedCertificate.GetCertHash(HashAlgorithmName.SHA256);
+        Ensure(expectedCertificate.Subject == unexpectedCertificate.Subject,
+            "expected and unexpected client certificates must share the subject");
+        Ensure(!ValidateExpectedCertificate(unexpectedCertificate, expectedCertificate),
+            "unexpected certificate must differ from the configured certificate pin");
+
+        var unexpectedPresented = 0;
+        var unexpectedRejected = 0;
+        var expectedAccepted = 0;
+        var serverOptions = CreateServerOptions(serverCertificate);
+        serverOptions.ClientCertificateRequired = true;
+        serverOptions.EnabledSslProtocols = SslProtocols.Tls12;
+        serverOptions.RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+        {
+            // Observe the existing decision without changing its trust policy.
+            var accepted = ValidateExpectedCertificate(certificate, expectedCertificate);
+            if (certificate is not null && CryptographicOperations.FixedTimeEquals(
+                    certificate.GetCertHash(HashAlgorithmName.SHA256), unexpectedHash))
+            {
+                Interlocked.Increment(ref unexpectedPresented);
+                if (!accepted)
+                    Interlocked.Increment(ref unexpectedRejected);
+            }
+            if (accepted)
+                Interlocked.Increment(ref expectedAccepted);
+            return accepted;
+        };
+        await using var server = await StartServerAsync(0, serverOptions);
+
+        var unexpectedOptions = CreateClientOptions("localhost");
+        unexpectedOptions.EnabledSslProtocols = SslProtocols.Tls12;
+        unexpectedOptions.ClientCertificates = new X509CertificateCollection { unexpectedCertificate };
+        // Do not let platform acceptable-issuer selection turn a wrong-certificate
+        // probe into another missing-certificate probe.
+        unexpectedOptions.LocalCertificateSelectionCallback = (_, _, _, _, _) => unexpectedCertificate;
+        await using (var unexpectedClient = CreateClient(server.Port, unexpectedOptions))
+        {
+            await EnsureTlsFailure(async () =>
+            {
+                await unexpectedClient.ConnectAsync();
+                _ = await unexpectedClient.Get<ITlsIntegrationService>().AddAsync(1, 1);
+            }, "presented unexpected mutual TLS certificate").WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(Volatile.Read(ref unexpectedPresented) > 0,
+                "server validation callback must see the actual unexpected certificate");
+            Ensure(Volatile.Read(ref unexpectedRejected) == Volatile.Read(ref unexpectedPresented),
+                "the exact-certificate pin must reject every unexpected certificate presentation");
+            Ensure(Volatile.Read(ref expectedAccepted) == 0,
+                "no certificate may be accepted during the unexpected-certificate attempt");
+            Ensure(((SharpLinkClient)unexpectedClient).ReadyConnectionCount == 0,
+                "rejected mutual TLS connection must never become ready");
+        }
+
+        var expectedOptions = CreateClientOptions("localhost");
+        expectedOptions.EnabledSslProtocols = SslProtocols.Tls12;
+        expectedOptions.ClientCertificates = new X509CertificateCollection { expectedCertificate };
+        expectedOptions.LocalCertificateSelectionCallback = (_, _, _, _, _) => expectedCertificate;
+        await using var expectedClient = CreateClient(server.Port, expectedOptions);
+        await expectedClient.ConnectAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        Ensure(await expectedClient.Get<ITlsIntegrationService>().AddAsync(20, 22)
+                .AsTask().WaitAsync(TimeSpan.FromSeconds(5)) == 42,
+            "same server must still accept the expected certificate and serve an RPC");
+        Ensure(Volatile.Read(ref expectedAccepted) > 0,
+            "server validation callback must explicitly accept the expected certificate control");
     }
 
     [Test]
