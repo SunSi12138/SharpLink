@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import contextlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -10,6 +12,7 @@ import unittest
 from unittest.mock import patch
 
 import provenance
+from run import require_pinned_sdk, require_test_runtime, verify_hosts, private_test_environment, verify_allocation_child_runtimes
 from scope import explicit_workers, ordinary_uids, verify_explicit_sources
 from validate import (GateError, check_summary, discovery_uids, read_report, strict_json,
                       uid_digest, unique_uids, validate_run)
@@ -210,6 +213,129 @@ class ExplicitScopeTests(unittest.TestCase):
             path.write_text('[Explicit]\npublic sealed class W\n{}')
             path.with_name('Unreviewed.cs').write_text('[Explicit]\npublic sealed class New\n{}')
             with self.assertRaises(GateError): verify_explicit_sources(root, discovery, [worker])
+
+
+class SdkSelectionTests(unittest.TestCase):
+    def test_exact_sdk_accepted_and_actual_logged(self):
+        output = io.StringIO()
+        with patch('run.subprocess.check_output', return_value='10.0.102\n') as invoke:
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(require_pinned_sdk(Path('/candidate'), {'PATH': '/isolated'}), '10.0.102')
+        invoke.assert_called_once_with(['dotnet', '--version'], cwd=Path('/candidate'),
+                                       env={'PATH': '/isolated'}, text=True)
+        self.assertIn('"actual": "10.0.102"', output.getvalue())
+
+    def test_other_patch_and_banner_are_not_silently_accepted(self):
+        for actual in ('10.0.114', '10.0.400', 'Welcome\n10.0.102'):
+            output = io.StringIO()
+            with patch('run.subprocess.check_output', return_value=actual):
+                with contextlib.redirect_stdout(output), self.assertRaises(GateError) as caught:
+                    require_pinned_sdk(Path('/candidate'), {})
+            self.assertIn('expected=10.0.102', str(caught.exception))
+            self.assertIn(json.dumps(actual), output.getvalue())
+
+    def test_diagnostic_is_bounded_without_truncating_comparison(self):
+        output = io.StringIO()
+        with patch('run.subprocess.check_output', return_value='x' * 10000):
+            with contextlib.redirect_stdout(output), self.assertRaises(GateError) as caught:
+                require_pinned_sdk(Path('/candidate'), {})
+        self.assertLess(len(output.getvalue()), 300)
+        self.assertLess(len(str(caught.exception)), 250)
+        self.assertIn('"truncated": true', output.getvalue())
+
+
+class PinnedHostTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.sdk = self.root / 'sdk'
+        self.runtime = self.root / 'private'
+        for root in (self.sdk, self.runtime):
+            root.mkdir()
+            (root / 'dotnet').touch()
+        self.env = {'SDK_DOTNET': str(self.sdk / 'dotnet'), 'PRIVATE_RUNTIME': str(self.runtime)}
+        self.outputs = [
+            '10.0.102\n', f'10.0.102 [{self.sdk / "sdk"}]\n',
+            ''.join(f'{name} 10.0.2 [{self.sdk / "shared" / name}]\n'
+                    for name in ('Microsoft.AspNetCore.App', 'Microsoft.NETCore.App')),
+            '', ''.join(f'{name} 10.0.14 [{self.runtime / "shared" / name}]\n'
+                        for name in ('Microsoft.AspNetCore.App', 'Microsoft.NETCore.App'))]
+
+    def test_two_exact_separate_hosts(self):
+        with patch('run.subprocess.check_output', side_effect=self.outputs) as invoke:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(verify_hosts(self.root, self.env),
+                                 (str(self.sdk / 'dotnet'), str(self.runtime / 'dotnet')))
+        self.assertEqual(invoke.call_args_list[0].args[0], [str(self.sdk / 'dotnet'), '--version'])
+        self.assertEqual(invoke.call_args_list[-1].args[0], [str(self.runtime / 'dotnet'), '--list-runtimes'])
+
+    def test_sdk_drift_extra_runtime_and_private_sdk_fail(self):
+        for index, bad in ((0, '10.0.114'), (1, self.outputs[1] + '10.0.114 [/other]\n'),
+                           (2, self.outputs[2].replace('10.0.2', '10.0.14')),
+                           (3, '10.0.102 [/private/sdk]'),
+                           (4, self.outputs[4].replace('10.0.14', '10.0.2')),
+                           (4, self.outputs[4] + 'Microsoft.NETCore.App 10.0.15 [/extra]\n')):
+            outputs = list(self.outputs)
+            outputs[index] = bad
+            with self.subTest(index=index, bad=bad), patch('run.subprocess.check_output', side_effect=outputs):
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(GateError):
+                    verify_hosts(self.root, self.env)
+
+    def test_missing_relative_and_mixed_host_fail(self):
+        for env in ({}, dict(self.env, SDK_DOTNET='dotnet'),
+                    dict(self.env, PRIVATE_RUNTIME=str(self.sdk))):
+            with self.assertRaises(GateError): verify_hosts(self.root, env)
+
+    def test_children_inherit_private_root_and_host(self):
+        env = dict(self.env, PATH='/build/bin', GITHUB_STEP_SUMMARY='/must-not-write')
+        result = private_test_environment(env, str(self.runtime / 'dotnet'))
+        self.assertEqual(result['DOTNET_ROOT'], str(self.runtime))
+        self.assertEqual(result['DOTNET_ROOT_X64'], str(self.runtime))
+        self.assertEqual(result['DOTNET_HOST_PATH'], str(self.runtime / 'dotnet'))
+        self.assertTrue(result['PATH'].startswith(str(self.runtime) + ':'))
+        self.assertNotIn('GITHUB_STEP_SUMMARY', result)
+
+    def test_actual_test_runtime_must_be_14(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(require_test_runtime({'runtimeVersion': '.NET 10.0.14'}), '.NET 10.0.14')
+        for value in (None, '.NET 10.0.2', '.NET 10.0.15', '10.0.14'):
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(GateError):
+                require_test_runtime({'runtimeVersion': value})
+
+
+class AllocationChildRuntimeTests(unittest.TestCase):
+    def records(self):
+        tests = []
+        for scenario in ('SuccessfulSuspensionsShouldNotAllocateAfterWarmup',
+                         'RegisteredConsumerSuspensionsShouldNotAllocateAfterWarmup'):
+            record = dict(scenario=scenario, runtime='10.0.14', architecture='X64', executed=1, passed=True,
+                          privateTrace='must-not-appear')
+            uid = ('SharpLink.UnitTests.Runtime.ReadOwnershipPipeReaderLifetimeTests.1.1.' + scenario
+                   + '(System.Threading.CancellationToken).1.1.0')
+            tests.append(dict(id=uid, status='passed', output='READ_OWNERSHIP_ALLOCATION_VERIFIED|'
+                              + json.dumps(record) + '\n'))
+        return dict(groups=[dict(tests=tests)])
+
+    def test_only_bounded_witness_fields_returned(self):
+        result = verify_allocation_child_runtimes(self.records())
+        self.assertEqual(len(result), 2)
+        self.assertEqual(set(result[0]), {'scenario', 'runtime', 'architecture', 'executed'})
+        self.assertNotIn('must-not-appear', json.dumps(result))
+
+    def test_missing_duplicate_wrong_runtime_and_identity_fail(self):
+        for mutation in ('missing', 'duplicate', 'runtime', 'scenario', 'uid', 'status', 'executed'):
+            value = self.records()
+            tests = value['groups'][0]['tests']
+            if mutation == 'missing': tests.pop()
+            if mutation == 'duplicate': tests[0]['output'] *= 2
+            if mutation == 'runtime': tests[0]['output'] = tests[0]['output'].replace('10.0.14', '10.0.2')
+            if mutation == 'scenario': tests[0]['output'] = tests[0]['output'].replace('SuccessfulSuspensions', 'Other')
+            if mutation == 'uid': tests[0]['id'] = 'unreviewed'
+            if mutation == 'status': tests[0]['status'] = 'failed'
+            if mutation == 'executed': tests[0]['output'] = tests[0]['output'].replace('"executed": 1', '"executed": 2')
+            with self.subTest(mutation=mutation), self.assertRaises(GateError):
+                verify_allocation_child_runtimes(value)
 
 
 if __name__ == '__main__':

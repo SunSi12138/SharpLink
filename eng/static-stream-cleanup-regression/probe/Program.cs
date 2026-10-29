@@ -2,17 +2,31 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Server;
 
 // Newly reconstructed ordinary regression, not O203C1 replay or performance evidence.
-if (args.Length != 2 || args[0] is not ("static-none" or "static-cancellable" or "dynamic-none" or "static-deadline" or "static-enumerator-only" or "static-none-held") ||
+if (args.Length is not (2 or 3) || args[0] is not ("static-none" or "static-cancellable" or "dynamic-none" or "static-deadline" or "static-enumerator-only" or "static-none-held") ||
     args[1] is not ("early-break" or "explicit-dispose" or "consumer-throw" or "enumerator-cancel"))
-    throw new ArgumentException("CONDITION TERMINATION");
+    throw new ArgumentException("CONDITION TERMINATION [EXPECTED_RUNTIME_VERSION]");
 var condition = args[0];
 var termination = args[1];
+var expectedRuntimeVersion = args.Length == 3 ? args[2] : null;
+var runtimeVersion = Environment.Version.ToString();
+var frameworkDescription = RuntimeInformation.FrameworkDescription;
+if (expectedRuntimeVersion is not null &&
+    (expectedRuntimeVersion != "10.0.14" || runtimeVersion != expectedRuntimeVersion))
+{
+    // Reject identity mismatch before constructing endpoints or executing any correctness case.
+    Console.WriteLine(JsonSerializer.Serialize(new { suite = "new-source-serverstream-cleanup", condition, termination,
+        expectedRuntimeVersion, runtimeVersion, frameworkDescription, passed = false,
+        failure = $"Runtime identity mismatch: expected reviewed10.0.14/{expectedRuntimeVersion}, actual {runtimeVersion}/{frameworkDescription}.",
+        caseExecuted = false, historicalReplay = false }));
+    return 1;
+}
 var dynamic = condition == "dynamic-none";
 var noMethodToken = condition is "static-deadline" or "static-enumerator-only";
 if ((condition == "static-enumerator-only") != (termination == "enumerator-cancel"))
@@ -224,6 +238,7 @@ finally
     await Stop("client-dispose", () => client.DisposeAsync().AsTask());
 }
 Console.WriteLine(JsonSerializer.Serialize(new { suite = "new-source-serverstream-cleanup", condition, termination,
+    expectedRuntimeVersion, runtimeVersion, frameworkDescription,
     requestTimeout = "disabled", methodHasCancellationToken = !noMethodToken, methodDeadlineSeconds = condition == "static-deadline" ? 3600 : 0, passed = failure is null && teardownFailures.Count == 0, failure, heldMoveSnapshot, heldDisposeSnapshot, beforeStop, teardownFailures,
     coverage = "method token/None, long non-expiring method deadline, enum-only cancellation, static None held MoveNext then held Dispose; no actual expiry/duplex claim", historicalReplay = false }));
 return failure is null && teardownFailures.Count == 0 ? 0 : 1;

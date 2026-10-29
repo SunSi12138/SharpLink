@@ -2,7 +2,7 @@ name: Static stream full-unit validation (no evidence upload)
 
 on:
   push:
-    branches: ['validation/static-stream-unit-no-evidence-20261029']
+    branches: ['validation/static-stream-unit-no-evidence-20261029-r2']
     paths: ['eng/static-stream-unit-validation/request.json']
 
 permissions:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   full-unit:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/validation/static-stream-unit-no-evidence-20261029'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/validation/static-stream-unit-no-evidence-20261029-r2'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -45,19 +45,53 @@ jobs:
       - name: Verify candidate checkout before any build or test
         id: source_gate
         run: python3 release/eng/static-stream-unit-validation/provenance.py --release-root release --source-root candidate
-      - name: Set up pinned SDK
+      - name: Install fixed SDK and separate SHA512-verified private runtime
         id: setup
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          dotnet-version: '10.0.102'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="$RUNNER_TEMP/static-stream-sdk-${{ github.run_id }}-${{ github.run_attempt }}"
+          PRIVATE_RUNTIME="$RUNNER_TEMP/static-stream-runtime-${{ github.run_id }}-${{ github.run_attempt }}"
+          test ! -e "$SDK_ROOT" && test ! -L "$SDK_ROOT"
+          test ! -e "$PRIVATE_RUNTIME" && test ! -L "$PRIVATE_RUNTIME"
+          mkdir "$SDK_ROOT" "$PRIVATE_RUNTIME"
+          INSTALL_CACHE="$(mktemp -d "$RUNNER_TEMP/static-stream-install-XXXXXX")"
+          trap 'rm -rf -- "$INSTALL_CACHE"' EXIT
+          cd "$INSTALL_CACHE"
+          # Exact official release-metadata/10.0/releases.json pins; no LTS/channel installer.
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.102/dotnet-sdk-10.0.102-linux-x64.tar.gz --output sdk.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz --output dotnet.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.14/aspnetcore-runtime-10.0.14-linux-x64.tar.gz --output aspnetcore.tar.gz
+          {
+            echo '7adf40e8e5547970391cfbe474c3874c6918ce3575ac398f376c78502134e1c8a2fa3da9aca281fdaeda81671f56c851ebe9e74c5b57c5a298bd45deba63565d  sdk.tar.gz'
+            echo '634326028645f38731c8c4e71a68356e4ca0d6b6607139a234ab760687f742063edaf33a1f20dda615742d2dc8300ca2ff857619d51fbb38090383b71334af89  dotnet.tar.gz'
+            echo 'dd024fd2616926a555b75cbf7a836f6dce998199f0596d9d75676dca2b9d59c8ee8673c6ac23473c0f1a4bdd59eb5cd02fe9ab097eeaf2dd8c8bd117c85e7031  aspnetcore.tar.gz'
+          } | sha512sum --check
+          tar -xzf sdk.tar.gz -C "$SDK_ROOT"
+          # Preserve the reviewed O203C1 private-framework install order.
+          tar -xzf dotnet.tar.gz -C "$PRIVATE_RUNTIME"
+          tar -xzf aspnetcore.tar.gz -C "$PRIVATE_RUNTIME"
+          {
+            echo "SDK_DOTNET=$SDK_ROOT/dotnet"
+            echo "PRIVATE_RUNTIME=$PRIVATE_RUNTIME"
+            echo "DOTNET_ROOT=$SDK_ROOT"
+            echo "DOTNET_ROOT_X64=$SDK_ROOT"
+            echo "DOTNET_HOST_PATH=$SDK_ROOT/dotnet"
+          } >> "$GITHUB_ENV"
+          echo "$SDK_ROOT" >> "$GITHUB_PATH"
+          "$SDK_ROOT/dotnet" --info
+          "$PRIVATE_RUNTIME/dotnet" --info
+      - name: Verify separate build and test host inventories
+        id: hosts
+        run: python3 candidate/eng/static-stream-unit-validation/run.py --verify-hosts-only --source-root candidate
       - name: Build and validate the entire fresh unit UID census
         run: python3 candidate/eng/static-stream-unit-validation/run.py --release-root release --source-root candidate
       - name: Run the new same-source real-TCP correctness matrix
-        if: ${{ !cancelled() && steps.source_gate.outcome == 'success' && steps.setup.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.source_gate.outcome == 'success' && steps.setup.outcome == 'success' && steps.hosts.outcome == 'success' }}
         run: |
           python3 release/eng/static-stream-unit-validation/provenance.py --release-root release --source-root candidate
           tcp_exit=0
-          python3 candidate/eng/static-stream-cleanup-regression/run.py --extended || tcp_exit=$?
+          python3 candidate/eng/static-stream-cleanup-regression/run.py --extended --dotnet "$SDK_DOTNET" --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" --runtime-version 10.0.14 || tcp_exit=$?
           provenance_exit=0
           python3 release/eng/static-stream-unit-validation/provenance.py --release-root release --source-root candidate || provenance_exit=$?
           if [ "$tcp_exit" -ne 0 ]; then

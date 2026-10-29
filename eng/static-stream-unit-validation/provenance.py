@@ -12,7 +12,7 @@ import subprocess
 from scope import explicit_workers, ordinary_uids
 from validate import GateError, require, strict_json, uid_digest, unique_uids
 
-BRANCH = 'refs/heads/validation/static-stream-unit-no-evidence-20261029'
+BRANCH = 'refs/heads/validation/static-stream-unit-no-evidence-20261029-r2'
 REQUEST = 'eng/static-stream-unit-validation/request.json'
 REQUEST_KEYS = {'schema_version', 'source_sha', 'source_tree', 'raw_discovered_count', 'raw_uid_sha256',
                 'ordinary_count', 'ordinary_uid_sha256'}
