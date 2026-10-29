@@ -24,11 +24,8 @@ internal sealed class ServerGeneratedBridge(
                 // User-code entry and inbound StreamData acceptance are both progress claims:
                 // neither may pass after a strong call terminal, and both promote an already-
                 // expired monotonic deadline to the terminal reason before returning.
-                if (callLease.State.TryAcceptStreamData())
-                    return;
-                throw ServerCallTerminationMapper.CreateServerCancellationException(
-                    callLease.State.Reason,
-                    deadlineExceeded: false);
+                EnsureUserCodeEntry(callLease.State);
+                return;
             }
             finally
             {
@@ -46,6 +43,15 @@ internal sealed class ServerGeneratedBridge(
                 SharpLinkErrorCode.DeadlineExceeded,
                 "Request deadline exceeded.");
         }
+    }
+
+    private static void EnsureUserCodeEntry(ServerCallCancellationState state)
+    {
+        if (state.TryAcceptStreamData())
+            return;
+        throw ServerCallTerminationMapper.CreateServerCancellationException(
+            state.Reason,
+            deadlineExceeded: false);
     }
 
     public IAsyncEnumerable<T> CreateInboundStream<T>(
@@ -74,55 +80,75 @@ internal sealed class ServerGeneratedBridge(
         long methodId,
         CancellationToken cancellationToken)
     {
+        // The outbound pump already owns the entire physical producer lifetime. Pin its
+        // pooled call generation once rather than reacquiring it at every iterator entry.
+        // Missing/failed capture must retain the old lookup path: a call state can be
+        // installed later when an initially untracked invocation first suspends.
+        var ownsCallLease = callCancellations.TryCapture(
+            requestId,
+            static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
+            out var callLease) && callLease.TryAcquire();
         try
-        {
-            await _protocolBridge.PumpOutboundStreamAsync(
-                requestId,
-                streamId,
-                new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
-                codec,
-                payloadNullable,
-                contractId,
-                methodId,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (
-            exception is not OutOfMemoryException and not StackOverflowException)
         {
             try
             {
-                // Once the framework call owner has selected a terminal, this pump has lost both
-                // user-code and wire-publication ownership. Do not run the application exception
-                // mapper and do not publish a second StreamComplete(Error); the selected call terminal
-                // is already responsible for the externally visible outcome. The local send-flow state
-                // still belongs to this pump and must be retired even though no wire terminal is sent.
-                if (GetSelectedTerminal(requestId, out var publishModuleDrainResponse) is { } selectedTerminal)
-                {
-                    session.CompleteSendStream(requestId, streamId, selectedTerminal);
-                    if (publishModuleDrainResponse)
-                    {
-                        await session.SendRpcErrorWithBackpressureAsync(
-                            requestId, selectedTerminal, session.LifetimeToken).ConfigureAwait(false);
-                    }
-                    return;
-                }
-
-                var protocolError = server.MapStreamServiceException(
-                    callCancellations,
-                    session,
+                await _protocolBridge.PumpOutboundStreamAsync(
                     requestId,
+                    streamId,
+                    ownsCallLease
+                        ? new PinnedUserCodeEntryAsyncEnumerable<T>(callLease.State, stream)
+                        : new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
+                    codec,
+                    payloadNullable,
                     contractId,
                     methodId,
-                    SharpLinkPhysicalWork.GetLogicalException(exception));
-                session.SendStreamErrorAsync(requestId, streamId, protocolError);
+                    cancellationToken).ConfigureAwait(false);
             }
-            finally
+            catch (Exception exception) when (
+                exception is not OutOfMemoryException and not StackOverflowException)
             {
-                // Publish the logical terminal first, but keep the existing invocation, service
-                // and module owners until abandoned producer/send/disposal work physically ends.
-                if (SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is { } physicalWork)
-                    await physicalWork.ConfigureAwait(false);
+                try
+                {
+                    // Once the framework call owner has selected a terminal, this pump has lost both
+                    // user-code and wire-publication ownership. Do not run the application exception
+                    // mapper and do not publish a second StreamComplete(Error); the selected call terminal
+                    // is already responsible for the externally visible outcome. The local send-flow state
+                    // still belongs to this pump and must be retired even though no wire terminal is sent.
+                    if (GetSelectedTerminal(requestId, out var publishModuleDrainResponse) is { } selectedTerminal)
+                    {
+                        session.CompleteSendStream(requestId, streamId, selectedTerminal);
+                        if (publishModuleDrainResponse)
+                        {
+                            await session.SendRpcErrorWithBackpressureAsync(
+                                requestId, selectedTerminal, session.LifetimeToken).ConfigureAwait(false);
+                        }
+                        return;
+                    }
+
+                    var protocolError = server.MapStreamServiceException(
+                        callCancellations,
+                        session,
+                        requestId,
+                        contractId,
+                        methodId,
+                        SharpLinkPhysicalWork.GetLogicalException(exception));
+                    session.SendStreamErrorAsync(requestId, streamId, protocolError);
+                }
+                finally
+                {
+                    // Publish the logical terminal first, but keep the existing invocation, service
+                    // and module owners until abandoned producer/send/disposal work physically ends.
+                    if (SharpLinkPhysicalWork.GetAbandonedUserWork(exception) is { } physicalWork)
+                        await physicalWork.ConfigureAwait(false);
+                }
             }
+        }
+        finally
+        {
+            // This includes error mapping/publication and its physical-work join. Never
+            // release merely because the logical terminal has been selected.
+            if (ownsCallLease)
+                callLease.ReleaseUse();
         }
     }
 
@@ -165,6 +191,35 @@ internal sealed class ServerGeneratedBridge(
                 "Request deadline exceeded.");
         }
         return null;
+    }
+
+    // Only the outbound pump may lend its pin. Inbound and untracked streams retain
+    // the lookup wrapper below because their lifetime can escape this pump.
+    private sealed class PinnedUserCodeEntryAsyncEnumerable<T>(
+        ServerCallCancellationState state,
+        IAsyncEnumerable<T> stream) : IAsyncEnumerable<T>
+    {
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            EnsureUserCodeEntry(state);
+            return new PinnedUserCodeEntryAsyncEnumerator(
+                state, stream.GetAsyncEnumerator(cancellationToken));
+        }
+
+        private sealed class PinnedUserCodeEntryAsyncEnumerator(
+            ServerCallCancellationState state,
+            IAsyncEnumerator<T> enumerator) : IAsyncEnumerator<T>
+        {
+            public T Current => enumerator.Current;
+
+            public ValueTask<bool> MoveNextAsync()
+            {
+                EnsureUserCodeEntry(state);
+                return enumerator.MoveNextAsync();
+            }
+
+            public ValueTask DisposeAsync() => enumerator.DisposeAsync();
+        }
     }
 
     private sealed class UserCodeEntryAsyncEnumerable<T>(
