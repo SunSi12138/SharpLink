@@ -41,6 +41,9 @@ internal sealed partial class RpcSession
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
+        // Pump-owned cleanup failures remain observable through WaitForStopAsync,
+        // without replacing the transport exception used to fail queued sends.
+        private Exception? _cleanupException;
 
         internal bool IsStopRequested => Volatile.Read(ref _stopped) != 0;
         internal bool HasPendingIdleWait => _wakeup.HasPendingIdleWait;
@@ -295,7 +298,14 @@ internal sealed partial class RpcSession
             catch (Exception ex)
             {
                 terminalException = NormalizeTransportException(ex);
-                ReportFaultOnce(terminalException);
+                try
+                {
+                    ReportFaultOnce(terminalException);
+                }
+                catch (Exception cleanupException)
+                {
+                    RecordCleanupFailure(cleanupException);
+                }
             }
             finally
             {
@@ -305,10 +315,26 @@ internal sealed partial class RpcSession
                 Interlocked.Exchange(ref _stopped, 1);
                 _progressQueue.Writer.TryComplete();
                 _normalQueue.Writer.TryComplete();
-                _flushPolicyState.UnregisterChanged(_flushPolicyChanged);
-                ReleaseBatch(pending, terminalException);
-                DrainQueuedFrames(terminalException);
-                PulseCapacityWaiters();
+                try
+                {
+                    _flushPolicyState.UnregisterChanged(_flushPolicyChanged);
+                }
+                catch (Exception exception)
+                {
+                    RecordCleanupFailure(exception);
+                }
+                RecordCleanupFailure(ReleaseBatch(pending, terminalException));
+                RecordCleanupFailure(DrainQueuedFrames(terminalException));
+                try
+                {
+                    PulseCapacityWaiters();
+                }
+                catch (Exception exception)
+                {
+                    RecordCleanupFailure(exception);
+                }
+                if (_cleanupException is { } cleanupException)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
             }
         }
 
@@ -368,7 +394,11 @@ internal sealed partial class RpcSession
             var result = await flush.ConfigureAwait(false);
             if (result.IsCanceled || result.IsCompleted)
                 throw CreateTransportClosedException();
-            ReleaseBatch(pending, exception: null);
+            if (ReleaseBatch(pending, exception: null) is { } cleanupException)
+            {
+                RecordCleanupFailure(cleanupException);
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
+            }
         }
 
         private async ValueTask<bool> WaitForMoreUntilFlushBoundaryAsync(
@@ -461,19 +491,51 @@ internal sealed partial class RpcSession
             }
         }
 
-        private void ReleaseBatch(List<OwnedFrame> pending, Exception? exception)
+        private Exception? ReleaseBatch(List<OwnedFrame> pending, Exception? exception)
         {
+            Exception? cleanupException = null;
             for (var index = 0; index < pending.Count; index++)
-                CompleteReserved(pending[index], exception, completeFlushWaiter: true);
+            {
+                var frame = pending[index];
+                // Retire ownership before callbacks can return/rerent this writer.
+                // A later cleanup failure must never replay a previously released
+                // slot when RunAsync enters its terminal drain.
+                pending[index] = default;
+                ReleaseClaimedFrame(frame, exception, ref cleanupException);
+            }
             pending.Clear();
+            return cleanupException;
         }
 
-        private void DrainQueuedFrames(Exception exception)
+        private Exception? DrainQueuedFrames(Exception exception)
         {
+            Exception? cleanupException = null;
             while (_progressQueue.Reader.TryRead(out var frame))
-                CompleteReserved(frame, exception, completeFlushWaiter: true);
+                ReleaseClaimedFrame(frame, exception, ref cleanupException);
             while (_normalQueue.Reader.TryRead(out var frame))
+                ReleaseClaimedFrame(frame, exception, ref cleanupException);
+            return cleanupException;
+        }
+
+        private void ReleaseClaimedFrame(
+            OwnedFrame frame,
+            Exception? exception,
+            ref Exception? cleanupException)
+        {
+            try
+            {
                 CompleteReserved(frame, exception, completeFlushWaiter: true);
+            }
+            catch (Exception cleanupFailure)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, cleanupFailure);
+            }
+        }
+
+        private void RecordCleanupFailure(Exception? exception)
+        {
+            if (exception is not null)
+                _cleanupException = CombineCleanupExceptions(_cleanupException, exception);
         }
 
         private void CompleteReserved(
@@ -486,29 +548,58 @@ internal sealed partial class RpcSession
             var failureObserver = exception is not null && completeFlushWaiter
                 ? frame.FailureObserver
                 : null;
-            var failedRequestId = failureObserver is null
-                ? 0
-                : BinaryPrimitives.ReadInt64LittleEndian(frame.Memory.Span.Slice(7, sizeof(long)));
+            Exception? cleanupException = null;
+            var failedRequestId = 0L;
+            if (failureObserver is not null)
+            {
+                try
+                {
+                    failedRequestId = BinaryPrimitives.ReadInt64LittleEndian(
+                        frame.Memory.Span.Slice(7, sizeof(long)));
+                }
+                catch (Exception cleanupFailure)
+                {
+                    cleanupException = cleanupFailure;
+                    failureObserver = null;
+                }
+            }
             try
             {
                 _returnBuffer(frame.Owner);
             }
-            finally
+            catch (Exception cleanupFailure)
             {
-                Interlocked.Add(ref _queuedBytes, -frame.Length);
-                SharpLinkTelemetry.AddSendQueueBytes(-frame.Length);
-                if (completeFlushWaiter)
-                {
-                    if (exception is null)
-                        frame.FlushCompletion?.TrySetResult(true);
-                    else
-                        frame.FlushCompletion?.TrySetException(exception);
-                }
+                cleanupException = CombineCleanupExceptions(cleanupException, cleanupFailure);
+            }
+            Interlocked.Add(ref _queuedBytes, -frame.Length);
+            SharpLinkTelemetry.AddSendQueueBytes(-frame.Length);
+            if (completeFlushWaiter)
+            {
+                if (exception is null)
+                    frame.FlushCompletion?.TrySetResult(true);
+                else
+                    frame.FlushCompletion?.TrySetException(exception);
+            }
+            try
+            {
                 PulseCapacityWaiters();
-                // This belongs to the pump's existing lifetime. There is no detached task,
-                // and no admission lock is held while the pending-call owner completes it.
+            }
+            catch (Exception cleanupFailure)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, cleanupFailure);
+            }
+            // This belongs to the pump's existing lifetime. There is no detached task,
+            // and no admission lock is held while the pending-call owner completes it.
+            try
+            {
                 failureObserver?.OnRequestEmissionFailure(failedRequestId, exception!);
             }
+            catch (Exception cleanupFailure)
+            {
+                cleanupException = CombineCleanupExceptions(cleanupException, cleanupFailure);
+            }
+            if (cleanupException is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
         }
 
         private void ReturnUnreserved(OwnedFrame frame, Exception? exception = null)
