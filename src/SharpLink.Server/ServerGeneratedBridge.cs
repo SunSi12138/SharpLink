@@ -24,11 +24,8 @@ internal sealed class ServerGeneratedBridge(
                 // User-code entry and inbound StreamData acceptance are both progress claims:
                 // neither may pass after a strong call terminal, and both promote an already-
                 // expired monotonic deadline to the terminal reason before returning.
-                if (callLease.State.TryAcceptStreamData())
-                    return;
-                throw ServerCallTerminationMapper.CreateServerCancellationException(
-                    callLease.State.Reason,
-                    deadlineExceeded: false);
+                EnsureUserCodeEntry(callLease.State);
+                return;
             }
             finally
             {
@@ -46,6 +43,15 @@ internal sealed class ServerGeneratedBridge(
                 SharpLinkErrorCode.DeadlineExceeded,
                 "Request deadline exceeded.");
         }
+    }
+
+    private static void EnsureUserCodeEntry(ServerCallCancellationState callState)
+    {
+        if (callState.TryAcceptStreamData())
+            return;
+        throw ServerCallTerminationMapper.CreateServerCancellationException(
+            callState.Reason,
+            deadlineExceeded: false);
     }
 
     public IAsyncEnumerable<T> CreateInboundStream<T>(
@@ -74,12 +80,21 @@ internal sealed class ServerGeneratedBridge(
         long methodId,
         CancellationToken cancellationToken)
     {
+        // This framework-owned pump, unlike an application-owned inbound enumerator, joins
+        // physical producer/disposal cleanup before returning. Pin its call generation once
+        // rather than reacquiring the same map entry on every user-code progress boundary.
+        var ownsCallLease = callCancellations.TryCapture(
+                requestId,
+                static (capturedRequestId, state) => state.CaptureLease(capturedRequestId),
+                out var callLease) && callLease.TryAcquire();
         try
         {
             await _protocolBridge.PumpOutboundStreamAsync(
                 requestId,
                 streamId,
-                new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
+                ownsCallLease
+                    ? new OutboundUserCodeEntryAsyncEnumerable<T>(callLease.State, stream)
+                    : new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
                 codec,
                 payloadNullable,
                 contractId,
@@ -124,6 +139,13 @@ internal sealed class ServerGeneratedBridge(
                     await physicalWork.ConfigureAwait(false);
             }
         }
+        finally
+        {
+            // Includes the exceptional physical-work join above: neither a selected public
+            // terminal nor removal from the lookup map permits this generation to be recycled.
+            if (ownsCallLease)
+                callLease.ReleaseUse();
+        }
     }
 
     private SharpLinkException? GetSelectedTerminal(long requestId, out bool publishModuleDrainResponse)
@@ -165,6 +187,32 @@ internal sealed class ServerGeneratedBridge(
                 "Request deadline exceeded.");
         }
         return null;
+    }
+
+    private sealed class OutboundUserCodeEntryAsyncEnumerable<T>(
+        ServerCallCancellationState callState,
+        IAsyncEnumerable<T> stream) : IAsyncEnumerable<T>
+    {
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            EnsureUserCodeEntry(callState);
+            return new Enumerator(callState, stream.GetAsyncEnumerator(cancellationToken));
+        }
+
+        private sealed class Enumerator(
+            ServerCallCancellationState callState,
+            IAsyncEnumerator<T> enumerator) : IAsyncEnumerator<T>
+        {
+            public T Current => enumerator.Current;
+
+            public ValueTask<bool> MoveNextAsync()
+            {
+                EnsureUserCodeEntry(callState);
+                return enumerator.MoveNextAsync();
+            }
+
+            public ValueTask DisposeAsync() => enumerator.DisposeAsync();
+        }
     }
 
     private sealed class UserCodeEntryAsyncEnumerable<T>(
