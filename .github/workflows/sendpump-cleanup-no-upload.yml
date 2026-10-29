@@ -1,0 +1,150 @@
+name: SendPump cleanup correctness (no upload)
+on:
+  push:
+    branches: ['validation/sendpump-cleanup-no-upload-20261029']
+    paths: ['eng/sendpump-cleanup-validation/request.json']
+permissions:
+  contents: read
+concurrency:
+  group: sendpump-cleanup-no-upload-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  baseline:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/validation/sendpump-cleanup-no-upload-20261029' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - name: Check out request and reviewed tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 4
+          persist-credentials: false
+          path: release
+      - name: Validate harness negative controls
+        run: python3 release/eng/sendpump-cleanup-validation/test_validation.py
+      - name: Bind reviewed source trees and exact request/tool ancestry
+        id: provenance
+        run: python3 release/eng/sendpump-cleanup-validation/run.py --release-root release --provenance-only
+      - name: Check out independently frozen baseline source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.provenance.outputs.baseline_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+          path: product
+      - name: Install fixed SDK and separate SHA512-verified private runtime
+        id: setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="$RUNNER_TEMP/static-stream-sdk-${{ github.run_id }}-${{ github.run_attempt }}"
+          PRIVATE_RUNTIME="$RUNNER_TEMP/static-stream-runtime-${{ github.run_id }}-${{ github.run_attempt }}"
+          test ! -e "$SDK_ROOT" && test ! -L "$SDK_ROOT"
+          test ! -e "$PRIVATE_RUNTIME" && test ! -L "$PRIVATE_RUNTIME"
+          mkdir "$SDK_ROOT" "$PRIVATE_RUNTIME"
+          INSTALL_CACHE="$(mktemp -d "$RUNNER_TEMP/static-stream-install-XXXXXX")"
+          trap 'rm -rf -- "$INSTALL_CACHE"' EXIT
+          cd "$INSTALL_CACHE"
+          # Exact official release-metadata/10.0/releases.json pins; no LTS/channel installer.
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.102/dotnet-sdk-10.0.102-linux-x64.tar.gz --output sdk.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz --output dotnet.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.14/aspnetcore-runtime-10.0.14-linux-x64.tar.gz --output aspnetcore.tar.gz
+          {
+            echo '7adf40e8e5547970391cfbe474c3874c6918ce3575ac398f376c78502134e1c8a2fa3da9aca281fdaeda81671f56c851ebe9e74c5b57c5a298bd45deba63565d  sdk.tar.gz'
+            echo '634326028645f38731c8c4e71a68356e4ca0d6b6607139a234ab760687f742063edaf33a1f20dda615742d2dc8300ca2ff857619d51fbb38090383b71334af89  dotnet.tar.gz'
+            echo 'dd024fd2616926a555b75cbf7a836f6dce998199f0596d9d75676dca2b9d59c8ee8673c6ac23473c0f1a4bdd59eb5cd02fe9ab097eeaf2dd8c8bd117c85e7031  aspnetcore.tar.gz'
+          } | sha512sum --check
+          tar -xzf sdk.tar.gz -C "$SDK_ROOT"
+          # Preserve the reviewed O203C1 private-framework install order.
+          tar -xzf dotnet.tar.gz -C "$PRIVATE_RUNTIME"
+          tar -xzf aspnetcore.tar.gz -C "$PRIVATE_RUNTIME"
+          {
+            echo "SDK_DOTNET=$SDK_ROOT/dotnet"
+            echo "PRIVATE_RUNTIME=$PRIVATE_RUNTIME"
+            echo "DOTNET_ROOT=$SDK_ROOT"
+            echo "DOTNET_ROOT_X64=$SDK_ROOT"
+            echo "DOTNET_HOST_PATH=$SDK_ROOT/dotnet"
+          } >> "$GITHUB_ENV"
+          echo "$SDK_ROOT" >> "$GITHUB_PATH"
+          "$SDK_ROOT/dotnet" --info
+          "$PRIVATE_RUNTIME/dotnet" --info
+      - name: Execute bounded baseline correctness phase
+        run: python3 release/eng/sendpump-cleanup-validation/run.py --release-root release --source-root product --phase baseline
+      # No artifact/cache/raw-log/SARIF/trace/job-summary uploads or retries.
+      # Reports and all failure details remain local to the ephemeral runner.
+  candidate:
+    needs: baseline
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/validation/sendpump-cleanup-no-upload-20261029' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_PROCESSOR_COUNT: '4'
+    steps:
+      - name: Check out request and reviewed tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 4
+          persist-credentials: false
+          path: release
+      - name: Validate harness negative controls
+        run: python3 release/eng/sendpump-cleanup-validation/test_validation.py
+      - name: Bind reviewed source trees and exact request/tool ancestry
+        id: provenance
+        run: python3 release/eng/sendpump-cleanup-validation/run.py --release-root release --provenance-only
+      - name: Check out independently frozen candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.provenance.outputs.source_sha }}
+          fetch-depth: 2
+          persist-credentials: false
+          path: product
+      - name: Install fixed SDK and separate SHA512-verified private runtime
+        id: setup
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="$RUNNER_TEMP/static-stream-sdk-${{ github.run_id }}-${{ github.run_attempt }}"
+          PRIVATE_RUNTIME="$RUNNER_TEMP/static-stream-runtime-${{ github.run_id }}-${{ github.run_attempt }}"
+          test ! -e "$SDK_ROOT" && test ! -L "$SDK_ROOT"
+          test ! -e "$PRIVATE_RUNTIME" && test ! -L "$PRIVATE_RUNTIME"
+          mkdir "$SDK_ROOT" "$PRIVATE_RUNTIME"
+          INSTALL_CACHE="$(mktemp -d "$RUNNER_TEMP/static-stream-install-XXXXXX")"
+          trap 'rm -rf -- "$INSTALL_CACHE"' EXIT
+          cd "$INSTALL_CACHE"
+          # Exact official release-metadata/10.0/releases.json pins; no LTS/channel installer.
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.102/dotnet-sdk-10.0.102-linux-x64.tar.gz --output sdk.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz --output dotnet.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.14/aspnetcore-runtime-10.0.14-linux-x64.tar.gz --output aspnetcore.tar.gz
+          {
+            echo '7adf40e8e5547970391cfbe474c3874c6918ce3575ac398f376c78502134e1c8a2fa3da9aca281fdaeda81671f56c851ebe9e74c5b57c5a298bd45deba63565d  sdk.tar.gz'
+            echo '634326028645f38731c8c4e71a68356e4ca0d6b6607139a234ab760687f742063edaf33a1f20dda615742d2dc8300ca2ff857619d51fbb38090383b71334af89  dotnet.tar.gz'
+            echo 'dd024fd2616926a555b75cbf7a836f6dce998199f0596d9d75676dca2b9d59c8ee8673c6ac23473c0f1a4bdd59eb5cd02fe9ab097eeaf2dd8c8bd117c85e7031  aspnetcore.tar.gz'
+          } | sha512sum --check
+          tar -xzf sdk.tar.gz -C "$SDK_ROOT"
+          # Preserve the reviewed O203C1 private-framework install order.
+          tar -xzf dotnet.tar.gz -C "$PRIVATE_RUNTIME"
+          tar -xzf aspnetcore.tar.gz -C "$PRIVATE_RUNTIME"
+          {
+            echo "SDK_DOTNET=$SDK_ROOT/dotnet"
+            echo "PRIVATE_RUNTIME=$PRIVATE_RUNTIME"
+            echo "DOTNET_ROOT=$SDK_ROOT"
+            echo "DOTNET_ROOT_X64=$SDK_ROOT"
+            echo "DOTNET_HOST_PATH=$SDK_ROOT/dotnet"
+          } >> "$GITHUB_ENV"
+          echo "$SDK_ROOT" >> "$GITHUB_PATH"
+          "$SDK_ROOT/dotnet" --info
+          "$PRIVATE_RUNTIME/dotnet" --info
+      - name: Execute bounded candidate correctness phase
+        run: python3 release/eng/sendpump-cleanup-validation/run.py --release-root release --source-root product --phase candidate
+      # No artifact/cache/raw-log/SARIF/trace/job-summary uploads or retries.
+      # Reports and all failure details remain local to the ephemeral runner.

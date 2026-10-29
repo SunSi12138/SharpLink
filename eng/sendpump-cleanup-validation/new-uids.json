@@ -1,0 +1,8 @@
+[
+  "SharpLink.UnitTests.Runtime.SendPumpCleanupProgressTests.1.1.CaptureMustNotMistakeWatchdogTimeoutForCompletedOperationFailure.1.1.0",
+  "SharpLink.UnitTests.Runtime.SendPumpCleanupProgressTests.1.1.StopMustJoinBlockedThrowingReturnAndStillCompleteMarkersAndCapacityWaiters.1.1.0",
+  "SharpLink.UnitTests.Runtime.SendPumpCleanupProgressTests.1.1.TerminalCleanupMustDrainBothQueuesAndPreserveTransportCause(System.String).1.1.0",
+  "SharpLink.UnitTests.Runtime.SendPumpCleanupProgressTests.1.1.TerminalCleanupMustDrainBothQueuesAndPreserveTransportCause(System.String).2.1.0",
+  "SharpLink.UnitTests.Runtime.SendPumpCleanupProgressTests.1.1.TerminalCleanupMustDrainBothQueuesAndPreserveTransportCause(System.String).3.1.0",
+  "SharpLink.UnitTests.Runtime.SendPumpCleanupProgressTests.1.1.ThrowingBatchReturnMustNotReleaseRerentedOwnerOrAbandonEitherQueue.1.1.0"
+]
