@@ -1,0 +1,205 @@
+name: Official 2.0.3 finite normal comparison (no uploads)
+
+on:
+  push:
+    branches: [validation/official203-normal-no-evidence-20261029]
+    paths: ['eng/official-normal-comparison/REQUEST.json']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official203-normal-O203N2
+  cancel-in-progress: false
+
+jobs:
+  normal-comparison:
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/validation/official203-normal-no-evidence-20261029' && github.run_attempt == 1 && github.event.head_commit.message == 'run: official203 normal comparison O203N2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+    steps:
+      - name: Initialize failure-retaining evidence paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DOTNET_INSTALL_DIR="$RUNNER_TEMP/official203-normal-sdk-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export DOTNET_CLI_HOME="$RUNNER_TEMP/official203-normal-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/cli-home"
+          export PRIVATE_RUNTIME="$RUNNER_TEMP/official203-normal-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export DIAGNOSTIC_ROOT="$RUNNER_TEMP/official203-normal-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          {
+            echo "DOTNET_INSTALL_DIR=$DOTNET_INSTALL_DIR"
+            echo "DOTNET_CLI_HOME=$DOTNET_CLI_HOME"
+            echo "PRIVATE_RUNTIME=$PRIVATE_RUNTIME"
+            echo "DIAGNOSTIC_ROOT=$DIAGNOSTIC_ROOT"
+          } >> "$GITHUB_ENV"
+          test ! -e "$DIAGNOSTIC_ROOT" && test ! -L "$DIAGNOSTIC_ROOT"
+          mkdir -p "$DIAGNOSTIC_ROOT/runtime-install" "$DOTNET_CLI_HOME"
+          printf 'request=%s\nrun=%s\nattempt=%s\nrunner=%s/%s\nimage=%s/%s\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_OS" "$RUNNER_ARCH" \
+            "${ImageOS:-unknown}" "${ImageVersion:-unknown}" > "$DIAGNOSTIC_ROOT/launch-environment.txt"
+      - name: Checkout bounded request commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify single request, exact review identity and explicit root release
+        id: request
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp eng/official-normal-comparison/REQUEST.json "$DIAGNOSTIC_ROOT/submitted-request.json"
+          cp "$GITHUB_EVENT_PATH" "$DIAGNOSTIC_ROOT/push-event.json"
+          python3 eng/official-normal-comparison/verify_request.py \
+            --record "$DIAGNOSTIC_ROOT/verified-request.json" > "$DIAGNOSTIC_ROOT/request-gate.log" 2>&1
+      - name: Pin all subsequent tools and workflow bytes to reviewed request parent
+        id: pin
+        working-directory: tools
+        env:
+          REVIEWED_TOOL_SHA: ${{ steps.request.outputs.reviewed_tool_sha }}
+          REVIEWED_TOOL_TREE: ${{ steps.request.outputs.reviewed_tool_tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$REVIEWED_TOOL_SHA"
+          test "$(git rev-parse HEAD)" = "$REVIEWED_TOOL_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$REVIEWED_TOOL_TREE"
+          test -z "$(git status --porcelain)"
+          cp .github/workflows/official-normal-comparison.yml "$DIAGNOSTIC_ROOT/reviewed-workflow.yml"
+          printf '%s\n' "$REVIEWED_TOOL_SHA" > "$DIAGNOSTIC_ROOT/reviewed-tool-sha.txt"
+      - name: Checkout exact development product, not request or tool revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 3d76a3a8b55a37e24c62a073fe588cff3d3867be
+          path: sources/dev
+          persist-credentials: false
+      - name: Install exact separate SDK102 and runtime14 with SHA512 verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$DOTNET_INSTALL_DIR" && test ! -L "$DOTNET_INSTALL_DIR"
+          test ! -e "$PRIVATE_RUNTIME" && test ! -L "$PRIVATE_RUNTIME"
+          cd "$DIAGNOSTIC_ROOT/runtime-install"
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.102/dotnet-sdk-10.0.102-linux-x64.tar.gz --output sdk.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz --output dotnet.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.14/aspnetcore-runtime-10.0.14-linux-x64.tar.gz --output aspnetcore.tar.gz
+          {
+            echo '7adf40e8e5547970391cfbe474c3874c6918ce3575ac398f376c78502134e1c8a2fa3da9aca281fdaeda81671f56c851ebe9e74c5b57c5a298bd45deba63565d  sdk.tar.gz'
+            echo '634326028645f38731c8c4e71a68356e4ca0d6b6607139a234ab760687f742063edaf33a1f20dda615742d2dc8300ca2ff857619d51fbb38090383b71334af89  dotnet.tar.gz'
+            echo 'dd024fd2616926a555b75cbf7a836f6dce998199f0596d9d75676dca2b9d59c8ee8673c6ac23473c0f1a4bdd59eb5cd02fe9ab097eeaf2dd8c8bd117c85e7031  aspnetcore.tar.gz'
+          } | sha512sum --check
+          mkdir "$DOTNET_INSTALL_DIR" "$PRIVATE_RUNTIME"
+          tar -xzf sdk.tar.gz -C "$DOTNET_INSTALL_DIR"
+          tar -xzf dotnet.tar.gz -C "$PRIVATE_RUNTIME"
+          tar -xzf aspnetcore.tar.gz -C "$PRIVATE_RUNTIME"
+          {
+            echo "DOTNET_ROOT=$DOTNET_INSTALL_DIR"
+            echo "DOTNET_ROOT_X64=$DOTNET_INSTALL_DIR"
+            echo "DOTNET_HOST_PATH=$DOTNET_INSTALL_DIR/dotnet"
+          } >> "$GITHUB_ENV"
+          echo "$DOTNET_INSTALL_DIR" >> "$GITHUB_PATH"
+          test "$("$DOTNET_INSTALL_DIR/dotnet" --list-sdks)" = "10.0.102 [$DOTNET_INSTALL_DIR/sdk]"
+          test -z "$("$PRIVATE_RUNTIME/dotnet" --list-sdks)"
+          echo 'HOST_INSTALL sdk=10.0.102 private-runtime=10.0.14 sha512=PASS'
+      - name: Exercise offline protocol and negative controls
+        working-directory: tools
+        run: python3 -m unittest discover -s eng/official-normal-comparison -p 'test_*.py'
+      - name: Warm hosted build dependencies
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/official-normal-comparison/warm_cache.py \
+            --source "$GITHUB_WORKSPACE/sources/dev" \
+            --dotnet "$DOTNET_INSTALL_DIR/dotnet" \
+            --output "$DIAGNOSTIC_ROOT/dependency-cache" > "$DIAGNOSTIC_ROOT/dependency-warmup.log" 2>&1
+      - name: Fetch fixed official packages and verify retained public provenance
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/official-normal-comparison/fetch_published.py \
+            --output "$DIAGNOSTIC_ROOT/published-cache" > "$DIAGNOSTIC_ROOT/published-fetch.log" 2>&1
+      - name: Prepare independent package and own-generator arms, build only
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/official-normal-comparison/prepare.py \
+            --official-cache "$DIAGNOSTIC_ROOT/published-cache" \
+            --official-provenance eng/official-normal-comparison/published-cache/provenance.json \
+            --dev-source "$GITHUB_WORKSPACE/sources/dev" \
+            --dependency-cache "$DIAGNOSTIC_ROOT/dependency-cache/packages" \
+            --dotnet "$DOTNET_INSTALL_DIR/dotnet" \
+            --output "$DIAGNOSTIC_ROOT/prepared" > "$DIAGNOSTIC_ROOT/preparation.log" 2>&1
+      - name: Shut down build servers and establish the released quiet window
+        shell: bash
+        run: |
+          set -euo pipefail
+          for cli_home in "$DOTNET_CLI_HOME" "$DIAGNOSTIC_ROOT/dependency-cache/cli-home" "$DIAGNOSTIC_ROOT/prepared/cli-home"; do
+            DOTNET_CLI_HOME="$cli_home" "$DOTNET_INSTALL_DIR/dotnet" build-server shutdown
+          done > "$DIAGNOSTIC_ROOT/build-server-shutdown.log" 2>&1
+          python3 - <<'PY'
+          import datetime, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['DIAGNOSTIC_ROOT'])
+          listing = subprocess.check_output(['ps', '-eo', 'pid=,stat=,comm='], text=True)
+          (root / 'quiet-window-processes.txt').write_text(listing)
+          active = []
+          for line in listing.splitlines():
+              pid, state, command = line.split(None, 2)
+              if not state.startswith('Z') and command.lower() in {'dotnet', 'testhost', 'msbuild', 'vbcscompiler', 'vstest.console'}:
+                  active.append(line)
+          if active:
+              raise RuntimeError('Other CLR/build/test process prevents quiet window')
+          verified = json.loads((root / 'verified-request.json').read_text())
+          if verified['request']['rootRelease'] != 'authorized' or verified['request']['reviewStatus'] != 'PASS':
+              raise RuntimeError('Root release/review assertion absent')
+          record = {'noOtherClrBuildTest': True,
+                    'owner': 'root-authorized O203N2 hosted job',
+                    'timestampUtc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    'requestCommit': verified['requestCommit'],
+                    'reviewedToolCommit': verified['reviewedToolCommit'],
+                    'runId': os.environ['GITHUB_RUN_ID'], 'attempt': 1,
+                    'campaign': 'official203-candidate3d76-60tcp-O203N2',
+                    'scope': 'this dedicated hosted job; no physical isolation claim'}
+          (root / 'quiet-window.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+      - name: Four candidate strict gates, eight symmetric normal gates, then 48 fresh timings
+        working-directory: tools
+        env:
+          REVIEWED_TOOL_SHA: ${{ steps.request.outputs.reviewed_tool_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/official-normal-comparison/run.py \
+            --prepared "$DIAGNOSTIC_ROOT/prepared" \
+            --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --reviewed-tool-sha "$REVIEWED_TOOL_SHA" \
+            --quiet-window-record "$DIAGNOSTIC_ROOT/quiet-window.json" \
+            --output "$DIAGNOSTIC_ROOT/evidence" > "$DIAGNOSTIC_ROOT/driver.log" 2>&1
+      - name: Always perform offline validation, including incomplete and failed evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f tools/eng/official-normal-comparison/validate.py && \
+             test -f "$DIAGNOSTIC_ROOT/prepared/prepared.json" && test -d "$DIAGNOSTIC_ROOT/evidence"; then
+            python3 tools/eng/official-normal-comparison/validate.py \
+              --input "$DIAGNOSTIC_ROOT/evidence" \
+              --prepared "$DIAGNOSTIC_ROOT/prepared" \
+              --runtime-dotnet "$PRIVATE_RUNTIME/dotnet"
+          else
+            echo 'COMPARISON_INVALID preparation or execution incomplete; no metrics accepted'
+            exit 1
+          fi
+      # Intentionally no artifact/report/trace/raw upload, publishing or log dump.
+      # All original failure files remain in this ephemeral runner-local directory.
