@@ -128,6 +128,8 @@ internal sealed partial class RpcSession
                 ProtocolViolationReason.ProtocolState,
                 "WindowUpdate was received without negotiated flow control.");
         controller.ApplyWindowUpdate(requestId, update.StreamId, checked((int)update.Credit));
+        // Handler completion is not proof of credit granted (late/duplicate credits can be discarded).
+        WindowUpdateCountDiagnostic.HandlerCompleted(Role, checked((int)update.Credit));
     }
 
     internal void CompleteSendStream(long requestId, ushort streamId, Exception? exception = null)
@@ -167,9 +169,11 @@ internal sealed partial class RpcSession
 
     private void TrySendWindowUpdate(long requestId, ushort streamId, int credit)
     {
+        WindowUpdateCountDiagnostic.Entered(Role, credit);
         try
         {
             this.SendWindowUpdate(requestId, streamId, credit);
+            WindowUpdateCountDiagnostic.Accepted(Role, credit);
         }
         catch (SharpLinkException exception) when (
             exception.Code is SharpLinkErrorCode.ConnectionClosed or SharpLinkErrorCode.ResourceExhausted)
