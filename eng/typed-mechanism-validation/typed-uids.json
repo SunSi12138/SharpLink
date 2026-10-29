@@ -1,0 +1,14 @@
+[
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.FirstCreditMustReserveWakeAndRetainNodeUntilFlushOrFault(System.Boolean).1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.FirstCreditMustReserveWakeAndRetainNodeUntilFlushOrFault(System.Boolean).2.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.MixedThrowingReturnMustNotRecycleReentrantlyRentedTypedNodeTwice.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.NegotiatedCompressionMustNeverProcessTypedCredit.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.QueueRejectionMustReturnOnlyUnreservedNodeAndKeepOriginalCreditOwned.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.ReentrantStopAfterReservationMustReturnUnpublishedTypedNodeOnce.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.RuntimePoolMustBeSharedBoundedAndDropLateReturnsAfterDisposal.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.TrustedEntryMustRejectInvalidValuesWithoutWeakeningEncodedPacketValidation.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.TypedCreditsMustRequireFlowControlAndAllowedProtocolPhase.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.TypedEntryMustDefensivelyEnforceSixBytePayloadBoundary.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.TypedTagMustPreserveOwnedFrameSizeAndNormalOwnerContract.1.1.0",
+  "SharpLink.UnitTests.Runtime.TypedWindowUpdateTests.1.1.TypedWireMustMatchExistingCodecAtEveryScalarBoundary.1.1.0"
+]

@@ -1,0 +1,11 @@
+[
+  ".github/workflows/typed-window-mechanism-no-upload.yml",
+  "eng/typed-mechanism-validation/cleanup-uids.json",
+  "eng/typed-mechanism-validation/console/Mechanism.csproj",
+  "eng/typed-mechanism-validation/console/Program.cs",
+  "eng/typed-mechanism-validation/focused-uids.json",
+  "eng/typed-mechanism-validation/run.py",
+  "eng/typed-mechanism-validation/test_validation.py",
+  "eng/typed-mechanism-validation/tool-files.json",
+  "eng/typed-mechanism-validation/typed-uids.json"
+]

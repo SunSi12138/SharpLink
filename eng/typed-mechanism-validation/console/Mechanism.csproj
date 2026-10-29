@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>SharpLink.Benchmarks</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ProductCommit Condition="'$(Arm)' == 'baseline'">0403d6a0a4eb2b1bc9dafc9c87aa876c36f0d158</ProductCommit>
+    <ProductCommit Condition="'$(Arm)' == 'candidate'">e62f7a335f16595bad37bc3a8edeb7b945c5b686</ProductCommit>
+    <SourceTree Condition="'$(Arm)' == 'baseline'">410fdb911cf7120ccabbbd10c820b0c9a73d9223</SourceTree>
+    <SourceTree Condition="'$(Arm)' == 'candidate'">b3e94d0c00a6e581944e98ffe7e971660f21b2e4</SourceTree>
+  </PropertyGroup>
+  <Target Name="ValidateInputs" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(ProductRoot)' == ''" Text="ProductRoot is required." />
+    <Error Condition="'$(ProductCommit)' == ''" Text="Arm must be baseline or candidate." />
+  </Target>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <AssemblyMetadata Include="Arm" Value="$(Arm)" />
+    <AssemblyMetadata Include="SourceTree" Value="$(SourceTree)" />
+    <AssemblyMetadata Include="ExpectedProductCommit" Value="$(ProductCommit)" />
+    <ProjectReference Include="$(ProductRoot)/src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="$(ProductRoot)/src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+  </ItemGroup>
+</Project>
