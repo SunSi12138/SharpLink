@@ -7,7 +7,9 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
     [Test]
-    public Task Issue865CapturedSnapshotsMustReleaseEveryChildAndRetainMainFailure()
+    [Arguments(false)]
+    [Arguments(true)]
+    public Task Issue865CapturedSnapshotsMustReleaseEveryChildAndRetainMainFailure(bool useWindowsLineEndings)
     {
         var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
@@ -30,7 +32,9 @@ public interface ISnapshotContract : SharpLink.Sdk.IService
 """);
         var result = GeneratorTestHarness.Run("SnapshotOwnershipRegression", source);
         Ensure(!result.Diagnostics.Any(d => d.Id == "CS8785"), "generator must not fault");
-        var code = string.Join("\n", result.GeneratedTrees.Select(t => t.GetText().ToString()));
+        var code = string.Join("\n", result.GeneratedTrees.Select(t => t.GetText().ToString()))
+            .ReplaceLineEndings(useWindowsLineEndings ? "\r\n" : "\n")
+            .ReplaceLineEndings("\n");
         Ensure(code.Contains("var __snapshotCleanupStarted = false;", StringComparison.Ordinal),
             "capture must install an exception cleanup path immediately after rent");
         Ensure(code.Contains("catch { /* The capture exception takes precedence. */ }", StringComparison.Ordinal),
