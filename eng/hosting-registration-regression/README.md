@@ -5,10 +5,11 @@ current checkout. The historical arms must reproduce their original three and
 four failures. The current arm must pass the focused checks and every case in the
 complete unit suite, with zero failures or skips and unchanged binary hashes.
 
-The expected complete-suite inventory is **2,188**: the prior 2,171 cases
+The expected complete-suite inventory is **2,194**: the prior 2,171 cases
 (including the two queued-reader workload controls after the 2,169-case baseline)
-plus 17 quiescent-pump controls already merged in #961. This corrects an existing
-Hosting-runner census omission; it does not add new test cases. The previous 2,123-case count
+plus 17 quiescent-pump controls already merged in #961, then six new
+send-pump cleanup-progress cases. The #961 count correction is a separate
+commit from the new six-case addition; neither changes the Hosting fixture. The previous 2,123-case count
 predated subsequent unit additions: [run 39962583418](https://github.com/SunSi12138/SharpLink/actions/runs/39962583418)
 executed 2,169 cases with zero failures/skips, then correctly rejected the stale
 inventory expectation. This count correction preserves the eleven-case fixture,
