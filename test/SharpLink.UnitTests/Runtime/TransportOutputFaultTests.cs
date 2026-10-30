@@ -174,7 +174,7 @@ public partial class TransportOutputFaultTests
     [Test]
     [Arguments("write-after-gate", 0)]
     [Arguments("write-prefix-after-gate", 7)]
-    public async Task QuiescentPumpFaultMustReturnInFlightQueuedAndCapacityWaitingOwnersOnce(string failure, int expectedBytes)
+    public async Task QuiescentPumpFaultMustReturnInFlightQueuedAndCapacityWaitingOwnersOnce(string failureMode, int expectedBytes)
     {
         using var context = new SharpLinkRuntimeContextBuilder().Configure(options =>
         {
@@ -182,7 +182,7 @@ public partial class TransportOutputFaultTests
             options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency;
         }).Build(includeGeneratedAssemblyCatalog: false);
         // Cover both failure before delivery and failure after an unknown partial prefix.
-        var stream = new ObservingStream(blockWrite: true, failure: failure);
+        var stream = new ObservingStream(blockWrite: true, failure: failureMode);
         var session = CreateSession(context, new StreamTransportConnection(stream));
         var frames = new CountingWriter[4];
         for (var index = 0; index < frames.Length; index++)
