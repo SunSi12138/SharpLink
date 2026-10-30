@@ -61,7 +61,7 @@ OneWay 矩阵记录的是有界本地发送接受，不是接收端业务完成�
 
 ## GitHub 门禁
 
-日常功能通过 PR 合并到 `dev`。正式候选以 `dev → main` Release PR 收口；该 PR 自动运行三平台 Release Gate、NativeAOT、包安装和 Chaos。合并后若 SHA 变化，必须在最终 `main` 提交手工重跑 Release Gate，构建、包和性能证据不能沿用不同 SHA 的 PR head 结果。
+日常功能通过 PR 合并到 `dev`。正式候选以 `dev → main` Release PR 收口；该 PR 自动运行三平台 Release Gate、NativeAOT、包安装和 Chaos。合并后的 `main` push 自动在最终 `main` 精确提交运行 Release Gate，构建、包和性能证据不能沿用不同 SHA 的 PR head 结果。
 
 创建标签前确认：
 

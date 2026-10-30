@@ -1,0 +1,550 @@
+{
+ "schemaVersion": 1,
+ "decision": "accept-exact-source-api-surface",
+ "reviewVerdict": "PASS_FULL_BASELINE_AND_DELTA_API_SEMANTIC_REVIEW",
+ "scope": "Static source API semantic retention only; not package/runtime/performance/merge/release approval.",
+ "baseline": {
+  "commit": "3d76a3a8b55a37e24c62a073fe588cff3d3867be",
+  "originalStatusPreserved": "proposal-not-approved",
+  "filesSha256": {
+   "eng/api-inventory/3.0-decisions.json": "906121d6dc5a069f695b90dc983948052f020afadbfcd8b58b93942566d8a807",
+   "eng/api-inventory/3.0-decision-ids.json": "1688b92f47819af47349ada21bb45df753dece0f71908fdc24ed6f776c3167ba"
+  },
+  "typeCount": 302,
+  "requiredIdCount": 3397,
+  "requiredMapSha256": "7800d0523c8199cfe5772125240a085c988df11f9f9f62f4e06dfbf9af089017",
+  "acceptance": "Accept each existing exact type/member ID in the two hash-pinned ledger files, not future members or a wildcard. Independently reviewed current purpose, signatures, accessibility, nullability, defaults, attributes, inheritance and interfaces; unchanged is not approval. No additional surface narrowing is authorized.",
+  "roles": {
+   "application-contract": {
+    "types": 57,
+    "ids": 650,
+    "reason": "Retain application integration, invocation, registry and authorization contracts; preserve explicit ownership and cancellation semantics."
+   },
+   "codec-spi": {
+    "types": 12,
+    "ids": 44,
+    "reason": "Retain serializer and codec composition with current ownership/lifetime and generated-code dependencies."
+   },
+   "configuration": {
+    "types": 30,
+    "ids": 409,
+    "reason": "Retain independently configurable options and immutable-at-build copies; validated clones remain mutable, not leases."
+   },
+   "contract-metadata": {
+    "types": 21,
+    "ids": 91,
+    "reason": "Retain source-generation attributes and metadata identity; generation performs semantic validation beyond CLR attribute construction."
+   },
+   "diagnostics": {
+    "types": 55,
+    "ids": 952,
+    "reason": "Retain observations, exceptions, telemetry and bounded support diagnostics; snapshots are not admission or security authority."
+   },
+   "generated-abi": {
+    "types": 36,
+    "ids": 427,
+    "reason": "Retain exact generated ABI metadata, descriptors, admission and context operations; matching consumer regeneration/rebuild required."
+   },
+   "generation-control": {
+    "types": 10,
+    "ids": 97,
+    "reason": "Retain optional inventory/sync and local staging/activation; not remote assembly loading or full live-upgrade authority."
+   },
+   "generator-entry": {
+    "types": 1,
+    "ids": 3,
+    "reason": "Retain public generator discovery/Initialize entry, not generator implementation internals."
+   },
+   "hosting": {
+    "types": 8,
+    "ids": 24,
+    "reason": "Retain DI/host lifecycle composition; internal fallback logger does not enlarge public logging authority."
+   },
+   "internal-polymorphism": {
+    "types": 7,
+    "ids": 7,
+    "reason": "Retain actual internal/private inheritance without promoting accessibility."
+   },
+   "legacy-helper": {
+    "types": 1,
+    "ids": 5,
+    "reason": "Retain balanced same-thread legacy sizing capability; current generator does not require this helper."
+   },
+   "policy-spi": {
+    "types": 33,
+    "ids": 328,
+    "reason": "Retain caller-supplied routing/authentication/selection policy boundaries without exposing engine internals."
+   },
+   "protocol-buffer-spi": {
+    "types": 21,
+    "ids": 298,
+    "reason": "Retain protocol/buffer/pool contracts and explicit wire configuration with current validation and ownership."
+   },
+   "transport-composition": {
+    "types": 10,
+    "ids": 62,
+    "reason": "Retain factory/connection composition and supported concrete transports; internal coordination interfaces are not new public SPI."
+   }
+  },
+  "inheritance": [
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkCallContextSnapshot",
+    "accessibility": "Public",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkException",
+    "accessibility": "Public",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkTransportAddress",
+    "accessibility": "Public",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.ClientRuntimeTopologyComposition",
+    "accessibility": "Internal",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.ClientTopologyDraft",
+    "accessibility": "Internal",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.ClientTopologyPlan",
+    "accessibility": "Internal",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.SharpLinkClient.ClientInterceptorState",
+    "accessibility": "Private",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalCodecPlan",
+    "accessibility": "Internal",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Generator/SharpLink.Generator.csproj@netstandard2.0|SharpLink.Generator|T:SharpLink.Generator.FinalPhysicalLayoutPlan",
+    "accessibility": "Internal",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|T:SharpLink.Runtime.StreamTransportConnection",
+    "accessibility": "Internal",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   },
+   {
+    "id": "src/SharpLink.Server/SharpLink.Server.csproj@net10.0|SharpLink.Server|T:SharpLink.Server.SharpLinkAdmissionRuleOptions",
+    "accessibility": "Public",
+    "decision": "keep-inheritable",
+    "reason": "Actual current direct derived types; preserve existing visibility."
+   }
+  ],
+  "memberExceptions": [
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkGeneratedAssemblyCatalog.CreateSnapshot",
+    "reason": "Retain legacy inspection of all currently live weak-catalog entries. Owner-scoped registration/resolution does not provide equivalent lossless enumeration. The returned strong point-in-time list can retain its manifests until the caller releases it."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkGeneratedClusterRouteCatalog.CreateSnapshot",
+    "reason": "Retain legacy inspection of all currently live weak-catalog entries. Owner-scoped registration/resolution does not provide equivalent lossless enumeration. The returned strong point-in-time list can retain its manifests until the caller releases it."
+   },
+   {
+    "id": "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|M:SharpLink.Runtime.BufferWriterPoolOptions.CloneValidated",
+    "reason": "Retain validation plus an independent, still-mutable options copy for standalone configuration. Property setters remain usable; this is not an immutable snapshot."
+   },
+   {
+    "id": "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|M:SharpLink.Runtime.RuntimeConcurrencyOptions.CloneValidated",
+    "reason": "Retain validation plus an independent, still-mutable options copy for standalone configuration. Property setters remain usable; this is not an immutable snapshot."
+   },
+   {
+    "id": "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|M:SharpLink.Runtime.SharpLinkProtocolOptions.CloneValidated",
+    "reason": "Retain validation plus an independent, still-mutable options copy for standalone configuration. Property setters remain usable; this is not an immutable snapshot."
+   }
+  ]
+ },
+ "current": {
+  "source": "a91ce4bf48523264282928231f35fce339fb1567",
+  "tree": "83fe67363af2c3c815a333e93806d8a5fc6136aa",
+  "requiredIdCount": 3506,
+  "typeCount": 311,
+  "requiredMapSha256": "6360b47d625f21261953a48e859f943deb5ffa1e17f06cc6e2caa42e79010dec",
+  "addedCount": 109,
+  "changedCount": 12,
+  "removedCount": 0,
+  "unchangedCount": 3385,
+  "assemblyGrantsUnchangedCount": 23,
+  "addedGroups": [
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.ISharpLinkMaintenanceController",
+    "reason": "Host-local cold authority; read current generation, begin exact compatible implementation plan; no remote invocation authority and no public proof/seal primitive.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.ISharpLinkMaintenanceController.BeginMaintenance(System.Int64,System.Collections.Generic.IReadOnlyList{SharpLink.Abstractions.SharpLinkImplementationReplacement})",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.ISharpLinkMaintenanceController.get_CatalogGeneration",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.ISharpLinkMaintenanceController.CatalogGeneration",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.ISharpLinkMaintenanceController"
+    ]
+   },
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.ISharpLinkMaintenanceOperation",
+    "reason": "Read-only observation of immutable operation/digest plus stage; WaitAsync cancellation affects observer only.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.ISharpLinkMaintenanceOperation.WaitAsync(System.Threading.CancellationToken)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.ISharpLinkMaintenanceOperation.get_OperationId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.ISharpLinkMaintenanceOperation.get_PlanDigest",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.ISharpLinkMaintenanceOperation.get_Stage",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.ISharpLinkMaintenanceOperation.OperationId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.ISharpLinkMaintenanceOperation.PlanDigest",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.ISharpLinkMaintenanceOperation.Stage",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.ISharpLinkMaintenanceOperation"
+    ]
+   },
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.ProtocolV2Capabilities",
+    "reason": "Retain negotiated optional maintenance capability bit 7 / frame 17; existing enum values unchanged; no wire-minor change or implicit capability enablement.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.ProtocolV2Capabilities.CooperativeMaintenance"
+    ]
+   },
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.ProtocolV2FrameType",
+    "reason": "Retain negotiated optional maintenance capability bit 7 / frame 17; existing enum values unchanged; no wire-minor change or implicit capability enablement.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.ProtocolV2FrameType.CooperativeMaintenance"
+    ]
+   },
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions",
+    "reason": "Sealed initialization-only fixed domain/participant/runtime identities; nonempty validation at opt-in; identities are not credentials.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.#ctor(System.Guid,System.Guid,System.Guid)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.Deconstruct(System.Guid@,System.Guid@,System.Guid@)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.Equals(SharpLink.Abstractions.SharpLinkClientMaintenanceOptions)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.Equals(System.Object)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.GetHashCode",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.ToString",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.get_DomainId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.get_ParticipantId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.get_RuntimeIncarnation",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.op_Equality(SharpLink.Abstractions.SharpLinkClientMaintenanceOptions,SharpLink.Abstractions.SharpLinkClientMaintenanceOptions)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.op_Inequality(SharpLink.Abstractions.SharpLinkClientMaintenanceOptions,SharpLink.Abstractions.SharpLinkClientMaintenanceOptions)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.set_DomainId(System.Guid)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.set_ParticipantId(System.Guid)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.set_RuntimeIncarnation(System.Guid)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.{Clone}$",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.DomainId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.ParticipantId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions.RuntimeIncarnation",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkClientMaintenanceOptions"
+    ]
+   },
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkImplementationReplacement",
+    "reason": "Sealed initialization-only exact local Assembly source/target pair; nonnull validated on BeginMaintenance; no artifact loading or remote upload authority.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.#ctor(System.Reflection.Assembly,System.Reflection.Assembly)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.Deconstruct(System.Reflection.Assembly@,System.Reflection.Assembly@)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.Equals(SharpLink.Abstractions.SharpLinkImplementationReplacement)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.Equals(System.Object)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.GetHashCode",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.ToString",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.get_Source",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.get_Target",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.op_Equality(SharpLink.Abstractions.SharpLinkImplementationReplacement,SharpLink.Abstractions.SharpLinkImplementationReplacement)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.op_Inequality(SharpLink.Abstractions.SharpLinkImplementationReplacement,SharpLink.Abstractions.SharpLinkImplementationReplacement)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.set_Source(System.Reflection.Assembly)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.set_Target(System.Reflection.Assembly)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkImplementationReplacement.{Clone}$",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkImplementationReplacement.Source",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkImplementationReplacement.Target",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkImplementationReplacement"
+    ]
+   },
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkMaintenanceParticipant",
+    "reason": "Sealed initialization-only fixed host roster: participant/runtime and authenticated subject; ordinal exact match and expiry enforced by existing authentication.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.#ctor(System.Guid,System.Guid,System.String)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.Deconstruct(System.Guid@,System.Guid@,System.String@)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.Equals(SharpLink.Abstractions.SharpLinkMaintenanceParticipant)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.Equals(System.Object)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.GetHashCode",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.ToString",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.get_AuthenticatedSubject",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.get_ParticipantId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.get_RuntimeIncarnation",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.op_Equality(SharpLink.Abstractions.SharpLinkMaintenanceParticipant,SharpLink.Abstractions.SharpLinkMaintenanceParticipant)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.op_Inequality(SharpLink.Abstractions.SharpLinkMaintenanceParticipant,SharpLink.Abstractions.SharpLinkMaintenanceParticipant)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.set_AuthenticatedSubject(System.String)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.set_ParticipantId(System.Guid)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.set_RuntimeIncarnation(System.Guid)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.{Clone}$",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.AuthenticatedSubject",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.ParticipantId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkMaintenanceParticipant.RuntimeIncarnation",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkMaintenanceParticipant"
+    ]
+   },
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkMaintenanceResult",
+    "reason": "Sealed value record/local terminal observation, not trusted receipt or integrity certificate; nullable Failure; arbitrary user-created/with copies grant no internal quiescence proof.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.#ctor(System.Guid,System.String,SharpLink.Abstractions.SharpLinkMaintenanceStage,System.Int64,System.Exception)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.Deconstruct(System.Guid@,System.String@,SharpLink.Abstractions.SharpLinkMaintenanceStage@,System.Int64@,System.Exception@)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.Equals(SharpLink.Abstractions.SharpLinkMaintenanceResult)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.Equals(System.Object)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.GetHashCode",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.ToString",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.get_Failure",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.get_OperationId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.get_PlanDigest",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.get_Stage",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.get_TargetGeneration",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.op_Equality(SharpLink.Abstractions.SharpLinkMaintenanceResult,SharpLink.Abstractions.SharpLinkMaintenanceResult)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.op_Inequality(SharpLink.Abstractions.SharpLinkMaintenanceResult,SharpLink.Abstractions.SharpLinkMaintenanceResult)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.set_Failure(System.Exception)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.set_OperationId(System.Guid)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.set_PlanDigest(System.String)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.set_Stage(SharpLink.Abstractions.SharpLinkMaintenanceStage)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.set_TargetGeneration(System.Int64)",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceResult.{Clone}$",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkMaintenanceResult.Failure",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkMaintenanceResult.OperationId",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkMaintenanceResult.PlanDigest",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkMaintenanceResult.Stage",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|P:SharpLink.Abstractions.SharpLinkMaintenanceResult.TargetGeneration",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkMaintenanceResult"
+    ]
+   },
+   {
+    "owner": "SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkMaintenanceStage",
+    "reason": "Ten explicit observable stages 0..9, not the eleven wire stages; success only Succeeded, rejection distinct from permanent fail-closed.",
+    "exactIds": [
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.CommittedPaused",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.Draining",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.FailedClosed",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.Freezing",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.Quiescent",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.RejectedBeforeSeal",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.Resuming",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.Retiring",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.Succeeded",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|F:SharpLink.Abstractions.SharpLinkMaintenanceStage.Validating",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|M:SharpLink.Abstractions.SharpLinkMaintenanceStage.#ctor",
+     "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkMaintenanceStage"
+    ]
+   },
+   {
+    "owner": "SharpLink.Client|T:SharpLink.Client.SharpLinkClientMaintenanceExtensions",
+    "reason": "Cold pre-connect opt-in on built-in client; existing client interface unchanged; custom clients explicitly NotSupported.",
+    "exactIds": [
+     "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|M:SharpLink.Client.SharpLinkClientMaintenanceExtensions.EnableCooperativeMaintenance(SharpLink.Abstractions.ISharpLinkClient,SharpLink.Abstractions.SharpLinkClientMaintenanceOptions)",
+     "src/SharpLink.Client/SharpLink.Client.csproj@net10.0|SharpLink.Client|T:SharpLink.Client.SharpLinkClientMaintenanceExtensions"
+    ]
+   },
+   {
+    "owner": "SharpLink.Server|T:SharpLink.Server.SharpLinkServerMaintenanceExtensions",
+    "reason": "Cold pre-start host opt-in and authority factory; existing server interface unchanged; custom servers explicitly NotSupported.",
+    "exactIds": [
+     "src/SharpLink.Server/SharpLink.Server.csproj@net10.0|SharpLink.Server|M:SharpLink.Server.SharpLinkServerMaintenanceExtensions.EnableCooperativeMaintenance(SharpLink.Abstractions.ISharpLinkServer,System.Guid,System.Collections.Generic.IReadOnlyList{SharpLink.Abstractions.SharpLinkMaintenanceParticipant})",
+     "src/SharpLink.Server/SharpLink.Server.csproj@net10.0|SharpLink.Server|T:SharpLink.Server.SharpLinkServerMaintenanceExtensions"
+    ]
+   }
+  ],
+  "changed": [
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.IRpcByteBufferWriter",
+    "classification": "incident-relation-only",
+    "reason": "Incoming internal maintenance-envelope writer dependency only."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.ISharpLinkClient",
+    "classification": "incident-relation-only",
+    "reason": "Incoming public client extension receiver/return only; no mandatory interface member added."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.ISharpLinkGeneratedAssemblyManifest",
+    "classification": "incident-relation-only",
+    "reason": "Incoming internal prepared-plan validation/dependency closure references only."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.ISharpLinkServer",
+    "classification": "incident-relation-only",
+    "reason": "Incoming public server extension receiver only; no mandatory interface member added."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.ProtocolV2Capabilities",
+    "classification": "incident-relation-only",
+    "reason": "NamedType declaration unchanged; value domain deliberately grows through separately reviewed CooperativeMaintenance=128 field."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.ProtocolV2FrameType",
+    "classification": "incident-relation-only",
+    "reason": "NamedType declaration unchanged; value domain deliberately grows through separately reviewed CooperativeMaintenance=17 field."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.RpcHash128",
+    "classification": "incident-relation-only",
+    "reason": "Incoming internal immutable contract-owner hash storage only."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkAuthenticationContext",
+    "classification": "incident-relation-only",
+    "reason": "Incoming coordinator/enrollment authenticated-subject/expiry dependencies only."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkClientInvocationResult",
+    "classification": "incident-relation-only",
+    "reason": "Four incoming edges removed with private duplicate deadline/abandoned-task wrappers; physical ownership now handled by SharpLinkPhysicalWork. No required ID removed."
+   },
+   {
+    "id": "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj@net10.0|SharpLink.Abstractions|T:SharpLink.Abstractions.SharpLinkException",
+    "classification": "incident-relation-only",
+    "reason": "Private terminal helper gains out bool and deadline arbitration carrier helper is added; public exception declaration and inheritance unchanged."
+   },
+   {
+    "id": "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|T:SharpLink.Runtime.SharpLinkRuntimeContext",
+    "classification": "incident-relation-only",
+    "reason": "Incoming nested prepared-publication dependency references only; no public member addition or privilege grant."
+   },
+   {
+    "id": "src/SharpLink.Runtime/SharpLink.Runtime.csproj@net10.0|SharpLink.Runtime|T:SharpLink.Runtime.StreamTransportConnection",
+    "classification": "internal-inheritance-extension",
+    "reason": "Internal nonsealed class adds two internal quiescent-shutdown interfaces only; explicit implementations stay internal effectively; real internal TLS subclass still derives. No public ITransportConnection requirement change."
+   }
+  ]
+ },
+ "maintenanceBoundary": {
+  "scope": "#933 restricted compatible server-implementation-only replacement; not full #775.",
+  "rules": [
+   "Host-local pre-start authority; fixed built-in TLS physical cohort and authenticated subject/expiry; not remotely invocable catalog mutation.",
+   "Exact source/target dependency/contracts validation, sealed configuration, no queue-capable generations; all participant fences/commits precede resume.",
+   "Freeze onward failure is fail-closed; observer cancellation is not rollback or physical drainage. Public result records/digests do not forge internal proof.",
+   "Cold management opt-in, not ordinary per-RPC coordinator lookup; custom implementations fail explicitly. No incompatible client/contract/codecs upgrade, remote loading, BindingId or ExactRegistration workflow."
+  ]
+ },
+ "migrationAndClarifications": [
+  "3.x breaking correctness-first migration is allowed; matching generated ABI consumers regenerate/rebuild. No 2.0.3 binary-compatibility promise.",
+  "SharpLinkAuthenticator.CreateClient/CreateServer each allocate a private sealed adapter. Retention rationale is narrow callback forwarding, not allocation-free construction; API unchanged.",
+  "Catalog snapshots are strong caller-owned lists over weak catalogs; CloneValidated results remain independently mutable; diagnostics and caller-created records are not trusted receipts."
+ ],
+ "reviewRecordSha256": {
+  "full-semantic-signoff.json": "66b183b2960f395195754b843a96ef017ec4905e2020b935967dcb0fa24f9b27",
+  "baseline-application-review.json": "c541b4ef7cc380cfe788e73cf2e1b39232dc39144377fbfe645dcb54f1e990c9",
+  "baseline-extensions-review.json": "0fc100a07793e0f49847d4ad1f177bd827ae30736dc4c1df0550e1499119fab5",
+  "baseline-spi-review.json": "cbf49d36a2057923dc7cf48ec7ce53c15741ad1f2e28e54ce4ed7175428d131d",
+  "delta-semantic-review.json": "fe3f667c75adec86a0b04acdf8ee8b4ce01cae33ce13323a69d54eaabc9fb836",
+  "source-reuse-proof.json": "df6318d7b8e8a85598ec4e17e5fec788f76fdd974e7d4894b07a0b8fc9447aab"
+ },
+ "provenance": {
+  "runUrl": "https://github.com/SunSi12138/SharpLink/actions/runs/40989514786",
+  "runId": 40989514786,
+  "runWorkflowHead": "1e4257d2ef57c92fa6ceeca2d3c0defb43bb96e5",
+  "actualInventorySource": "a91ce4bf48523264282928231f35fce339fb1567",
+  "runConclusionPreserved": "failure",
+  "comparisonStatusPreserved": "INCOMPLETE_REVIEW_OUTPUT",
+  "comparisonSha256": "e81578809925c93188ab0c3a3aea9f47d04679b15c2b252d71031dc79e79d7eb",
+  "artifactId": 12947834456,
+  "artifactUrl": "https://api.github.com/repos/SunSi12138/SharpLink/actions/artifacts/12947834456",
+  "artifactName": "api-current-review-40989514786-1",
+  "artifactBytes": 7176432,
+  "artifactSha256": "f97cef6dfd44392ab20e9e351df11f7c0ceb6347609b205ebddaadb796b32525",
+  "artifactExpiresAt": "2026-11-02T02:07:54Z",
+  "availability": "GitHub artifact retention is temporary, not a permanent evidence archive. Hashes identify retained copies; source and fixed ledger remain independently reviewable by commit. A digest alone does not recover missing artifact bytes.",
+  "historicalInventorySource": "de0d871f7a13662010fdf47d140ee885d7ba04ea",
+  "historicalInventoryTree": "ccc99fbab3daa767ef1bb340bd3a73c9472d798c",
+  "historicalRunId": 39986953281,
+  "historicalArtifactId": 12515194592,
+  "historicalArtifactSha256": "ae34d7099e7a5549dfcafafc2b13b94daddb333b02d948937c3b95186957f03a"
+ },
+ "staticReuse": {
+  "sourceTree": "23f3fa6c5769a232ffc924d0ceca6cc6cabcbe63",
+  "productionBlobCount": 524,
+  "srcRecursiveManifestSha256": "daa7907a9f834985c5a23ee0b04b4668fcbdc89074a30c842672c7757202aa8c",
+  "manifestMethod": "SHA256 of git ls-tree -r <commit> src bytes; git tree and all blob identities must also match.",
+  "controlGitObjects": {
+   "eng": "8e02c8efba72af916924d926977245b7879217d5",
+   "Directory.Build.props": "a20e1f128ccfa06c4d0a4e6324b8c698a21f9916",
+   "Directory.Packages.props": "0fe99e9456299e47981e5965b22961e3d92fcc73",
+   "global.json": "e9ed1033b3534e6d844d4c34b2783ab0c814ed84",
+   "Sharplink.slnx": "9a1545f4ef34328f4b0a619ba56dee7f4dd15c08"
+  },
+  "inputFilesSha256": {
+   "eng/SharpLink.ApiInventory/GeneratedSourceComparison.cs": "07d2a9cba76add787a26590d2f475b5fe11a36208108577d04675caf485538f8",
+   "eng/SharpLink.ApiInventory/InventoryReport.cs": "58ce8211aa8ed0e8ea34d985ff9ac731028551ad5f2968b1edeed9d11a3b87ab",
+   "eng/SharpLink.ApiInventory/InventoryRunner.cs": "4a1845a9604332593aa49ce8780048db77aebd29d4ac42226048324753491383",
+   "eng/SharpLink.ApiInventory/Program.cs": "ce8fea9df2ef2342dcc77e0c150e6548ab5a1ea5060c96cbbff63a945371a506",
+   "eng/SharpLink.ApiInventory/SymbolInventory.cs": "585e0763d8f6cd1d03534d4fba55e401a2c278c730466fec0a16ec93df649e3b",
+   "eng/SharpLink.ApiInventory/SharpLink.ApiInventory.csproj": "58b259867b6b2b35352f6928af8907477d2b357f9a0964e7623c8b181b24d87a",
+   "eng/run-api-inventory.py": "c2735b36765e11521d8342a4f14ba7cf46aa833a44b7fe14e051c47e66c196aa",
+   "eng/api-inventory/scope.json": "52e8be5cb399d0445b426a98bab1ce10997fee38895885d0638c4efdbbe1c4fe",
+   "Directory.Packages.props": "82870bbf7a9967a85d7ca991dbdd90b97329184cfbdcd67922fb6b45c0c8523e",
+   "global.json": "099805cd1161ca87a57c0b0241c614b0ec35b5fce384c3fd1c86a16e5364f6e4",
+   "Directory.Build.props": "8e6b542c7afaf25e1b510f514f534a3f0c924ceaf8681e98995ade24a76c56cb",
+   "src/Directory.Build.props": "5dbaadda54a281d25c9ddc263532e23eb0c5c937af3d70b10d866a80b850cd86",
+   "src/SharpLink.Abstractions/SharpLink.Abstractions.csproj": "026d3726e13ae7ce0791eb2864413308ad6393ff1091b950bc2eace90d12cecc",
+   "src/SharpLink.Client/SharpLink.Client.csproj": "c4be86cce056d56ee28ca8b25ca539f787ce9953e8c117d728dd1420999c466d",
+   "src/SharpLink.Compression.Zstd/SharpLink.Compression.Zstd.csproj": "1c48b9e40a62d44d8dec67d92aea95d4ab4ede1bdefb4326d47177859d3e0344",
+   "src/SharpLink.GenerationControl/SharpLink.GenerationControl.csproj": "e7f82b4fd21da52922faad8935d74cd95a245fbd537f498137fa06e296df3ff1",
+   "src/SharpLink.Generator/SharpLink.Generator.csproj": "b22065bedfa90aca4cecab4ae7e641be5fd1ec0fa87a55a1c28267e09d1c119e",
+   "src/SharpLink.Hosting/SharpLink.Hosting.csproj": "3567a87d76d52aa4911e8cfe39f0f350954dd756ab47c370d72d8e5f62741fe2",
+   "src/SharpLink.Runtime/SharpLink.Runtime.csproj": "7364a80e389fa7e16b2cde1bdf5f897f2360b817af74a3b3fd50d625406013ae",
+   "src/SharpLink.Sdk/SharpLink.Sdk.csproj": "134e70627bd80c89d2aab4b3930df1da5e0a1a0b945035f2903afcc66d06c117",
+   "src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj": "efd63b3c6281af14d49663e5a97f22bfe8f2c5aace9b906500b79c406dec2a21",
+   "src/SharpLink.Server/SharpLink.Server.csproj": "b100a680185f4f3aed84fca83d0f1012b0ac4ad729664fb1cf67745f932bd4e0"
+  },
+  "verifiedCandidates": [
+   {
+    "commit": "dd999dbb8e0f1e9fb3f2a4b259540991dee19e6c",
+    "tree": "9de916800d1df26d612fbd021dd5438fd5f6cf29",
+    "changesSinceInventorySource": [
+     "test/SharpLink.Generator.Tests/RpcIssue865RegressionTests.cs"
+    ]
+   },
+   {
+    "commit": "e8fcef3ddb93d76457b690dadc279e7a8f91b47d",
+    "tree": "23074b603a369fe339b9958dec2da53a04b4bfa8",
+    "identityVerification": "GitHub git/commits GET verified exact commit/tree; local same-tree object independently compared against inventory source.",
+    "sourceTreeAnd524BlobsMatch": true,
+    "all22InputSha256Match": true,
+    "changesSincePreviousCandidate": [
+     "test/SharpLink.IntegrationTests/DynamicEndpointSelectionRuntimeIntegrationTests.cs",
+     "test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.MaintenanceSupport.cs"
+    ]
+   }
+  ],
+  "condition": "Reuse only when production src and all listed API tool/control inputs remain byte-identical. This never relabels run 40989514786 as a candidate run. Source/API semantics/signature-set changes require renewed scoped review and exact-set reconciliation; docs/test-only changes require verified identity, not assumption."
+ },
+ "governance": {
+  "residualSemanticIssues": [],
+  "newMajorUserProductDecisionsRequired": [],
+  "preserved": [
+   "Historical proposal JSON files and validator",
+   "Original incomplete CI comparison and actual run source"
+  ],
+  "requiredReleaseGates": [
+   "Final exact-SHA ref/implementation/package API, TypeForwarder and assembly-grant boundary verification",
+   "Consumer positive/negative and generated ABI checks",
+   "Required runtime, AOT, Trim, ALC, DI, maintenance/quiescence and performance gates"
+  ],
+  "notAuthorized": [
+   "Automatic approval of future IDs",
+   "Loosening validators to turn the original run green",
+   "Merge or release"
+  ]
+ }
+}
