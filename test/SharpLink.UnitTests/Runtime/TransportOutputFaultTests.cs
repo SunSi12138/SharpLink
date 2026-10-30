@@ -6,7 +6,7 @@ using System.Threading;
 
 namespace SharpLink.UnitTests.Runtime;
 
-public class TransportOutputFaultTests
+public partial class TransportOutputFaultTests
 {
     [Test]
     [Arguments("write-sync", 0, 0)]
@@ -68,19 +68,25 @@ public class TransportOutputFaultTests
     public async Task OutputFailureMustNotReplacePriorStoppingWinner()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
-        var stream = new ObservingStream(blockWrite: true, failure: "write-after-gate");
+        var stream = new ObservingStream(blockWrite: true, failure: "write-prefix-after-gate");
         var session = CreateSession(context, new StreamTransportConnection(stream));
         var frame = CreateFrame(session, 64, 1);
         var sent = session.SendPacketAndFlushAsync(frame).AsTask();
+        Exception? firstTerminal = null;
+        var notifications = 0;
+        session.OnDisconnected += exception => { firstTerminal ??= exception; notifications++; };
         try
         {
             await stream.WriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             session.BeginShutdown();
+            var stopping = firstTerminal;
             stream.ReleaseWrite.TrySetResult();
             _ = await CaptureAsync(() => new ValueTask(sent));
             await session.DisposeAsync();
-            Ensure(stream.WriteCount == 2 && stream.BytesWritten == 79,
-                "an output failure cannot replace an already-published normal stopping winner");
+            Ensure(stopping is not null && ReferenceEquals(stopping, firstTerminal) && notifications == 1,
+                "the first stopping terminal remains the only public notification");
+            Ensure(stream.WriteCount == 1 && stream.BytesWritten == 7,
+                "a later output failure must not replay its unknown prefix after Stopping won");
             EnsureReturned(frame);
         }
         finally
@@ -173,7 +179,7 @@ public class TransportOutputFaultTests
             options.FlowControl.MaxSendQueueBytes = 3 * 79;
             options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency;
         }).Build(includeGeneratedAssemblyCatalog: false);
-        var stream = new ObservingStream(blockWrite: true, failure: "write-after-gate");
+        var stream = new ObservingStream(blockWrite: true, failure: "write-prefix-after-gate");
         var session = CreateSession(context, new StreamTransportConnection(stream));
         var frames = new CountingWriter[4];
         for (var index = 0; index < frames.Length; index++)
@@ -267,15 +273,16 @@ public class TransportOutputFaultTests
             await transport.Writer.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             session.NotifyDisconnected(new IOException(origin + " fault"));
             var disposing = session.DisposeAsync().AsTask();
-            Ensure(transport.FaultDisposals == 0 && transport.NormalDisposals == 1,
-                "non-output fault must not infer quiescence or invoke discard completion");
+            Ensure(transport.FaultDisposals == 0 && transport.NormalDisposals == 0,
+                "non-output fault must not invoke any provider disposal before physical write completion");
             Ensure(frame.WrittenCount == 79 && session.QueuedSendBytes == 79 && !disposing.IsCompleted,
                 "pump must retain owner/credits while the actual output await is still held");
             transport.Writer.Release.TrySetResult();
             _ = await CaptureAsync(() => new ValueTask(sent));
             await disposing.WaitAsync(TimeSpan.FromSeconds(5));
-            Ensure(transport.FaultDisposals == 0 && transport.Writer.Returned.Task.IsCompleted,
-                "late output error must not replace the earlier reader/heartbeat terminal winner");
+            Ensure(transport.FaultDisposals == 0 && transport.NormalDisposals == 1 &&
+                transport.Writer.Returned.Task.IsCompleted,
+                "join the write before exactly one provider disposal without replacing the earlier terminal");
             EnsureReturned(frame);
             Ensure(session.QueuedSendBytes == 0, "actual output completion must release queue credits");
         }
@@ -467,9 +474,14 @@ public class TransportOutputFaultTests
         internal int FlushCount;
         internal int BytesWritten;
         internal int DisposeCount;
+        internal readonly TaskCompletionSource DisposeEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Action? OnWrite;
+        internal Action? OnDispose;
         public override ValueTask DisposeAsync()
         {
             Interlocked.Increment(ref DisposeCount);
+            DisposeEntered.TrySetResult();
+            OnDispose?.Invoke();
             return disposeFailure is null ? ValueTask.CompletedTask : ValueTask.FromException(disposeFailure);
         }
         public override bool CanRead => true;
@@ -487,6 +499,7 @@ public class TransportOutputFaultTests
         {
             Source = buffer;
             var count = Interlocked.Increment(ref WriteCount);
+            OnWrite?.Invoke();
             WriteEntered.TrySetResult();
             if (count == 1 && failure == "write-sync") throw new IOException("injected synchronous write failure");
             if (count == 1 && failure == "write-partial")
@@ -494,7 +507,12 @@ public class TransportOutputFaultTests
                 BytesWritten += Math.Min(7, buffer.Length);
                 return ValueTask.FromException(new IOException("injected failure after prefix write"));
             }
-            if (blockWrite) return WaitForWriteAsync(buffer);
+            if (blockWrite)
+            {
+                if (failure is "write-prefix-after-gate" or "cancel-prefix-after-gate")
+                    BytesWritten += Math.Min(7, buffer.Length);
+                return WaitForWriteAsync(buffer);
+            }
             BytesWritten += buffer.Length;
             return ValueTask.CompletedTask;
         }
@@ -503,8 +521,10 @@ public class TransportOutputFaultTests
         {
             // Deliberately ignores cancellation: physical completion remains independently held.
             await ReleaseWrite.Task;
-            if (failure == "write-after-gate" && WriteCount == 1)
+            if (failure is "write-after-gate" or "write-prefix-after-gate" && WriteCount == 1)
                 throw new IOException("injected write failure after gate");
+            if (failure == "cancel-prefix-after-gate" && WriteCount == 1)
+                throw new OperationCanceledException("injected canceled write after prefix");
             BytesWritten += buffer.Length;
         }
 
@@ -513,7 +533,14 @@ public class TransportOutputFaultTests
             var count = Interlocked.Increment(ref FlushCount);
             FlushEntered.TrySetResult();
             if (count == 1 && failure == "flush") return Task.FromException(new IOException("injected flush failure"));
-            return blockFlush ? ReleaseFlush.Task : Task.CompletedTask;
+            return blockFlush ? WaitForFlushAsync() : Task.CompletedTask;
+        }
+
+        private async Task WaitForFlushAsync()
+        {
+            await ReleaseFlush.Task;
+            if (failure == "flush-after-gate" && FlushCount == 1)
+                throw new IOException("injected flush failure after gate");
         }
     }
 }

@@ -57,6 +57,8 @@ internal class StreamTransportConnection : ITransportConnection, IQuiescentPumpF
 
     private async Task DisposeCoreAsync(Exception? outputException)
     {
+        // Publish the single-flight owner before any user stream callback can reenter.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         Exception? cleanupException = null;
         try
         {
@@ -327,6 +329,8 @@ internal sealed class AnonymousPipeTransportConnection : ITransportConnection, I
 
     private async Task DisposeCoreAsync(Exception? outputException)
     {
+        // Publish the single-flight owner before any user stream callback can reenter.
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         Exception? cleanupException = null;
         try
         {

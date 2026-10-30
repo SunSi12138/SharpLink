@@ -45,6 +45,9 @@ internal sealed partial class RpcSession
         // without replacing the transport exception used to fail queued sends.
         private Exception? _cleanupException;
 
+        // Cold teardown only: cancellation or a failed output may have emitted an unknown prefix.
+        internal bool RequiresTerminalOutputDiscard => Volatile.Read(ref _faulted) != 0;
+
         internal bool IsStopRequested => Volatile.Read(ref _stopped) != 0;
         internal bool HasPendingIdleWait => _wakeup.HasPendingIdleWait;
 
@@ -294,6 +297,9 @@ internal sealed partial class RpcSession
             }
             catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
             {
+                // Cancellation does not prove that a stream wrote no prefix. Preserve the
+                // selected session terminal, but never replay this output during disposal.
+                Interlocked.Exchange(ref _faulted, 1);
             }
             catch (Exception ex)
             {

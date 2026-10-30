@@ -16,6 +16,15 @@ internal sealed partial class RpcSession
         var pump = CapturePumpForStop();
         pump?.Stop();
         var writesDrained = pump?.WaitForStopAsync().AsTask() ?? Task.CompletedTask;
+        // The public terminal winner and physical output disposition are separate.
+        // Only a successful physical join with no failed/canceled output can flush.
+        // A prior Stopping/read-side winner must never authorize replay after a later
+        // write failure; its exception identity remains selected by the original CAS.
+        if (writesDrained.IsCompletedSuccessfully && pump?.RequiresTerminalOutputDiscard != true)
+        {
+            await _transport.DisposeAsync().ConfigureAwait(false);
+            return;
+        }
         if (_transport is IQuiescingTransportConnection quiescing)
         {
             await quiescing.DisposeAfterWritesAsync(writesDrained, GetTerminalException()).ConfigureAwait(false);
@@ -31,7 +40,15 @@ internal sealed partial class RpcSession
         catch (Exception exception) { cleanupException = CombineCleanupExceptions(cleanupException, exception); }
         try { await writesDrained.ConfigureAwait(false); }
         catch (Exception exception) { cleanupException = CombineCleanupExceptions(cleanupException, exception); }
-        try { await _transport.DisposeAsync().ConfigureAwait(false); }
+        try
+        {
+            var terminal = Volatile.Read(ref _terminal);
+            if (terminal is { State: SessionTerminalState.QuiescentPumpFault } &&
+                _transport is IQuiescentPumpFaultDisposal faultedOutput)
+                await faultedOutput.DisposeAfterPumpFaultAsync(terminal.Exception).ConfigureAwait(false);
+            else
+                await _transport.DisposeAsync().ConfigureAwait(false);
+        }
         catch (Exception exception) { cleanupException = CombineCleanupExceptions(cleanupException, exception); }
         if (cleanupException is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupException).Throw();
