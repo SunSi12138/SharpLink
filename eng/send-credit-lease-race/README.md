@@ -55,8 +55,9 @@ python3 eng/send-credit-lease-race/run.py --out artifacts/send-credit-lease-race
 The exact ordinary expectation is **2,474**: dev `57f06f17` **2,188** + required
 physical ownership **111** + cooperative maintenance **157** + static-stream
 flags **6** + send-pump cleanup **6** + shutdown composition **5** + queued-owner
-partial-prefix variant **1**. The original zero-prefix ownership case remains covered. The last five
-are three runtime output-safety/reentry cases and two server graceful-budget cases.
+partial-prefix variant **1**. The original zero-prefix ownership case remains covered.
+The five shutdown-composition cases are three runtime output-safety/reentry cases
+and two server graceful-budget cases.
 No case declarations are removed. Historical #931's 113 includes two queued-reader
 cases already on dev; the five preexisting Explicit workers remain outside ordinary
 execution. The lease runner alone adds its unchanged eight injected cases (**2,482**).
