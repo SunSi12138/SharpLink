@@ -1,3 +1,5 @@
+using System.Threading.Tasks.Sources;
+
 namespace SharpLink.IntegrationTests;
 
 public sealed class StaticServerStreamCancellationTests
@@ -21,6 +23,8 @@ public sealed class StaticServerStreamCancellationTests
             .DisableRequestTimeout()
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10))
             .Build();
+        Task? consumption = null;
+        Exception? primaryFailure = null;
         try
         {
             await server.StartAsync().AsTask().WaitAsync(guard);
@@ -31,9 +35,9 @@ public sealed class StaticServerStreamCancellationTests
 
             // No caller token, method deadline, dynamic registration, or interceptor is involved.
             // Wait for the second MoveNext before terminating, so EOF cannot masquerade as cancellation.
-            if (earlyBreak)
+            async Task ConsumeOneAsync()
             {
-                async Task ConsumeOneAsync()
+                if (earlyBreak)
                 {
                     await foreach (var value in service.ReadAsync(CancellationToken.None))
                     {
@@ -42,15 +46,16 @@ public sealed class StaticServerStreamCancellationTests
                         break;
                     }
                 }
-                await ConsumeOneAsync().WaitAsync(guard);
+                else
+                {
+                    await using var reader = service.ReadAsync(CancellationToken.None).GetAsyncEnumerator();
+                    Ensure(await reader.MoveNextAsync().AsTask().WaitAsync(guard) && reader.Current == 42,
+                        "first stream item must arrive before consumer abandonment");
+                    await implementation.Waiting.Task.WaitAsync(guard);
+                }
             }
-            else
-            {
-                await using var reader = service.ReadAsync(CancellationToken.None).GetAsyncEnumerator();
-                Ensure(await reader.MoveNextAsync().AsTask().WaitAsync(guard) && reader.Current == 42,
-                    "first stream item must arrive before consumer abandonment");
-                await implementation.Waiting.Task.WaitAsync(guard);
-            }
+            consumption = ConsumeOneAsync();
+            await consumption.WaitAsync(guard);
 
             await implementation.Disposed.Task.WaitAsync(guard);
             Ensure(implementation.CancellationObserved == 1 && implementation.MoveNextCompleted == 1,
@@ -62,11 +67,31 @@ public sealed class StaticServerStreamCancellationTests
             Ensure(await service.GetSessionIdAsync().AsTask().WaitAsync(guard) == session,
                 "early termination must leave the original TCP session usable");
         }
+        catch (Exception exception)
+        {
+            primaryFailure = exception;
+            throw;
+        }
         finally
         {
             // This release is teardown only, never evidence of consumer cancellation. It also
             // lets the unfixed baseline finish cleanup after the regression watchdog fails.
             implementation.Release.TrySetResult();
+            if (consumption is not null)
+            {
+                try { await consumption.WaitAsync(guard); }
+                catch (Exception cleanupFailure)
+                {
+                    // Observe a late fault even if the bounded join itself timed out. Keep
+                    // the original test failure authoritative without discarding cleanup detail.
+                    _ = consumption.ContinueWith(static task => { _ = task.Exception; },
+                        CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted |
+                        TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    if (primaryFailure is null)
+                        throw;
+                    primaryFailure.Data["StaticStreamConsumerCleanupFailure"] = cleanupFailure;
+                }
+            }
         }
     }
 
@@ -106,42 +131,74 @@ public sealed class StaticCancellationService : IStaticCancellationService
             => new CooperativeEnumerator(owner, cancellationToken);
     }
 
-    private sealed class CooperativeEnumerator(StaticCancellationService owner, CancellationToken token)
-        : IAsyncEnumerator<int>
+    private sealed class CooperativeEnumerator : IAsyncEnumerator<int>, IValueTaskSource<bool>
     {
+        private readonly StaticCancellationService _owner;
+        private readonly CancellationToken _token;
+        private ManualResetValueTaskSourceCore<bool> _pending;
         private int _moves;
         private int _moving;
+
+        internal CooperativeEnumerator(StaticCancellationService owner, CancellationToken token)
+        {
+            _owner = owner;
+            _token = token;
+            _pending.RunContinuationsAsynchronously = true;
+            _pending.Reset();
+        }
+
         public int Current => 42;
 
-        public async ValueTask<bool> MoveNextAsync()
+        public ValueTask<bool> MoveNextAsync()
         {
-            if (Interlocked.Increment(ref _moves) == 1)
-                return true;
+            var ordinal = Interlocked.Increment(ref _moves);
+            if (ordinal == 1)
+                return ValueTask.FromResult(true);
+            if (ordinal != 2)
+                throw new InvalidOperationException("The cooperative producer must terminate after its pending second move.");
+            var wait = _owner.Release.Task.WaitAsync(_token);
+            if (wait.IsCompleted)
+                throw new InvalidOperationException("The producer must be pending before consumer termination.");
             Interlocked.Increment(ref _moving);
-            owner.Waiting.TrySetResult();
-            try
+            _ = CompleteAsync(wait);
+            return new ValueTask<bool>(this, _pending.Version);
+        }
+
+        private async Task CompleteAsync(Task wait)
+        {
+            Exception? failure = null;
+            try { await wait.ConfigureAwait(false); }
+            catch (OperationCanceledException exception) when (_token.IsCancellationRequested)
             {
-                await owner.Release.Task.WaitAsync(token).ConfigureAwait(false);
-                return false;
+                Interlocked.Increment(ref _owner.CancellationObserved);
+                failure = exception;
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                Interlocked.Increment(ref owner.CancellationObserved);
-                throw;
-            }
-            finally
-            {
-                Interlocked.Decrement(ref _moving);
-                Interlocked.Increment(ref owner.MoveNextCompleted);
-            }
+            catch (Exception exception) { failure = exception; }
+            Interlocked.Decrement(ref _moving);
+            Interlocked.Increment(ref _owner.MoveNextCompleted);
+            if (failure is null)
+                _pending.SetResult(false);
+            else
+                _pending.SetException(failure);
+        }
+
+        public bool GetResult(short token) => _pending.GetResult(token);
+        public ValueTaskSourceStatus GetStatus(short token) => _pending.GetStatus(token);
+        public void OnCompleted(Action<object?> continuation, object? state, short token,
+            ValueTaskSourceOnCompletedFlags flags)
+        {
+            // The actual generated pump has registered its continuation on a genuinely
+            // pending producer operation before the consumer is allowed to terminate.
+            _pending.OnCompleted(continuation, state, token, flags);
+            _owner.Waiting.TrySetResult();
         }
 
         public ValueTask DisposeAsync()
         {
             if (Volatile.Read(ref _moving) != 0)
-                Interlocked.Increment(ref owner.DisposeOverlap);
-            Interlocked.Increment(ref owner.DisposeCount);
-            owner.Disposed.TrySetResult();
+                Interlocked.Increment(ref _owner.DisposeOverlap);
+            Interlocked.Increment(ref _owner.DisposeCount);
+            _owner.Disposed.TrySetResult();
             return ValueTask.CompletedTask;
         }
     }
