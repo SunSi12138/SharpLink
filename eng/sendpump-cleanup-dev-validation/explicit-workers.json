@@ -1,0 +1,42 @@
+[
+  {
+    "uid": "SharpLink.UnitTests.Validation.AdmissionDiagnosticsValidationProbe.1.1.Run.1.1.0",
+    "namespace": "SharpLink.UnitTests.Validation",
+    "type_name": "AdmissionDiagnosticsValidationProbe",
+    "method_name": "Run",
+    "source_path": "test/SharpLink.UnitTests/Validation/AdmissionDiagnosticsValidationProbe.cs",
+    "reason": "Isolated admission diagnostics process worker requiring scenario driver."
+  },
+  {
+    "uid": "SharpLink.UnitTests.Validation.CodecValidationProbe.1.1.DateTimeCrossZone.1.1.0",
+    "namespace": "SharpLink.UnitTests.Validation",
+    "type_name": "CodecValidationProbe",
+    "method_name": "DateTimeCrossZone",
+    "source_path": "test/SharpLink.UnitTests/Validation/CodecValidationProbe.cs",
+    "reason": "Isolated codec cross-zone/fragmentation driver; not ordinary unit execution."
+  },
+  {
+    "uid": "SharpLink.UnitTests.Validation.CodecValidationProbe.1.1.DateTimeOffsetFragmentation.1.1.0",
+    "namespace": "SharpLink.UnitTests.Validation",
+    "type_name": "CodecValidationProbe",
+    "method_name": "DateTimeOffsetFragmentation",
+    "source_path": "test/SharpLink.UnitTests/Validation/CodecValidationProbe.cs",
+    "reason": "Isolated codec cross-zone/fragmentation driver; not ordinary unit execution."
+  },
+  {
+    "uid": "SharpLink.UnitTests.Validation.DateTimeOffsetPerformanceValidationProbe.1.1.Run.1.1.0",
+    "namespace": "SharpLink.UnitTests.Validation",
+    "type_name": "DateTimeOffsetPerformanceValidationProbe",
+    "method_name": "Run",
+    "source_path": "test/SharpLink.UnitTests/Validation/DateTimeOffsetPerformanceValidationProbe.cs",
+    "reason": "Isolated performance microbenchmark driver; performance reruns are outside this gate."
+  },
+  {
+    "uid": "SharpLink.UnitTests.Validation.PendingLifecycleValidationProbe.1.1.Run.1.1.0",
+    "namespace": "SharpLink.UnitTests.Validation",
+    "type_name": "PendingLifecycleValidationProbe",
+    "method_name": "Run",
+    "source_path": "test/SharpLink.UnitTests/Validation/PendingLifecycleValidationProbe.cs",
+    "reason": "Isolated lifecycle process worker requiring scenario and external watchdog."
+  }
+]
