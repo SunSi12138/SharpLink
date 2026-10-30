@@ -1,0 +1,106 @@
+name: Frozen 3.0 release stability validation
+on:
+  push:
+    branches: ['validation/3.0-release-stability-20261030']
+    paths: ['eng/release-stability-validation/request.json']
+permissions:
+  contents: read
+concurrency:
+  group: release-stability-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  generated-abi-dynamic-module-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 135
+    env:
+      SHARPLINK_P3_DYNAMIC_SOAK_DURATION_SECONDS: '600'
+      SHARPLINK_P3_DYNAMIC_SOAK_OUTPUT: ${{ github.workspace }}/source/artifacts/p3-generated-abi/dynamic-module-soak
+    steps:
+      - name: Checkout reviewed request and tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout frozen release candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: e8fcef3ddb93d76457b690dadc279e7a8f91b47d
+          persist-credentials: false
+          path: source
+      - name: Verify request ancestry and actual source identity
+        run: python3 eng/release-stability-validation/validate.py validate --output source/artifacts/stability/provenance.json
+      - name: Setup .NET CI environment
+        uses: ./source/.github/actions/setup-dotnet
+      - name: Record installed SDK and runtime inventory
+        run: dotnet --info | tee source/artifacts/stability/dotnet-info.txt
+      - name: Record original dotnet executable and install transparent evidence entry
+        run: python3 eng/release-stability-validation/validate.py setup --kind abi --output source/artifacts/stability/host-config.json
+      - name: Generated ABI Dynamic-module Churn
+        working-directory: source
+        run: ./eng/run-generated-abi-dynamic-module-soak.sh
+      - name: Require complete successful ABI evidence
+        run: python3 eng/release-stability-validation/validate.py complete --kind abi --output source/artifacts/stability/verified.json
+      - name: Record built assembly and runtime configuration hashes
+        if: always()
+        run: python3 eng/release-stability-validation/validate.py inventory --kind abi --output source/artifacts/stability/built-sha256.json
+      - name: Upload Generated ABI Soak Report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-abi-dynamic-module-soak-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            source/artifacts/p3-generated-abi/dynamic-module-soak
+            source/artifacts/stability
+          if-no-files-found: error
+          retention-days: 3
+  release-soak:
+    strategy:
+      fail-fast: false
+      matrix:
+        transport: [tcp, sharedmemory]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SHARPLINK_SOAK_DURATION: 10m
+      SHARPLINK_SOAK_TRANSPORT: ${{ matrix.transport }}
+      SHARPLINK_SOAK_OUTPUT: artifacts/chaos/release-10m-${{ matrix.transport }}.json
+    steps:
+      - name: Checkout reviewed request and tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout frozen release candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: e8fcef3ddb93d76457b690dadc279e7a8f91b47d
+          persist-credentials: false
+          path: source
+      - name: Verify request ancestry and actual source identity
+        run: python3 eng/release-stability-validation/validate.py validate --output source/artifacts/stability/provenance.json
+      - name: Setup .NET CI environment
+        uses: ./source/.github/actions/setup-dotnet
+      - name: Record installed SDK and runtime inventory
+        run: dotnet --info | tee source/artifacts/stability/dotnet-info.txt
+      - name: Record original dotnet executable and install transparent evidence entry
+        run: python3 eng/release-stability-validation/validate.py setup --kind ${{ matrix.transport }} --output source/artifacts/stability/host-config.json
+      - name: Ten-minute release soak
+        working-directory: source
+        run: ./eng/run-release-soak.sh
+      - name: Require complete successful release-soak evidence
+        run: python3 eng/release-stability-validation/validate.py complete --kind ${{ matrix.transport }} --output source/artifacts/stability/verified.json
+      - name: Record built assembly and runtime configuration hashes
+        if: always()
+        run: python3 eng/release-stability-validation/validate.py inventory --kind ${{ matrix.transport }} --output source/artifacts/stability/built-sha256.json
+      - name: Upload release soak evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-soak-10m-${{ matrix.transport }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            source/artifacts/chaos
+            source/artifacts/stability
+          if-no-files-found: error
+          retention-days: 3
