@@ -509,7 +509,7 @@ public partial class TransportOutputFaultTests
             }
             if (blockWrite)
             {
-                if (failure is "write-prefix-after-gate" or "cancel-prefix-after-gate")
+                if (count == 1 && failure is "write-prefix-after-gate" or "cancel-prefix-after-gate")
                     BytesWritten += Math.Min(7, buffer.Length);
                 return WaitForWriteAsync(buffer);
             }
