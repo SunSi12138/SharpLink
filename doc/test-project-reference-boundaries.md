@@ -15,7 +15,7 @@ The guardrail is closed-world for test-originating `ProjectReference` edges, not
 - deny a `ProjectReference` from an unregistered test project, to an unregistered test target, or to any project outside the registered production/test project sets;
 - keep `src/` production rules from #371 authoritative and independent.
 
-The baseline inventory was captured from `dev` at `3e772ef0de75bda9f79d5f3508ef01f573bb6254` with **107** test-originating `ProjectReference` edges. The reviewed policy now lists **108** edges after adding the allocation-probe build dependency below; there is no debt exception.
+The baseline inventory was captured from `dev` at `3e772ef0de75bda9f79d5f3508ef01f573bb6254` with **107** test-originating `ProjectReference` edges. The reviewed policy now lists **149** edges: 40 references already present on dev were missing from the historical policy, physical ownership adds one allocation-probe build dependency, and cooperative maintenance adds one build-only DynamicServices dependency. No dependency is added by this policy reconciliation, and there is no debt exception.
 
 ## Reference modes
 
@@ -58,7 +58,7 @@ Every current edge belongs to exactly one policy class:
 
 There are currently **no `debt_exception` edges**. A future exception must be added explicitly to `debt_exceptions` with both a rationale and a tracking issue; an exception is not precedent for neighboring edges.
 
-## Current inventory
+## Historical inventory
 
 The following table is explanatory; the YAML is normative. Unmarked targets use `assembly` mode. `analyzer` and `build-only` are called out explicitly. Test-project targets are prefixed with `test:`.
 
@@ -146,3 +146,92 @@ This issue defines the design only. It intentionally does **not** add or change 
 ## Changing the boundary
 
 A PR that intentionally adds, removes, or changes a test-originating `ProjectReference` should update the YAML in the same change. Normal test-to-production usage belongs in `allowed`; shared test/support wiring belongs in `intentional_test_infrastructure`; an architecture violation must not be normalized as an exception without a specific reason and tracking issue.
+
+## Current inventory reconciliation
+
+The historical 107-edge inventory was not kept current with later dev additions.
+A direct literal `ProjectReference` declaration census on dev `57f06f17` finds
+147 edges; the physical-ownership allocation child and cooperative-maintenance
+DynamicServices build edge bring this source tree to 149. The table above records
+the historical support roles; the normative YAML explicitly registers all current
+projects and edges. No analyzer rule, wildcard authorization, production boundary,
+project reference, or debt exception changes. This declaration check is not an
+MSBuild evaluated-item or runtime test result.
+
+The 40 preexisting omissions and one new maintenance edge are enumerated below.
+In particular, Compression.Zstd references already exist on dev; they are not
+introduced by cooperative maintenance.
+
+| Origin | Target | Mode | Source |
+| --- | --- | --- | --- |
+| `aot_smoke` | `compression_zstd` | `assembly` | already on dev57 |
+| `benchmarks` | `compression_zstd` | `assembly` | already on dev57 |
+| `codec_compatibility_layout_evidence` | `runtime` | `assembly` | already on dev57 |
+| `generator_tests` | `abstractions` | `build_only` | already on dev57 |
+| `integration_tests` | `hosting` | `assembly` | already on dev57 |
+| `integration_tests` | `module_dependency_consumer` | `build_only` | already on dev57 |
+| `integration_tests` | `referenced_codec_consumer` | `build_only` | already on dev57 |
+| `integration_tests` | `referenced_codec_provider` | `build_only` | already on dev57 |
+| `integration_tests` | `replacement_services` | `build_only` | already on dev57 |
+| `module_dependency_consumer` | `abstractions` | `assembly` | already on dev57 |
+| `module_dependency_consumer` | `referenced_codec_provider` | `assembly` | already on dev57 |
+| `producer_progress_aot_evidence` | `abstractions` | `assembly` | already on dev57 |
+| `producer_progress_aot_evidence` | `client` | `assembly` | already on dev57 |
+| `producer_progress_aot_evidence` | `generator` | `analyzer` | already on dev57 |
+| `producer_progress_aot_evidence` | `runtime` | `assembly` | already on dev57 |
+| `producer_progress_aot_evidence` | `sdk` | `assembly` | already on dev57 |
+| `producer_progress_aot_evidence` | `serializer_sharppack` | `assembly` | already on dev57 |
+| `producer_progress_aot_evidence` | `server` | `assembly` | already on dev57 |
+| `referenced_codec_consumer` | `abstractions` | `assembly` | already on dev57 |
+| `referenced_codec_consumer` | `referenced_codec_provider` | `assembly` | already on dev57 |
+| `referenced_codec_provider` | `abstractions` | `assembly` | already on dev57 |
+| `replacement_contracts` | `abstractions` | `assembly` | already on dev57 |
+| `replacement_contracts` | `generator` | `analyzer` | already on dev57 |
+| `replacement_contracts` | `sdk` | `assembly` | already on dev57 |
+| `replacement_contracts` | `serializer_sharppack` | `assembly` | already on dev57 |
+| `replacement_services` | `abstractions` | `assembly` | already on dev57 |
+| `replacement_services` | `generator` | `analyzer` | already on dev57 |
+| `replacement_services` | `replacement_contracts` | `assembly` | already on dev57 |
+| `replacement_services` | `sdk` | `assembly` | already on dev57 |
+| `sharp_pack_aot_smoke` | `abstractions` | `assembly` | already on dev57 |
+| `sharp_pack_aot_smoke` | `aot_external_payloads` | `assembly` | already on dev57 |
+| `sharp_pack_aot_smoke` | `client` | `assembly` | already on dev57 |
+| `sharp_pack_aot_smoke` | `generator` | `analyzer` | already on dev57 |
+| `sharp_pack_aot_smoke` | `runtime` | `assembly` | already on dev57 |
+| `sharp_pack_aot_smoke` | `sdk` | `assembly` | already on dev57 |
+| `sharp_pack_aot_smoke` | `serializer_sharppack` | `assembly` | already on dev57 |
+| `sharp_pack_aot_smoke` | `server` | `assembly` | already on dev57 |
+| `unit_tests` | `compression_zstd` | `assembly` | already on dev57 |
+| `unit_tests` | `dynamic_services` | `build_only` | #933 new build dependency |
+| `zstd_aot_smoke` | `compression_zstd` | `assembly` | already on dev57 |
+| `zstd_aot_smoke` | `runtime` | `assembly` | already on dev57 |
+
+### Architecture review of previously omitted references
+
+The 40 previously existing edges are grouped by their actual test purpose:
+
+- **Zstd (5):** unit and benchmark provider coverage plus AOT host/provider/runtime
+  wiring. Compression remains an explicit optional test dependency.
+- **Layout evidence (1):** the shared raw-layout executable consumes Runtime.
+- **Generator build-only Abstractions (1):** `RealAbstractionsCompilationReference`
+  supplies the real DLL by path to specific Roslyn tests, without contaminating
+  synthetic SDK compilation references.
+- **Hosting (1):** `HostedServiceProviderIntegrationTests` exercises hosted ownership.
+- **Codec/module fixtures (8):** isolated ALC exact-generation and dependency-order
+  controls; the three Integration dependencies remain build-only.
+- **Replacement fixtures (9):** contracts/services deliberately share assembly names
+  across distinct RPC identities; Integration only builds the replacement DLL.
+- **Producer-progress AOT host (7):** an existing explicit generated-contract host.
+- **SharpPack AOT host (8):** an existing host with a separate external-payload fixture.
+
+The one new maintenance edge is independently justified by
+`PreparedImplementationReplacementTests.Support.cs`: it locates the dynamic service
+DLL by path and loads it in a collectible ALC. `ReferenceOutputAssembly=false` is
+retained; the test assembly does not gain a static reference to the dynamic module.
+
+All production and test project files retain their original references. Production
+references never target `test/`; GenerationControl still depends only on Abstractions
+and Generator and gains no incoming project edge. Frozen API3/API4 binary fixtures
+remain decoded from their provenance-checked payloads, not rebuilt from current
+source. Their preexisting API4 source recipe edges are unchanged. The policy still
+default-denies undeclared projects, edges and modes; no blanket exception is added.

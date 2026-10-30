@@ -21,8 +21,8 @@ scope:
 inventory:
   baseline_branch: dev
   baseline_commit: 3e772ef0de75bda9f79d5f3508ef01f573bb6254
-  # The recorded baseline had 107 edges; the reviewed allocation-probe edge adds one.
-  project_reference_edge_count: 108
+  # Historical107 + 40 preexisting dev omissions + allocation-probe1 + maintenance1.
+  project_reference_edge_count: 149
   allowed_references_are_current_inventory: true
   debt_exception_count: 0
 
@@ -101,6 +101,17 @@ test_projects:
   stream_load_test_tests: test/SharpLink.StreamLoadTest.Tests/SharpLink.StreamLoadTest.Tests.csproj
   unit_tests: test/SharpLink.UnitTests/SharpLink.UnitTests.csproj
   api4_fixture: test/fixtures/generated-api4/source/SharpLink.Api4Fixture.csproj
+
+  aot_external_payloads: test/SharpLink.AotExternalPayloads/SharpLink.AotExternalPayloads.csproj
+  codec_compatibility_layout_evidence: test/SharpLink.CodecCompatibility.LayoutEvidence/SharpLink.CodecCompatibility.LayoutEvidence.csproj
+  module_dependency_consumer: test/SharpLink.ModuleDependencyConsumer/SharpLink.ModuleDependencyConsumer.csproj
+  producer_progress_aot_evidence: test/SharpLink.ProducerProgressAotEvidence/SharpLink.ProducerProgressAotEvidence.csproj
+  referenced_codec_consumer: test/SharpLink.ReferencedCodecConsumer/SharpLink.ReferencedCodecConsumer.csproj
+  referenced_codec_provider: test/SharpLink.ReferencedCodecProvider/SharpLink.ReferencedCodecProvider.csproj
+  replacement_contracts: test/SharpLink.ReplacementContracts/SharpLink.ReplacementContracts.csproj
+  replacement_services: test/SharpLink.ReplacementServices/SharpLink.ReplacementServices.csproj
+  sharp_pack_aot_smoke: test/SharpLink.SharpPackAotSmoke/SharpLink.SharpPackAotSmoke.csproj
+  zstd_aot_smoke: test/SharpLink.ZstdAotSmoke/SharpLink.ZstdAotSmoke.csproj
 
 # Each entry expands to one exact edge for every id in `to`. `target_scope`
 # selects either the production project registry from production_policy or the
@@ -395,6 +406,254 @@ allowed_references:
     to: [generator]
     mode: analyzer
     classification: allowed
+
+  # Explicit inventory reconciliation: 40 existing dev edges and one maintenance build-only edge.
+  - from: aot_smoke
+    target_scope: production
+    to: [compression_zstd]
+    mode: assembly
+    classification: allowed
+    reason: Existing compression-provider validation across unit, benchmark and NativeAOT smoke hosts; the optional provider remains an explicit test dependency.
+  - from: benchmarks
+    target_scope: production
+    to: [compression_zstd]
+    mode: assembly
+    classification: allowed
+    reason: Existing compression-provider validation across unit, benchmark and NativeAOT smoke hosts; the optional provider remains an explicit test dependency.
+  - from: codec_compatibility_layout_evidence
+    target_scope: production
+    to: [runtime]
+    mode: assembly
+    classification: allowed
+    reason: Existing layout-evidence executable consumes Runtime raw-layout helpers without adding any production dependency on tests.
+  - from: generator_tests
+    target_scope: production
+    to: [abstractions]
+    mode: build_only
+    classification: allowed
+    reason: Build real Abstractions for path-based Roslyn compilation controls without statically referencing it or contaminating synthetic SDK compilations.
+  - from: integration_tests
+    target_scope: production
+    to: [hosting]
+    mode: assembly
+    classification: allowed
+    reason: Existing HostedServiceProviderIntegrationTests validate hosted service-provider ownership through the Hosting API.
+  - from: integration_tests
+    target_scope: test
+    to: [module_dependency_consumer]
+    mode: build_only
+    classification: intentional_test_infrastructure
+    reason: Existing isolated codec/module fixtures test collectible ALC generations and dependency retirement ordering; Integration references remain build-only.
+  - from: integration_tests
+    target_scope: test
+    to: [referenced_codec_consumer]
+    mode: build_only
+    classification: intentional_test_infrastructure
+    reason: Existing isolated codec/module fixtures test collectible ALC generations and dependency retirement ordering; Integration references remain build-only.
+  - from: integration_tests
+    target_scope: test
+    to: [referenced_codec_provider]
+    mode: build_only
+    classification: intentional_test_infrastructure
+    reason: Existing isolated codec/module fixtures test collectible ALC generations and dependency retirement ordering; Integration references remain build-only.
+  - from: integration_tests
+    target_scope: test
+    to: [replacement_services]
+    mode: build_only
+    classification: intentional_test_infrastructure
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: module_dependency_consumer
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+    reason: Existing isolated codec/module fixtures test collectible ALC generations and dependency retirement ordering; Integration references remain build-only.
+  - from: module_dependency_consumer
+    target_scope: test
+    to: [referenced_codec_provider]
+    mode: assembly
+    classification: intentional_test_infrastructure
+    reason: Existing isolated codec/module fixtures test collectible ALC generations and dependency retirement ordering; Integration references remain build-only.
+  - from: producer_progress_aot_evidence
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+    reason: Existing explicit producer-progress NativeAOT host requires generated contracts and runtime/client/server/codec dependencies; no ordinary product dependency is added.
+  - from: producer_progress_aot_evidence
+    target_scope: production
+    to: [client]
+    mode: assembly
+    classification: allowed
+    reason: Existing explicit producer-progress NativeAOT host requires generated contracts and runtime/client/server/codec dependencies; no ordinary product dependency is added.
+  - from: producer_progress_aot_evidence
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+    reason: Existing explicit producer-progress NativeAOT host requires generated contracts and runtime/client/server/codec dependencies; no ordinary product dependency is added.
+  - from: producer_progress_aot_evidence
+    target_scope: production
+    to: [runtime]
+    mode: assembly
+    classification: allowed
+    reason: Existing explicit producer-progress NativeAOT host requires generated contracts and runtime/client/server/codec dependencies; no ordinary product dependency is added.
+  - from: producer_progress_aot_evidence
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+    reason: Existing explicit producer-progress NativeAOT host requires generated contracts and runtime/client/server/codec dependencies; no ordinary product dependency is added.
+  - from: producer_progress_aot_evidence
+    target_scope: production
+    to: [serializer_sharppack]
+    mode: assembly
+    classification: allowed
+    reason: Existing explicit producer-progress NativeAOT host requires generated contracts and runtime/client/server/codec dependencies; no ordinary product dependency is added.
+  - from: producer_progress_aot_evidence
+    target_scope: production
+    to: [server]
+    mode: assembly
+    classification: allowed
+    reason: Existing explicit producer-progress NativeAOT host requires generated contracts and runtime/client/server/codec dependencies; no ordinary product dependency is added.
+  - from: referenced_codec_consumer
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+    reason: Existing isolated codec/module fixtures test collectible ALC generations and dependency retirement ordering; Integration references remain build-only.
+  - from: referenced_codec_consumer
+    target_scope: test
+    to: [referenced_codec_provider]
+    mode: assembly
+    classification: intentional_test_infrastructure
+    reason: Existing isolated codec/module fixtures test collectible ALC generations and dependency retirement ordering; Integration references remain build-only.
+  - from: referenced_codec_provider
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+    reason: Existing isolated codec/module fixtures test collectible ALC generations and dependency retirement ordering; Integration references remain build-only.
+  - from: replacement_contracts
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: replacement_contracts
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: replacement_contracts
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: replacement_contracts
+    target_scope: production
+    to: [serializer_sharppack]
+    mode: assembly
+    classification: allowed
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: replacement_services
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: replacement_services
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: replacement_services
+    target_scope: test
+    to: [replacement_contracts]
+    mode: assembly
+    classification: intentional_test_infrastructure
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: replacement_services
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+    reason: Existing distinct RPC-identity fixtures share assembly names to exercise replacement generations; Integration builds services without statically loading their assembly.
+  - from: sharp_pack_aot_smoke
+    target_scope: production
+    to: [abstractions]
+    mode: assembly
+    classification: allowed
+    reason: Existing SharpPack NativeAOT host validates generated and external-payload paths using an explicit support assembly, not a production-to-test edge.
+  - from: sharp_pack_aot_smoke
+    target_scope: test
+    to: [aot_external_payloads]
+    mode: assembly
+    classification: intentional_test_infrastructure
+    reason: Existing SharpPack NativeAOT host validates generated and external-payload paths using an explicit support assembly, not a production-to-test edge.
+  - from: sharp_pack_aot_smoke
+    target_scope: production
+    to: [client]
+    mode: assembly
+    classification: allowed
+    reason: Existing SharpPack NativeAOT host validates generated and external-payload paths using an explicit support assembly, not a production-to-test edge.
+  - from: sharp_pack_aot_smoke
+    target_scope: production
+    to: [generator]
+    mode: analyzer
+    classification: allowed
+    reason: Existing SharpPack NativeAOT host validates generated and external-payload paths using an explicit support assembly, not a production-to-test edge.
+  - from: sharp_pack_aot_smoke
+    target_scope: production
+    to: [runtime]
+    mode: assembly
+    classification: allowed
+    reason: Existing SharpPack NativeAOT host validates generated and external-payload paths using an explicit support assembly, not a production-to-test edge.
+  - from: sharp_pack_aot_smoke
+    target_scope: production
+    to: [sdk]
+    mode: assembly
+    classification: allowed
+    reason: Existing SharpPack NativeAOT host validates generated and external-payload paths using an explicit support assembly, not a production-to-test edge.
+  - from: sharp_pack_aot_smoke
+    target_scope: production
+    to: [serializer_sharppack]
+    mode: assembly
+    classification: allowed
+    reason: Existing SharpPack NativeAOT host validates generated and external-payload paths using an explicit support assembly, not a production-to-test edge.
+  - from: sharp_pack_aot_smoke
+    target_scope: production
+    to: [server]
+    mode: assembly
+    classification: allowed
+    reason: Existing SharpPack NativeAOT host validates generated and external-payload paths using an explicit support assembly, not a production-to-test edge.
+  - from: unit_tests
+    target_scope: production
+    to: [compression_zstd]
+    mode: assembly
+    classification: allowed
+    reason: Existing compression-provider validation across unit, benchmark and NativeAOT smoke hosts; the optional provider remains an explicit test dependency.
+  - from: unit_tests
+    target_scope: test
+    to: [dynamic_services]
+    mode: build_only
+    classification: intentional_test_infrastructure
+    reason: Build replacement-service fixture DLLs for an independently collectible ALC loaded by path; ReferenceOutputAssembly=false prevents a static unit assembly reference.
+  - from: zstd_aot_smoke
+    target_scope: production
+    to: [compression_zstd]
+    mode: assembly
+    classification: allowed
+    reason: Existing compression-provider validation across unit, benchmark and NativeAOT smoke hosts; the optional provider remains an explicit test dependency.
+  - from: zstd_aot_smoke
+    target_scope: production
+    to: [runtime]
+    mode: assembly
+    classification: allowed
+    reason: Existing compression-provider validation across unit, benchmark and NativeAOT smoke hosts; the optional provider remains an explicit test dependency.
 
 debt_exceptions: []
 
