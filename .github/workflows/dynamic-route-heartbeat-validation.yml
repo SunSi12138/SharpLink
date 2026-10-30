@@ -1,0 +1,75 @@
+name: Dynamic route heartbeat causal validation
+on:
+  push:
+    branches: ['validation/dynamic-route-heartbeat-tools-20261030']
+    paths:
+      - '.github/workflows/dynamic-route-heartbeat-validation.yml'
+      - 'eng/dynamic-route-heartbeat-validation/**'
+permissions:
+  contents: read
+concurrency:
+  group: dynamic-route-heartbeat-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  causal:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/validation/dynamic-route-heartbeat-tools-20261030' }}
+    runs-on: macos-latest
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '1'
+      MSBUILDDISABLENODEREUSE: '1'
+      DOTNET_CLI_USE_MSBUILD_SERVER: '0'
+    steps:
+      - name: Reserve immutable evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT="$RUNNER_TEMP/dynamic-route-heartbeat-${{ github.run_id }}-${{ github.run_attempt }}"
+          test ! -e "$OUTPUT" && test ! -L "$OUTPUT"
+          mkdir "$OUTPUT"
+          echo "CAUSAL_OUTPUT=$OUTPUT" >> "$GITHUB_ENV"
+          printf 'run=%s attempt=%s tools=%s\n' '${{ github.run_id }}' '${{ github.run_attempt }}' '${{ github.sha }}' > "$OUTPUT/request-identity.txt"
+      - name: Checkout exact reviewed tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Checkout exact candidate with shared diagnostic overlay
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 90de2660125d6317ed2028fd2d60e25b8348776d
+          fetch-depth: 2
+          persist-credentials: false
+          path: positive
+      - name: Checkout exact one-line negative control
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 9afb782c7c2f367678d58fdc480318f4a3f7d702
+          fetch-depth: 2
+          persist-credentials: false
+          path: negative
+      - name: Exercise fail-closed offline oracle controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/dynamic-route-heartbeat-validation/test_validation.py 2>&1 | tee "$CAUSAL_OUTPUT/offline-controls.log"
+      - name: Setup .NET using the original release gate action
+        uses: ./.github/actions/setup-dotnet
+      - name: Execute discovered exact positive 100/700 and negative 700 cases once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/dynamic-route-heartbeat-validation/run.py --positive positive --negative negative --output "$CAUSAL_OUTPUT/reports" 2>&1 | tee "$CAUSAL_OUTPUT/execution.log"
+      - name: Retain raw source identities, discovery, reports, logs and completion outcomes
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dynamic-route-heartbeat-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dynamic-route-heartbeat-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false

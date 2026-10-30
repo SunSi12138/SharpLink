@@ -1,0 +1,6 @@
+{
+  "candidate": "67f201ec80dab3dee226e4765d4f2f445c1c912c",
+  "production_tree": "23f3fa6c5769a232ffc924d0ceca6cc6cabcbe63",
+  "positive": {"sha": "90de2660125d6317ed2028fd2d60e25b8348776d", "tree": "815897a3a9bd3ac55afaed243c010236bb6fda79"},
+  "negative": {"sha": "9afb782c7c2f367678d58fdc480318f4a3f7d702", "tree": "3fd1a24e0b6d06bf92d8e64cda8c84232cea1a5a"}
+}
