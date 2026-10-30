@@ -8,83 +8,101 @@ public sealed partial class DynamicEndpointIntegrationTests
     [NotInParallel]
     public async Task RuntimeSelectionPolicyShouldComposeWithDynamicTopologyReplacementWithoutExtraDial(int streamDelayMs)
     {
-        await using var first = await TcpServerScope.StartAsync("first");
-        await using var second = await TcpServerScope.StartAsync("second");
-        await using var third = await TcpServerScope.StartAsync("third");
-        var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(
-            1,
-            [Endpoint("first", first.Port, "blue"), Endpoint("second", second.Port, "green")]));
         var counter = new RuntimeSelectionConnectCounter();
-        var sockets = SharpLinkTransportFactories.Sockets();
-        await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
-            // Match TcpServerScope's 500 ms idle watchdog. The default 10 s heartbeat
-            // would legitimately reconnect idle siblings while the accepted stream drains.
-            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
-            .UseEndpointResolver(
-                resolver,
-                endpoint => new RuntimeSelectionCountingTransportFactory(sockets(endpoint), counter, endpoint.Id))
-            .UseEndpointSelector(new IdSelector("first"))
-            .UseCluster(options =>
-            {
-                options.MinReadyEndpoints = 2;
-                options.MaxConnections = 2;
-                options.MaxConnectionsPerEndpoint = 1;
-            })
-            .Build();
-
-        await client.ConnectAsync();
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
-        counter.EnsureCounts("initial topology", first: 1, second: 1, third: 0);
-
-        var service = client.Get<IConnectionBehaviorService>();
-        Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic selector should route to first");
-
-        counter.Phase = "policy-only publication";
-        client.UpdateEndpointSelector(new IdSelector("second"));
-        Ensure(await service.GetEndpointIdAsync() == "second",
-            "a live dynamic client should route its next physical attempt with the new selector");
-        counter.EnsureCounts("policy-only publication must not reconnect", first: 1, second: 1, third: 0);
-
-        // The 700 ms case keeps healthy siblings idle beyond the server watchdog;
-        // matching heartbeat producers, rather than a fast test run, must preserve them.
-        await using var retiringStream = service
-            .SlowRangeAsync(3, streamDelayMs, CancellationToken.None)
-            .GetAsyncEnumerator();
-        Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 0,
-            "the accepted stream should bind to the endpoint selected before retirement begins");
-
-        counter.Phase = "concurrent topology/policy publication";
-        var topologyUpdate = resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(
-            2,
-            [Endpoint("first", first.Port, "blue"), Endpoint("third", third.Port, "yellow")]));
-        var policyUpdates = Task.Run(() =>
+        var capture = new RuntimeSelectionDiagnosticCapture(counter);
+        Exception? failure = null;
+        var bodyCompleted = false;
+        try
         {
-            for (var iteration = 0; iteration < 256; iteration++)
+            await using var first = await TcpServerScope.StartAsync("first", capture.ForEndpoint("first"));
+            await using var second = await TcpServerScope.StartAsync("second", capture.ForEndpoint("second"));
+            await using var third = await TcpServerScope.StartAsync("third", capture.ForEndpoint("third"));
+            var resolver = new ControllableResolver(new SharpLinkEndpointSnapshot(
+                1,
+                [Endpoint("first", first.Port, "blue"), Endpoint("second", second.Port, "green")]));
+            var sockets = SharpLinkTransportFactories.Sockets();
+            await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+                // Match TcpServerScope's 500 ms idle watchdog. The default 10 s heartbeat
+                // would legitimately reconnect idle siblings while the accepted stream drains.
+                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
+                .UseEndpointResolver(
+                    resolver,
+                    endpoint => new RuntimeSelectionCountingTransportFactory(sockets(endpoint), counter, endpoint.Id))
+                .UseEndpointSelector(new IdSelector("first"))
+                .UseCluster(options =>
+                {
+                    options.MinReadyEndpoints = 2;
+                    options.MaxConnections = 2;
+                    options.MaxConnectionsPerEndpoint = 1;
+                })
+                .Build();
+
+            await client.ConnectAsync();
+            await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
+            counter.EnsureCounts("initial topology", first: 1, second: 1, third: 0);
+            capture.InitialCountsVerified = true;
+
+            var service = client.Get<IConnectionBehaviorService>();
+            Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic selector should route to first");
+
+            counter.Phase = "policy-only publication";
+            client.UpdateEndpointSelector(new IdSelector("second"));
+            Ensure(await service.GetEndpointIdAsync() == "second",
+                "a live dynamic client should route its next physical attempt with the new selector");
+            counter.EnsureCounts("policy-only publication must not reconnect", first: 1, second: 1, third: 0);
+            capture.PolicyOnlyCountsVerified = true;
+
+            // The 700 ms case keeps healthy siblings idle beyond the server watchdog;
+            // matching heartbeat producers, rather than a fast test run, must preserve them.
+            await using var retiringStream = service
+                .SlowRangeAsync(3, streamDelayMs, CancellationToken.None)
+                .GetAsyncEnumerator();
+            Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 0,
+                "the accepted stream should bind to the endpoint selected before retirement begins");
+
+            counter.Phase = "concurrent topology/policy publication";
+            var topologyUpdate = resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(
+                2,
+                [Endpoint("first", first.Port, "blue"), Endpoint("third", third.Port, "yellow")]));
+            var policyUpdates = Task.Run(() =>
             {
-                client.UpdateEndpointSelector(new IdSelector((iteration & 1) == 0 ? "first" : "third"));
-            }
-            client.UpdateEndpointSelector(new IdSelector("third"));
-        });
-        await Task.WhenAll(topologyUpdate, policyUpdates);
+                for (var iteration = 0; iteration < 256; iteration++)
+                {
+                    client.UpdateEndpointSelector(new IdSelector((iteration & 1) == 0 ? "first" : "third"));
+                }
+                client.UpdateEndpointSelector(new IdSelector("third"));
+            });
+            await Task.WhenAll(topologyUpdate, policyUpdates);
 
-        counter.Phase = "accepted stream drain";
-        Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 1,
-            "policy/topology publication must not move an accepted stream off its retiring endpoint");
-        Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 2,
-            "the retiring endpoint must remain bound through the accepted stream's final item");
-        Ensure(!await retiringStream.MoveNextAsync(),
-            "the accepted stream should complete normally while its endpoint drains");
+            counter.Phase = "accepted stream drain";
+            Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 1,
+                "policy/topology publication must not move an accepted stream off its retiring endpoint");
+            Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 2,
+                "the retiring endpoint must remain bound through the accepted stream's final item");
+            Ensure(!await retiringStream.MoveNextAsync(),
+                "the accepted stream should complete normally while its endpoint drains");
 
-        counter.Phase = "replacement readiness";
-        await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
-        await WaitUntilAsync(
-            async () => await service.GetEndpointIdAsync() == "third",
-            TimeSpan.FromSeconds(3));
-        counter.EnsureCounts(
-            "resolver replacement requires exactly one new dial; policy publications must add none",
-            first: 1, second: 1, third: 1);
-        Ensure(client.GetReadinessSnapshot().ActiveEndpoints == 2,
-            "selection publication must not alter resolver-owned endpoint membership");
+            counter.Phase = "replacement readiness";
+            await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
+            await WaitUntilAsync(
+                async () => await service.GetEndpointIdAsync() == "third",
+                TimeSpan.FromSeconds(3));
+            counter.EnsureCounts(
+                "resolver replacement requires exactly one new dial; policy publications must add none",
+                first: 1, second: 1, third: 1);
+            Ensure(client.GetReadinessSnapshot().ActiveEndpoints == 2,
+                "selection publication must not alter resolver-owned endpoint membership");
+            bodyCompleted = true;
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+            throw;
+        }
+        finally
+        {
+            capture.WriteRecord(streamDelayMs, bodyCompleted, failure);
+        }
     }
 
     private sealed class RuntimeSelectionConnectCounter
@@ -95,6 +113,7 @@ public sealed partial class DynamicEndpointIntegrationTests
 
         public string Phase
         {
+            get { lock (_gate) return _phase; }
             set { lock (_gate) _phase = value; }
         }
 
@@ -102,6 +121,12 @@ public sealed partial class DynamicEndpointIntegrationTests
         {
             lock (_gate)
                 _attempts.Add((endpoint, _phase));
+        }
+
+        public (string Endpoint, string Phase)[] CaptureAttempts()
+        {
+            lock (_gate)
+                return _attempts.ToArray();
         }
 
         public void EnsureCounts(string phase, int first, int second, int third)

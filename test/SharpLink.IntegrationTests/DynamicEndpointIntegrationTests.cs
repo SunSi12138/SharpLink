@@ -941,12 +941,15 @@ public sealed partial class DynamicEndpointIntegrationTests
             await Task.WhenAny(_runTask, Task.Delay(1000));
         }
 
-        public static Task<TcpServerScope> StartAsync(string endpointId)
+        public static Task<TcpServerScope> StartAsync(
+            string endpointId, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null)
         {
             var builder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback)
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500));
+            if (loggerFactory is not null)
+                builder.UseLoggerFactory(loggerFactory);
             builder.ReplaceService<IConnectionBehaviorService>(new ConnectionBehaviorService { EndpointId = endpointId });
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             return Task.FromResult(new TcpServerScope(builder.Build(), port));
