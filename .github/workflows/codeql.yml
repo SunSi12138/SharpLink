@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - dev
+      - 'validation/dependency-forward-dev-20261030'
   pull_request:
     branches:
       - main

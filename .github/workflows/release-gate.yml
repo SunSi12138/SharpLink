@@ -8,6 +8,8 @@ on:
     branches:
       - main
   push:
+    branches:
+      - 'validation/dependency-forward-dev-20261030'
     tags:
       - 'v*'
   workflow_dispatch:
