@@ -381,7 +381,20 @@ internal sealed partial class SharpLinkServer
                 var callsDrained = _callsDrained.Task.IsCompletedSuccessfully;
                 Task flushTask = Task.CompletedTask;
                 if (callsDrained)
+                {
                     flushTask = FlushAllSessionsAsync();
+                    try
+                    {
+                        // Calls and their final queued output share the original graceful
+                        // deadline. Starting a flush is not evidence that it completed.
+                        await WaitUntilWithRuntimeTimeAsync(flushTask, gracefulDeadline).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // The physical task remains in frameworkCleanupTask below, where
+                        // its original failure is reported after independent forced close.
+                    }
+                }
 
                 var unfinishedCalls = _server._callAdmission.ActiveCallCount;
                 if (!callsDrained)
