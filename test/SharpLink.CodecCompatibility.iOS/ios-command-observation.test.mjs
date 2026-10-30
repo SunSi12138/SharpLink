@@ -222,3 +222,23 @@ test('monitor enable failure still attempts disable once and finish is idempoten
     assert.match(JSON.stringify(observation.record.errors), /MOCK_ENABLE/);
     assert.equal(observation.record.observationStatus, 'partial');
 });
+
+test('finish freezes telemetry against late callbacks and previously issued chunk tokens', () => {
+    const state = setup();
+    const oldToken = state.observation.beginChunk('stdout', 3);
+    state.observation.rawWrite(oldToken, 100, 102);
+    state.setNow(110);
+    state.observation.finish();
+    const frozen = JSON.parse(JSON.stringify(state.observation.record));
+    state.setNow(200);
+    const lateToken = state.observation.beginChunk('stderr', 99);
+    state.observation.rawWrite(oldToken, 110, 150);
+    state.observation.forwardWrite(oldToken, 151, 160, false, { writableLength: 999 });
+    state.observation.endChunk(oldToken);
+    state.observation.rawWrite(lateToken, 170, 180);
+    state.observation.forwardWrite(lateToken, 180, 190, false, { writableLength: 999 });
+    state.observation.endChunk(lateToken);
+    state.observation.finish();
+    assert.deepEqual(JSON.parse(JSON.stringify(state.observation.record)), frozen);
+    assert.equal(state.disabled, 1);
+});

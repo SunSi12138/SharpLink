@@ -767,3 +767,56 @@ test('invalid I/O observation flag fails configuration before spawning any comma
     assert.match(result.stderr, /SHARPLINK_IOS_IO_OBSERVATION must be 0 or 1/);
     assert.equal(result.rawOut, '');
 });
+
+test('metadata failure preserves cleanup output while already-finished telemetry stays frozen', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalWrite = fs.writeFileSync;
+        let thrown = false;
+        fs.writeFileSync = function(name, data, ...args) {
+            let record;
+            if (String(name).endsWith('.json') && typeof data === 'string') {
+                try { record = JSON.parse(data); } catch {}
+            }
+            if (!thrown && record?.status === 'running' && record.pid > 1) {
+                thrown = true;
+                const until = performance.now() + 1500;
+                const pause = new Int32Array(new SharedArrayBuffer(4));
+                while (!fs.existsSync(process.env.TEST_HEARTBEAT_FILE) && performance.now() < until) {
+                    Atomics.wait(pause, 0, 0, 5);
+                }
+                if (!fs.existsSync(process.env.TEST_HEARTBEAT_FILE)) {
+                    throw new Error('MOCK_FIXTURE_INITIALIZATION_TIMEOUT: SIGTERM handler was not ready');
+                }
+                throw new Error('MOCK_METADATA_AFTER_SPAWN');
+            }
+            return originalWrite.call(fs, name, data, ...args);
+        };
+    `;
+    const code = `
+        process.on('SIGTERM', () => {
+            process.stdout.write('AFTER_FINISH_RAW');
+            setTimeout(() => process.exit(0), 50);
+        });
+        require('node:fs').writeFileSync(process.env.TEST_HEARTBEAT_FILE, 'SIGTERM_HANDLER_READY');
+        process.stdout.write('PRE_RAW');
+        setInterval(() => {}, 1000);
+    `;
+    const result = await execute(t, { preload, code, timeoutMs: 3000,
+        env: { SHARPLINK_IOS_IO_OBSERVATION: '1' } });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /MOCK_METADATA_AFTER_SPAWN/);
+    assert.equal(result.rawOut, 'PRE_RAWAFTER_FINISH_RAW');
+    assert.equal(result.records.length, 1);
+    const record = result.records[0];
+    assert.equal(record.processGroupExited, true);
+    assert.equal(record.finalGroupState, 'gone');
+    assert.equal(record.ioObservation.totalChunkCount, 0);
+    assert.deepEqual(record.ioObservation.samples, []);
+    assert.equal(record.ioObservation.streams.stdout.byteCount, 0);
+    const cleanupSignal = record.events.find(event => event.type === 'signal-call' && event.signal === 'SIGTERM');
+    assert.ok(cleanupSignal, 'unexpected metadata failure must still stop its owned group');
+    assert.ok(record.ioObservation.endedMonotonicMs <= cleanupSignal.monotonicMs,
+        'observation ends before cleanup signals and cannot be extended by later data callbacks');
+    assert.ok(result.elapsedMs < 5000);
+});

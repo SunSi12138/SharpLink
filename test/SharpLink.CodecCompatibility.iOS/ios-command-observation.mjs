@@ -8,10 +8,11 @@ export function createCommandObservation({ monotonicMs, monitorFactory = monitor
     const record = {
         schemaVersion: 1, observationStatus: 'collecting',
         timingMeaning: 'Callback observation time, not kernel output production time. Measurements perturb execution.',
-        scope: 'Command try entry through final-cleanup entry; raw writes and forwarded child chunks only; excludes metadata writes and supervisor console messages.',
+        scope: 'ELD/CPU: command try entry through final-cleanup entry, including metadata/console work inside that interval. Per-write statistics: raw writes and forwarded child chunks only. APIs ignore later cleanup output after finish.',
+        callTimingMeaning: 'Monotonic elapsed around calls includes descheduling/preemption; not pure kernel I/O time or proof of slow disk.',
         runtime, outputDescriptors: {}, monotonicClock: 'ios-command timelineOriginAt / process.hrtime.bigint relative',
         sampleRetention: 'First 128 and most recent 128 chunks, without duplicate sequences; totals include discarded samples.',
-        outputQueueMeaning: 'Supervisor output stream writableLength; may include supervisor messages, not only child bytes.',
+        outputQueueMeaning: 'Supervisor writableLength may include supervisor messages. Peak is sampled after forwarding and at finish, not a continuous kernel queue maximum.',
         sampleLimit: 256, samples: [], totalChunkCount: 0, droppedSampleCount: 0,
         errors: [], droppedErrorCount: 0, streams: {},
         eventLoopDelay: { status: 'unknown', resolutionMs: 20, unit: 'nanoseconds', count: 0, caveat: 'Histogram callbacks can miss a final stall before disable; no samples is unknown, never zero delay.' }, cpuUsageDeltaMicros: null, cpuScope: 'Supervisor process only; excludes child CPU and cannot prove host contention.'
@@ -48,7 +49,7 @@ export function createCommandObservation({ monotonicMs, monitorFactory = monitor
     safely('start-clock', () => { record.startedMonotonicMs = clock(); });
     safely('cpu-start', () => { initialCpu = cpuUsage(); });
     safely('event-loop-enable', () => { histogram = monitorFactory({ resolution: 20 }); histogram.enable(); });
-    const beginChunk = (stream, bytes) => safely('chunk-begin', () => {
+    const beginChunk = (stream, bytes) => finished ? undefined : safely('chunk-begin', () => {
         const stats = record.streams[stream];
         if (!stats || !Number.isSafeInteger(bytes) || bytes < 0) throw new Error('Invalid chunk observation.');
         stats.chunkCount++; stats.byteCount += bytes; record.totalChunkCount++;
@@ -67,14 +68,14 @@ export function createCommandObservation({ monotonicMs, monitorFactory = monitor
         if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) throw new Error('Invalid observation duration.');
         return end - start;
     };
-    const rawWrite = (sample, start, end) => safely('raw-write', () => {
+    const rawWrite = (sample, start, end) => finished ? undefined : safely('raw-write', () => {
         if (!sample) return;
         const ms = duration(start, end), stats = record.streams[sample.stream];
         stats.rawWriteCalls++; stats.rawWriteTotalMs += ms; stats.rawWriteMaxMs = Math.max(stats.rawWriteMaxMs, ms);
         sample.rawWriteCalls++; sample.rawWriteTotalMs += ms; sample.rawWriteMaxMs = Math.max(sample.rawWriteMaxMs, ms);
         sample.rawWriteFirstStartMonotonicMs ??= start; sample.rawWriteLastEndMonotonicMs = end;
     });
-    const forwardWrite = (sample, start, end, returned, stream) => safely('forward-write', () => {
+    const forwardWrite = (sample, start, end, returned, stream) => finished ? undefined : safely('forward-write', () => {
         if (!sample) return;
         const ms = duration(start, end), stats = record.streams[sample.stream];
         stats.forwardWriteCalls++; stats.forwardWriteTotalMs += ms; stats.forwardWriteMaxMs = Math.max(stats.forwardWriteMaxMs, ms);
@@ -84,7 +85,7 @@ export function createCommandObservation({ monotonicMs, monitorFactory = monitor
         Object.assign(sample, { forwardStartMonotonicMs: start, forwardEndMonotonicMs: end,
             forwardDurationMs: ms, forwardReturned: typeof returned === 'boolean' ? returned : null, queuedBytesAfter: queue });
     });
-    const endChunk = sample => safely('chunk-end', () => {
+    const endChunk = sample => finished ? undefined : safely('chunk-end', () => {
         if (!sample) return;
         const now = clock(), ms = duration(sample.arrivalMonotonicMs, now), stats = record.streams[sample.stream];
         sample.callbackEndMonotonicMs = now; sample.callbackDurationMs = ms;
