@@ -77,7 +77,7 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
     [Test]
     public async Task UpdateBetweenAttemptsShouldNotMutateCurrentCustomLoop()
     {
-        var timeProvider = new ManualTimeProvider();
+        var timeProvider = new RegisteredRetryDelayTimeProvider(TimeSpan.FromSeconds(1));
         var transport = new TestClientTransportFactory();
         var policy = new RecordingDelayPolicy(TimeSpan.FromSeconds(1));
         await using var client = ClientBuilderTestHelper.Build(transport, builder =>
@@ -92,6 +92,9 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
         var first = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
         await InjectErrorAsync(transport, first, SharpLinkErrorCode.Unavailable);
         await policy.EvaluationStarted.WaitAsync(TimeSpan.FromSeconds(2));
+        // Evaluation begins before the retry loop registers its delay. Advancing earlier
+        // can leave a newly registered timer one full interval ahead of the test clock.
+        await timeProvider.DelayRegistered.WaitAsync(TimeSpan.FromSeconds(2));
 
         client.DisableRetry();
         timeProvider.Advance(TimeSpan.FromSeconds(1));
@@ -254,6 +257,31 @@ public sealed class SharpLinkClientRuntimeRetryPolicyTests
                 await _release.Task.ConfigureAwait(false);
             }
             return await next(context).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class RegisteredRetryDelayTimeProvider(TimeSpan retryDelay) : TimeProvider
+    {
+        private readonly ManualTimeProvider _clock = new();
+        private readonly TaskCompletionSource _delayRegistered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal Task DelayRegistered => _delayRegistered.Task;
+        internal void Advance(TimeSpan elapsed) => _clock.Advance(elapsed);
+        public override long TimestampFrequency => _clock.TimestampFrequency;
+        public override DateTimeOffset GetUtcNow() => _clock.GetUtcNow();
+        public override long GetTimestamp() => _clock.GetTimestamp();
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            var timer = _clock.CreateTimer(callback, state, dueTime, period);
+            if (dueTime == retryDelay && period == Timeout.InfiniteTimeSpan)
+                _delayRegistered.TrySetResult();
+            return timer;
         }
     }
 
