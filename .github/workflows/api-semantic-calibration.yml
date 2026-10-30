@@ -1,0 +1,132 @@
+name: Fixed-artifact API comparison (temporary current reports)
+
+on:
+  push:
+    branches: ['validation/api-semantic-readpath-20261029']
+    paths: ['eng/api-semantic-calibration/request.json']
+
+permissions:
+  contents: read
+  actions: read # Explicitly authorized same-repository historical-artifact read.
+
+concurrency:
+  group: api-semantic-calibration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/validation/api-semantic-readpath-20261029'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+      MSBUILDDISABLENODEREUSE: '1'
+      DOTNET_CLI_USE_MSBUILD_SERVER: '0'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+      UseSharedCompilation: 'false'
+    steps:
+      - name: Checkout reviewed tools and request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+          path: tools
+      - name: Offline controls and request-only guard
+        id: provenance
+        run: |
+          python3 -m unittest discover -s tools/eng/api-semantic-calibration -p 'test_*.py' -v
+          python3 tools/eng/api-semantic-calibration/gate.py --tools-root tools
+      - name: Checkout immutable product separately
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.provenance.outputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: candidate
+      - name: Verify clean source SHA and tree
+        id: source
+        run: python3 tools/eng/api-semantic-calibration/gate.py --tools-root tools --source-root candidate
+      - name: Checkout frozen ledger source separately
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 3d76a3a8b55a37e24c62a073fe588cff3d3867be
+          fetch-depth: 1
+          persist-credentials: false
+          path: baseline-source
+      - name: Read fixed historical artifact and reconstruct frozen expected hashes
+        id: baseline
+        env:
+          GH_READ_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/eng/api-semantic-calibration/baseline.py --workspace "$RUNNER_TEMP/api-baseline-${{ github.run_id }}-${{ github.run_attempt }}" --source-root baseline-source
+      - name: Install official SHA512-verified SDK102 into private paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/api-calibration-${{ github.run_id }}-${{ github.run_attempt }}"
+          test ! -e "$ROOT" && test ! -L "$ROOT"
+          mkdir -p "$ROOT/sdk" "$ROOT/cli-home" "$ROOT/http-cache" "$ROOT/scratch" "$ROOT/tmp" "$ROOT/packages"
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.102/dotnet-sdk-10.0.102-linux-x64.tar.gz --output "$ROOT/sdk.tar.gz"
+          echo '7adf40e8e5547970391cfbe474c3874c6918ce3575ac398f376c78502134e1c8a2fa3da9aca281fdaeda81671f56c851ebe9e74c5b57c5a298bd45deba63565d  '"$ROOT/sdk.tar.gz" | sha512sum --check
+          tar -xzf "$ROOT/sdk.tar.gz" -C "$ROOT/sdk"
+          {
+            echo "DOTNET_ROOT=$ROOT/sdk"
+            echo "DOTNET_ROOT_X64=$ROOT/sdk"
+            echo "DOTNET_HOST_PATH=$ROOT/sdk/dotnet"
+            echo "DOTNET_CLI_HOME=$ROOT/cli-home"
+            echo "NUGET_PACKAGES=$ROOT/packages"
+            echo "NUGET_HTTP_CACHE_PATH=$ROOT/http-cache"
+            echo "NUGET_SCRATCH=$ROOT/scratch"
+            echo "TMPDIR=$ROOT/tmp"
+            echo "INVENTORY=$ROOT/inventory"
+          } >> "$GITHUB_ENV"
+          echo "$ROOT/sdk" >> "$GITHUB_PATH"
+          cd candidate
+          test "$("$ROOT/sdk/dotnet" --version)" = 10.0.102
+      - name: Generate complete production inventory using unchanged source helper
+        id: inventory
+        working-directory: candidate
+        run: |
+          # Existing/symlink log destinations must not be overwritten or followed.
+          set -C
+          python3 eng/run-api-inventory.py --output "$INVENTORY" > "$RUNNER_TEMP/api-calibration-${{ github.run_id }}-${{ github.run_attempt }}/inventory-driver.log" 2>&1
+      - name: Exhaustive bounded semantic difference discovery
+        id: comparison
+        if: ${{ !cancelled() && steps.source.outcome == 'success' && steps.baseline.outcome == 'success' && steps.inventory.outcome != 'skipped' }}
+        run: python3 tools/eng/api-semantic-calibration/compare.py "$INVENTORY" --fixture "$RUNNER_TEMP/api-baseline-${{ github.run_id }}-${{ github.run_attempt }}/expected.json" --report "$RUNNER_TEMP/api-review-${{ github.run_id }}-${{ github.run_attempt }}/comparison.json"
+      - name: Recheck immutable source and reviewed tools
+        id: final_source
+        if: ${{ always() && steps.source.outcome == 'success' }}
+        run: python3 tools/eng/api-semantic-calibration/gate.py --tools-root tools --source-root candidate
+      - name: Bounded final status; differences require independent review
+        if: always()
+        env:
+          SOURCE: ${{ steps.source.outcome }}
+          BASELINE: ${{ steps.baseline.outcome }}
+          INVENTORY_RESULT: ${{ steps.inventory.outcome }}
+          COMPARISON: ${{ steps.comparison.outcome }}
+          FINAL_SOURCE: ${{ steps.final_source.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          result = {key: os.environ[key] for key in ('SOURCE','BASELINE','INVENTORY_RESULT','COMPARISON','FINAL_SOURCE')}
+          print('API_CALIBRATION_RESULT ' + json.dumps(result, sort_keys=True))
+          print('Difference discovery only; no ledger rebinding, API approval, package or release claim.')
+          raise SystemExit(0 if all(value == 'success' for value in result.values()) else 1)
+          PY
+      - name: Preserve current inventory and review diagnostics only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-current-review-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 3
+          if-no-files-found: warn
+          include-hidden-files: false
+          path: |
+            ${{ runner.temp }}/api-calibration-${{ github.run_id }}-${{ github.run_attempt }}/inventory/
+            ${{ runner.temp }}/api-review-${{ github.run_id }}-${{ github.run_attempt }}/comparison.json
+            ${{ runner.temp }}/api-calibration-${{ github.run_id }}-${{ github.run_attempt }}/inventory-driver.log
+      # Never upload the baseline ZIP/reconstructed fixture, credentials or workspace.
