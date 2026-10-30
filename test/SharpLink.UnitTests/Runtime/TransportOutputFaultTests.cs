@@ -179,7 +179,9 @@ public partial class TransportOutputFaultTests
             options.FlowControl.MaxSendQueueBytes = 3 * 79;
             options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency;
         }).Build(includeGeneratedAssemblyCatalog: false);
-        var stream = new ObservingStream(blockWrite: true, failure: "write-prefix-after-gate");
+        // This owner/queue case injects failure before any bytes are delivered.
+        // Partial-prefix replay is covered separately by the stopping/cancellation cases.
+        var stream = new ObservingStream(blockWrite: true, failure: "write-after-gate");
         var session = CreateSession(context, new StreamTransportConnection(stream));
         var frames = new CountingWriter[4];
         for (var index = 0; index < frames.Length; index++)
@@ -201,6 +203,8 @@ public partial class TransportOutputFaultTests
             Ensure(session.QueuedSendBytes == 3 * 79 && !sends[3].IsCompleted,
                 "three reserved frames must hold capacity while the fourth waits for admission");
             Ensure(frames.All(frame => frame.ReturnCount == 0), "no owner may return before the held write terminates");
+            Ensure(stream.WriteCount == 1 && stream.BytesWritten == 0 && stream.DisposeCount == 0,
+                "the held failing write must not deliver a prefix or begin transport disposal");
             stream.ReleaseWrite.TrySetResult();
             foreach (var send in sends)
             {
@@ -212,7 +216,7 @@ public partial class TransportOutputFaultTests
             Ensure(frames.All(frame => frame.ReturnCount == 1) && session.QueuedSendBytes == 0,
                 "in-flight, queued and admission-waiting owners and credits must be returned exactly once");
             Ensure(stream.WriteCount == 1 && stream.BytesWritten == 0 && stream.DisposeCount == 1,
-                "terminal cleanup must not write the failed or queued frames again");
+                $"terminal cleanup must not write the failed or queued frames again: writes={stream.WriteCount}, bytes={stream.BytesWritten}, disposals={stream.DisposeCount}");
         }
         finally
         {
