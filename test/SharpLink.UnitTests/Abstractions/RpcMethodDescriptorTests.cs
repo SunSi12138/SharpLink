@@ -21,7 +21,16 @@ public class RpcMethodDescriptorTests
             ClientStreamCount: 2,
             ResponseNullable: true);
 
-        var (contractId, methodId, kind, hasResponse, hasStreams, hasTimeout,
+        long contractId;
+        long methodId;
+        RpcMethodKind kind;
+        bool hasResponse;
+        bool hasStreams;
+        bool hasTimeout;
+        TimeSpan? oldTimeout;
+        bool idempotent;
+        int streamCount;
+        (contractId, methodId, kind, hasResponse, hasStreams, hasTimeout,
             oldTimeout, idempotent, streamCount) = descriptor;
         descriptor.Deconstruct(
             out _, out _, out _, out _, out _, out _, out _, out _, out _, out var nullable);
