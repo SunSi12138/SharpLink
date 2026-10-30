@@ -3,8 +3,10 @@ namespace SharpLink.IntegrationTests;
 public sealed partial class DynamicEndpointIntegrationTests
 {
     [Test]
+    [Arguments(100)]
+    [Arguments(700)]
     [NotInParallel]
-    public async Task RuntimeSelectionPolicyShouldComposeWithDynamicTopologyReplacementWithoutExtraDial()
+    public async Task RuntimeSelectionPolicyShouldComposeWithDynamicTopologyReplacementWithoutExtraDial(int streamDelayMs)
     {
         await using var first = await TcpServerScope.StartAsync("first");
         await using var second = await TcpServerScope.StartAsync("second");
@@ -15,9 +17,12 @@ public sealed partial class DynamicEndpointIntegrationTests
         var counter = new RuntimeSelectionConnectCounter();
         var sockets = SharpLinkTransportFactories.Sockets();
         await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            // Match TcpServerScope's 500 ms idle watchdog. The default 10 s heartbeat
+            // would legitimately reconnect idle siblings while the accepted stream drains.
+            .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
             .UseEndpointResolver(
                 resolver,
-                endpoint => new RuntimeSelectionCountingTransportFactory(sockets(endpoint), counter))
+                endpoint => new RuntimeSelectionCountingTransportFactory(sockets(endpoint), counter, endpoint.Id))
             .UseEndpointSelector(new IdSelector("first"))
             .UseCluster(options =>
             {
@@ -29,23 +34,26 @@ public sealed partial class DynamicEndpointIntegrationTests
 
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
-        Ensure(counter.Count == 2, "initial dynamic topology should dial exactly two Ready endpoints");
+        counter.EnsureCounts("initial topology", first: 1, second: 1, third: 0);
 
         var service = client.Get<IConnectionBehaviorService>();
         Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic selector should route to first");
 
+        counter.Phase = "policy-only publication";
         client.UpdateEndpointSelector(new IdSelector("second"));
         Ensure(await service.GetEndpointIdAsync() == "second",
             "a live dynamic client should route its next physical attempt with the new selector");
-        Ensure(counter.Count == 2,
-            "publishing a dynamic selection policy must not reconnect healthy sessions");
+        counter.EnsureCounts("policy-only publication must not reconnect", first: 1, second: 1, third: 0);
 
+        // The 700 ms case keeps healthy siblings idle beyond the server watchdog;
+        // matching heartbeat producers, rather than a fast test run, must preserve them.
         await using var retiringStream = service
-            .SlowRangeAsync(3, 100, CancellationToken.None)
+            .SlowRangeAsync(3, streamDelayMs, CancellationToken.None)
             .GetAsyncEnumerator();
         Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 0,
             "the accepted stream should bind to the endpoint selected before retirement begins");
 
+        counter.Phase = "concurrent topology/policy publication";
         var topologyUpdate = resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(
             2,
             [Endpoint("first", first.Port, "blue"), Endpoint("third", third.Port, "yellow")]));
@@ -59,6 +67,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         });
         await Task.WhenAll(topologyUpdate, policyUpdates);
 
+        counter.Phase = "accepted stream drain";
         Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 1,
             "policy/topology publication must not move an accepted stream off its retiring endpoint");
         Ensure(await retiringStream.MoveNextAsync() && retiringStream.Current == 2,
@@ -66,32 +75,59 @@ public sealed partial class DynamicEndpointIntegrationTests
         Ensure(!await retiringStream.MoveNextAsync(),
             "the accepted stream should complete normally while its endpoint drains");
 
+        counter.Phase = "replacement readiness";
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
         await WaitUntilAsync(
             async () => await service.GetEndpointIdAsync() == "third",
             TimeSpan.FromSeconds(3));
-        Ensure(counter.Count == 3,
-            "the resolver replacement should require exactly one new dial; policy publications must add none");
+        counter.EnsureCounts(
+            "resolver replacement requires exactly one new dial; policy publications must add none",
+            first: 1, second: 1, third: 1);
         Ensure(client.GetReadinessSnapshot().ActiveEndpoints == 2,
             "selection publication must not alter resolver-owned endpoint membership");
     }
 
     private sealed class RuntimeSelectionConnectCounter
     {
-        private int _count;
+        private readonly Lock _gate = new();
+        private readonly List<(string Endpoint, string Phase)> _attempts = [];
+        private string _phase = "initial topology";
 
-        public int Count => Volatile.Read(ref _count);
+        public string Phase
+        {
+            set { lock (_gate) _phase = value; }
+        }
 
-        public void Increment() => Interlocked.Increment(ref _count);
+        public void Increment(string endpoint)
+        {
+            lock (_gate)
+                _attempts.Add((endpoint, _phase));
+        }
+
+        public void EnsureCounts(string phase, int first, int second, int third)
+        {
+            (string Endpoint, string Phase)[] attempts;
+            lock (_gate)
+                attempts = _attempts.ToArray();
+            var actualFirst = attempts.Count(attempt => attempt.Endpoint == "first");
+            var actualSecond = attempts.Count(attempt => attempt.Endpoint == "second");
+            var actualThird = attempts.Count(attempt => attempt.Endpoint == "third");
+            Ensure(attempts.Length == first + second + third &&
+                actualFirst == first && actualSecond == second && actualThird == third,
+                $"{phase}: expected total={first + second + third}, first={first}, second={second}, third={third}; " +
+                $"actual total={attempts.Length}, first={actualFirst}, second={actualSecond}, third={actualThird}; " +
+                $"dial sources=[{string.Join(", ", attempts.Select(attempt => $"{attempt.Endpoint}@{attempt.Phase}"))}]");
+        }
     }
 
     private sealed class RuntimeSelectionCountingTransportFactory(
         IClientTransportFactory inner,
-        RuntimeSelectionConnectCounter counter) : IClientTransportFactory
+        RuntimeSelectionConnectCounter counter,
+        string endpoint) : IClientTransportFactory
     {
         public async ValueTask<ITransportConnection> ConnectAsync(CancellationToken cancellationToken = default)
         {
-            counter.Increment();
+            counter.Increment(endpoint);
             return await inner.ConnectAsync(cancellationToken).ConfigureAwait(false);
         }
 
