@@ -1,0 +1,98 @@
+name: Isolated iOS x64 Readiness I/O Diagnostic
+
+# Readiness only: omits .NET SDK/workload preparation and all product/performance loads.
+# Thus this is NOT a fully identical replay of the earlier complete mobile jobs.
+# Observe once; retain failures without retries, new devices, or deadline increases.
+on:
+  push:
+    branches: [codex/3-ios-readiness-io-diagnostic]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-readiness-io-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harness-mocks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      SHARPLINK_IOS_IO_OBSERVATION: '1'
+    steps:
+      - name: Checkout
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify all 103 pure Node mocks before real readiness
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ios-readiness-mocks
+          node --version > artifacts/ios-readiness-mocks/node-version.txt
+          node --test --test-reporter=tap \
+            test/SharpLink.CodecCompatibility.iOS/run-ios.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/ios-command.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/boot-ios.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/ios-process-snapshot.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/ios-command-observation.test.mjs \
+            2>&1 | tee artifacts/ios-readiness-mocks/results.tap
+
+      - name: Preserve mock report even on failure
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-readiness-mocks-${{ github.sha }}
+          path: artifacts/ios-readiness-mocks
+          if-no-files-found: error
+          retention-days: 3
+
+  readiness-once:
+    needs: harness-mocks
+    runs-on: macos-26-intel
+    timeout-minutes: 50
+    env:
+      SHARPLINK_IOS_IO_OBSERVATION: '1'
+      SHARPLINK_IOS_DIAGNOSTICS: artifacts/codec-compat/ios-diagnostics
+    steps:
+      - name: Checkout
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Record experiment scope and preserve the original execution budget
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$SHARPLINK_IOS_DIAGNOSTICS"
+          cat > "$SHARPLINK_IOS_DIAGNOSTICS/experiment-context.txt" <<'CONTEXT'
+          One observed x64 readiness attempt; no .NET SDK/workload preparation, product build/install/run, or performance load.
+          Omitting .NET preparation changes pre-readiness conditions: this is not a fully identical replay or proof of the prior root cause.
+          Keep the runner-default Xcode selection and unmodified first-available-iPhone strategy; do not create/delete devices.
+          Existing 40-minute execution budget, one shared 8-minute preparation phase, 9-minute boot step, 50-minute job; no retries or relaxed verdicts.
+          Observation perturbs execution. Callback arrival and elapsed I/O-call timing include scheduling effects; they do not prove kernel production time or disk latency.
+          Partial observations cannot exclude logging/scheduling delay; historical failures remain authoritative.
+          CONTEXT
+          cat "$SHARPLINK_IOS_DIAGNOSTICS/experiment-context.txt" >> "$GITHUB_STEP_SUMMARY"
+          node -e 'require("fs").appendFileSync(process.env.GITHUB_ENV, `SHARPLINK_IOS_EXECUTION_DEADLINE_MS=${Date.now() + 40 * 60 * 1000}\n`)'
+
+      - name: Show the unchanged runner-selected Xcode version
+        timeout-minutes: 1
+        run: node test/SharpLink.CodecCompatibility.iOS/ios-command.mjs xcode-version 15 xcodebuild -version
+
+      - name: Observe the existing bounded simulator preparation exactly once
+        timeout-minutes: 9
+        run: node test/SharpLink.CodecCompatibility.iOS/boot-ios.mjs
+
+      - name: Preserve original readiness diagnostics even on failure
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-readiness-x64-${{ github.sha }}
+          path: artifacts/codec-compat/ios-diagnostics
+          if-no-files-found: error
+          retention-days: 3
