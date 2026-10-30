@@ -71,9 +71,11 @@ async function execute(t, { code, timeoutMs = 1000, command = process.execPath, 
     try { entries = await fs.readdir(diagnostics); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     const records = await Promise.all(entries.filter(name => name.endsWith('.json')).map(async name => JSON.parse(await fs.readFile(path.join(diagnostics, name), 'utf8'))));
-    const rawOut = (await Promise.all(entries.filter(name => name.endsWith('.stdout.log')).map(name => fs.readFile(path.join(diagnostics, name), 'utf8')))).join('');
-    const rawErr = (await Promise.all(entries.filter(name => name.endsWith('.stderr.log')).map(name => fs.readFile(path.join(diagnostics, name), 'utf8')))).join('');
-    return { ...outcome, root, records, rawOut, rawErr, childEnv };
+    const rawOutBuffer = Buffer.concat(await Promise.all(entries.filter(name => name.endsWith('.stdout.log')).map(name => fs.readFile(path.join(diagnostics, name)))));
+    const rawErrBuffer = Buffer.concat(await Promise.all(entries.filter(name => name.endsWith('.stderr.log')).map(name => fs.readFile(path.join(diagnostics, name)))));
+    const rawOut = rawOutBuffer.toString('utf8');
+    const rawErr = rawErrBuffer.toString('utf8');
+    return { ...outcome, root, records, rawOut, rawErr, rawOutBuffer, rawErrBuffer, childEnv };
 }
 
 test('command success preserves complete raw stdout and stderr with a zero exit record', async t => {
@@ -688,4 +690,80 @@ test('invalid absolute monotonic deadline is rejected before any subprocess or e
     assert.deepEqual(result.records, []);
     assert.doesNotMatch(result.stdout, /MUST_NOT_RUN/);
     assert.match(result.stderr, /Invalid absolute monotonic deadline/);
+});
+
+test('opt-in observation measures slow raw writes without changing the timeout failure gate', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalOpen = fs.openSync, originalWrite = fs.writeSync;
+        let rawStdoutFd;
+        fs.openSync = function(name, ...args) {
+            const fd = originalOpen.call(fs, name, ...args);
+            if (String(name).endsWith('.stdout.log')) rawStdoutFd = fd;
+            return fd;
+        };
+        fs.writeSync = function(fd, buffer, ...args) {
+            if (fd === rawStdoutFd && Buffer.isBuffer(buffer)) {
+                const until = performance.now() + 350;
+                while (performance.now() < until) {}
+            }
+            return originalWrite.call(fs, fd, buffer, ...args);
+        };
+    `;
+    const result = await execute(t, { timeoutMs: 200, preload,
+        env: { SHARPLINK_IOS_IO_OBSERVATION: '1' },
+        code: `process.stdout.write('RAW_WRITE_TIMING');setInterval(() => {},1000);` });
+    assert.notEqual(result.code, 0);
+    assert.equal(result.rawOut, 'RAW_WRITE_TIMING');
+    assert.equal(result.records.length, 1);
+    const record = result.records[0];
+    assert.equal(record.status, 'failure');
+    assert.equal(record.timedOut, true);
+    assert.equal(record.processGroupExited, true);
+    assert.ok(record.ioObservation.streams.stdout.rawWriteMaxMs >= 300);
+    assert.equal(record.ioObservation.streams.stdout.byteCount, Buffer.byteLength('RAW_WRITE_TIMING'));
+    assert.ok(result.elapsedMs < 5000);
+});
+
+test('opt-in observation preserves binary raw output and observes false forwarding without drain control', async t => {
+    const preload = `
+        const originalWrite = process.stdout.write.bind(process.stdout);
+        Object.defineProperty(process.stdout, 'writableLength', { configurable: true, get: () => 64 });
+        process.stdout.write = function(chunk, ...args) {
+            const returned = originalWrite(chunk, ...args);
+            return Buffer.isBuffer(chunk) ? false : returned;
+        };
+    `;
+    const bytes = [255, 254, 0, 195, 40, 128];
+    const result = await execute(t, { preload, env: { SHARPLINK_IOS_IO_OBSERVATION: '1' },
+        code: `process.stdout.write(Buffer.from(${JSON.stringify(bytes)}));process.stderr.write(Buffer.from([0,255]));` });
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(result.rawOutBuffer, Buffer.from(bytes));
+    assert.deepEqual(result.rawErrBuffer, Buffer.from([0, 255]));
+    const record = result.records[0];
+    assert.equal(record.status, 'success');
+    assert.equal(record.ioObservation.streams.stdout.byteCount, bytes.length);
+    assert.equal(record.ioObservation.streams.stderr.byteCount, 2);
+    assert.ok(record.ioObservation.streams.stdout.forwardFalseCount >= 1);
+    assert.equal(record.ioObservation.streams.stdout.queuePeakBytes, 64);
+    assert.equal(record.ioObservation.streams.stdout.queueFinalBytes, 64);
+    assert.equal(record.outputError, null);
+});
+
+test('I/O observation remains opt-in and default command records contain no telemetry field', async t => {
+    // Explicitly absent even if the parent test runner opts other subprocess controls into observation.
+    const result = await execute(t, { env: { SHARPLINK_IOS_IO_OBSERVATION: undefined },
+        code: `process.stdout.write('DEFAULT_UNOBSERVED');` });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.rawOut, 'DEFAULT_UNOBSERVED');
+    assert.equal(Object.hasOwn(result.records[0], 'ioObservation'), false);
+});
+
+test('invalid I/O observation flag fails configuration before spawning any command', async t => {
+    const result = await execute(t, { env: { SHARPLINK_IOS_IO_OBSERVATION: 'yes' },
+        code: `process.stdout.write('MUST_NOT_SPAWN_INVALID_FLAG');` });
+    assert.notEqual(result.code, 0);
+    assert.doesNotMatch(result.stdout, /MUST_NOT_SPAWN_INVALID_FLAG/);
+    assert.match(result.stderr, /SHARPLINK_IOS_IO_OBSERVATION must be 0 or 1/);
+    assert.equal(result.rawOut, '');
 });

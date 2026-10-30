@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { captureOwnedGroupSnapshot } from './ios-process-snapshot.mjs';
+import { createCommandObservation } from './ios-command-observation.mjs';
 
 let sequence = 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -24,6 +25,9 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     if (monotonicDeadlineMs !== undefined && (!Number.isFinite(monotonicDeadlineMs) || monotonicDeadlineMs <= 0)) {
         throw new Error('Invalid absolute monotonic deadline.');
     }
+    const observationFlag = process.env.SHARPLINK_IOS_IO_OBSERVATION ?? '0';
+    if (!['0', '1'].includes(observationFlag)) throw new Error('SHARPLINK_IOS_IO_OBSERVATION must be 0 or 1.');
+    let observation;
     const timelineOriginAt = new Date().toISOString();
     const monotonicOrigin = process.hrtime.bigint();
     const monotonicMs = () => Number(process.hrtime.bigint() - monotonicOrigin) / 1e6;
@@ -88,22 +92,30 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     let resolveClosed;
     const closePromise = new Promise(resolve => { resolveClosed = resolve; });
     const append = (fd, stream, chunk, isStdout) => {
+        const sample = observation?.beginChunk(isStdout ? 'stdout' : 'stderr', chunk.length);
         try {
             let offset = 0;
             while (offset < chunk.length) {
-                const written = fs.writeSync(fd, chunk, offset, chunk.length - offset);
+                let written;
+                const rawStart = observation ? monotonicMs() : null;
+                try { written = fs.writeSync(fd, chunk, offset, chunk.length - offset); }
+                finally { observation?.rawWrite(sample, rawStart, monotonicMs()); }
                 if (!Number.isInteger(written) || written <= 0 || written > chunk.length - offset) {
                     throw new Error(`Raw log write made invalid progress: ${written}.`);
                 }
                 offset += written;
             }
         } catch (error) { outputError ??= error; }
-        try { stream.write(chunk); } catch (error) { outputError ??= error; }
+        const forwardStart = observation ? monotonicMs() : null;
+        let forwarded;
+        try { forwarded = stream.write(chunk); } catch (error) { outputError ??= error; }
+        finally { observation?.forwardWrite(sample, forwardStart, monotonicMs(), forwarded, stream); }
         if (outputError) void stop();
         // Success requires complete raw logs; logging failure is fatal. Only small return values need capture.
         if (capture) {
             if (isStdout) stdout += chunk.toString(); else stderr += chunk.toString();
         }
+        observation?.endChunk(sample);
     };
     const probeGroup = source => {
         if (!child?.pid) return 'not-started';
@@ -156,6 +168,10 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     process.stdout.on('error', onOutputError); process.stderr.on('error', onOutputError);
     process.on('SIGTERM', onTerm); process.on('SIGINT', onInt);
     try {
+        if (observationFlag === '1') {
+            observation = createCommandObservation({ monotonicMs });
+            record.ioObservation = observation.record;
+        }
         // Directory/open/metadata I/O above can consume the shared budget. Recheck at the spawn boundary.
         clipTimeoutToBudget();
         budgetExpired = executionDeadlineExpired();
@@ -225,6 +241,8 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
         }
         return { stdout, stderr, record };
     } finally {
+        // Always stop observational sampling, even when subsequent cleanup/persistence throws.
+        observation?.finish();
         // Unexpected logger/metadata errors must never abandon an owned live group.
         if (child?.pid && (!closed || unresolvedGroup('finally'))) await stop();
         if (stopping) await stopping;
