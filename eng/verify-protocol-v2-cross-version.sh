@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Historical path retained for callers. Both peers use the same current package build;
+# this is a process interoperability gate, not a 2.x/3.x compatibility matrix.
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$ROOT/test/fixtures/protocol-v2-cross-version/SharpLink.ProtocolV2CrossVersion.csproj"
 CONFIG="$ROOT/test/SharpLink.PackageSmoke/NuGet.config"
@@ -72,4 +75,4 @@ ACTIVE_SERVER_PID=""
 grep -Fx "CLIENT_PASS" "$client_log" >/dev/null
 grep -Fx "SERVER_PASS" "$server_log" >/dev/null
 
-echo "Protocol v2 process gate passed for SharpLink $current_version. Pre-2.0 cross-version compatibility is intentionally out of scope."
+echo "Protocol v2 process gate passed for SharpLink $current_version. Both peers used the same current package build; cross-major compatibility is not asserted."
