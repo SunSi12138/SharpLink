@@ -10,7 +10,7 @@ try {
         const device = devices.find(item => item.isAvailable && item.name?.startsWith('iPhone'));
         if (device) { selected = { ...device, runtime }; break; }
     }
-    if (!selected || !/^[0-9a-f-]{36}$/i.test(selected.udid)) throw new Error('No available iPhone simulator found.');
+    if (!selected || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selected.udid)) throw new Error('No available iPhone simulator found.');
     console.log(`Selected simulator: ${selected.name}, runtime=${selected.runtime}, udid=${selected.udid}, initialState=${selected.state}`);
     if (selected.state !== 'Shutdown') {
         await runCommand('simulator-shutdown', 'xcrun', ['simctl', 'shutdown', selected.udid], { timeoutMs: 30_000 });

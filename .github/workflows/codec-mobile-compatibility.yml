@@ -218,7 +218,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$SHARPLINK_IOS_DIAGNOSTICS"
-          # Bound normal work to 40 minutes after checkout; reserve the rest of the unchanged job for cleanup/upload.
+          # Reject normal completion after 40 minutes; step limits still bound filesystem/action work.
+          # Reserve remaining job time for best-effort cleanup/upload, not a host-loss guarantee.
           node -e 'require("fs").appendFileSync(process.env.GITHUB_ENV, `SHARPLINK_IOS_EXECUTION_DEADLINE_MS=${Date.now() + 40 * 60 * 1000}\n`)'
 
       - name: Pin experimental .NET 11 SDK for iOS CoreCLR

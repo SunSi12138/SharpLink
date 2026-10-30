@@ -19,8 +19,13 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(simu
 }
 const diagnosticsDirectory = process.env.SHARPLINK_IOS_DIAGNOSTICS || 'artifacts/codec-compat/ios-diagnostics';
 let interrupted;
-process.on('SIGTERM', () => { interrupted = 'SIGTERM'; });
-process.on('SIGINT', () => { interrupted = 'SIGINT'; });
+const onSignal = signal => {
+    interrupted = signal;
+    process.exitCode = 1;
+    console.error(`iOS probe received ${signal}; cancellation remains a failure through final evidence preservation.`);
+};
+process.on('SIGTERM', () => onSignal('SIGTERM'));
+process.on('SIGINT', () => onSignal('SIGINT'));
 
 async function findManifestFiles(root) {
     const found = [];
@@ -157,6 +162,10 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, target
             console.log(`iOS simulator consumer verified ${parsed.results?.length ?? 0} entries; blocking failures: ${blocking}.`);
             if (blocking !== 0) throw new Error(`iOS verification has ${blocking} blocking result(s).`);
         }
+        const executionDeadline = Number(process.env.SHARPLINK_IOS_EXECUTION_DEADLINE_MS || Infinity);
+        if (Date.now() >= executionDeadline) {
+            throw new Error('iOS normal execution exceeded its deadline while processing or writing the result.');
+        }
     } catch (error) { failure = error; }
     if (interrupted && !failure) failure = new Error(`iOS probe interrupted by ${interrupted}.`);
     const finalErrors = [];
@@ -165,6 +174,9 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, target
     catch (error) { finalErrors.push(error); }
     try { await preserveResult(resultPath, `${mode}-after`); }
     catch (error) { finalErrors.push(error); }
+    if (interrupted && !finalErrors.some(error => String(error.message).includes(interrupted))) {
+        finalErrors.push(new Error(`iOS probe interrupted by ${interrupted} during cleanup or evidence preservation.`));
+    }
     if (finalErrors.length) {
         throw new AggregateError(finalErrors, finalErrors.map((error, index) => `Failure ${index + 1}: ${error.stack ?? error}`).join('\n'));
     }

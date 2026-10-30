@@ -138,7 +138,7 @@ async function run(context, mode = 'produce') {
     }
     const started = Date.now();
     return await new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [launcher, ...args], {
+        const child = spawn(process.execPath, [...(context.nodeArgs ?? []), launcher, ...args], {
             cwd: context.root, env: context.env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe']
         });
         let stdout = '';
@@ -150,7 +150,7 @@ async function run(context, mode = 'produce') {
         let interruptionSent = false;
         child.stdout.on('data', chunk => {
             stdout += chunk;
-            if (context.interruptWhenLaunched && !interruptionSent && stdout.includes('iOS simulator launch attempt')) {
+            if (context.interruptWhenLaunched && !interruptionSent && stdout.includes(context.interruptMarker ?? 'iOS simulator launch attempt')) {
                 interruptionSent = true;
                 setTimeout(() => child.kill('SIGTERM'), 50);
             }
@@ -369,4 +369,69 @@ test('SIGTERM while awaiting a result becomes a recorded failure and still runs 
     assert.equal((await commands(context)).filter(row => row.args[1] === 'terminate').length, 1);
     assert.match(result.stdout + result.stderr + await allEvidence(context.diagnostics), /interrupt|SIGTERM/i);
     assert.ok(result.elapsedMs < 3000, 'interruption is noticed without waiting out the full probe deadline');
+});
+
+
+test('SIGTERM during final evidence copy cannot change cancellation into a successful exit', async t => {
+    const context = await setup(t);
+    const hook = path.join(context.root, 'slow-final-copy.mjs');
+    await fs.writeFile(hook, `
+        import fs from 'node:fs/promises';
+        const originalCopy = fs.copyFile;
+        fs.copyFile = async function(source, destination, ...args) {
+            if (String(destination).includes('-after-') && !String(destination).endsWith('.tmp')) {
+                console.log('MOCK_FINAL_EVIDENCE_COPY_WAIT');
+                await new Promise(resolve => setTimeout(resolve, 400));
+            }
+            return originalCopy.call(fs, source, destination, ...args);
+        };
+    `);
+    context.nodeArgs = ['--import', hook];
+    context.interruptWhenLaunched = true;
+    context.interruptMarker = 'MOCK_FINAL_EVIDENCE_COPY_WAIT';
+    const result = await run(context);
+    assert.notEqual(result.code, 0, 'late cancellation must remain failure even after successful probe and cleanup');
+    assert.equal(result.signal, null);
+    assertOneLaunch(await commands(context));
+    assert.equal((await commands(context)).filter(row => row.args[1] === 'terminate').length, 1);
+    assert.match(result.stdout, /MOCK_FINAL_EVIDENCE_COPY_WAIT/);
+    assert.match(result.stderr, /SIGTERM/);
+    assert.match(result.stderr, /evidence preservation|cancellation remains a failure/);
+    const afterFiles = (await fs.readdir(context.diagnostics)).filter(name => name.includes('-after-') && name.endsWith('-result.json'));
+    assert.equal(afterFiles.length, 1, 'final raw result preservation still completes');
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(context.diagnostics, afterFiles[0]), 'utf8')), envelope);
+});
+
+test('normal corpus write completing past the execution deadline remains failed with cleanup and raw sample intact', async t => {
+    const context = await setup(t);
+    const hook = path.join(context.root, 'slow-normal-write.mjs');
+    await fs.writeFile(hook, `
+        import fs from 'node:fs/promises';
+        const originalWrite = fs.writeFile;
+        fs.writeFile = async function(name, ...args) {
+            if (String(name).endsWith('/corpus/manifest.json')) {
+                console.log('MOCK_NORMAL_CORPUS_WRITE_WAIT');
+                await new Promise(resolve => setTimeout(resolve, 1500));
+            }
+            return originalWrite.call(fs, name, ...args);
+        };
+    `);
+    context.nodeArgs = ['--import', hook];
+    const deadline = Date.now() + 1100;
+    context.env.SHARPLINK_IOS_EXECUTION_DEADLINE_MS = String(deadline);
+    const result = await run(context);
+    assert.notEqual(result.code, 0, 'late normal materialization must not produce a green exit');
+    assert.equal(result.signal, null);
+    assertOneLaunch(await commands(context));
+    assert.equal((await commands(context)).filter(row => row.args[1] === 'terminate').length, 1);
+    assert.match(result.stdout, /MOCK_NORMAL_CORPUS_WRITE_WAIT/, 'negative control reached the normal corpus write');
+    assert.match(result.stderr, /normal execution exceeded its deadline/);
+    assert.ok(Date.now() >= deadline);
+    const evidenceFiles = await fs.readdir(context.diagnostics);
+    const afterFiles = evidenceFiles.filter(name => name.includes('-after-') && name.endsWith('-result.json'));
+    assert.equal(afterFiles.length, 1);
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(context.diagnostics, afterFiles[0]), 'utf8')), envelope);
+    const cleanupFile = evidenceFiles.find(name => name.endsWith('-produce-terminate.json'));
+    assert.ok(cleanupFile);
+    assert.equal(JSON.parse(await fs.readFile(path.join(context.diagnostics, cleanupFile), 'utf8')).status, 'success', 'bounded cleanup still runs after execution budget expiry');
 });

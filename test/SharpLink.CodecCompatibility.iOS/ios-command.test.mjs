@@ -9,7 +9,7 @@ import test from 'node:test';
 // This suite exercises only Node child processes; no real mobile or build tools.
 const helper = fileURLToPath(new URL('./ios-command.mjs', import.meta.url));
 
-async function execute(t, { code, timeoutMs = 1000, command = process.execPath, args, env = {} }) {
+async function execute(t, { code, timeoutMs = 1000, command = process.execPath, args, env = {}, preload }) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sharplink-ios-command-test-'));
     const diagnostics = path.join(root, 'diagnostics');
     t.after(async () => {
@@ -29,10 +29,16 @@ async function execute(t, { code, timeoutMs = 1000, command = process.execPath, 
     if (Object.hasOwn(env, 'SHARPLINK_IOS_EXECUTION_DEADLINE_MS')) {
         childEnv.SHARPLINK_IOS_EXECUTION_DEADLINE_MS = env.SHARPLINK_IOS_EXECUTION_DEADLINE_MS;
     }
+    const nodeArgs = [];
+    if (preload) {
+        const hook = path.join(root, 'preload.mjs');
+        await fs.writeFile(hook, preload);
+        nodeArgs.push('--import', hook);
+    }
     const started = Date.now();
     const outcome = await new Promise((resolve, reject) => {
         const child = spawn(process.execPath,
-            [helper, 'mock-command', String(timeoutMs / 1000), command, ...(args ?? ['-e', code])],
+            [...nodeArgs, helper, 'mock-command', String(timeoutMs / 1000), command, ...(args ?? ['-e', code])],
             { cwd: root, env: childEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
         let stdout = '', stderr = '';
         const watchdog = setTimeout(() => {
@@ -177,4 +183,84 @@ test('large build-style output is preserved without a buffered spawn limit', asy
     assert.equal(result.rawOut, 'o'.repeat(262144));
     assert.equal(result.rawErr, 'e'.repeat(262144));
     assert.equal(result.records[0].status, 'success');
+});
+
+
+test('raw log write EIO records failure and stops the owned child instead of escaping cleanup', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalOpen = fs.openSync;
+        const originalWrite = fs.writeSync;
+        let rawStdoutFd;
+        fs.openSync = function(name, ...args) {
+            const descriptor = originalOpen.call(fs, name, ...args);
+            if (String(name).endsWith('.stdout.log')) rawStdoutFd = descriptor;
+            return descriptor;
+        };
+        fs.writeSync = function(descriptor, buffer, ...args) {
+            if (descriptor === rawStdoutFd && Buffer.isBuffer(buffer) && buffer.toString().includes('TRIGGER_LOG_EIO')) {
+                throw Object.assign(new Error('mock raw-log write EIO'), { code: 'EIO' });
+            }
+            return originalWrite.call(fs, descriptor, buffer, ...args);
+        };
+    `;
+    const code = `
+        const fs = require('node:fs');
+        fs.writeFileSync(process.env.TEST_PID_FILE, String(process.pid));
+        setInterval(() => fs.appendFileSync(process.env.TEST_HEARTBEAT_FILE, 'x'), 20);
+        setTimeout(() => process.stdout.write('TRIGGER_LOG_EIO'), 100);
+    `;
+    const result = await execute(t, { code, timeoutMs: 1000, preload });
+    assert.notEqual(result.code, 0);
+    assert.ok(result.elapsedMs < 4000);
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].status, 'failure');
+    assert.match(result.records[0].outputError, /mock raw-log write EIO/);
+    assert.equal(result.records[0].pipesClosed, true);
+    assert.equal(result.records[0].processGroupExited, true);
+    assert.match(result.stdout, /TRIGGER_LOG_EIO/, 'console output preserves the bytes the raw log could not write');
+    const heartbeat = await fs.readFile(result.childEnv.TEST_HEARTBEAT_FILE, 'utf8');
+    assert.ok(heartbeat.length > 0, 'owned process was actively running before the injected write failure');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    assert.equal(await fs.readFile(result.childEnv.TEST_HEARTBEAT_FILE, 'utf8'), heartbeat, 'no heartbeat after the original command budget');
+});
+
+test('SIGTERM EPERM is recorded without an unhandled rejection and SIGKILL still stops owned work', async t => {
+    const preload = `
+        const originalKill = process.kill.bind(process);
+        let refusedFirstTerm = false;
+        process.on('unhandledRejection', error => console.error('MOCK_UNHANDLED_REJECTION', error));
+        process.kill = function(pid, signal) {
+            if (pid < 0 && signal === 'SIGTERM' && !refusedFirstTerm) {
+                refusedFirstTerm = true;
+                console.error('MOCK_FIRST_SIGTERM_EPERM');
+                throw Object.assign(new Error('mock first SIGTERM EPERM'), { code: 'EPERM' });
+            }
+            if (pid < 0 && signal === 'SIGKILL') console.log('MOCK_SIGKILL_FORWARDED');
+            return originalKill(pid, signal);
+        };
+    `;
+    const code = `
+        const fs = require('node:fs');
+        fs.writeFileSync(process.env.TEST_PID_FILE, String(process.pid));
+        process.on('SIGTERM', () => {});
+        setInterval(() => fs.appendFileSync(process.env.TEST_HEARTBEAT_FILE, 'x'), 20);
+    `;
+    const result = await execute(t, { code, timeoutMs: 300, preload });
+    assert.notEqual(result.code, 0);
+    assert.ok(result.elapsedMs < 5000, 'cleanup error must not cause an unbounded wait');
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].status, 'failure');
+    assert.match(result.records[0].cleanupError, /mock first SIGTERM EPERM/);
+    assert.equal(result.records[0].pipesClosed, true);
+    assert.equal(result.records[0].signal, 'SIGKILL');
+    // A previous cleanup error may deliberately leave processGroupExited false;
+    // verify actual inactivity independently instead of treating unknown as success.
+    assert.match(result.stderr, /MOCK_FIRST_SIGTERM_EPERM/);
+    assert.match(result.stdout, /MOCK_SIGKILL_FORWARDED/);
+    assert.doesNotMatch(result.stdout + result.stderr, /MOCK_UNHANDLED_REJECTION/);
+    const heartbeat = await fs.readFile(result.childEnv.TEST_HEARTBEAT_FILE, 'utf8');
+    assert.ok(heartbeat.length > 0, 'owned child was active before failed SIGTERM');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(await fs.readFile(result.childEnv.TEST_HEARTBEAT_FILE, 'utf8'), heartbeat, 'SIGKILL left no active heartbeat');
 });
