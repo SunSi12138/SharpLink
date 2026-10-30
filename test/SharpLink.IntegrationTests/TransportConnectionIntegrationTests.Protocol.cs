@@ -101,33 +101,57 @@ public partial class TransportConnectionIntegrationTests
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
-        var contract = GlobalCatalogManifestSource.Instance.CreateSnapshot()
-            .SelectMany(static manifest => manifest.Contracts)
-            .Single(static descriptor => descriptor.ContractType == typeof(ILegacyHandshakeDispatchProbe));
-        var method = contract.Methods.Single();
+        Exception? failure = null;
 
         try
         {
+            var contract = GlobalCatalogManifestSource.Instance.CreateSnapshot()
+                .SelectMany(static manifest => manifest.Contracts)
+                .Single(static descriptor => descriptor.ContractType == typeof(ILegacyHandshakeDispatchProbe));
             // Prove that exactly this raw request is valid and executes on the current wire generation.
-            await SendCoalescedProbeAsync(ProtocolV2Constants.MinorVersion, reject: false);
+            await SendCoalescedProbeAsync(ProtocolV2Constants.MinorVersion, reject: false, contract);
             Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 1,
                 "the current-minor control must execute the probe exactly once");
             LegacyHandshakeDispatchProbe.Reset();
 
             await SendCoalescedProbeAsync(
-                checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1)), reject: true);
+                checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1)), reject: true, contract);
             Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 0,
                 "a rejected handshake must not dispatch its coalesced RPC request");
         }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
         finally
         {
-            await serverCts.CancelAsync();
-            await server.DisposeAsync();
-            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
+            // Attempt every cleanup even if a preceding cleanup fails or times out.
+            await ObserveCleanupAsync(() => serverCts.CancelAsync());
+            await ObserveCleanupAsync(() => server.DisposeAsync().AsTask());
+            await ObserveCleanupAsync(() => serverTask);
         }
 
-        async Task SendCoalescedProbeAsync(ushort minor, bool reject)
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 0,
+            "the rejected RPC must remain unexecuted after server disposal and task completion");
+
+        async Task ObserveCleanupAsync(Func<Task> cleanup)
         {
+            try
+            {
+                await cleanup().WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            catch (Exception exception)
+            {
+                failure = failure is null ? exception : new AggregateException(failure, exception);
+            }
+        }
+
+        async Task SendCoalescedProbeAsync(
+            ushort minor, bool reject, SharpLinkGeneratedContractDescriptor contract)
+        {
+            var method = contract.Methods.Single();
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await socket.ConnectAsync(IPAddress.Loopback, port, timeout.Token);
