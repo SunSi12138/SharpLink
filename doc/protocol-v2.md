@@ -2,7 +2,7 @@
 
 Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-当前 protocol minor 为 4，能力包含 metadata、compression、flow control、health check、cancellation reason、contract manifest 和 session refresh。minor 4 是 `TimeBudget` wire 语义的破坏性边界；低于 4 的 peer 在握手阶段以 `Unimplemented` 拒绝，不会把旧 absolute-deadline 字段按新 duration 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+当前 protocol minor 为 4，能力包含 metadata、compression、flow control、health check、cancellation reason、contract manifest、session refresh，以及显式 opt-in 的 cooperative maintenance。minor 4 是 `TimeBudget` wire 语义的破坏性边界；低于 4 的 peer 在握手阶段以 `Unimplemented` 拒绝，不会把旧 absolute-deadline 字段按新 duration 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
 
 3.0 的进程内 Generated ABI 为 API 5，与此处 wire minor 是独立版本轴；不因 API 号变化而自动改变 wire grammar。当前包双进程门禁不是 2.0.3 ↔ 3.0 兼容矩阵，跨 major 成功互操作不属于 3.0 的发布承诺；不兼容输入仍必须在握手或契约绑定边界拒绝，不能误解释后执行业务。
 
@@ -36,6 +36,7 @@ Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼�
 | `GoAway` | 0 | `lastAcceptedRequestId:uint64 + binary error/reason` |
 | `HealthCheck` | 非 0 | 空；只在协商 health-check capability 后发送 |
 | `HealthResponse` | 非 0 | 单字节 `Unhealthy/Ready/Draining` 状态 |
+| `CooperativeMaintenance`（17） | 0 | 固定 144-byte connection-control envelope；仅在协商 capability bit 7 后使用，flags 必须为 None |
 
 Stream ID 0 表示默认返回流，1–65535 表示显式流参数。Request ID 0 仅用于连接控制帧；溢出分配时必须跳过 0。
 
@@ -65,8 +66,11 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 - bit 4: cancellation reason
 - bit 5: contract manifest
 - bit 6: session refresh
+- bit 7: cooperative maintenance（显式 opt-in）
 
 当前 wire generation 使用 `minor 4`（`MinimumCompatibleMinorVersion == MinorVersion == 4`），只相对已发布的 1.1.1/minor 3 升级一次。开发期使用过的中间编号不构成发布兼容性边界。minor 只在握手/发布边界承担 grammar compatibility 校验，不参与握手后的 feature gating。协议边界“能够识别的 capability bit”与端点“实际实现并主动 advertise 的 capability”是两份独立事实：扩展 codec/rules 使其认识新 bit，不会自动让 Client/Server 宣告支持。握手成功后，普通 runtime feature code 只读取冻结的 negotiated capability set；需要具体 wire identity 的能力（例如 compression）再附带 capability-scoped profile/binding。
+
+Cooperative maintenance 保留本次 3.0 集成的受限能力：host 授权、认证 TLS 全服务器 cohort、固定 endpoint、封闭 runtime/catalog 配置下的兼容 implementation-only replacement。144-byte envelope 的 stage 仅定义 1–11；它使用正常 FIFO 而非越过旧帧的优先通道。它不是 #775 的 session-bound BindingId/ExactRegistration receipt，也不提供客户端 contract/codec 替换或动态拓扑功能。完整约束见 [ADR 0004](adr/0004-cooperative-session-maintenance.md)。这里的当前包互通边界澄清不删除该维护能力，也不改变 wire minor。
 
 minor 4 的 `HandshakeRequest` 在三个固定限制字段后编码：
 
