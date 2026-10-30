@@ -257,7 +257,16 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var names = new SubjectAlternativeNameBuilder();
         names.AddDnsName("localhost");
         request.CertificateExtensions.Add(names.Build());
-        return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddDays(1));
+        using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddDays(1));
+        // Schannel cannot use the ephemeral key returned by CreateSelfSigned. Match
+        // the existing TLS fixture's DefaultKeySet import without changing the cert
+        // identity, client pin, authentication requirements or negotiated protocol.
+        var pkcs12 = generated.Export(X509ContentType.Pkcs12);
+        try
+        {
+            return X509CertificateLoader.LoadPkcs12(pkcs12, password: null, X509KeyStorageFlags.DefaultKeySet);
+        }
+        finally { CryptographicOperations.ZeroMemory(pkcs12); }
     }
 
     private sealed class MaintenanceClock : TimeProvider
