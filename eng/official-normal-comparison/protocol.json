@@ -1,0 +1,88 @@
+{
+  "schema": 4,
+  "purpose": "Finite normal-completion diagnostic distance to QPS +10% and P99 -20%; not final release acceptance",
+  "officialSource": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+  "devSource": "8ae9ee36ebec82f82e03185432601a830c865e95",
+  "officialVersion": "2.0.3",
+  "devVersion": "3.0.0",
+  "officialApi": 4,
+  "devApi": 5,
+  "sdk": "10.0.102",
+  "runtime": "10.0.14",
+  "topology": "hosted ubuntu24.04; one process containing loopback TCP client and server; one worker; same two allowed logical CPUs selected on distinct guest-reported (socket,core)",
+  "affinity": "smallest allowed online CPU, then smallest allowed online CPU on a different guest (socket,core); stop if mapping unavailable",
+  "isolationClaim": "None; retain guest core/socket/SMT and cgroup observations; no physical-core isolation claim",
+  "modes": [
+    "static-intercepted",
+    "dynamic-intercepted"
+  ],
+  "items": [
+    1,
+    100
+  ],
+  "pairsPerCell": 6,
+  "timedProcesses": 48,
+  "warmupSeconds": 3,
+  "measureSeconds": 6,
+  "workers": 1,
+  "connectionPoolMin": 1,
+  "connectionPoolMax": 1,
+  "heartbeatSeconds": 3600,
+  "requestTimeout": "disabled",
+  "clientInterceptors": 1,
+  "serverInterceptors": 0,
+  "qpsTargetRatio": [
+    11,
+    10
+  ],
+  "p99TargetRatio": [
+    4,
+    5
+  ],
+  "quantile": "nearest rank ceil(n*p), exact integer rational rank, no floating-point percentile rank",
+  "pairOrder": "odd pair official then dev; even pair dev then official; scenarios rotated by pair index",
+  "failurePolicy": "retain every planned slot and all raw failures; no replacement, exclusion, retry, adaptive stop or claim from incomplete evidence",
+  "releaseBoundary": "Exact candidate8ae9ee36 main source and tree versus official2.0.3 packages. Four representative normal-completion cells only; neither final release acceptance nor full functional parity.",
+  "interopBoundary": "No cross-major interoperability gate; each arm uses same-version client/server and its own Generator",
+  "executionHost": "hosted ubuntu24.04",
+  "aggregation": "Per cell median of six paired dev/official QPS ratios and separately six paired P99 ratios. Retain all six ratios and exact rational metrics. No operation pooling, no best round, no cross-cell global pass. All4 cells mandatory; any failed/missing input blocks target observations.",
+  "coldPolicy": "Four dedicated candidate-only strict-cleanup processes and eight symmetric normal-validate processes must pass before timing. Each of 48 fresh normal-measure processes repeats normal-only controls; no failure/cancellation/early-exit probes in either arm timed process.",
+  "campaign": "official203-candidate8ae9-60tcp-O203N4",
+  "devTree": "1f0c9291c7394d012d3241a9cf31482b0734b697",
+  "strictProcesses": 4,
+  "normalProcesses": 8,
+  "processTimeoutSeconds": 120,
+  "cleanupGuardSeconds": 15,
+  "knownNegative": {
+    "campaign": "O203C1",
+    "run": 40753260956,
+    "source": "c1b4d73b922183364065a4460c6b7bce8829e9a7",
+    "request": "d8f88f43e939a6178eda7ef5b61f1c0a4029da55",
+    "result": "Historical untimed static-none cleanup failure; CTS and dynamic controls passed. Reference only; no re-execution, no performance claim, no claim lost O203N1 passed."
+  },
+  "evidencePolicy": "User-authorized temporary CI artifact retained for 3 days: raw per-process ticks, rounds, exact process-wide allocation counters, process order, binary/package/runtime provenance, build logs and all failures. Never commit evidence or create an evidence branch. Ordinary CI logs contain allowlisted per-round and per-cell metrics, not raw tick vectors.",
+  "phaseSchema": [
+    "strict-cleanup",
+    "normal-validate",
+    "normal-measure"
+  ],
+  "dependencyPolicy": {
+    "buildClosure": "Four identical private10.0.12 dependency DLLs copied to both prepared snapshots; these are build closure, not asserted runtime load origins.",
+    "executionClosure": "Exactly four pinned Microsoft dependency identities from private Microsoft.AspNetCore.App10.0.14, common to both arms; all product and fixture assemblies remain own-arm only.",
+    "policySource": "c1b4d73b922183364065a4460c6b7bce8829e9a7:eng/official-cleanup-diagnostic/identity.py",
+    "checks": [
+      "exactNameClosure",
+      "absolutePath",
+      "SHA256",
+      "MVID",
+      "productVersion",
+      "onDiskFrameworkHash",
+      "completeNonDynamicAssemblyCensus",
+      "archiveDerivedFrameworkAllowlist",
+      "canonicalNoSymlinkPaths"
+    ],
+    "remainingFrameworkClosure": "Every other loaded non-dynamic assembly must match canonical path and SHA256 derived independently from the two fixed SHA512-verified private runtime14 archives; unknown, inserted or symlinked DLLs rejected. Collection and hashing occur outside all timing windows."
+  },
+  "supersedesCampaign": "official203-candidate3d76-60tcp-O203N3",
+  "allocationMetric": "Process-wide GC.GetTotalAllocatedBytes(true) end minus start divided by completed stream operations; counters enclose the unchanged timing window, include both loopback client/server and measurement orchestration, and exclude warmup, preallocated tick arrays, drain/shutdown and serialization. No per-item or thread-local attribution; descriptive only, no allocation target."
+}
