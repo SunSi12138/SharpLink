@@ -1,0 +1,4 @@
+name: sharplink/compilation-forensics
+version: 0.0.1
+dependencies:
+  codeql/csharp-all: 7.4.1
