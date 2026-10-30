@@ -5,7 +5,7 @@ current checkout. The historical arms must reproduce their original three and
 four failures. The current arm must pass the focused checks and every case in the
 complete unit suite, with zero failures or skips and unchanged binary hashes.
 
-The expected complete-suite inventory is **2,473**, derived from the exact source
+The expected complete-suite inventory is **2,474**, derived from the exact source
 case additions below, not runtime discovery. The old 2,171 expectation already
 omitted dev's 17 quiescent-pump controls; they are not new in this integration.
 The eleven-case Hosting fixture, historical negative controls, exact count
@@ -29,13 +29,14 @@ expected test failures, not product passes.
 
 ## Combined correctness source census
 
-The exact ordinary expectation is **2,473**: dev `57f06f17` **2,188** + required
+The exact ordinary expectation is **2,474**: dev `57f06f17` **2,188** + required
 physical ownership **111** + cooperative maintenance **157** + static-stream
-flags **6** + send-pump cleanup **6** + shutdown composition **5**. The last five
+flags **6** + send-pump cleanup **6** + shutdown composition **5** + queued-owner
+partial-prefix variant **1**. The original zero-prefix ownership case remains covered. The last five
 are three runtime output-safety/reentry cases and two server graceful-budget cases.
 No case declarations are removed. Historical #931's 113 includes two queued-reader
 cases already on dev; the five preexisting Explicit workers remain outside ordinary
-execution. The lease runner alone adds its unchanged eight injected cases (**2,481**).
+execution. The lease runner alone adds its unchanged eight injected cases (**2,482**).
 
 This expectation comes from source path/method/Arguments identities, not a convenient
 run result. It is **not** final-head runtime discovery, execution or performance

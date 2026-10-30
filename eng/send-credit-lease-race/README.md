@@ -38,9 +38,9 @@ python3 eng/send-credit-lease-race/run.py --out artifacts/send-credit-lease-race
 |---|---|---|
 | old | focused 一轮、8 cases | exit 2，精确 1 failed / 7 succeeded / 0 skipped；必须是同 key 同对象新 lease 被接受且信用为 0/16，任意其他失败不算有效 red。 |
 | current | focused 四轮 | 每轮 8/8、exit 0、0 skipped。 |
-| current | unfiltered 完整套件四轮 | 每轮 2,481/2,481、exit 0、0 skipped；原测试和超时不变。 |
+| current | unfiltered 完整套件四轮 | 每轮 2,482/2,482、exit 0、0 skipped；原测试和超时不变。 |
 
-`FULL_COUNT=2481` 对应源码逐case推导的 2,473 ordinary + 8 原有注入 controls。下方明确列出每层增量，无移除、无runtime发现/通过声明。历史完整执行证据保留原始计数；focused/old-negative、并行、超时和失败标准均不改。
+`FULL_COUNT=2482` 对应源码逐case推导的 2,474 ordinary + 8 原有注入 controls。下方明确列出每层增量，无移除、无runtime发现/通过声明。历史完整执行证据保留原始计数；focused/old-negative、并行、超时和失败标准均不改。
 
 每次运行保存真实 argv、cwd、退出码、stdout/stderr、完整 TUnit 输出、输入/输出源码身份和编译后二进制 hashes。每轮前后再次核对全部 DLL/PDB/config 身份，避免测到另一套 build；下一轮前只清理隔离目录中已经归档的旧 TestResults，防止旧 HTML 被当成新报告。非预期失败立即使工作流失败，不重跑到绿。artifact 上传使用 `if: always()`，失败日志照常保留。
 
@@ -52,13 +52,14 @@ python3 eng/send-credit-lease-race/run.py --out artifacts/send-credit-lease-race
 
 ## Combined correctness source census
 
-The exact ordinary expectation is **2,473**: dev `57f06f17` **2,188** + required
+The exact ordinary expectation is **2,474**: dev `57f06f17` **2,188** + required
 physical ownership **111** + cooperative maintenance **157** + static-stream
-flags **6** + send-pump cleanup **6** + shutdown composition **5**. The last five
+flags **6** + send-pump cleanup **6** + shutdown composition **5** + queued-owner
+partial-prefix variant **1**. The original zero-prefix ownership case remains covered. The last five
 are three runtime output-safety/reentry cases and two server graceful-budget cases.
 No case declarations are removed. Historical #931's 113 includes two queued-reader
 cases already on dev; the five preexisting Explicit workers remain outside ordinary
-execution. The lease runner alone adds its unchanged eight injected cases (**2,481**).
+execution. The lease runner alone adds its unchanged eight injected cases (**2,482**).
 
 This expectation comes from source path/method/Arguments identities, not a convenient
 run result. It is **not** final-head runtime discovery, execution or performance
