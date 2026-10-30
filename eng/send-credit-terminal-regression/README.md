@@ -6,6 +6,22 @@ The same one-case fixture runs against unchanged old dev and the actual checked-
 
 The fix adds one boolean settlement marker, set only by the existing full-abort refund and cleared on pooled-state reuse. It does not introduce a byte balance, window change, or second state map. The effective WindowUpdate calculation from #840 is unchanged. The integrated controller preserves the lease fix's under-gate capture and two-line call required by its diagnostic anchor, while remaining within the original file-LOC ceiling.
 
-The runner changes no production code. Old dev must reproduce exactly `completeBefore=56, completeAfter=56, completeRetained=1` while its full-abort control remains at 64 with no retired state. The current arm must pass four focused runs and four complete 2,095-case unit runs with zero skips. All original source trees, product diffs, binary identities, exits and fresh HTML reports are retained. Unexpected failures fail the workflow without automatic retry.
+The runner changes no production code. Old dev must reproduce exactly `completeBefore=56, completeAfter=56, completeRetained=1` while its full-abort control remains at 64 with no retired state. The current arm must pass four focused runs and four complete 2,473-case unit runs with zero skips. All original source trees, product diffs, binary identities, exits and fresh HTML reports are retained. Unexpected failures fail the workflow without automatic retry.
 
 This fixture establishes controller accounting. The separate B2 generated-bridge fixture forces the server-owner terminal before a blocked admitted serializer is released; that is a distinct integration test, not a claim already established by this controller fixture.
+
+## Combined correctness source census
+
+The exact ordinary expectation is **2,473**: dev `57f06f17` **2,188** + required
+physical ownership **111** + cooperative maintenance **157** + static-stream
+flags **6** + send-pump cleanup **6** + shutdown composition **5**. The last five
+are three runtime output-safety/reentry cases and two server graceful-budget cases.
+No case declarations are removed. Historical #931's 113 includes two queued-reader
+cases already on dev; the five preexisting Explicit workers remain outside ordinary
+execution. The lease runner alone adds its unchanged eight injected cases (**2,481**).
+
+This expectation comes from source path/method/Arguments identities, not a convenient
+run result. It is **not** final-head runtime discovery, execution or performance
+acceptance. Fresh authorized execution must confirm the exact identity set with zero
+drops/skips; old-negative and focused counts, markers, timeouts, parallelism and
+acceptance rules are unchanged.

@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/GeneratedStreamSnapshotOwnershipTests.c
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/GeneratedStreamSnapshotOwnershipTests/*"
 FOCUSED_COUNT = 2
-FULL_COUNT = 2188  # 2171 existing cases plus 17 quiescent-pump cleanup controls.
+FULL_COUNT = 2473  # 2188 dev + 111 ownership + 157 maintenance + 6 static + 6 cleanup + 5 shutdown composition; source-derived.
 
 
 def digest(path):
