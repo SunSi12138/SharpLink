@@ -37,7 +37,11 @@ function remainingPhaseMs() {
     return remaining;
 }
 async function runPhase(label, args, capMs) {
-    const result = await runCommand(label, 'xcrun', args, { timeoutMs: Math.min(capMs, remainingPhaseMs()) });
+    const result = await runCommand(label, 'xcrun', args, {
+        timeoutMs: Math.min(capMs, remainingPhaseMs()),
+        // Absolute in this Node process: log setup cannot restart or extend the phase.
+        monotonicDeadlineMs: phaseStartedMono + phaseBudgetMs
+    });
     remainingPhaseMs();
     return result;
 }

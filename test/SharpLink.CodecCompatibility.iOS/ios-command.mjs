@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { performance } from 'node:perf_hooks';
 import { captureOwnedGroupSnapshot } from './ios-process-snapshot.mjs';
 
 let sequence = 0;
@@ -16,9 +17,12 @@ export function shortenedTimeout(name, maximum) {
     return value;
 }
 
-export async function runCommand(label, command, args, { timeoutMs, env = process.env, capture = true, cleanup = false } = {}) {
+export async function runCommand(label, command, args, { timeoutMs, env = process.env, capture = true, cleanup = false, monotonicDeadlineMs } = {}) {
     if (!/^[a-z0-9-]+$/.test(label) || typeof command !== 'string' || !command || !Array.isArray(args) || args.some(arg => typeof arg !== 'string') || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
         throw new Error('Invalid command label or timeout.');
+    }
+    if (monotonicDeadlineMs !== undefined && (!Number.isFinite(monotonicDeadlineMs) || monotonicDeadlineMs <= 0)) {
+        throw new Error('Invalid absolute monotonic deadline.');
     }
     const timelineOriginAt = new Date().toISOString();
     const monotonicOrigin = process.hrtime.bigint();
@@ -44,16 +48,23 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     };
     const originalExecutionDeadlineMs = optionalDeadline('SHARPLINK_IOS_ORIGINAL_EXECUTION_DEADLINE_MS') ?? (deadlineScope === 'job-execution' ? deadline || null : null);
     const preparationDeadlineMs = optionalDeadline('SHARPLINK_IOS_PREPARATION_DEADLINE_MS');
-    let budgetExpired = Boolean(deadline && !cleanup && deadline <= Date.now());
-    if (deadline && !cleanup) timeoutMs = Math.min(timeoutMs, Math.max(1, deadline - Date.now()));
+    const executionDeadlineExpired = () => !cleanup && Boolean(
+        (deadline && Date.now() >= deadline) || (monotonicDeadlineMs !== undefined && performance.now() >= monotonicDeadlineMs));
+    const clipTimeoutToBudget = () => {
+        if (cleanup) return;
+        if (deadline) timeoutMs = Math.min(timeoutMs, Math.max(1, deadline - Date.now()));
+        if (monotonicDeadlineMs !== undefined) timeoutMs = Math.min(timeoutMs, Math.max(1, Math.floor(monotonicDeadlineMs - performance.now())));
+    };
+    let budgetExpired = executionDeadlineExpired();
+    clipTimeoutToBudget();
     const directory = process.env.SHARPLINK_IOS_DIAGNOSTICS || 'artifacts/codec-compat/ios-diagnostics';
     fs.mkdirSync(directory, { recursive: true });
     const stem = path.join(directory, `${Date.now()}-${process.pid}-${++sequence}-${label}`);
     const outFd = fs.openSync(`${stem}.stdout.log`, 'wx');
     const errFd = fs.openSync(`${stem}.stderr.log`, 'wx');
     const startedAt = new Date().toISOString();
-    const record = { label, command, args, startedAt, timelineOriginAt, timeoutMs, status: 'running', pid: null, expectedPgid: null, deadlineScope, effectiveDeadlineMs: deadline || null, originalExecutionDeadlineMs, preparationDeadlineMs, events, eventLimit, get droppedEventCount() { return droppedEventCount; }, snapshots: [] };
-    event('deadline-check', { stage: 'initial', deadlineMs: deadline || null, expired: budgetExpired });
+    const record = { label, command, args, startedAt, timelineOriginAt, timeoutMs, status: 'running', pid: null, expectedPgid: null, deadlineScope, effectiveDeadlineMs: deadline || null, originalExecutionDeadlineMs, preparationDeadlineMs, monotonicDeadlineMs: monotonicDeadlineMs ?? null, monotonicDeadlineClock: 'performance.now', events, eventLimit, get droppedEventCount() { return droppedEventCount; }, snapshots: [] };
+    event('deadline-check', { stage: 'initial', deadlineMs: deadline || null, monotonicDeadlineMs: monotonicDeadlineMs ?? null, expired: budgetExpired });
     fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n', { flag: 'wx' });
     console.log(`[ios-command] START ${label} timeoutMs=${timeoutMs}`);
     let stdout = '', stderr = '', child, exitCode = null, signal = null, spawnError, outputError, cleanupError;
@@ -146,12 +157,10 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     process.on('SIGTERM', onTerm); process.on('SIGINT', onInt);
     try {
         // Directory/open/metadata I/O above can consume the shared budget. Recheck at the spawn boundary.
-        if (deadline && !cleanup) {
-            budgetExpired = deadline <= Date.now();
-            timeoutMs = Math.min(timeoutMs, Math.max(1, deadline - Date.now()));
-            record.timeoutMs = timeoutMs;
-        }
-        event('deadline-check', { stage: 'before-spawn', deadlineMs: deadline || null, expired: budgetExpired });
+        clipTimeoutToBudget();
+        budgetExpired = executionDeadlineExpired();
+        record.timeoutMs = timeoutMs;
+        event('deadline-check', { stage: 'before-spawn', deadlineMs: deadline || null, monotonicDeadlineMs: monotonicDeadlineMs ?? null, expired: budgetExpired });
         if (budgetExpired) {
             spawnError = new Error('iOS execution budget exhausted; command was not started.');
             closed = true; resolveClosed();
@@ -190,22 +199,22 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
         await Promise.all(snapshots);
         const finalGroupState = probeGroup('final-verdict');
         const groupExited = ['gone', 'not-started'].includes(finalGroupState) && !cleanupError;
-        const completedPastDeadline = Boolean(deadline && !cleanup && Date.now() >= deadline);
+        const completedPastDeadline = executionDeadlineExpired();
         budgetExpired ||= completedPastDeadline;
-        event('deadline-check', { stage: 'final-verdict', deadlineMs: deadline || null, expired: completedPastDeadline });
+        event('deadline-check', { stage: 'final-verdict', deadlineMs: deadline || null, monotonicDeadlineMs: monotonicDeadlineMs ?? null, expired: completedPastDeadline });
         const ok = !completedPastDeadline && !cleanupError && !outputError && !interrupted && !spawnError && !timedOut && !pipeLeak && !lingering && closed && exitCode === 0 && signal === null && groupExited;
         Object.assign(record, { endedAt: new Date().toISOString(), status: ok ? 'success' : 'failure', exitCode, signal,
             timedOut, budgetExpired, interrupted, pipeLeak, lingeringDescendants: exited && lingering, confirmedRemainingGroupMembers: lingering, remainingGroupState, finalGroupState, unknownGroupOwnership: remainingGroupState === 'unknown' || finalGroupState === 'unknown', childExited: exited, pipesClosed: closed, processGroupExited: groupExited,
             spawnError: spawnError?.message ?? null, outputError: outputError?.message ?? null, cleanupError: cleanupError?.message ?? null });
         fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
-        event('deadline-check', { stage: 'after-final-metadata', deadlineMs: deadline || null, expired: Boolean(deadline && !cleanup && Date.now() >= deadline) });
-        if (record.status === 'success' && deadline && !cleanup && Date.now() >= deadline) {
+        event('deadline-check', { stage: 'after-final-metadata', deadlineMs: deadline || null, expired: executionDeadlineExpired() });
+        if (record.status === 'success' && executionDeadlineExpired()) {
             Object.assign(record, { status: 'failure', budgetExpired: true, endedAt: new Date().toISOString() });
             fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
         }
         console.log(`[ios-command] END ${label} status=${record.status} exit=${exitCode} signal=${signal} timeout=${timedOut} groupExited=${groupExited}`);
         // Console/file output must not create a final successful-return window past the absolute budget.
-        if (record.status === 'success' && deadline && !cleanup && Date.now() >= deadline) {
+        if (record.status === 'success' && executionDeadlineExpired()) {
             Object.assign(record, { status: 'failure', budgetExpired: true, endedAt: new Date().toISOString() });
             fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
         }
@@ -234,12 +243,12 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
         if (record.status === 'success' && cleanupRemainsUncertain) {
             Object.assign(record, { status: 'failure', endedAt: new Date().toISOString() });
         }
-        event('deadline-check', { stage: 'after-log-close', deadlineMs: deadline || null, expired: Boolean(deadline && !cleanup && Date.now() >= deadline) });
+        event('deadline-check', { stage: 'after-log-close', deadlineMs: deadline || null, expired: executionDeadlineExpired() });
         fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
         if (cleanupRemainsUncertain && wasSuccessfulBeforeFinalCleanup) {
             throw new Error(`${label} failed final ownership cleanup: state=${finalCleanupState}, cleanup=${cleanupError?.message ?? 'none'}, output=${outputError?.message ?? 'none'}, interrupted=${interrupted}; raw evidence: ${stem}`);
         }
-        if (record.status === 'success' && deadline && !cleanup && Date.now() >= deadline) {
+        if (record.status === 'success' && executionDeadlineExpired()) {
             Object.assign(record, { status: 'failure', budgetExpired: true, endedAt: new Date().toISOString() });
             fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
             throw new Error(`${label} exceeded its execution deadline during final log cleanup; raw evidence: ${stem}`);

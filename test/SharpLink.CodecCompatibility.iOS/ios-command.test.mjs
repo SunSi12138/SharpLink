@@ -3,13 +3,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 // This suite exercises only Node child processes; no real mobile or build tools.
 const helper = fileURLToPath(new URL('./ios-command.mjs', import.meta.url));
 
-async function execute(t, { code, timeoutMs = 1000, command = process.execPath, args, env = {}, preload }) {
+async function execute(t, { code, timeoutMs = 1000, command = process.execPath, args, env = {}, preload, monotonicBudgetMs, cleanup = false }) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sharplink-ios-command-test-'));
     const diagnostics = path.join(root, 'diagnostics');
     t.after(async () => {
@@ -35,10 +35,24 @@ async function execute(t, { code, timeoutMs = 1000, command = process.execPath, 
         await fs.writeFile(hook, preload);
         nodeArgs.push('--import', hook);
     }
+    let entry = helper;
+    if (monotonicBudgetMs !== undefined) {
+        entry = path.join(root, 'monotonic-driver.mjs');
+        await fs.writeFile(entry, `
+            import { runCommand } from ${JSON.stringify(pathToFileURL(helper).href)};
+            import { performance } from 'node:perf_hooks';
+            const [label, seconds, command, ...args] = process.argv.slice(2);
+            const monotonicDeadlineMs = performance.now() + ${JSON.stringify(monotonicBudgetMs)};
+            runCommand(label, command, args, { timeoutMs: Number(seconds) * 1000, capture: false,
+                monotonicDeadlineMs, cleanup: ${JSON.stringify(cleanup)} }).catch(error => {
+                console.error(error.stack ?? error); process.exitCode = 1;
+            });
+        `);
+    }
     const started = Date.now();
     const outcome = await new Promise((resolve, reject) => {
         const child = spawn(process.execPath,
-            [...nodeArgs, helper, 'mock-command', String(timeoutMs / 1000), command, ...(args ?? ['-e', code])],
+            [...nodeArgs, entry, 'mock-command', String(timeoutMs / 1000), command, ...(args ?? ['-e', code])],
             { cwd: root, env: childEnv, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
         let stdout = '', stderr = '';
         const watchdog = setTimeout(() => {
@@ -578,4 +592,100 @@ test('monotonic event storage is capped and counts dropped events rather than gr
     assert.equal(record.eventLimit, 1024);
     assert.ok(record.droppedEventCount > 400);
     assert.ok(record.snapshots.length <= 2);
+});
+
+test('absolute monotonic budget bounds a command even without a wall-clock deadline', async t => {
+    const result = await execute(t, { code: `setInterval(() => {}, 1000);`, timeoutMs: 5000, monotonicBudgetMs: 150 });
+    assert.notEqual(result.code, 0);
+    assert.ok(result.elapsedMs < 3000);
+    const record = result.records[0];
+    assert.equal(record.effectiveDeadlineMs, null);
+    assert.ok(Number.isFinite(record.monotonicDeadlineMs) && record.monotonicDeadlineMs > 0);
+    assert.equal(record.monotonicDeadlineClock, 'performance.now');
+    assert.ok(record.timeoutMs > 0 && record.timeoutMs <= 150 && Number.isInteger(record.timeoutMs));
+    assert.equal(record.budgetExpired, true);
+});
+
+test('shorter wall budget wins over a longer monotonic budget without extending the command', async t => {
+    const result = await execute(t, {
+        code: `setInterval(() => {}, 1000);`, timeoutMs: 5000, monotonicBudgetMs: 1500,
+        env: { SHARPLINK_IOS_EXECUTION_DEADLINE_MS: String(Date.now() + 350) }
+    });
+    assert.notEqual(result.code, 0);
+    assert.ok(result.elapsedMs < 1500);
+    assert.ok(result.records[0].timeoutMs <= 350);
+    assert.equal(result.records[0].budgetExpired, true);
+});
+
+test('initial metadata blocking plus wall-clock rollback cannot spawn after the monotonic phase budget', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalWrite = fs.writeFileSync;
+        const realNow = Date.now.bind(Date);
+        let delayed = false;
+        fs.writeFileSync = function(name, data, ...args) {
+            if (!delayed && String(name).endsWith('.json') && typeof data === 'string' && JSON.parse(data).status === 'running') {
+                delayed = true;
+                const end = realNow() + 250;
+                while (realNow() < end) {}
+                Date.now = () => realNow() - 1000;
+                console.log('MOCK_INITIAL_METADATA_BLOCK_AND_WALL_ROLLBACK');
+            }
+            return originalWrite.call(fs, name, data, ...args);
+        };
+    `;
+    const result = await execute(t, {
+        code: `process.stdout.write('MUST_NOT_SPAWN_PAST_MONOTONIC_BUDGET');`, timeoutMs: 5000, monotonicBudgetMs: 150, preload,
+        env: { SHARPLINK_IOS_EXECUTION_DEADLINE_MS: String(Date.now() + 700) }
+    });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stdout, /MOCK_INITIAL_METADATA_BLOCK_AND_WALL_ROLLBACK/);
+    assert.doesNotMatch(result.stdout, /MUST_NOT_SPAWN_PAST_MONOTONIC_BUDGET/);
+    assert.equal(result.rawOut, '');
+    const record = result.records[0];
+    assert.equal(record.status, 'failure');
+    assert.equal(record.pid, null);
+    assert.equal(record.childExited, false);
+    assert.equal(record.budgetExpired, true);
+    assert.match(record.spawnError, /not started/);
+});
+
+test('final metadata write crossing only the monotonic budget must revise success to failure', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalWrite = fs.writeFileSync;
+        let delayed = false;
+        fs.writeFileSync = function(name, data, ...args) {
+            if (!delayed && String(name).endsWith('.json') && typeof data === 'string' && JSON.parse(data).status === 'success') {
+                delayed = true;
+                console.log('MOCK_FINAL_METADATA_MONOTONIC_WAIT');
+                const end = performance.now() + 400;
+                while (performance.now() < end) {}
+            }
+            return originalWrite.call(fs, name, data, ...args);
+        };
+    `;
+    const result = await execute(t, { code: `process.stdout.write('completed-before-log');`, timeoutMs: 5000, monotonicBudgetMs: 300, preload });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stdout, /MOCK_FINAL_METADATA_MONOTONIC_WAIT/);
+    assert.equal(result.rawOut, 'completed-before-log');
+    assert.equal(result.records[0].status, 'failure');
+    assert.equal(result.records[0].budgetExpired, true);
+    assert.equal(result.records[0].exitCode, 0);
+});
+
+test('cleanup retains its own bounded timeout when the execution monotonic budget is exhausted', async t => {
+    const result = await execute(t, { code: `process.stdout.write('bounded-cleanup');`, timeoutMs: 1000, monotonicBudgetMs: 0, cleanup: true });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.records[0].status, 'success');
+    assert.equal(result.records[0].timeoutMs, 1000);
+    assert.equal(result.records[0].budgetExpired, false);
+});
+
+test('invalid absolute monotonic deadline is rejected before any subprocess or evidence record', async t => {
+    const result = await execute(t, { code: `process.stdout.write('MUST_NOT_RUN');`, monotonicBudgetMs: 'invalid' });
+    assert.notEqual(result.code, 0);
+    assert.deepEqual(result.records, []);
+    assert.doesNotMatch(result.stdout, /MUST_NOT_RUN/);
+    assert.match(result.stderr, /Invalid absolute monotonic deadline/);
 });

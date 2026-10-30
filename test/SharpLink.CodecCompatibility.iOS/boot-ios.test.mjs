@@ -214,3 +214,28 @@ test('a late filesystem handoff is retained as failure, not falsely claimed unwr
     assert.equal(result.phaseEvents.at(-1).lateHandoffFailure, true);
     assert.equal(result.phaseEvents.at(-1).deadlineScope, 'simulator-preparation');
 });
+
+
+test('metadata delay plus wall-clock rollback cannot spawn after the shared monotonic phase expires', async t => {
+    const result = await exercise(t, 'success', { SHARPLINK_IOS_PREP_TIMEOUT_MS: '150' }, `
+        import fs from 'node:fs';
+        const write = fs.writeFileSync, now = Date.now;
+        let delayed = false;
+        fs.writeFileSync = function(file, ...args) {
+            if (!delayed && String(file).endsWith('-simulator-list.json')) {
+                delayed = true;
+                const end = performance.now() + 250; while (performance.now() < end) {}
+                Date.now = () => now() - 1000;
+            }
+            return write.call(fs, file, ...args);
+        };
+    `);
+    assert.notEqual(result.code, 0);
+    assert.deepEqual(result.commands, []);
+    assert.equal(result.githubEnv, '');
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].pid, null);
+    assert.equal(result.records[0].status, 'failure');
+    assert.equal(result.records[0].budgetExpired, true);
+    assert.ok(result.records[0].monotonicDeadlineMs > 0);
+});

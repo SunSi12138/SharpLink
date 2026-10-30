@@ -113,3 +113,53 @@ test('snapshot delayed event-loop close after its monotonic budget is unknown ev
     assert.equal(result.reason, 'timeout');
     assert.deepEqual(result.rows, []);
 });
+
+for (const behavior of ['async-kill-error', 'kill-throws', 'kill-false']) {
+    test(`snapshot ${behavior} without close retains bounded reference cleanup and unknown termination`, async () => {
+        let child;
+        let kills = 0;
+        let unreferenced = false;
+        const start = Date.now();
+        const result = await captureOwnedGroupSnapshot(pgid, {
+            spawnImpl: mockSpawn(() => {}, call => {
+                child = call.child;
+                child.unref = () => { unreferenced = true; };
+                child.kill = signal => {
+                    kills++;
+                    assert.equal(signal, 'SIGKILL');
+                    if (behavior === 'async-kill-error') {
+                        queueMicrotask(() => child.emit('error', Object.assign(new Error('mock asynchronous kill EPERM'), { code: 'EPERM' })));
+                        return false;
+                    }
+                    if (behavior === 'kill-throws') throw Object.assign(new Error('mock thrown kill EPERM'), { code: 'EPERM' });
+                    return false;
+                };
+            })
+        });
+        assert.ok(Date.now() - start < 1500, 'failure without close must still resolve within the diagnostic bound');
+        assert.equal(result.status, 'unknown');
+        assert.equal(result.reason, 'timeout');
+        assert.equal(result.closed, false, 'reference release cannot claim observed child close');
+        assert.equal(result.exitCode, null);
+        assert.equal(result.signal, null);
+        assert.equal(result.killAttempted, true);
+        assert.equal(kills, 1, 'do not retry a denied diagnostic kill');
+        assert.equal(child.stdout.destroyed, true);
+        assert.equal(child.stderr.destroyed, true);
+        assert.equal(unreferenced, true);
+        assert.deepEqual(result.referenceCleanup, { stdoutDestroyCalled: true, stderrDestroyCalled: true, unrefCalled: true });
+        if (behavior === 'async-kill-error') {
+            assert.ok(result.errors.some(error => error.source === 'kill-event' && error.code === 'EPERM'));
+            assert.equal(result.killError.source, 'kill-event');
+            assert.equal(result.killError.code, 'EPERM');
+            assert.equal(result.spawnError, undefined, 'a running child kill error is not a spawn failure');
+        } else if (behavior === 'kill-throws') {
+            assert.equal(result.killError.source, 'kill-call');
+            assert.equal(result.killError.code, 'EPERM');
+        } else {
+            assert.equal(result.killReturnValue, false);
+            assert.equal(result.killError.source, 'kill-return');
+        }
+        assert.deepEqual(result.rows, []);
+    });
+}
