@@ -166,10 +166,17 @@ internal sealed partial class SharpLinkClient
         {
             return logicalCall.TryEnterProgress(control.Deadline, control.TimeProvider!)
                 ? exception
-                : CreateDeadlineExceededException();
+                : CreateArbitratedDeadlineException(exception);
         }
 
-        return IsDeadlineElapsed(control) ? CreateDeadlineExceededException() : exception;
+        return IsDeadlineElapsed(control) ? CreateArbitratedDeadlineException(exception) : exception;
+    }
+
+    private static SharpLinkException CreateArbitratedDeadlineException(Exception exception)
+    {
+        var failure = CreateDeadlineExceededException();
+        SharpLinkPhysicalWork.PreserveAbandonedUserWork(exception, failure);
+        return failure;
     }
 
     private static SharpLinkRetryDecision EvaluateRetryDecision(

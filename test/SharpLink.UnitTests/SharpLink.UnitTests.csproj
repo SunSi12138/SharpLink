@@ -18,6 +18,21 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../SharpLink.ReadOwnershipAllocationProbe/SharpLink.ReadOwnershipAllocationProbe.csproj"
+                      ReferenceOutputAssembly="false" OutputItemType="ReadOwnershipAllocationProbeOutput" />
+  </ItemGroup>
+
+  <Target Name="CopyReadOwnershipAllocationProbe" AfterTargets="Build">
+    <ItemGroup>
+      <ReadOwnershipAllocationProbeFile Include="@(ReadOwnershipAllocationProbeOutput)" />
+      <ReadOwnershipAllocationProbeFile Include="@(ReadOwnershipAllocationProbeOutput->'%(RootDir)%(Directory)%(Filename).deps.json')" />
+      <ReadOwnershipAllocationProbeFile Include="@(ReadOwnershipAllocationProbeOutput->'%(RootDir)%(Directory)%(Filename).runtimeconfig.json')" />
+    </ItemGroup>
+    <Error Condition="'@(ReadOwnershipAllocationProbeFile)' == ''" Text="The standalone read allocation probe was not built." />
+    <Copy SourceFiles="@(ReadOwnershipAllocationProbeFile)" DestinationFolder="$(OutDir)allocation-probe" SkipUnchangedFiles="true" />
+  </Target>
+
+  <ItemGroup>
     <PackageReference Include="TUnit" />
   </ItemGroup>
 

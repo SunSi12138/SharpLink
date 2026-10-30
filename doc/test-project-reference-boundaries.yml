@@ -21,7 +21,8 @@ scope:
 inventory:
   baseline_branch: dev
   baseline_commit: 3e772ef0de75bda9f79d5f3508ef01f573bb6254
-  project_reference_edge_count: 107
+  # The recorded baseline had 107 edges; the reviewed allocation-probe edge adds one.
+  project_reference_edge_count: 108
   allowed_references_are_current_inventory: true
   debt_exception_count: 0
 
@@ -88,6 +89,7 @@ test_projects:
   multi_cluster_contracts: test/SharpLink.MultiClusterTest.Contracts/SharpLink.MultiClusterTest.Contracts.csproj
   package_smoke: test/SharpLink.PackageSmoke/SharpLink.PackageSmoke.csproj
   pre_credit_aot_smoke: test/SharpLink.PreCreditAotSmoke/SharpLink.PreCreditAotSmoke.csproj
+  read_ownership_allocation_probe: test/SharpLink.ReadOwnershipAllocationProbe/SharpLink.ReadOwnershipAllocationProbe.csproj
   reference_rooting_package_client: test/SharpLink.ReferenceRooting.PackageClient/SharpLink.ReferenceRooting.PackageClient.csproj
   reference_rooting_package_contracts: test/SharpLink.ReferenceRooting.PackageContracts/SharpLink.ReferenceRooting.PackageContracts.csproj
   reference_rooting_package_server: test/SharpLink.ReferenceRooting.PackageServer/SharpLink.ReferenceRooting.PackageServer.csproj
@@ -376,6 +378,12 @@ allowed_references:
     to: [multi_cluster_contracts, rollback_plugin, static_codec_owner_contracts]
     mode: assembly
     classification: intentional_test_infrastructure
+  - from: unit_tests
+    target_scope: test
+    to: [read_ownership_allocation_probe]
+    mode: build_only
+    classification: intentional_test_infrastructure
+    reason: Build and copy the standalone reader allocation host for child-process measurement without referencing its assembly from UnitTests.
 
   - from: api4_fixture
     target_scope: production
