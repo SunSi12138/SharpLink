@@ -1,0 +1,142 @@
+name: Isolated CodeQL SARIF evidence CQL3
+on:
+  push:
+    branches: [validation/codeql-sarif-c22-20261030-r3]
+    paths: [eng/codeql-sarif-evidence/REQUEST.json]
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  security-events: write
+concurrency:
+  group: isolated-codeql-sarif-CQL3
+  cancel-in-progress: false
+jobs:
+  evidence:
+    if: >-
+      github.run_attempt == 1 && github.repository == 'SunSi12138/SharpLink' && github.event.head_commit.message == 'run: isolated CodeQL SARIF CQL3'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      MSBUILDDISABLENODEREUSE: '1'
+      DOTNET_CLI_USE_MSBUILD_SERVER: '0'
+    steps:
+      - name: Checkout request and reviewed wrapper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify one authorized request child
+        run: python eng/codeql-sarif-evidence/verify_request.py --record "$RUNNER_TEMP/cql3-evidence/request.json"
+      - name: Offline validator controls
+        run: python -m unittest discover -s eng/codeql-sarif-evidence -p 'test_*.py' -v
+      - name: Preserve only reviewed hash-bound tools outside the scan workspace
+        run: python eng/codeql-sarif-evidence/evidence.py stage --stage-dir "$RUNNER_TEMP/cql3-tools" --output "$RUNNER_TEMP/cql3-evidence"
+      - name: Clean checkout exact product at Actions working-directory root
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: c22b945f71c075c878e93a7c92bf4e45a8d33a6f
+          clean: true
+          persist-credentials: false
+      - name: Install the validated Release Gate SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.114
+      - name: Bind exact source and separate wrapper identities
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/evidence.py" before --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/cql3-evidence"
+      - name: Bind actual SDK with owned-process cleanup
+        id: sdk
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/process_host.py" sdk --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/cql3-evidence"
+      - name: Fetch and verify frozen official CodeQL bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --max-time 600 --output "$RUNNER_TEMP/codeql-bundle-linux64.tar.gz" 'https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.3/codeql-bundle-linux64.tar.gz'
+          printf '%s  %s\n' '64518dc413c8e7b5733fee2489e830a899bb1e3f28c8873b5869d5cc90164c5c' "$RUNNER_TEMP/codeql-bundle-linux64.tar.gz" | sha256sum --check --strict
+      - name: Initialize default C# queries with manual extraction
+        id: init
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
+        with:
+          languages: csharp
+          build-mode: manual
+          source-root: .
+          db-location: ${{ runner.temp }}/cql3-db
+          tools: ${{ runner.temp }}/codeql-bundle-linux64.tar.gz
+          debug: 'false'
+          trap-caching: 'false'
+          dependency-caching: 'false'
+      - name: Record actual CLI and query pack bytes
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/evidence.py" toolchain --source "$GITHUB_WORKSPACE" --db "$RUNNER_TEMP/cql3-db" --codeql '${{ steps.init.outputs.codeql-path }}' --bundle "$RUNNER_TEMP/codeql-bundle-linux64.tar.gz" --output "$RUNNER_TEMP/cql3-evidence"
+      - name: Restore the complete solution once under initialized tracing
+        id: restore
+        timeout-minutes: 11
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/process_host.py" restore --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/cql3-evidence"
+      - name: Build the complete Release solution once without servers or incremental reuse
+        id: build
+        timeout-minutes: 21
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/process_host.py" build --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/cql3-evidence"
+      - name: Fail closed unless all owned process groups are quiescent
+        id: lifecycle
+        if: always()
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/process_host.py" lifecycle --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/cql3-evidence" --sdk-outcome '${{ steps.sdk.outcome }}' --restore-outcome '${{ steps.restore.outcome }}' --build-outcome '${{ steps.build.outcome }}'
+      - name: Record actual project outputs and generated-source provenance without executing them
+        id: compiled
+        if: always() && !cancelled() && steps.init.outcome == 'success' && steps.lifecycle.outcome == 'success' && steps.lifecycle.outputs.safe == 'true'
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/manual.py" build --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/cql3-evidence" --restore-outcome '${{ steps.restore.outcome }}' --build-outcome '${{ steps.build.outcome }}'
+      - name: Analyze once without uploading a GitHub analysis or database
+        id: analyze
+        if: always() && !cancelled() && steps.init.outcome == 'success' && steps.lifecycle.outcome == 'success' && steps.lifecycle.outputs.safe == 'true'
+        timeout-minutes: 15
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
+        with:
+          category: /language:csharp
+          checkout_path: ${{ github.workspace }}
+          output: ${{ runner.temp }}/cql3-sarif
+          upload: 'never'
+          upload-database: 'false'
+      - name: Preserve full SARIF and validate execution completeness
+        if: always()
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/evidence.py" collect --source "$GITHUB_WORKSPACE" --db "$RUNNER_TEMP/cql3-db" --sarif "$RUNNER_TEMP/cql3-sarif" --output "$RUNNER_TEMP/cql3-evidence" --init-outcome '${{ steps.init.outcome }}' --analyze-outcome '${{ steps.analyze.outcome }}'
+      - name: Hash allowlisted evidence including incomplete outcomes
+        if: always()
+        run: python "$RUNNER_TEMP/cql3-tools/eng/codeql-sarif-evidence/evidence.py" finalize --output "$RUNNER_TEMP/cql3-evidence"
+      - name: Temporary SARIF and identity evidence only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: CQL3-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/cql3-evidence/request.json
+            ${{ runner.temp }}/cql3-evidence/check-outcomes.json
+            ${{ runner.temp }}/cql3-evidence/staged-tools.json
+            ${{ runner.temp }}/cql3-evidence/workspace-scope-before.json
+            ${{ runner.temp }}/cql3-evidence/workspace-scope-after.json
+            ${{ runner.temp }}/cql3-evidence/sarif-scope.json
+            ${{ runner.temp }}/cql3-evidence/incomplete-stage.json
+            ${{ runner.temp }}/cql3-evidence/source-identity.json
+            ${{ runner.temp }}/cql3-evidence/toolchain.json
+            ${{ runner.temp }}/cql3-evidence/effective-scope-before.json
+            ${{ runner.temp }}/cql3-evidence/effective-scope-after.json
+            ${{ runner.temp }}/cql3-evidence/step-outcomes.json
+            ${{ runner.temp }}/cql3-evidence/query-result-hashes.json
+            ${{ runner.temp }}/cql3-evidence/csharp.sarif
+            ${{ runner.temp }}/cql3-evidence/findings.json
+            ${{ runner.temp }}/cql3-evidence/completion.json
+            ${{ runner.temp }}/cql3-evidence/incomplete-before.json
+            ${{ runner.temp }}/cql3-evidence/incomplete-toolchain.json
+            ${{ runner.temp }}/cql3-evidence/incomplete-collect.json
+            ${{ runner.temp }}/cql3-evidence/artifact-hashes.json
+            ${{ runner.temp }}/cql3-evidence/manual-build.json
+            ${{ runner.temp }}/cql3-evidence/manual-archive.json
+            ${{ runner.temp }}/cql3-evidence/manual-coverage.json
+            ${{ runner.temp }}/cql3-evidence/native-compiler-log.json
+            ${{ runner.temp }}/cql3-evidence/incomplete-build.json
+            ${{ runner.temp }}/cql3-evidence/process-sdk.json
+            ${{ runner.temp }}/cql3-evidence/process-restore.json
+            ${{ runner.temp }}/cql3-evidence/process-build.json
+            ${{ runner.temp }}/cql3-evidence/process-lifecycle.json
