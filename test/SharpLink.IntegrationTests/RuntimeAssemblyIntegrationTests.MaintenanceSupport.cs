@@ -15,7 +15,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         private readonly bool _separateOldImplementation;
         private MaintenanceReplacementContext? _oldImplementationContext;
         internal Assembly SourceAssembly;
-        private readonly X509Certificate2 _certificate = CreateMaintenanceCertificate();
+        private readonly X509Certificate2 _certificate;
         private readonly ServiceProvider _services = new ServiceCollection().AddSingleton(TimeProvider.System).BuildServiceProvider();
         private readonly MaintenanceReplacementContext _replacementContext;
         internal readonly Guid Domain = Guid.NewGuid();
@@ -40,8 +40,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         internal ClientConnection[][] Captured = [];
         internal Func<ValueTask>? BeforeCleanupForTesting;
 
-        private MaintenanceHarness(bool separateOldImplementation)
+        private MaintenanceHarness(bool separateOldImplementation, X509Certificate2? certificate)
         {
+            _certificate = certificate ?? CreateMaintenanceCertificate();
             _separateOldImplementation = separateOldImplementation;
             Plugin = PluginBundle.Load($"maintenance-old-{Guid.NewGuid()}", loadService: !separateOldImplementation);
             if (separateOldImplementation)
@@ -62,9 +63,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             TargetService.GetMethod("Reset")!.Invoke(null, null);
         }
 
-        internal static async Task<MaintenanceHarness> CreateAsync(bool expiringAuthentication = false, bool separateOldImplementation = false, Action<SharpLinkServer>? beforeOptIn = null, bool gateSends = false, TimeSpan? requestTimeout = null, Action? duringStubPreparation = null)
+        internal static async Task<MaintenanceHarness> CreateAsync(bool expiringAuthentication = false, bool separateOldImplementation = false, Action<SharpLinkServer>? beforeOptIn = null, bool gateSends = false, TimeSpan? requestTimeout = null, Action? duringStubPreparation = null, X509Certificate2? certificate = null)
         {
-            var harness = new MaintenanceHarness(separateOldImplementation);
+            var harness = new MaintenanceHarness(separateOldImplementation, certificate);
             harness._requestTimeout = requestTimeout;
             harness._duringStubPreparation = duringStubPreparation;
             if (expiringAuthentication)
@@ -91,6 +92,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 manifestSource = new FixedGeneratedManifestSource([new MaintenancePreparationManifest(manifest!, _duringStubPreparation)]);
             }
             var builder = SharpLinkServerBuilder.Create()
+                .UseLoggerFactory(MaintenanceDiagnosticLoggerFactory.Instance)
                 .UseGeneratedManifestSource(manifestSource)
                 .UseServiceProvider(_services)
                 .UseTimeProvider(Clock)
