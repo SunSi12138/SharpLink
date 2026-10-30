@@ -1,0 +1,80 @@
+name: Limited current-head RPC flush comparison
+on:
+  push:
+    branches: [validation/release-flush-limited-20261030-r1]
+    paths: ['eng/release-flush-limited/REQUEST.json']
+permissions:
+  contents: read
+concurrency:
+  group: release-flush-limited-FLUSH1
+  cancel-in-progress: false
+jobs:
+  flush:
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/validation/release-flush-limited-20261030-r1' && github.run_attempt == 1 && github.event.head_commit.message == 'run: release flush limited FLUSH1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+    steps:
+      - name: Initialize retained attempt directory
+        shell: bash
+        run: |
+          export DIAGNOSTIC_ROOT="$RUNNER_TEMP/release-flush-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$DIAGNOSTIC_ROOT"
+          mkdir "$DIAGNOSTIC_ROOT"
+          echo "DIAGNOSTIC_ROOT=$DIAGNOSTIC_ROOT" >> "$GITHUB_ENV"
+          printf 'run=%s\nattempt=%s\nrequest=%s\nimage=%s/%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "${ImageOS:-unknown}" "${ImageVersion:-unknown}" > "$DIAGNOSTIC_ROOT/start.txt"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify single authorized request child
+        id: request
+        working-directory: tools
+        shell: bash
+        run: python3 eng/release-flush-limited/verify_request.py --record "$DIAGNOSTIC_ROOT/request.json"
+      - name: Pin reviewed tools
+        working-directory: tools
+        env:
+          REVIEWED_TOOL_SHA: ${{ steps.request.outputs.reviewed_tool_sha }}
+          REVIEWED_TOOL_TREE: ${{ steps.request.outputs.reviewed_tool_tree }}
+        shell: bash
+        run: |
+          git checkout --detach "$REVIEWED_TOOL_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$REVIEWED_TOOL_TREE"
+          test -z "$(git status --porcelain)"
+          python3 -m unittest discover -s eng/release-flush-limited -p 'test_*.py' -v
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 57f06f172d29fa5cfd4ea8e9b86a23f122df24ab
+          path: baseline
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 8ae9ee36ebec82f82e03185432601a830c865e95
+          path: candidate
+          persist-credentials: false
+      - name: Install exact SDK114 with runtime14
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.114'
+      - name: Build identical harness overlay and execute finite frozen order
+        shell: bash
+        run: python3 tools/eng/release-flush-limited/run.py --baseline baseline --candidate candidate --output "$DIAGNOSTIC_ROOT/evidence"
+      - name: Validate raw rounds even after failure
+        if: always()
+        shell: bash
+        run: python3 tools/eng/release-flush-limited/validate.py --output "$DIAGNOSTIC_ROOT/evidence"
+      - name: Preserve temporary successes and failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-flush-limited-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.DIAGNOSTIC_ROOT }}
+          if-no-files-found: error
+          retention-days: 3
