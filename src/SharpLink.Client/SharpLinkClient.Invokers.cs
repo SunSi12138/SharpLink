@@ -390,6 +390,7 @@ internal sealed partial class SharpLinkClient
                 outcome,
                 hasResponsePayload: method.HasResponsePayload,
                 responseNullable: method.ResponseNullable);
+            connection.ReleaseCallAdmissionReservation();
             reservationOwned = false;
             return StartUnaryCall(
                 connection,
@@ -695,7 +696,6 @@ internal sealed partial class SharpLinkClient
             EnsureLogicalCallProgress(control);
             oneWayStreamLease = connection!.PendingCalls.RegisterOneWayClientStream(
                 control.Deadline, cancellationToken, outcome);
-            reservationOwned = false;
             requestId = oneWayStreamLease.Id;
         }
         catch (Exception exception)
@@ -739,9 +739,9 @@ internal sealed partial class SharpLinkClient
             // Preserve the pending owner's terminal arbitration and observe its lease once.
             connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
         }
+        finally { connection!.ReleaseCallAdmissionReservation(); }
 
-        // Registration may already have completed and removed the pending entry. Its operation
-        // still owns that terminal result and must be consumed exactly once to return it to the pool.
+        // The terminal operation must still be consumed once even after pending removal.
         _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
     }
 
@@ -778,7 +778,6 @@ internal sealed partial class SharpLinkClient
                 outcome,
                 hasResponsePayload: method.HasResponsePayload,
                 responseNullable: method.ResponseNullable);
-            reservationOwned = false;
         }
         catch (Exception exception)
         {
@@ -788,15 +787,21 @@ internal sealed partial class SharpLinkClient
             outcome?.CompleteLocalFailure(exception);
             throw exception;
         }
+        if (!connection!.PendingCalls.Contains(requestId))
+        {
+            connection.ReleaseCallAdmissionReservation();
+            return await operation.AsValueTask().ConfigureAwait(false);
+        }
         var flags = method.HasResponsePayload
             ? ProtocolV2FrameFlags.HasReturn | ProtocolV2FrameFlags.Cancellable
             : ProtocolV2FrameFlags.Cancellable;
-        var streamCancellationToken = connection!.PendingCalls.GetProducerCancellationToken(requestId);
         SharpLinkDynamicModuleLease producerLease = default;
         try
         {
-            if (connection.PendingCalls.Contains(requestId))
+            Task producerTask;
+            try
             {
+                var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
                 producerLease = moduleProducerLifetime?.TakeLease() ?? default;
                 await SendRpcCall(
                     connection.Session,
@@ -809,15 +814,19 @@ internal sealed partial class SharpLinkClient
                     control.Deadline,
                     control.Metadata,
                     observeEmission: control.Deadline.HasValue,
-                    // Same ownership rule as the one-way client-stream shape: this call is owned by
-                    // its pending entry, so the emission wait has to observe the token that entry
-                    // cancels when it reaches a terminal reason.
+                    // Pending ownership gates request publication even after cancellation removes it.
                     cancellationToken: streamCancellationToken,
                     publicationTable: connection.PendingCalls).ConfigureAwait(false);
-                var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, streamCancellationToken, producerLease);
-                producerLease = default;
-                TrackFrameworkTask(producerTask, "ClientStreamingProducer");
+                producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, streamCancellationToken, producerLease);
             }
+            catch
+            {
+                connection.ReleaseCallAdmissionReservation();
+                throw;
+            }
+            // A returned producer task owns the reservation, including synchronous completion.
+            producerLease = default;
+            TrackFrameworkTask(producerTask, "ClientStreamingProducer");
         }
         catch (Exception exception)
         {
@@ -850,6 +859,7 @@ internal sealed partial class SharpLinkClient
         finally
         {
             producerLease.Dispose();
+            connection.ReleaseCallAdmissionReservation();
         }
     }
 
@@ -875,6 +885,7 @@ internal sealed partial class SharpLinkClient
                 captureTerminalSignal: control.Deadline.HasValue).ConfigureAwait(false);
             connection = registration.Connection;
             requestId = registration.RequestId;
+            connection.ReleaseCallAdmissionReservation();
             try
             {
                 await SendRpcCall(
@@ -958,6 +969,7 @@ internal sealed partial class SharpLinkClient
         finally
         {
             producerLease.Dispose();
+            connection?.ReleaseCallAdmissionReservation();
             dispatcher.ReleaseRegistrationRetention(registrationLease);
         }
     }
@@ -991,7 +1003,6 @@ internal sealed partial class SharpLinkClient
                 control.Deadline,
                 cancellationToken,
                 completionObserver);
-            reservationOwned = false;
             if (!connection.PendingCalls.Contains(requestId))
             {
                 cancellationToken.ThrowIfCancellationRequested();

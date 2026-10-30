@@ -8,6 +8,10 @@ internal sealed partial class SharpLinkServer
 
     public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
     {
+        using var preparation = TryEnterColdPreparation();
+        if (preparation is null)
+            return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                "Maintenance or shutdown has sealed catalog preparation.", assembly);
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
         if (!loaded.Succeeded)
             return loaded;
@@ -34,6 +38,9 @@ internal sealed partial class SharpLinkServer
                 SharpLinkDynamicModule[] currentModules;
                 lock (_registryGate)
                 {
+                    if (MaintenanceConfigured || _serviceModuleRegistry.IsColdWriterHeld)
+                        return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "The maintenance domain owns server catalog mutation.", assembly);
                     if (IsAssemblyRegistered(assembly))
                     {
                         return Failure(
@@ -68,6 +75,9 @@ internal sealed partial class SharpLinkServer
                 var retry = false;
                 lock (_registryGate)
                 {
+                    if (MaintenanceConfigured || _serviceModuleRegistry.IsColdWriterHeld)
+                        return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "The maintenance domain owns server catalog mutation.", assembly);
                     if (generation != _registryGeneration)
                     {
                         retry = true;
@@ -165,6 +175,11 @@ internal sealed partial class SharpLinkServer
                 newAssembly)));
         }
 
+        using var preparation = TryEnterColdPreparation();
+        if (preparation is null)
+            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                "Maintenance or shutdown has sealed catalog preparation.", newAssembly)));
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(newAssembly, out var manifest);
         if (!loaded.Succeeded)
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
@@ -190,6 +205,10 @@ internal sealed partial class SharpLinkServer
                 IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> retainedCodecs;
                 lock (_registryGate)
                 {
+                    if (MaintenanceConfigured || _serviceModuleRegistry.IsColdWriterHeld)
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "The maintenance domain owns server catalog mutation.", newAssembly)));
                     if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
                     {
                         return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
@@ -255,9 +274,21 @@ internal sealed partial class SharpLinkServer
                 var retry = false;
                 lock (_registryGate)
                 {
+                    if (MaintenanceConfigured || _serviceModuleRegistry.IsColdWriterHeld)
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "The maintenance domain owns server catalog mutation.", newAssembly)));
                     if (generation != _registryGeneration)
                     {
                         retry = true;
+                    }
+                    else if (CurrentState is ServerState.Draining or ServerState.Stopped or ServerState.Faulted)
+                    {
+                        rollbackError = CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            $"Server state '{CurrentState}' does not accept runtime assembly replacement.",
+                            newAssembly);
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
                     }
                     else if (!_dynamicModules.TryGetValue(oldAssembly, out var currentOldModule) ||
                         !ReferenceEquals(currentOldModule, oldModule) ||
@@ -719,57 +750,6 @@ internal sealed partial class SharpLinkServer
         }
         return false;
     }
-
-    private static SharpLinkAssemblyRegistrationResult Failure(
-        SharpLinkAssemblyRegistrationErrorCode code,
-        string message,
-        Assembly assembly)
-        => SharpLinkAssemblyRegistrationResult.Failure(CreateError(code, message, assembly));
-
-    private static SharpLinkAssemblyRegistrationError CreateError(
-        SharpLinkAssemblyRegistrationErrorCode code,
-        string message,
-        Assembly assembly,
-        string? artifact = null,
-        string? contractName = null,
-        long? contractId = null,
-        string? existingFingerprint = null,
-        string? incomingFingerprint = null)
-        => new(
-            code,
-            message,
-            SharpLinkAssemblyManifestLoader.GetAssemblyIdentity(assembly),
-            IncomingLoadContext: SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(assembly),
-            Artifact: artifact,
-            ContractName: contractName,
-            ContractId: contractId,
-            ExistingFingerprint: existingFingerprint,
-            IncomingFingerprint: incomingFingerprint);
-
-    private static SharpLinkAssemblyRegistrationError Conflict(
-        SharpLinkAssemblyRegistrationErrorCode code,
-        string artifact,
-        ISharpLinkGeneratedAssemblyManifest incoming,
-        string contractName,
-        long contractId,
-        string incomingFingerprint,
-        ISharpLinkGeneratedAssemblyManifest existing,
-        string existingFingerprint)
-        => new(
-            code,
-            $"{artifact} conflict for '{contractName}' ({contractId}). Incoming Assembly='{incoming.OwnerAssembly.FullName}', " +
-            $"ALC='{SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(incoming.OwnerAssembly)}', Fingerprint='{incomingFingerprint}'; " +
-            $"Existing Assembly='{existing.OwnerAssembly.FullName}', " +
-            $"ALC='{SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(existing.OwnerAssembly)}', Fingerprint='{existingFingerprint}'.",
-            SharpLinkAssemblyManifestLoader.GetAssemblyIdentity(incoming.OwnerAssembly),
-            SharpLinkAssemblyManifestLoader.GetAssemblyIdentity(existing.OwnerAssembly),
-            SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(incoming.OwnerAssembly),
-            SharpLinkAssemblyManifestLoader.GetLoadContextIdentity(existing.OwnerAssembly),
-            artifact,
-            contractName,
-            contractId,
-            ExistingFingerprint: existingFingerprint,
-            IncomingFingerprint: incomingFingerprint);
 
     private readonly record struct RegistrationCandidate(
         FrozenDictionary<long, ServiceRegistration> Services,

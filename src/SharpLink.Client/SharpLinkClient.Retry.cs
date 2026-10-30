@@ -276,6 +276,7 @@ internal sealed partial class SharpLinkClient
                 throw;
             }
 
+            connection.ReleaseCallAdmissionReservation();
             return StartUnaryCall(
                 connection,
                 contractId,

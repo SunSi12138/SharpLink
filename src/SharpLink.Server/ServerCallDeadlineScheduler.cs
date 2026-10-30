@@ -89,6 +89,26 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
         _timer.Dispose();
     }
 
+    /// <summary>
+    /// Joins a scan that may still hold an already-removed call generation. The caller must first
+    /// seal ingress and drain ordinary request owners: an empty map alone is not a producer fence.
+    /// A later scan of that sealed empty map cannot acquire a call or invoke its token callbacks.
+    /// </summary>
+    internal Task DrainPhysicalCallbacksAsync()
+    {
+        if (_calls.Count != 0)
+            throw new InvalidOperationException("Cancellation callbacks require a drained call map.");
+        return Volatile.Read(ref _scanRunning) == 0 ? Task.CompletedTask : DrainActiveScanAsync();
+    }
+
+    private async Task DrainActiveScanAsync()
+    {
+        // Reuse the scan owner published before snapshot capture. There is no timeout that can
+        // turn an executing application cancellation callback into reclaimed ownership.
+        while (Volatile.Read(ref _scanRunning) != 0)
+            await Task.Delay(1).ConfigureAwait(false);
+    }
+
     private void UpdateEarliestDeadline(RpcDeadline deadline)
     {
         lock (_deadlineGate)
@@ -185,6 +205,13 @@ internal sealed class ServerCallDeadlineScheduler : IDisposable
             // were violated. Keep the timer callback bounded and retry later rather than dropping
             // deadline processing or spinning indefinitely.
             ScheduleInvariantRetry();
+        }
+        catch (Exception exception)
+        {
+            // Publish failure before releasing the existing scan owner. A later cold drain
+            // must not certify successful resource cleanup merely because the timer returned.
+            ServerCancellationCallbackWork.RecordCleanupFailure(_calls, exception);
+            throw;
         }
         finally
         {

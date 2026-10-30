@@ -95,10 +95,6 @@ public class PendingResponseStreamDeliveryDeadlineTests
 
         internal int DeadlineCompletionCount => Volatile.Read(ref _deadlineCompletionCount);
 
-        public void OnPendingCallRegistered()
-        {
-        }
-
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
         {
             if (completion.Reason != PendingCallCompletionReason.DeadlineExceeded)

@@ -194,16 +194,69 @@ internal static partial class PendingRequestMatrixEvidenceRunner
         double P999,
         double Max);
 
+    private static void RunCompletionLedgerGates(List<object> cells)
+    {
+        static PendingCallCompletion Completion(long id)
+            => new(id, PendingCallKind.Unary, PendingCallCompletionReason.Response, null, null, true);
+        static void RequireFailure(Action action, string expected)
+        {
+            try { action(); }
+            catch (InvalidOperationException exception) when (exception.Message.Contains(expected, StringComparison.Ordinal))
+            { return; }
+            throw new InvalidOperationException($"Completion ledger did not detect {expected}.");
+        }
+
+        var missing = new RecordingOwner();
+        missing.ExpectCompletions(1);
+        RequireFailure(missing.RequireIdle, "missing 1");
+        missing.OnPendingCallCompleted(Completion(1));
+        missing.RequireIdle();
+
+        var duplicate = new RecordingOwner();
+        duplicate.ExpectCompletions(2);
+        duplicate.OnPendingCallCompleted(Completion(1));
+        RequireFailure(() => duplicate.OnPendingCallCompleted(Completion(1)), "more than once");
+        // Callback exceptions may be isolated by the product: RequireIdle must still fail.
+        RequireFailure(duplicate.RequireIdle, "more than once");
+
+        var extra = new RecordingOwner();
+        extra.ExpectCompletions(1);
+        extra.OnPendingCallCompleted(Completion(1));
+        RequireFailure(() => extra.OnPendingCallCompleted(Completion(2)), "underflowed");
+        RequireFailure(extra.RequireIdle, "underflowed");
+        cells.Add(new
+        {
+            category = "hard-gate",
+            scenario = "completion-ledger-missing-duplicate-extra-controls",
+            missingDetected = true,
+            duplicateDetected = true,
+            extraDetected = true,
+            recoveredPhaseHistoryReleased = true,
+            invariant = true
+        });
+    }
+
     private sealed class RecordingOwner : IPendingCallOwner
     {
         private readonly object _gate = new();
         private HashSet<long> _completedIds = [];
-        private int _active;
+        private int _remaining;
+        private string? _failure;
 
-        public void OnPendingCallRegistered()
+        // Compatibility member for replaying this same harness on the historical interface.
+        // Registration ordering is tested by the pre-MarkRegistered unit/probe witnesses,
+        // not by this phase-level completion ledger.
+        public void OnPendingCallRegistered() { }
+
+        public void ExpectCompletions(int count)
         {
-            if (Interlocked.Increment(ref _active) <= 0)
-                throw new InvalidOperationException("Pending owner registration accounting overflowed.");
+            lock (_gate)
+            {
+                RequireIdle();
+                if (count <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(count));
+                _remaining = count;
+            }
         }
 
         public void OnPendingCallCompleted(in PendingCallCompletion completion)
@@ -211,21 +264,15 @@ internal static partial class PendingRequestMatrixEvidenceRunner
             lock (_gate)
             {
                 if (!_completedIds.Add(completion.RequestId))
-                    throw new InvalidOperationException($"Request {completion.RequestId} completed more than once.");
-            }
-
-            var active = Interlocked.Decrement(ref _active);
-            if (active < 0)
-                throw new InvalidOperationException("Pending owner completion accounting underflowed.");
-            if (active != 0)
-                return;
-
-            lock (_gate)
-            {
-                if (Volatile.Read(ref _active) == 0)
+                    _failure ??= $"Request {completion.RequestId} completed more than once.";
+                if (--_remaining < 0)
+                    _failure ??= "Pending owner completion accounting underflowed.";
+                if (_failure is not null)
+                    throw new InvalidOperationException(_failure);
+                if (_remaining == 0)
                 {
-                    // Recovery heap samples must measure the table, not an ever-growing
-                    // harness-only exactly-once history retained from previous quiescent cycles.
+                    // Drop the whole phase's harness history before recovery heap samples.
+                    // Revised timings require this same phase ledger on BOTH source arms.
                     _completedIds = [];
                 }
             }
@@ -236,8 +283,15 @@ internal static partial class PendingRequestMatrixEvidenceRunner
 
         public void RequireIdle()
         {
-            if (Volatile.Read(ref _active) != 0)
-                throw new InvalidOperationException($"Pending owner retained {Volatile.Read(ref _active)} active calls.");
+            lock (_gate)
+            {
+                if (_failure is not null)
+                    throw new InvalidOperationException(_failure);
+                if (_remaining != 0)
+                    throw new InvalidOperationException($"Pending owner is missing {_remaining} expected completions.");
+                if (_completedIds.Count != 0)
+                    throw new InvalidOperationException("Pending owner retained its completed phase history.");
+            }
         }
     }
 

@@ -151,7 +151,7 @@ internal sealed partial class SharpLinkClient
                 return;
             }
 
-            while (!_shutdownCts.IsCancellationRequested &&
+            while (!IsMaintenanceFrozen && !_shutdownCts.IsCancellationRequested &&
                    ReadyConnectionCount < _connectionPoolOptions.MinConnections)
             {
                 var generation = CaptureReconnectPolicy();
@@ -389,7 +389,7 @@ internal sealed partial class SharpLinkClient
     {
         try
         {
-            if (ReadyConnectionCount >= _connectionPoolOptions.MaxConnections)
+            if (IsMaintenanceFrozen || ReadyConnectionCount >= _connectionPoolOptions.MaxConnections)
                 return;
             await ConnectOneAsync(_shutdownCts.Token).ConfigureAwait(false);
             PublishReadyState();

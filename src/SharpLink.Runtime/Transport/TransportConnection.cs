@@ -9,7 +9,7 @@ internal interface IQuiescentPumpFaultDisposal
     ValueTask DisposeAfterPumpFaultAsync(Exception exception);
 }
 
-internal class StreamTransportConnection : ITransportConnection, IQuiescentPumpFaultDisposal
+internal class StreamTransportConnection : ITransportConnection, IQuiescentPumpFaultDisposal, IQuiescingTransportConnection
 {
     internal const int ReadBufferBytes = 16 * 1024;
 
@@ -46,6 +46,13 @@ internal class StreamTransportConnection : ITransportConnection, IQuiescentPumpF
         ArgumentNullException.ThrowIfNull(exception);
         lock (_disposeGate)
             return new ValueTask(_disposeTask ??= DisposeCoreAsync(exception));
+    }
+
+    ValueTask IQuiescingTransportConnection.DisposeAfterWritesAsync(Task writesDrained, Exception terminalException)
+    {
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= TransportShutdown.DisposeAfterWritesAsync(
+                Input, Output, _stream, null, writesDrained, terminalException));
     }
 
     private async Task DisposeCoreAsync(Exception? outputException)
@@ -275,7 +282,7 @@ internal sealed class ReadOwnershipPipeReader(PipeReader inner) : PipeReader
     }
 }
 
-internal sealed class AnonymousPipeTransportConnection : ITransportConnection, IQuiescentPumpFaultDisposal
+internal sealed class AnonymousPipeTransportConnection : ITransportConnection, IQuiescentPumpFaultDisposal, IQuiescingTransportConnection
 {
     private readonly PipeStream _inputStream;
     private readonly PipeStream _outputStream;
@@ -309,6 +316,13 @@ internal sealed class AnonymousPipeTransportConnection : ITransportConnection, I
         ArgumentNullException.ThrowIfNull(exception);
         lock (_disposeGate)
             return new ValueTask(_disposeTask ??= DisposeCoreAsync(exception));
+    }
+
+    ValueTask IQuiescingTransportConnection.DisposeAfterWritesAsync(Task writesDrained, Exception terminalException)
+    {
+        lock (_disposeGate)
+            return new ValueTask(_disposeTask ??= TransportShutdown.DisposeAfterWritesAsync(
+                Input, Output, _outputStream, _inputStream, writesDrained, terminalException));
     }
 
     private async Task DisposeCoreAsync(Exception? outputException)

@@ -59,6 +59,10 @@ namespace SharpLink.Client
         public static string ExportDiagnosticSnapshotJson(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Client.SharpLinkClientSupportSnapshotOptions? options = null) { }
         public static SharpLink.Client.SharpLinkClientSupportSnapshot GetDiagnosticSnapshot(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Client.SharpLinkClientSupportSnapshotOptions? options = null) { }
     }
+    public static class SharpLinkClientMaintenanceExtensions
+    {
+        public static SharpLink.Abstractions.ISharpLinkClient EnableCooperativeMaintenance(this SharpLink.Abstractions.ISharpLinkClient client, SharpLink.Abstractions.SharpLinkClientMaintenanceOptions options) { }
+    }
     public static class SharpLinkClientRpcSessionFlushExtensions
     {
         public static SharpLink.Runtime.SharpLinkRpcSessionFlushPolicySnapshot GetRpcSessionFlushPolicySnapshot(this SharpLink.Abstractions.ISharpLinkClient client) { }

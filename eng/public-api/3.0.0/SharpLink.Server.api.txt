@@ -126,6 +126,10 @@ namespace SharpLink.Server
     {
         public static void UpdateConnectionAdmission(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkConnectionAdmissionOptions> configure) { }
     }
+    public static class SharpLinkServerMaintenanceExtensions
+    {
+        public static SharpLink.Abstractions.ISharpLinkMaintenanceController EnableCooperativeMaintenance(this SharpLink.Abstractions.ISharpLinkServer server, System.Guid domainId, System.Collections.Generic.IReadOnlyList<SharpLink.Abstractions.SharpLinkMaintenanceParticipant> participants) { }
+    }
     public static class SharpLinkServerRpcSessionFlushExtensions
     {
         public static SharpLink.Runtime.SharpLinkRpcSessionFlushPolicySnapshot GetRpcSessionFlushPolicySnapshot(this SharpLink.Abstractions.ISharpLinkServer server) { }

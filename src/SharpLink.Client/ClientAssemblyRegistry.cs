@@ -41,6 +41,18 @@ internal sealed partial class ClientAssemblyRegistry
         new(ReferenceEqualityComparer.Instance);
     private long _generation;
     private bool _shutdownStarted;
+    private bool _maintenanceSealed;
+
+    internal void SealForCooperativeMaintenance()
+    {
+        lock (_gate)
+        {
+            if (_shutdownStarted || _preparationWriters != 0 || _retirementFailed || _unregisterOperations.Values.Any(static item => !item.IsCompleted) ||
+                _dynamicModules.Values.Any(static module => module.State != SharpLinkDynamicModuleState.Running))
+                throw new InvalidOperationException("Client contract ownership is not stable for maintenance.");
+            _maintenanceSealed = true;
+        }
+    }
 
     internal ClientAssemblyRegistry(
         SharpLinkRuntimeContext runtimeContext,
@@ -93,6 +105,10 @@ internal sealed partial class ClientAssemblyRegistry
 
     internal SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
     {
+        using var preparation = TryEnterPreparation();
+        if (preparation is null)
+            return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                "Client catalog preparation is closed.", assembly);
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
         if (!loaded.Succeeded)
             return loaded;
@@ -223,6 +239,11 @@ internal sealed partial class ClientAssemblyRegistry
                 newAssembly)));
         }
 
+        using var preparation = TryEnterPreparation();
+        if (preparation is null)
+            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                "Client catalog preparation is closed.", newAssembly)));
         var loaded = SharpLinkAssemblyManifestLoader.TryLoad(newAssembly, out var manifest);
         if (!loaded.Succeeded)
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
@@ -404,6 +425,8 @@ internal sealed partial class ClientAssemblyRegistry
         Task<SharpLinkAssemblyUnregisterResult> operation;
         lock (_gate)
         {
+            if (_maintenanceSealed && !_shutdownStarted)
+                throw new InvalidOperationException("Maintenance participant contracts are immutable.");
             if (_unregisterOperations.TryGetValue(assembly, out operation!))
                 return WaitForUnregisterAsync(operation, cancellationToken);
             if (!_dynamicModules.TryGetValue(assembly, out var module))
@@ -488,7 +511,7 @@ internal sealed partial class ClientAssemblyRegistry
     private bool RejectMutation(out SharpLinkConnectionState state)
     {
         state = _stateProvider();
-        return Volatile.Read(ref _shutdownStarted) ||
+        return Volatile.Read(ref _maintenanceSealed) || Volatile.Read(ref _shutdownStarted) ||
                state is SharpLinkConnectionState.Draining or
                    SharpLinkConnectionState.Stopped or
                    SharpLinkConnectionState.Faulted;
@@ -497,7 +520,7 @@ internal sealed partial class ClientAssemblyRegistry
     private bool RejectMutationLocked(out SharpLinkConnectionState state)
     {
         state = _stateProvider();
-        return _shutdownStarted ||
+        return _maintenanceSealed || _shutdownStarted ||
                state is SharpLinkConnectionState.Draining or
                    SharpLinkConnectionState.Stopped or
                    SharpLinkConnectionState.Faulted;
@@ -569,41 +592,55 @@ internal sealed partial class ClientAssemblyRegistry
 
     private void ReleaseModule(Assembly assembly, SharpLinkDynamicModule module)
     {
-        RpcGeneratedManifestRegistration codecRegistration;
-        lock (_gate)
-        {
-            if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
-                return;
-            var nextProxies = _proxyLookup.Capture()
-                .Where(pair => !ReferenceEquals(pair.Value.Module, module))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                .ToFrozenDictionary();
-            var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
-            codecRegistration = module.CodecRegistration;
-            var codecTypes = codecRegistration.Codecs.Keys.ToArray();
-            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            for (var index = 0; index < codecTypes.Length; index++)
-            {
-                var codecType = codecTypes[index];
-                var replacement = FindReplacementCodec(codecType, module);
-                if (replacement is null)
-                    nextFactories.Remove(codecType);
-                else
-                    nextFactories[codecType] = replacement;
-            }
-            _runtimeContext.PublishGeneratedCodecs(nextFactories);
-            _proxyLookup.Publish(nextProxies);
-            _dynamicModules.Remove(assembly);
-            _generation++;
-        }
+        IDisposable? cleanup = null;
         try
         {
-            _runtimeContext.ReleaseGeneratedManifest(codecRegistration);
+            RpcGeneratedManifestRegistration codecRegistration;
+            lock (_gate)
+            {
+                if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
+                    return;
+                var nextProxies = _proxyLookup.Capture()
+                    .Where(pair => !ReferenceEquals(pair.Value.Module, module))
+                    .ToDictionary(static pair => pair.Key, static pair => pair.Value)
+                    .ToFrozenDictionary();
+                var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
+                codecRegistration = module.CodecRegistration;
+                var codecTypes = codecRegistration.Codecs.Keys.ToArray();
+                var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                for (var index = 0; index < codecTypes.Length; index++)
+                {
+                    var codecType = codecTypes[index];
+                    var replacement = FindReplacementCodec(codecType, module);
+                    if (replacement is null)
+                        nextFactories.Remove(codecType);
+                    else
+                        nextFactories[codecType] = replacement;
+                }
+                _runtimeContext.PublishGeneratedCodecs(nextFactories);
+                _proxyLookup.Publish(nextProxies);
+                cleanup = EnterPreparationLocked();
+                _dynamicModules.Remove(assembly);
+                _generation++;
+            }
+            try
+            {
+                _runtimeContext.ReleaseGeneratedManifest(codecRegistration);
+            }
+            finally
+            {
+                module.MarkReleased();
+            }
         }
-        finally
+        catch
         {
-            module.MarkReleased();
+            if (cleanup is not null)
+            {
+                lock (_gate) _retirementFailed = true;
+            }
+            throw;
         }
+        finally { cleanup?.Dispose(); }
     }
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(

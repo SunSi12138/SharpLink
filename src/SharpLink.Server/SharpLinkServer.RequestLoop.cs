@@ -51,22 +51,10 @@ internal sealed partial class SharpLinkServer
                 out var notifyCancellation);
             if (notifyCancellation)
             {
-                // The connection read loop owns frame parsing for every call on this transport.
-                // Never execute application token callbacks inline here. Retain this generation
-                // until the best-effort notification completes so the pooled state cannot be
-                // recycled underneath the queued work.
+                // Publish physical callback ownership before the reader can consume a fence.
+                // Keep scheduling/closure allocation off the ordinary stream-progress path.
                 releaseLease = false;
-                _ = Task.Run(() =>
-                {
-                    try
-                    {
-                        callLease.State.NotifyInvocationCancellation();
-                    }
-                    finally
-                    {
-                        callLease.ReleaseUse();
-                    }
-                });
+                ServerCancellationCallbackWork.QueueNotification(requestCancellationMap, callLease);
             }
             return accepted;
         }
@@ -251,6 +239,9 @@ internal sealed partial class SharpLinkServer
                         {
                             switch (header.Type)
                             {
+                                case ProtocolV2FrameType.CooperativeMaintenance:
+                                    HandleMaintenanceControl(connection, payload);
+                                    break;
                                 case ProtocolV2FrameType.Ping:
                                     DebugLogClientHeartbeatReceived(_logger);
                                     await session.SendPongWithBackpressureAsync(

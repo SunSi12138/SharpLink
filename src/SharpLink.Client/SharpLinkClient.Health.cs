@@ -31,6 +31,7 @@ internal sealed partial class SharpLinkClient
                 deadline,
                 cancellationToken,
                 out var requestId);
+            connection.ReleaseCallAdmissionReservation();
             reservationOwned = false;
             try
             {

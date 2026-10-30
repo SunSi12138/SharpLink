@@ -14,6 +14,7 @@
     <ProjectReference Include="..\..\src\SharpLink.Server\SharpLink.Server.csproj" />
     <ProjectReference Include="..\SharpLink.MultiClusterTest.Contracts\SharpLink.MultiClusterTest.Contracts.csproj" />
     <ProjectReference Include="..\SharpLink.RollbackPlugin\SharpLink.RollbackPlugin.csproj" />
+    <ProjectReference Include="..\SharpLink.DynamicServices\SharpLink.DynamicServices.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\SharpLink.StaticCodecOwnerTest.Contracts\SharpLink.StaticCodecOwnerTest.Contracts.csproj" />
   </ItemGroup>
 

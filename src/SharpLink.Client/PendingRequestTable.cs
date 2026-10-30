@@ -34,7 +34,6 @@ internal readonly record struct PendingCallCompletion(
 
 internal interface IPendingCallOwner
 {
-    void OnPendingCallRegistered();
     void OnPendingCallCompleted(in PendingCallCompletion completion);
     void OnProducerCancellationCallbackFailed(Exception exception);
 
@@ -765,7 +764,6 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     private void OnRegistered(PendingCall call)
     {
         SharpLinkTelemetry.AddPendingRequests(1);
-        _owner.OnPendingCallRegistered();
         call.MarkRegistered();
         if (call.Deadline.HasValue)
             _deadlineScheduler.Observe(call.Deadline);
