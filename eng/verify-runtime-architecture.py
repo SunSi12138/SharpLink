@@ -21,6 +21,7 @@ yield_sites = {
     "src/SharpLink.Server/SharpLinkServer.AssemblyDrain.cs": (1, "one cancellation-continuation turn before supervised drain cleanup"),
     "src/SharpLink.Client/ClientAssemblyRegistry.cs": (1, "one cancellation-continuation turn before supervised drain cleanup"),
     "src/SharpLink.Server/SharpLinkServer.DesiredSession.cs": (1, "start the supervised rollout worker outside its owner gate"),
+    "src/SharpLink.Server/SharpLinkServer.PreparedImplementationReplacement.cs": (2, "publish cold prepare/dispose single-owner tasks before application callbacks"),
 }
 utc_sites = {
     "src/SharpLink.Runtime/RpcSession.cs": (2, "public diagnostic last-active UTC timestamps"),
@@ -28,6 +29,7 @@ utc_sites = {
     "src/SharpLink.Client/SharpLinkClient.SupportSnapshot.cs": (2, "support capture/failure UTC timestamps"),
     "src/SharpLink.Runtime/Transport/SharedMemoryMapping.cs": (1, "compare filesystem mapping age against filesystem UTC metadata"),
     "src/SharpLink.Abstractions/SharpLinkAuthenticationContext.cs": (1, "externally defined absolute authentication expiry"),
+    "src/SharpLink.Server/SharpLinkServer.Maintenance.cs": (1, "revalidate external absolute authentication expiry during opt-in maintenance"),
 }
 patterns = {
     "yield": (r"\bTask\.Yield\s*\(", yield_sites),
