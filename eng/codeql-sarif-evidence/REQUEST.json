@@ -1,4 +1,10 @@
 {
-  "state": "review-required",
-  "campaign": "codeql-c22-full-sarif-CQL1"
+  "state": "authorized",
+  "campaign": "codeql-c22-full-sarif-CQL1",
+  "reviewedToolCommit": "645df89ab8f4a06b9868d3cf005dff822539e303",
+  "reviewedToolTree": "9bb5de7e95b7a45873d0b86f2dfdf2348c0c29f7",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "devSource": "c22b945f71c075c878e93a7c92bf4e45a8d33a6f",
+  "devTree": "12b88cb38821e2c40bd1fb209a6244396bed52ba"
 }
