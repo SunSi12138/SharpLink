@@ -22,6 +22,7 @@ from unit_gate.record import expected_record, validate_record, graph_digest, DYN
 from prepare import correctness_graph_inventory
 from unit_gate.temp_paths import create_short_temp
 from unit_gate.diagnostics import emit_diagnostics
+from unit_gate.postgate_diagnostics import PostGateDiagnostics, emit_stage_failure
 from unit_gate.scope import verify_explicit_sources
 from unit_gate.validate import (GateError, discovery_uids, read_report, require,
                                 strict_json, uid_digest, validate_run, check_summary)
@@ -205,6 +206,7 @@ def validate_integration(report, code, timed):
 
 
 def run_arm(arm, data, runtime, output, env, record):
+    postgate = PostGateDiagnostics(arm)
     source = Path(data['source']['path'])
     verify_source(source, output / 'source.log', arm)
     require(correctness_graph_inventory(source) == data['correctness']['graphSnapshot'], 'pre-gate correctness graph changed')
@@ -222,33 +224,54 @@ def run_arm(arm, data, runtime, output, env, record):
                           environment, 1260, output / 'execution.log')
     report = report_from(output)
     emit_diagnostics(report, ordinary, code, timed)
+    postgate.report('ORDINARY_RUNTIME', report, len(ordinary), code, timed)
     require_runtime(report)
-    validate_run(ordinary, report, code, timed)
+    validate_run(ordinary, report, code, timed, on_stage=lambda stage: postgate.validation(stage, report, len(ordinary), code, timed))
+    postgate.children(report)
     record['allocationChildren'] = allocation_children(report)
+    postgate.stage('ORDINARY_SNAPSHOT')
+    postgate.snapshot('ORDINARY_SNAPSHOT', data['correctness']['unitSnapshot'], inventory(assembly.parent))
     require(inventory(assembly.parent) == data['correctness']['unitSnapshot'], 'ordinary output bytes changed')
     record['assemblySha256'] = inventory(assembly.parent)
+    postgate.stage('ORDINARY_GRAPH')
+    postgate.snapshot('ORDINARY_GRAPH', data['correctness']['graphSnapshot'], correctness_graph_inventory(source))
     require(correctness_graph_inventory(source) == data['correctness']['graphSnapshot'], 'ordinary changed full correctness graph')
     dynamic = output / 'dynamic-module-retirement'
     dynamic.mkdir()
     integration = source / INTEGRATION
+    postgate.stage('DYNAMIC_DISCOVERY_PROCESS')
     code, timed = execute([runtime, integration, '--list-tests', 'json'], source, environment,
                           180, dynamic / 'discovery.json')
+    postgate.process('DYNAMIC_DISCOVERY_EXIT', code, timed)
     require(not timed and code == 0, 'fresh dynamic discovery failed')
+    postgate.stage('DYNAMIC_DISCOVERY_REPORT')
     discovery = read_report(dynamic / 'discovery.json')
+    postgate.discovery(discovery, DYNAMIC_UID)
     require(DYNAMIC_UID in discovery_uids(discovery), 'missing exact dynamic UID')
     selected = [t for t in discovery['tests'] if t['uid'] == DYNAMIC_UID]
+    postgate.mapping(selected)
     require(len(selected) == 1 and selected[0].get('location', {}).get('file', '').replace('\\', '/').endswith(
         '/test/SharpLink.IntegrationTests/RuntimeAssemblyIntegrationTests.PhysicalOwnership.cs'), 'dynamic UID source mapping')
+    postgate.stage('DYNAMIC_EXECUTION_PROCESS')
     code, timed = execute(test_command(runtime, integration, dynamic, 1, DYNAMIC_UID), source,
                           environment, 180, dynamic / 'execution.log')
+    postgate.process('DYNAMIC_EXECUTION_EXIT', code, timed)
+    postgate.stage('DYNAMIC_RESULT_REPORT')
+    postgate.report('DYNAMIC_RESULT', report_from(dynamic), 1, code, timed)
     validate_integration(report_from(dynamic), code, timed)
+    postgate.stage('DYNAMIC_SNAPSHOT')
+    postgate.snapshot('DYNAMIC_SNAPSHOT', data['correctness']['integrationSnapshot'], inventory(integration.parent))
     require(inventory(integration.parent) == data['correctness']['integrationSnapshot'], 'integration output bytes changed')
     record['integrationAssemblySha256'] = inventory(integration.parent)
     record['frozenClosure'] = data['closure']
+    postgate.stage('DYNAMIC_GRAPH')
     graph = correctness_graph_inventory(source)
+    postgate.snapshot('DYNAMIC_GRAPH', data['correctness']['graphSnapshot'], graph)
     require(graph == data['correctness']['graphSnapshot'], 'dynamic changed full correctness graph')
     record['correctnessGraphSha256'] = graph_digest(graph)
+    postgate.stage('FINAL_SOURCE_IDENTITY')
     verify_source(source, output / 'source.log', arm)
+    postgate.stage('ARM_POSTGATE_PASS')
     print(f'UNIT_ARM_PASS arm={arm} ordinary={len(ordinary)} actualDynamicRetirement=1 CoreOnly14=true', flush=True)
 
 
@@ -274,17 +297,24 @@ def run(args):
             except UnsafeProcessGroup:
                 raise
             except (GateError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+                emit_stage_failure(arm, type(error).__name__)
                 failures.append({'arm': arm, 'error': str(error), 'type': type(error).__name__})
                 (arm_output / 'failure.json').write_text(json.dumps(failures[-1], indent=2) + '\n')
                 print(f'UNIT_ARM_FAIL arm={arm} reason={type(error).__name__}', flush=True)
         require(not failures, 'one or more ordinary/dynamic arm gates failed')
+        postgate = PostGateDiagnostics('both')
+        postgate.stage('FINAL_PREPARED_SNAPSHOTS')
         check_prepared(manifest, revision)
+        postgate.stage('FINAL_TOOL_IDENTITY')
         require(tool_identity() == revision, 'unit tooling changed during execution')
+        postgate.stage('FINAL_RECORD_BINDING')
         validate_record(value, revision, manifest)
         (output / 'unit-gate.json').write_text(json.dumps(value, indent=2) + '\n')
+        postgate.stage('COMPLETE_POSTGATE_PASS')
         print('UNIT_GATE_PASS bothArms=true actualDynamicRetirementEachArm=true CoreOnly14=true', flush=True)
         return 0
     except (GateError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+        emit_stage_failure('both', type(error).__name__)
         (output / 'failure.json').write_text(json.dumps({'type': type(error).__name__, 'detail': str(error)}, indent=2) + '\n')
         print('UNIT_GATE_FAIL reason=' + type(error).__name__, flush=True)
         return 1

@@ -1,6 +1,8 @@
 [
   ".github/workflows/server-call-pin-tcp.yml",
+  ".github/workflows/server-call-pin-unit-postgate-diagnostic.yml",
   "eng/server-call-pin-tcp/REQUEST.template.json",
+  "eng/server-call-pin-tcp/UNIT_DIAGNOSTIC_REQUEST.template.json",
   "eng/server-call-pin-tcp/common.py",
   "eng/server-call-pin-tcp/fixture/Directory.Build.props",
   "eng/server-call-pin-tcp/fixture/Directory.Build.targets",
@@ -27,6 +29,7 @@
   "eng/server-call-pin-tcp/test_protocol.py",
   "eng/server-call-pin-tcp/test_request.py",
   "eng/server-call-pin-tcp/test_run.py",
+  "eng/server-call-pin-tcp/test_unit_diagnostic_request.py",
   "eng/server-call-pin-tcp/test_validation.py",
   "eng/server-call-pin-tcp/tool-files.json",
   "eng/server-call-pin-tcp/unit_gate/__init__.py",
@@ -35,6 +38,7 @@
   "eng/server-call-pin-tcp/unit_gate/expected-base-uids.json",
   "eng/server-call-pin-tcp/unit_gate/explicit-workers.json",
   "eng/server-call-pin-tcp/unit_gate/new-uids.json",
+  "eng/server-call-pin-tcp/unit_gate/postgate_diagnostics.py",
   "eng/server-call-pin-tcp/unit_gate/provenance.py",
   "eng/server-call-pin-tcp/unit_gate/record.py",
   "eng/server-call-pin-tcp/unit_gate/run.py",
@@ -42,7 +46,9 @@
   "eng/server-call-pin-tcp/unit_gate/temp_paths.py",
   "eng/server-call-pin-tcp/unit_gate/test_diagnostics.py",
   "eng/server-call-pin-tcp/unit_gate/test_gate.py",
+  "eng/server-call-pin-tcp/unit_gate/test_postgate_diagnostics.py",
   "eng/server-call-pin-tcp/unit_gate/validate.py",
   "eng/server-call-pin-tcp/validate.py",
-  "eng/server-call-pin-tcp/verify_request.py"
+  "eng/server-call-pin-tcp/verify_request.py",
+  "eng/server-call-pin-tcp/verify_unit_diagnostic_request.py"
 ]
