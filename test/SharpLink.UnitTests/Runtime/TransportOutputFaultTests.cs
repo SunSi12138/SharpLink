@@ -172,16 +172,17 @@ public partial class TransportOutputFaultTests
     }
 
     [Test]
-    public async Task QuiescentPumpFaultMustReturnInFlightQueuedAndCapacityWaitingOwnersOnce()
+    [Arguments("write-after-gate", 0)]
+    [Arguments("write-prefix-after-gate", 7)]
+    public async Task QuiescentPumpFaultMustReturnInFlightQueuedAndCapacityWaitingOwnersOnce(string failure, int expectedBytes)
     {
         using var context = new SharpLinkRuntimeContextBuilder().Configure(options =>
         {
             options.FlowControl.MaxSendQueueBytes = 3 * 79;
             options.PerformanceProfile = SharpLinkPerformanceProfile.LowLatency;
         }).Build(includeGeneratedAssemblyCatalog: false);
-        // This owner/queue case injects failure before any bytes are delivered.
-        // Partial-prefix replay is covered separately by the stopping/cancellation cases.
-        var stream = new ObservingStream(blockWrite: true, failure: "write-after-gate");
+        // Cover both failure before delivery and failure after an unknown partial prefix.
+        var stream = new ObservingStream(blockWrite: true, failure: failure);
         var session = CreateSession(context, new StreamTransportConnection(stream));
         var frames = new CountingWriter[4];
         for (var index = 0; index < frames.Length; index++)
@@ -203,8 +204,8 @@ public partial class TransportOutputFaultTests
             Ensure(session.QueuedSendBytes == 3 * 79 && !sends[3].IsCompleted,
                 "three reserved frames must hold capacity while the fourth waits for admission");
             Ensure(frames.All(frame => frame.ReturnCount == 0), "no owner may return before the held write terminates");
-            Ensure(stream.WriteCount == 1 && stream.BytesWritten == 0 && stream.DisposeCount == 0,
-                "the held failing write must not deliver a prefix or begin transport disposal");
+            Ensure(stream.WriteCount == 1 && stream.BytesWritten == expectedBytes && stream.DisposeCount == 0,
+                "the held write must deliver exactly its injected prefix without beginning transport disposal");
             stream.ReleaseWrite.TrySetResult();
             foreach (var send in sends)
             {
@@ -215,7 +216,7 @@ public partial class TransportOutputFaultTests
             await session.DisposeAsync();
             Ensure(frames.All(frame => frame.ReturnCount == 1) && session.QueuedSendBytes == 0,
                 "in-flight, queued and admission-waiting owners and credits must be returned exactly once");
-            Ensure(stream.WriteCount == 1 && stream.BytesWritten == 0 && stream.DisposeCount == 1,
+            Ensure(stream.WriteCount == 1 && stream.BytesWritten == expectedBytes && stream.DisposeCount == 1,
                 $"terminal cleanup must not write the failed or queued frames again: writes={stream.WriteCount}, bytes={stream.BytesWritten}, disposals={stream.DisposeCount}");
         }
         finally
@@ -504,7 +505,6 @@ public partial class TransportOutputFaultTests
             Source = buffer;
             var count = Interlocked.Increment(ref WriteCount);
             OnWrite?.Invoke();
-            WriteEntered.TrySetResult();
             if (count == 1 && failure == "write-sync") throw new IOException("injected synchronous write failure");
             if (count == 1 && failure == "write-partial")
             {
@@ -515,6 +515,8 @@ public partial class TransportOutputFaultTests
             {
                 if (count == 1 && failure is "write-prefix-after-gate" or "cancel-prefix-after-gate")
                     BytesWritten += Math.Min(7, buffer.Length);
+                // Publish only after the injected prefix is visible to held-write assertions.
+                WriteEntered.TrySetResult();
                 return WaitForWriteAsync(buffer);
             }
             BytesWritten += buffer.Length;
