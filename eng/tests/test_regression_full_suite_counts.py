@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep the three fixed-old regression runners' current-suite census exact."""
+"""Keep the fixed-old regression runners' current-suite census exact."""
 
 import importlib.util
 from pathlib import Path
@@ -8,9 +8,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNERS = (
-    ("send-credit-lease-race", 2196, 8),
-    ("generated-stream-snapshot-regression", 2188, 2),
-    ("send-credit-terminal-regression", 2188, 1),
+    ("send-credit-lease-race", 2202, 8),
+    ("generated-stream-snapshot-regression", 2194, 2),
+    ("send-credit-terminal-regression", 2194, 1),
 )
 
 
@@ -35,6 +35,16 @@ class ExactRegressionSuiteCensusTests(unittest.TestCase):
                 self.assertEqual(runner.FULL_COUNT, count)
                 self.assertEqual(runner.inspect_test_log(summary(count), False, False),
                                  dict(total=count, failed=0, succeeded=count, skipped=0))
+
+    def test_hosting_current_full_census_is_declared_and_exact(self):
+        runner = load_runner("hosting-registration-regression")
+        self.assertEqual(runner.FULL_COUNT, 2194)
+        self.assertEqual(runner.inspect(summary(2194), 2194, 0, ())["total"], 2194)
+        for text in (summary(2193), summary(2195), summary(2194, failed=1),
+                     summary(2194, skipped=1), summary(2194, succeeded=2193)):
+            with self.subTest(text=text):
+                with self.assertRaises(ValueError):
+                    runner.inspect(text, 2194, 0, ())
 
     def test_missing_or_undeclared_extra_case_is_rejected(self):
         for name, count, _ in RUNNERS:

@@ -32,7 +32,7 @@ jobs:
             tag: linux-x64
           - os: windows-latest
             tag: windows-x64
-          - os: macos-14
+          - os: macos-15
             tag: macos-arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45

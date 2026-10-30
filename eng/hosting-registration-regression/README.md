@@ -5,8 +5,13 @@ current checkout. The historical arms must reproduce their original three and
 four failures. The current arm must pass the focused checks and every case in the
 complete unit suite, with zero failures or skips and unchanged binary hashes.
 
-The expected complete-suite inventory is **2,171**, including the two queued-reader
-workload controls added after the 2,169-case baseline. The previous 2,123-case count
+The expected complete-suite inventory is **2,194**: the prior 2,171 cases
+(including the two queued-reader workload controls after the 2,169-case baseline),
+plus 17 quiescent-pump cases already merged in #961, and six new static-stream
+request-flags cases. The two real-TCP early-termination cases belong to the separate
+IntegrationTests project and do not enter this unit census. This candidate does not
+include the independent six-case send-pump cleanup fix; a later combined candidate
+must account for that addition separately. The previous 2,123-case count
 predated subsequent unit additions: [run 39962583418](https://github.com/SunSi12138/SharpLink/actions/runs/39962583418)
 executed 2,169 cases with zero failures/skips, then correctly rejected the stale
 inventory expectation. This count correction preserves the eleven-case fixture,
