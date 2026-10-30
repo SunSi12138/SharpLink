@@ -1,4 +1,10 @@
 {
-  "state": "review-required",
-  "campaign": "codeql-c22-manual-sarif-CQL3"
+  "state": "authorized",
+  "campaign": "codeql-c22-manual-sarif-CQL3",
+  "reviewedToolCommit": "180dd745997ad61406f4b79e14757f145d1b3703",
+  "reviewedToolTree": "69e90f9b09beda4030a0cb80dcdaa0310829186e",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "devSource": "c22b945f71c075c878e93a7c92bf4e45a8d33a6f",
+  "devTree": "12b88cb38821e2c40bd1fb209a6244396bed52ba"
 }
