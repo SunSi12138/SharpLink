@@ -1,4 +1,10 @@
 {
-  "state": "review-required",
-  "campaign": "codeql-d39aa-manual-sarif-CQL5"
+  "state": "authorized",
+  "campaign": "codeql-d39aa-manual-sarif-CQL5",
+  "reviewedToolCommit": "ede3c4b6b9515d3ab78a76fbf426bfd1093d8d81",
+  "reviewedToolTree": "d20652c898345ded9a8e8c26014e407a0bf074ae",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "devSource": "d39aa31948461e16264be54a69be231c8fb5882d",
+  "devTree": "2c1fe56b793ce06cff6fb63c9e633c67d4fd1ac3"
 }
