@@ -271,7 +271,7 @@ jobs:
           path: artifacts/codec-compat/producers/codec-mobile-corpus-desktop-linux-x64
 
       - name: Boot the exact iOS simulator with bounded readiness
-        timeout-minutes: 5
+        timeout-minutes: 9
         run: node test/SharpLink.CodecCompatibility.iOS/boot-ios.mjs
 
       - name: Build experimental iOS CoreCLR producer

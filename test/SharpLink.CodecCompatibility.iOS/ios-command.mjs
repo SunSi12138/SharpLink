@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { captureOwnedGroupSnapshot } from './ios-process-snapshot.mjs';
 
 let sequence = 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -19,9 +20,30 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     if (!/^[a-z0-9-]+$/.test(label) || typeof command !== 'string' || !command || !Array.isArray(args) || args.some(arg => typeof arg !== 'string') || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
         throw new Error('Invalid command label or timeout.');
     }
+    const timelineOriginAt = new Date().toISOString();
+    const monotonicOrigin = process.hrtime.bigint();
+    const monotonicMs = () => Number(process.hrtime.bigint() - monotonicOrigin) / 1e6;
+    const events = [];
+    const eventLimit = 1024;
+    let droppedEventCount = 0;
+    const event = (type, details = {}) => {
+        if (events.length >= eventLimit) { droppedEventCount++; return; }
+        events.push({ sequence: events.length + 1, monotonicMs: monotonicMs(), type, ...details });
+    };
     // The workflow reserves its final minutes for evidence upload. Cleanup retains its own short bound.
     const deadline = Number(process.env.SHARPLINK_IOS_EXECUTION_DEADLINE_MS || 0);
     if (!Number.isSafeInteger(deadline) || deadline < 0) throw new Error('Invalid iOS execution deadline.');
+    const deadlineScope = process.env.SHARPLINK_IOS_DEADLINE_SCOPE || 'job-execution';
+    if (!['job-execution', 'simulator-preparation'].includes(deadlineScope)) throw new Error('Invalid iOS deadline scope.');
+    const optionalDeadline = name => {
+        const value = process.env[name];
+        if (!value) return null;
+        const parsed = Number(value);
+        if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`Invalid ${name}.`);
+        return parsed;
+    };
+    const originalExecutionDeadlineMs = optionalDeadline('SHARPLINK_IOS_ORIGINAL_EXECUTION_DEADLINE_MS') ?? (deadlineScope === 'job-execution' ? deadline || null : null);
+    const preparationDeadlineMs = optionalDeadline('SHARPLINK_IOS_PREPARATION_DEADLINE_MS');
     let budgetExpired = Boolean(deadline && !cleanup && deadline <= Date.now());
     if (deadline && !cleanup) timeoutMs = Math.min(timeoutMs, Math.max(1, deadline - Date.now()));
     const directory = process.env.SHARPLINK_IOS_DIAGNOSTICS || 'artifacts/codec-compat/ios-diagnostics';
@@ -30,13 +52,28 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     const outFd = fs.openSync(`${stem}.stdout.log`, 'wx');
     const errFd = fs.openSync(`${stem}.stderr.log`, 'wx');
     const startedAt = new Date().toISOString();
-    const record = { label, command, args, startedAt, timeoutMs, status: 'running' };
+    const record = { label, command, args, startedAt, timelineOriginAt, timeoutMs, status: 'running', pid: null, expectedPgid: null, deadlineScope, effectiveDeadlineMs: deadline || null, originalExecutionDeadlineMs, preparationDeadlineMs, events, eventLimit, get droppedEventCount() { return droppedEventCount; }, snapshots: [] };
+    event('deadline-check', { stage: 'initial', deadlineMs: deadline || null, expired: budgetExpired });
     fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n', { flag: 'wx' });
     console.log(`[ios-command] START ${label} timeoutMs=${timeoutMs}`);
     let stdout = '', stderr = '', child, exitCode = null, signal = null, spawnError, outputError, cleanupError;
     let exited = false, closed = false, timedOut = false, pipeLeak = false;
     let timer, pipeTimer, watchdog;
-    let interrupted = null, commandStartedMs = null;
+    let interrupted = null, commandStartedMs = null, commandStartedMonotonicMs = null;
+    const snapshots = [];
+    const requestSnapshot = stage => {
+        if (snapshots.length >= 2 || !Number.isSafeInteger(child?.pid) || child.pid <= 1) return;
+        event('snapshot-request', { stage, ownedPgid: child.pid });
+        const ownedPgid = child.pid;
+        const pending = Promise.resolve().then(() => captureOwnedGroupSnapshot(ownedPgid)).then(snapshot => {
+            record.snapshots.push({ stage, ...snapshot });
+            event('snapshot-complete', { stage, status: snapshot.status, reason: snapshot.reason });
+        }).catch(error => {
+            record.snapshots.push({ stage, ownedPgid, status: 'unknown', reason: 'internal-snapshot-error', rows: [], error: { code: error.code ?? null, message: error.message } });
+            event('snapshot-complete', { stage, status: 'unknown', reason: 'internal-snapshot-error' });
+        });
+        snapshots.push(pending);
+    };
     let resolveClosed;
     const closePromise = new Promise(resolve => { resolveClosed = resolve; });
     const append = (fd, stream, chunk, isStdout) => {
@@ -57,27 +94,43 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
             if (isStdout) stdout += chunk.toString(); else stderr += chunk.toString();
         }
     };
-    const groupAlive = () => {
-        if (!child?.pid) return false;
-        try { process.kill(-child.pid, 0); return true; }
+    const probeGroup = source => {
+        if (!child?.pid) return 'not-started';
+        let state = 'alive', errno = null;
+        event('group-probe-call', { source, signal: 0, expectedPgid: child.pid });
+        try { process.kill(-child.pid, 0); }
         catch (error) {
-            if (error.code === 'ESRCH') return false;
-            cleanupError ??= error; return true; // Unknown is never proof of group exit.
+            errno = error.code ?? 'UNKNOWN';
+            if (error.code === 'ESRCH') state = 'gone';
+            else { cleanupError ??= error; state = 'unknown'; }
         }
+        event('group-probe-result', { source, signal: 0, expectedPgid: child.pid, state, errno });
+        return state;
     };
+    const unresolvedGroup = source => !['gone', 'not-started'].includes(probeGroup(source));
     const send = sig => {
         if (!child?.pid) return;
+        let result = 'sent', errno = null;
+        event('signal-call', { signal: sig, expectedPgid: child.pid });
         try { process.kill(-child.pid, sig); }
-        catch (error) { if (error.code !== 'ESRCH') cleanupError ??= error; }
+        catch (error) {
+            errno = error.code ?? 'UNKNOWN';
+            if (error.code === 'ESRCH') result = 'gone';
+            else { cleanupError ??= error; result = 'unknown'; }
+        }
+        event('signal-result', { signal: sig, expectedPgid: child.pid, result, errno });
     };
     let stopping;
     const stop = () => stopping ??= (async () => {
+        // Start diagnostics without awaiting them: snapshots cannot delay TERM or KILL.
         send('SIGTERM');
-        const termDeadline = Date.now() + 1000;
-        while ((!closed || groupAlive()) && Date.now() < termDeadline) await sleep(25);
-        if (!closed || groupAlive()) send('SIGKILL');
-        const killDeadline = Date.now() + 2000;
-        while ((!closed || groupAlive()) && Date.now() < killDeadline) await sleep(25);
+        requestSnapshot('after-term');
+        const termDeadline = monotonicMs() + 1000;
+        while ((!closed || unresolvedGroup('term-wait')) && monotonicMs() < termDeadline) await sleep(25);
+        if (!closed || unresolvedGroup('before-kill')) { send('SIGKILL'); requestSnapshot('after-kill'); }
+        const killDeadline = monotonicMs() + 2000;
+        while ((!closed || unresolvedGroup('kill-wait')) && monotonicMs() < killDeadline) await sleep(25);
+        requestSnapshot('cleanup-complete');
         // Do not wait forever for inherited output pipes after killing the owned group.
         if (!closed) {
             child?.stdout?.destroy(); child?.stderr?.destroy();
@@ -85,7 +138,7 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
             if (!closed) child?.unref(); // Report uncertain cleanup, but do not hang the supervisor itself.
         }
     })();
-    const onInterrupt = sig => { interrupted = sig; void stop(); };
+    const onInterrupt = sig => { interrupted = sig; event('interrupted', { signal: sig }); void stop(); };
     const onTerm = () => onInterrupt('SIGTERM');
     const onInt = () => onInterrupt('SIGINT');
     const onOutputError = error => { outputError ??= error; void stop(); };
@@ -98,41 +151,54 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
             timeoutMs = Math.min(timeoutMs, Math.max(1, deadline - Date.now()));
             record.timeoutMs = timeoutMs;
         }
+        event('deadline-check', { stage: 'before-spawn', deadlineMs: deadline || null, expired: budgetExpired });
         if (budgetExpired) {
             spawnError = new Error('iOS execution budget exhausted; command was not started.');
             closed = true; resolveClosed();
         } else {
             commandStartedMs = Date.now();
             record.spawnedAt = new Date(commandStartedMs).toISOString();
+            commandStartedMonotonicMs = monotonicMs();
+            event('spawn-call');
             child = spawn(command, args, { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+            record.pid = child.pid ?? null; record.expectedPgid = child.pid ?? null;
+            event('spawn-returned', { pid: record.pid, expectedPgid: record.expectedPgid });
+            console.log(`[ios-command] OWNED ${label} pid=${record.pid} expectedPgid=${record.expectedPgid}`);
             child.stdout.on('data', chunk => append(outFd, process.stdout, chunk, true));
             child.stderr.on('data', chunk => append(errFd, process.stderr, chunk, false));
-            child.on('error', error => { spawnError = error; });
+            child.on('error', error => { spawnError = error; event('spawn-error', { errno: error.code ?? null }); });
             child.on('exit', (code, sig) => {
-                exited = true; exitCode = code; signal = sig;
-                pipeTimer = setTimeout(() => { if (!closed) { pipeLeak = true; void stop(); } }, 1000);
+                exited = true; exitCode = code; signal = sig; event('exit', { exitCode: code, signal: sig });
+                pipeTimer = setTimeout(() => { if (!closed) { pipeLeak = true; event('timer-fired', { timer: 'pipe-close' }); void stop(); } }, 1000);
             });
             child.on('close', (code, sig) => {
-                closed = true; exitCode = code; signal = sig; clearTimeout(pipeTimer); resolveClosed();
+                closed = true; exitCode = code; signal = sig; event('close', { exitCode: code, signal: sig }); clearTimeout(pipeTimer); resolveClosed();
             });
         }
-        timer = setTimeout(() => { timedOut = true; void stop(); }, timeoutMs);
-        await Promise.race([closePromise, new Promise(resolve => { watchdog = setTimeout(resolve, timeoutMs + 4000); })]);
+        timer = setTimeout(() => { timedOut = true; event('timer-fired', { timer: 'command-timeout' }); void stop(); }, timeoutMs);
+        fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
+        await Promise.race([closePromise, new Promise(resolve => { watchdog = setTimeout(() => { event('timer-fired', { timer: 'supervisor-watchdog' }); resolve(); }, timeoutMs + 4000); })]);
         clearTimeout(watchdog);
         clearTimeout(timer); clearTimeout(pipeTimer);
         // A delayed JS timer must not turn a command completed after its limit into success.
-        if (commandStartedMs !== null && Date.now() >= commandStartedMs + timeoutMs) timedOut = true;
-        const lingering = groupAlive();
-        if (!closed || lingering) await stop();
+        if (commandStartedMonotonicMs !== null && monotonicMs() >= commandStartedMonotonicMs + timeoutMs) timedOut = true;
+        event('deadline-check', { stage: 'after-close-or-watchdog', commandElapsedMs: commandStartedMonotonicMs === null ? null : monotonicMs() - commandStartedMonotonicMs, timeoutMs, timedOut });
+        const remainingGroupState = probeGroup('after-close-or-watchdog');
+        const lingering = remainingGroupState === 'alive';
+        if (!closed || ['alive', 'unknown'].includes(remainingGroupState)) await stop();
         if (stopping) await stopping;
-        const groupExited = !groupAlive() && !cleanupError;
+        await Promise.all(snapshots);
+        const finalGroupState = probeGroup('final-verdict');
+        const groupExited = ['gone', 'not-started'].includes(finalGroupState) && !cleanupError;
         const completedPastDeadline = Boolean(deadline && !cleanup && Date.now() >= deadline);
         budgetExpired ||= completedPastDeadline;
+        event('deadline-check', { stage: 'final-verdict', deadlineMs: deadline || null, expired: completedPastDeadline });
         const ok = !completedPastDeadline && !cleanupError && !outputError && !interrupted && !spawnError && !timedOut && !pipeLeak && !lingering && closed && exitCode === 0 && signal === null && groupExited;
         Object.assign(record, { endedAt: new Date().toISOString(), status: ok ? 'success' : 'failure', exitCode, signal,
-            timedOut, budgetExpired, interrupted, pipeLeak, lingeringDescendants: lingering, childExited: exited, pipesClosed: closed, processGroupExited: groupExited,
+            timedOut, budgetExpired, interrupted, pipeLeak, lingeringDescendants: exited && lingering, confirmedRemainingGroupMembers: lingering, remainingGroupState, finalGroupState, unknownGroupOwnership: remainingGroupState === 'unknown' || finalGroupState === 'unknown', childExited: exited, pipesClosed: closed, processGroupExited: groupExited,
             spawnError: spawnError?.message ?? null, outputError: outputError?.message ?? null, cleanupError: cleanupError?.message ?? null });
         fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
+        event('deadline-check', { stage: 'after-final-metadata', deadlineMs: deadline || null, expired: Boolean(deadline && !cleanup && Date.now() >= deadline) });
         if (record.status === 'success' && deadline && !cleanup && Date.now() >= deadline) {
             Object.assign(record, { status: 'failure', budgetExpired: true, endedAt: new Date().toISOString() });
             fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
@@ -151,12 +217,28 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
         return { stdout, stderr, record };
     } finally {
         // Unexpected logger/metadata errors must never abandon an owned live group.
-        if (child?.pid && (!closed || groupAlive())) await stop();
+        if (child?.pid && (!closed || unresolvedGroup('finally'))) await stop();
         if (stopping) await stopping;
+        await Promise.all(snapshots);
         clearTimeout(timer); clearTimeout(pipeTimer); clearTimeout(watchdog);
         process.off('SIGTERM', onTerm); process.off('SIGINT', onInt);
         process.stdout.off('error', onOutputError); process.stderr.off('error', onOutputError);
         fs.closeSync(outFd); fs.closeSync(errFd);
+        const finalCleanupState = probeGroup('after-final-cleanup');
+        const wasSuccessfulBeforeFinalCleanup = record.status === 'success';
+        const cleanupRemainsUncertain = !['gone', 'not-started'].includes(finalCleanupState) || cleanupError || outputError || interrupted;
+        Object.assign(record, { finalGroupState: finalCleanupState,
+            processGroupExited: ['gone', 'not-started'].includes(finalCleanupState) && !cleanupError,
+            unknownGroupOwnership: Boolean(record.unknownGroupOwnership || finalCleanupState === 'unknown'),
+            cleanupError: cleanupError?.message ?? null, outputError: outputError?.message ?? null, interrupted });
+        if (record.status === 'success' && cleanupRemainsUncertain) {
+            Object.assign(record, { status: 'failure', endedAt: new Date().toISOString() });
+        }
+        event('deadline-check', { stage: 'after-log-close', deadlineMs: deadline || null, expired: Boolean(deadline && !cleanup && Date.now() >= deadline) });
+        fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
+        if (cleanupRemainsUncertain && wasSuccessfulBeforeFinalCleanup) {
+            throw new Error(`${label} failed final ownership cleanup: state=${finalCleanupState}, cleanup=${cleanupError?.message ?? 'none'}, output=${outputError?.message ?? 'none'}, interrupted=${interrupted}; raw evidence: ${stem}`);
+        }
         if (record.status === 'success' && deadline && !cleanup && Date.now() >= deadline) {
             Object.assign(record, { status: 'failure', budgetExpired: true, endedAt: new Date().toISOString() });
             fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');

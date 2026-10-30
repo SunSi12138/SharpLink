@@ -252,6 +252,10 @@ test('SIGTERM EPERM is recorded without an unhandled rejection and SIGKILL still
     assert.equal(result.records.length, 1);
     assert.equal(result.records[0].status, 'failure');
     assert.match(result.records[0].cleanupError, /mock first SIGTERM EPERM/);
+    const termEvent = result.records[0].events.find(event => event.type === 'signal-result' && event.signal === 'SIGTERM');
+    assert.equal(termEvent.errno, 'EPERM');
+    assert.equal(termEvent.result, 'unknown');
+    assert.equal(result.records[0].events[termEvent.sequence - 2].type, 'signal-call');
     assert.equal(result.records[0].pipesClosed, true);
     assert.equal(result.records[0].signal, 'SIGKILL');
     // A previous cleanup error may deliberately leave processGroupExited false;
@@ -393,4 +397,185 @@ test('zero-byte raw-log write fails without spinning and stops the owned child',
     assert.ok(heartbeat.length > 0);
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(await fs.readFile(result.childEnv.TEST_HEARTBEAT_FILE, 'utf8'), heartbeat);
+});
+
+test('ownership metadata and monotonic call/return lifecycle distinguish a reaped group from unknown', async t => {
+    const result = await execute(t, { code: `process.stdout.write('owned');` });
+    assert.equal(result.code, 0, result.stderr);
+    const record = result.records[0];
+    assert.ok(Number.isSafeInteger(record.pid) && record.pid > 1);
+    assert.equal(record.expectedPgid, record.pid);
+    assert.ok(Number.isFinite(Date.parse(record.timelineOriginAt)));
+    assert.ok(Date.parse(record.timelineOriginAt) <= Date.parse(record.startedAt), 'timeline origin precedes log setup; startedAt is not monotonic zero');
+    assert.equal(record.finalGroupState, 'gone');
+    assert.equal(record.unknownGroupOwnership, false);
+    assert.equal(record.eventLimit, 1024);
+    assert.equal(record.droppedEventCount, 0);
+    const events = record.events;
+    for (let index = 0; index < events.length; index++) {
+        assert.equal(events[index].sequence, index + 1);
+        assert.ok(events[index].monotonicMs >= 0);
+        if (index) assert.ok(events[index].monotonicMs >= events[index - 1].monotonicMs);
+    }
+    const at = type => events.findIndex(event => event.type === type);
+    assert.ok(at('spawn-call') < at('spawn-returned'));
+    assert.ok(at('spawn-returned') < at('exit'));
+    assert.ok(at('exit') < at('close'));
+    const probes = events.filter(event => event.type === 'group-probe-result');
+    assert.ok(probes.length > 0);
+    assert.ok(probes.every(event => event.signal === 0 && event.state === 'gone' && event.errno === 'ESRCH'));
+    for (const probe of probes) {
+        const call = events[probe.sequence - 2];
+        assert.equal(call.type, 'group-probe-call');
+        assert.equal(call.source, probe.source);
+        assert.equal(call.expectedPgid, record.expectedPgid);
+    }
+    assert.deepEqual(record.snapshots, []);
+});
+
+test('signal-zero EPERM is unknown ownership, not confirmed remaining descendants', async t => {
+    const preload = `
+        const originalKill = process.kill.bind(process);
+        process.kill = function(pid, signal) {
+            if (pid < 0 && signal === 0) throw Object.assign(new Error('mock signal-zero EPERM'), { code: 'EPERM' });
+            return originalKill(pid, signal);
+        };
+    `;
+    const result = await execute(t, { code: `process.stdout.write('finished');`, preload });
+    assert.notEqual(result.code, 0);
+    const record = result.records[0];
+    assert.equal(record.remainingGroupState, 'unknown');
+    assert.equal(record.unknownGroupOwnership, true);
+    assert.equal(record.lingeringDescendants, false);
+    assert.equal(record.confirmedRemainingGroupMembers, false);
+    assert.equal(record.processGroupExited, false);
+    const probes = record.events.filter(event => event.type === 'group-probe-result');
+    assert.ok(probes.length > 0 && probes.every(event => event.state === 'unknown' && event.errno === 'EPERM'));
+    const signals = record.events.filter(event => event.type === 'signal-result');
+    assert.ok(signals.some(event => event.signal === 'SIGTERM' && event.errno === 'ESRCH' && event.result === 'gone'));
+    assert.ok(record.snapshots.length <= 2);
+    assert.ok(record.events.length <= record.eventLimit);
+});
+
+test('SIGKILL EPERM retains its distinct errno source and cannot become success after a late normal exit', async t => {
+    const preload = `
+        const originalKill = process.kill.bind(process);
+        process.kill = function(pid, signal) {
+            if (pid < 0 && signal === 'SIGKILL') throw Object.assign(new Error('mock SIGKILL EPERM'), { code: 'EPERM' });
+            return originalKill(pid, signal);
+        };
+    `;
+    const code = `process.on('SIGTERM', () => {});setTimeout(() => process.exit(0), 2200);`;
+    const result = await execute(t, { code, timeoutMs: 300, preload });
+    assert.notEqual(result.code, 0);
+    const record = result.records[0];
+    assert.equal(record.status, 'failure');
+    assert.equal(record.timedOut, true);
+    assert.match(record.cleanupError, /mock SIGKILL EPERM/);
+    const signal = record.events.find(event => event.type === 'signal-result' && event.signal === 'SIGKILL');
+    assert.equal(signal.errno, 'EPERM');
+    assert.equal(signal.result, 'unknown');
+    assert.equal(record.events[signal.sequence - 2].type, 'signal-call');
+    assert.ok(record.events.some(event => event.type === 'close' && event.exitCode === 0));
+    assert.ok(record.snapshots.length <= 2);
+});
+
+test('late close after the command timer remains failed and lifecycle timestamps show the ordering', async t => {
+    const preload = `
+        import cp from 'node:child_process';
+        import { syncBuiltinESMExports } from 'node:module';
+        const originalSpawn = cp.spawn;
+        cp.spawn = function(command, ...args) {
+            const child = originalSpawn.call(cp, command, ...args);
+            if (command === process.execPath) {
+                const originalEmit = child.emit.bind(child);
+                child.emit = function(name, ...values) {
+                    if (name === 'close') { setTimeout(() => originalEmit(name, ...values), 350); return true; }
+                    return originalEmit(name, ...values);
+                };
+            }
+            return child;
+        };
+        syncBuiltinESMExports();
+    `;
+    const result = await execute(t, { code: `process.stdout.write('root completed');`, timeoutMs: 150, preload });
+    assert.notEqual(result.code, 0);
+    const record = result.records[0];
+    assert.equal(record.timedOut, true);
+    assert.equal(record.exitCode, 0);
+    const fired = record.events.find(event => event.type === 'timer-fired' && event.timer === 'command-timeout');
+    const close = record.events.find(event => event.type === 'close');
+    assert.ok(fired && close && fired.monotonicMs < close.monotonicMs);
+});
+
+test('snapshot timeouts are independent diagnostics and cannot delay TERM-to-KILL escalation', async t => {
+    const preload = `
+        import cp from 'node:child_process';
+        import { syncBuiltinESMExports } from 'node:module';
+        import { EventEmitter } from 'node:events';
+        import { PassThrough } from 'node:stream';
+        const originalSpawn = cp.spawn;
+        cp.spawn = function(command, args, options) {
+            if (command !== '/bin/ps') return originalSpawn.call(cp, command, args, options);
+            const child = new EventEmitter();
+            child.pid = 99001;
+            child.stdout = new PassThrough(); child.stderr = new PassThrough();
+            child.unref = () => {};
+            child.kill = signal => { queueMicrotask(() => child.emit('close', null, signal)); return true; };
+            return child;
+        };
+        syncBuiltinESMExports();
+    `;
+    const result = await execute(t, { code: `process.on('SIGTERM', () => {});setInterval(() => {}, 1000);`, timeoutMs: 300, preload });
+    assert.notEqual(result.code, 0);
+    const record = result.records[0];
+    assert.equal(record.snapshots.length, 2);
+    assert.ok(record.snapshots.every(snapshot => snapshot.status === 'unknown' && snapshot.reason === 'timeout'));
+    const term = record.events.find(event => event.type === 'signal-call' && event.signal === 'SIGTERM');
+    const kill = record.events.find(event => event.type === 'signal-call' && event.signal === 'SIGKILL');
+    assert.ok(term && kill);
+    assert.ok(kill.monotonicMs - term.monotonicMs < 1400, 'diagnostic snapshots must not add their timeout to TERM grace');
+    assert.equal(record.processGroupExited, true);
+});
+
+test('command evidence distinguishes the simulator-preparation deadline from the original job budget', async t => {
+    const original = Date.now() + 30000;
+    const preparation = Date.now() + 10000;
+    const result = await execute(t, {
+        code: `process.stdout.write('scoped');`,
+        env: {
+            SHARPLINK_IOS_EXECUTION_DEADLINE_MS: String(preparation),
+            SHARPLINK_IOS_DEADLINE_SCOPE: 'simulator-preparation',
+            SHARPLINK_IOS_ORIGINAL_EXECUTION_DEADLINE_MS: String(original),
+            SHARPLINK_IOS_PREPARATION_DEADLINE_MS: String(preparation)
+        }
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.records[0].deadlineScope, 'simulator-preparation');
+    assert.equal(result.records[0].effectiveDeadlineMs, preparation);
+    assert.equal(result.records[0].originalExecutionDeadlineMs, original);
+    assert.equal(result.records[0].preparationDeadlineMs, preparation);
+});
+
+
+test('monotonic event storage is capped and counts dropped events rather than growing without bound', async t => {
+    const preload = `
+        const originalWrite = process.stdout.write.bind(process.stdout);
+        let flooded = false;
+        process.stdout.write = function(chunk, ...args) {
+            if (!flooded && String(chunk).includes('TRIGGER_EVENT_FLOOD')) {
+                flooded = true;
+                for (let index = 0; index < 1500; index++) process.emit('SIGINT');
+            }
+            return originalWrite(chunk, ...args);
+        };
+    `;
+    const result = await execute(t, { code: `process.stdout.write('TRIGGER_EVENT_FLOOD');setInterval(() => {}, 1000);`, preload });
+    assert.notEqual(result.code, 0);
+    const record = result.records[0];
+    assert.equal(record.status, 'failure');
+    assert.equal(record.events.length, record.eventLimit);
+    assert.equal(record.eventLimit, 1024);
+    assert.ok(record.droppedEventCount > 400);
+    assert.ok(record.snapshots.length <= 2);
 });

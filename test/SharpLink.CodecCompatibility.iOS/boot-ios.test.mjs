@@ -12,6 +12,8 @@ const other = '11111111-2222-3333-4444-555555555555';
 const fake = `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
+const delayMs = Number(process.env['FAKE_' + String(args[1]).toUpperCase() + '_DELAY_MS'] || 0);
+if (delayMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
 fs.appendFileSync(process.env.FAKE_COMMAND_LOG, JSON.stringify(args) + '\\n');
 if (args[0] !== 'simctl') process.exit(90);
 if (args[1] === 'list') {
@@ -35,7 +37,7 @@ if (args[1] === 'list') {
 }
 `;
 
-async function exercise(t, scenario) {
+async function exercise(t, scenario, overrides = {}, preload = null) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sharplink-ios-boot-test-'));
     t.after(() => fs.rm(root, { recursive: true, force: true }));
     const bin = path.join(root, 'bin');
@@ -49,8 +51,13 @@ async function exercise(t, scenario) {
         FAKE_SCENARIO: scenario, SELECTED_UDID: selected, OTHER_UDID: other
     };
     delete env.SHARPLINK_IOS_EXECUTION_DEADLINE_MS;
+    delete env.SHARPLINK_IOS_PREP_TIMEOUT_MS;
+    Object.assign(env, overrides);
+    const nodeArgs = [];
+    if (preload) { const hook = path.join(root, 'hook.mjs'); await fs.writeFile(hook, preload); nodeArgs.push('--import', hook); }
+    nodeArgs.push(boot);
     const result = await new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [boot], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+        const child = spawn(process.execPath, nodeArgs, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
         let stdout = '', stderr = '';
         const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('Boot mock exceeded watchdog')); }, 5000);
         child.stdout.on('data', data => { stdout += data; });
@@ -58,12 +65,18 @@ async function exercise(t, scenario) {
         child.on('error', error => { clearTimeout(timer); reject(error); });
         child.on('close', code => { clearTimeout(timer); resolve({ code, stdout, stderr }); });
     });
-    const commands = (await fs.readFile(env.FAKE_COMMAND_LOG, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    let commands = [];
+    try { commands = (await fs.readFile(env.FAKE_COMMAND_LOG, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
     let githubEnv = '';
     try { githubEnv = await fs.readFile(env.GITHUB_ENV, 'utf8'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    const records = await Promise.all((await fs.readdir(env.SHARPLINK_IOS_DIAGNOSTICS)).filter(name => name.endsWith('.json')).map(async name => JSON.parse(await fs.readFile(path.join(env.SHARPLINK_IOS_DIAGNOSTICS, name), 'utf8'))));
-    return { ...result, commands, githubEnv, records };
+    const files = await fs.readdir(env.SHARPLINK_IOS_DIAGNOSTICS).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
+    const records = await Promise.all(files.filter(name => name.endsWith('.json')).map(async name => JSON.parse(await fs.readFile(path.join(env.SHARPLINK_IOS_DIAGNOSTICS, name), 'utf8'))));
+    let phaseEvents = [];
+    try { phaseEvents = (await fs.readFile(path.join(env.SHARPLINK_IOS_DIAGNOSTICS, 'preparation-events.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    return { ...result, commands, githubEnv, records, phaseEvents };
 }
 
 test('boot selects the first available iPhone, waits for readiness once, and hands off exactly its UDID', async t => {
@@ -75,7 +88,10 @@ test('boot selects the first available iPhone, waits for readiness once, and han
         ['simctl', 'bootstatus', selected, '-b']
     ]);
     assert.equal(result.githubEnv, `IOS_SIMULATOR_UDID=${selected}\n`);
-    assert.deepEqual(result.records.map(record => record.timeoutMs).sort((a, b) => a - b), [15000, 90000, 120000]);
+    assert.equal(result.records.find(record => record.label === 'simulator-list').timeoutMs, 15000);
+    assert.equal(result.records.find(record => record.label === 'simulator-boot').timeoutMs, 90000);
+    const readyBudget = result.records.find(record => record.label === 'simulator-ready').timeoutMs;
+    assert.ok(readyBudget > 470000 && readyBudget < 480000, 'readiness receives remaining phase budget, not a reset');
     assert.ok(result.records.every(record => record.status === 'success'));
 });
 
@@ -106,4 +122,95 @@ test('no available iPhone fails without booting an ambient simulator', async t =
     assert.deepEqual(result.commands, [['simctl', 'list', 'devices', 'available', '-j']]);
     assert.equal(result.githubEnv, '');
     assert.match(result.stderr, /No available iPhone simulator/);
+});
+
+
+test('one preparation budget is shared across list and boot rather than renewed per command', async t => {
+    const result = await exercise(t, 'success', {
+        SHARPLINK_IOS_PREP_TIMEOUT_MS: '450', FAKE_LIST_DELAY_MS: '180', FAKE_BOOT_DELAY_MS: '300'
+    });
+    assert.notEqual(result.code, 0);
+    assert.equal(result.githubEnv, '');
+    assert.equal(result.commands.filter(command => command[1] === 'bootstatus').length, 0);
+    const list = result.records.find(record => record.label === 'simulator-list');
+    const bootRecord = result.records.find(record => record.label === 'simulator-boot');
+    assert.equal(list.status, 'success');
+    assert.ok(bootRecord && bootRecord.timeoutMs < list.timeoutMs);
+    assert.equal(bootRecord.status, 'failure');
+});
+
+test('exhausting preparation during list never starts boot or publishes a UDID', async t => {
+    const result = await exercise(t, 'success', { SHARPLINK_IOS_PREP_TIMEOUT_MS: '200', FAKE_LIST_DELAY_MS: '500' });
+    assert.notEqual(result.code, 0);
+    assert.equal(result.githubEnv, '');
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].label, 'simulator-list');
+    assert.equal(result.records[0].status, 'failure');
+    assert.ok(result.commands.every(command => command[1] === 'list'));
+});
+
+test('the caller deadline wins when earlier than the preparation phase allowance', async t => {
+    const result = await exercise(t, 'success', {
+        SHARPLINK_IOS_PREP_TIMEOUT_MS: '1000',
+        SHARPLINK_IOS_EXECUTION_DEADLINE_MS: String(Date.now() + 300), FAKE_LIST_DELAY_MS: '500'
+    });
+    assert.notEqual(result.code, 0);
+    assert.equal(result.githubEnv, '');
+    assert.equal(result.records.length, 1);
+    assert.ok(result.records[0].timeoutMs <= 300);
+    assert.equal(result.records[0].status, 'failure');
+});
+
+test('expired caller budget fails before any simulator command or handoff', async t => {
+    const result = await exercise(t, 'success', { SHARPLINK_IOS_EXECUTION_DEADLINE_MS: String(Date.now() - 1) });
+    assert.notEqual(result.code, 0);
+    assert.deepEqual(result.commands, []);
+    assert.equal(result.githubEnv, '');
+    assert.match(result.stderr, /caller execution deadline exhausted/);
+});
+
+for (const value of ['480001', 'NaN']) {
+    test(`preparation override ${value} cannot extend or invalidate the phase budget`, async t => {
+        const result = await exercise(t, 'success', { SHARPLINK_IOS_PREP_TIMEOUT_MS: value });
+        assert.notEqual(result.code, 0);
+        assert.deepEqual(result.commands, []);
+        assert.equal(result.githubEnv, '');
+        assert.match(result.stderr, /SHARPLINK_IOS_PREP_TIMEOUT_MS/);
+    });
+}
+
+
+test('the budget is checked again immediately before the environment handoff', async t => {
+    const result = await exercise(t, 'success', { SHARPLINK_IOS_PREP_TIMEOUT_MS: '1200' }, `
+        import fs from 'node:fs';
+        const append = fs.appendFileSync;
+        fs.appendFileSync = function(file, data, ...args) {
+            if (String(file).endsWith('preparation-events.jsonl') && String(data).includes('handoff-write-start')) {
+                const end = Date.now() + 1300; while (Date.now() < end) {}
+            }
+            return append.call(fs, file, data, ...args);
+        };
+    `);
+    assert.notEqual(result.code, 0);
+    assert.equal(result.githubEnv, '');
+    assert.equal(result.phaseEvents.at(-1).type, 'phase-failure');
+    assert.equal(result.phaseEvents.at(-1).handoffWritten, false);
+    assert.equal(result.commands.filter(command => command[1] === 'bootstatus').length, 1);
+});
+
+test('a late filesystem handoff is retained as failure, not falsely claimed unwritten or successful', async t => {
+    const result = await exercise(t, 'success', { SHARPLINK_IOS_PREP_TIMEOUT_MS: '1200' }, `
+        import fs from 'node:fs/promises';
+        const append = fs.appendFile;
+        fs.appendFile = async function(file, ...args) {
+            if (String(file).endsWith('github-env')) await new Promise(resolve => setTimeout(resolve, 1300));
+            return append.call(fs, file, ...args);
+        };
+    `);
+    assert.notEqual(result.code, 0);
+    assert.equal(result.githubEnv, `IOS_SIMULATOR_UDID=${selected}\n`);
+    assert.equal(result.phaseEvents.at(-1).type, 'phase-failure');
+    assert.equal(result.phaseEvents.at(-1).handoffWritten, true);
+    assert.equal(result.phaseEvents.at(-1).lateHandoffFailure, true);
+    assert.equal(result.phaseEvents.at(-1).deadlineScope, 'simulator-preparation');
 });
