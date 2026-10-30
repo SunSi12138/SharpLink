@@ -19,7 +19,7 @@ permissions:
 jobs:
   isolated-shard:
     # No self-hosted/large runner selection; each matrix cell gets a separate VM.
-    runs-on: ${{ inputs.platform == 'linux' && 'ubuntu-24.04' || inputs.platform == 'macos' && 'macos-14' || 'windows-2022' }}
+    runs-on: ${{ inputs.platform == 'linux' && 'ubuntu-24.04' || inputs.platform == 'macos' && 'macos-15' || 'windows-2022' }}
     timeout-minutes: 240
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
