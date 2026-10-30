@@ -1,14 +1,26 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { runCommand, shortenedTimeout } from './ios-command.mjs';
 
 const bundleId = 'com.sharplink.codeccompat.ios';
 const inputFileName = 'sharplink-input.json';
 const resultFileName = 'sharplink-result.json';
 const builtinRawCategory = 'builtin-semantic-raw';
-const probeTimeoutMs = Number(process.env.SHARPLINK_IOS_PROBE_TIMEOUT_MS ?? 300_000);
-const maxProbeAttempts = Number(process.env.SHARPLINK_IOS_PROBE_ATTEMPTS ?? 2);
-const probeTimeoutCode = 'SHARPLINK_IOS_PROBE_TIMEOUT';
+const probeTimeoutMs = shortenedTimeout('SHARPLINK_IOS_PROBE_TIMEOUT_MS', 300_000);
+const commandTimeoutMs = shortenedTimeout('SHARPLINK_IOS_COMMAND_TIMEOUT_MS', 90_000);
+const cleanupTimeoutMs = shortenedTimeout('SHARPLINK_IOS_CLEANUP_TIMEOUT_MS', 15_000);
+if (process.env.SHARPLINK_IOS_PROBE_ATTEMPTS && process.env.SHARPLINK_IOS_PROBE_ATTEMPTS !== '1') {
+    throw new Error('SHARPLINK_IOS_PROBE_ATTEMPTS must be 1; automatic probe retries are prohibited.');
+}
+const simulatorUdid = process.env.IOS_SIMULATOR_UDID;
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(simulatorUdid ?? '')) {
+    throw new Error('IOS_SIMULATOR_UDID must identify the exact installed simulator.');
+}
+const diagnosticsDirectory = process.env.SHARPLINK_IOS_DIAGNOSTICS || 'artifacts/codec-compat/ios-diagnostics';
+let interrupted;
+process.on('SIGTERM', () => { interrupted = 'SIGTERM'; });
+process.on('SIGINT', () => { interrupted = 'SIGINT'; });
 
 async function findManifestFiles(root) {
     const found = [];
@@ -77,72 +89,49 @@ async function writeCorpus(envelope, outputDirectory) {
     }
 }
 
-function simctl(args, env = process.env) {
-    const result = spawnSync('xcrun', ['simctl', ...args], { encoding: 'utf8', env });
-    if (result.status !== 0) {
-        throw new Error(`xcrun simctl ${args.join(' ')} failed (${result.status}):\n${result.stdout ?? ''}\n${result.stderr ?? ''}`);
-    }
-    return result.stdout ?? '';
-}
-
-function simctlDiagnostic(args) {
-    const result = spawnSync('xcrun', ['simctl', ...args], {
-        encoding: 'utf8',
-        timeout: 15_000
+async function simctl(label, args, env = process.env, cleanup = false) {
+    const result = await runCommand(label, 'xcrun', ['simctl', ...args], {
+        env, timeoutMs: cleanup ? cleanupTimeoutMs : Math.min(commandTimeoutMs, label.endsWith('-get-container') ? 15_000 : 90_000), cleanup
     });
-    return [
-        `$ xcrun simctl ${args.join(' ')}`,
-        `exit=${result.status ?? 'timeout'}`,
-        result.stdout ?? '',
-        result.stderr ?? ''
-    ].join('\n');
+    return result.stdout;
 }
 
-function delay(milliseconds) {
-    return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
-
-async function waitForResult(resultPath, launchOutput) {
-    const deadline = Date.now() + probeTimeoutMs;
-    while (Date.now() < deadline) {
+async function preserveResult(resultPath, label) {
+    await fs.mkdir(diagnosticsDirectory, { recursive: true });
+    for (const suffix of ['', '.tmp']) {
         try {
-            return await fs.readFile(resultPath, 'utf8');
-        } catch (error) {
-            if (error?.code !== 'ENOENT') throw error;
-        }
-        await delay(250);
+            // Unique immutable copies preserve malformed, partial, stale, and failing samples as well as successes.
+            await fs.copyFile(resultPath + suffix,
+                path.join(diagnosticsDirectory, `${label}-${randomUUID()}-result.json${suffix}`), fs.constants.COPYFILE_EXCL);
+        } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
+}
 
-    const diagnostics = [
-        `simctl launch output:\n${launchOutput}`,
-        simctlDiagnostic(['list', 'devices']),
-        simctlDiagnostic(['get_app_container', 'booted', bundleId, 'app']),
-        simctlDiagnostic(['get_app_container', 'booted', bundleId, 'data']),
-        simctlDiagnostic([
-            'spawn', 'booted', 'log', 'show',
-            '--last', '5m',
-            '--style', 'compact',
-            '--predicate', 'process CONTAINS[c] "SharpLink" OR eventMessage CONTAINS[c] "SharpLink codec"'
-        ])
-    ].join('\n\n');
-    const error = new Error(
-        `iOS simulator probe timed out after ${probeTimeoutMs} ms waiting for container result file.\n${diagnostics}`);
-    error.code = probeTimeoutCode;
-    throw error;
+async function waitForResult(resultPath) {
+    const executionDeadline = Number(process.env.SHARPLINK_IOS_EXECUTION_DEADLINE_MS || Infinity);
+    const deadline = Math.min(Date.now() + probeTimeoutMs, executionDeadline);
+    while (Date.now() < deadline) {
+        if (interrupted) throw new Error(`iOS probe interrupted by ${interrupted}; cleanup remains mandatory.`);
+        try { return await fs.readFile(resultPath, 'utf8'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        await new Promise(resolve => setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))));
+    }
+    throw new Error(`iOS simulator probe timed out waiting for result (limit ${probeTimeoutMs} ms; one attempt, no retry).`);
 }
 
 async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, targetFramework) {
     const input = mode === 'verify' ? JSON.stringify(await loadEnvelopes(producerRoot)) : null;
-
-    const dataContainer = simctl(['get_app_container', 'booted', bundleId, 'data']).trim();
+    const dataContainer = (await simctl(`${mode}-get-container`, ['get_app_container', simulatorUdid, bundleId, 'data'])).trim();
     if (!dataContainer) throw new Error('simctl returned an empty iOS app data-container path.');
     const documentsDirectory = path.join(dataContainer, 'Documents');
     const inputPath = path.join(documentsDirectory, inputFileName);
     const resultPath = path.join(documentsDirectory, resultFileName);
     await fs.mkdir(documentsDirectory, { recursive: true });
+    await preserveResult(resultPath, `${mode}-before`);
+    await fs.rm(resultPath, { force: true });
+    await fs.rm(resultPath + '.tmp', { force: true });
     await fs.rm(inputPath, { force: true });
     if (input !== null) await fs.writeFile(inputPath, input, 'utf8');
-
     const launchEnv = {
         ...process.env,
         SIMCTL_CHILD_SHARPLINK_MODE: mode,
@@ -150,45 +139,14 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, target
         SIMCTL_CHILD_SHARPLINK_SDK_VERSION: sdkVersion,
         SIMCTL_CHILD_SHARPLINK_TARGET_FRAMEWORK: targetFramework
     };
-
-    let resultText;
+    let failure;
     try {
-        for (let attempt = 1; attempt <= maxProbeAttempts; attempt++) {
-            try { simctl(['terminate', 'booted', bundleId]); } catch {}
-            await fs.rm(resultPath, { force: true });
-            if (input !== null) await fs.writeFile(inputPath, input, 'utf8');
-
-            if (attempt > 1) {
-                console.warn(`Retrying iOS simulator probe (${attempt}/${maxProbeAttempts}) after timeout.`);
-                await delay(3_000);
-            }
-
-            const launchOutput = simctl(
-                ['launch', '--terminate-running-process', 'booted', bundleId],
-                launchEnv);
-            console.log(`iOS simulator launch attempt ${attempt}/${maxProbeAttempts}: ${launchOutput.trim()}`);
-            console.log(`iOS simulator data container: ${dataContainer}`);
-
-            try {
-                resultText = await waitForResult(resultPath, launchOutput);
-                break;
-            } catch (error) {
-                if (error?.code !== probeTimeoutCode || attempt === maxProbeAttempts) {
-                    throw error;
-                }
-                console.warn(error.message);
-                try { simctl(['terminate', 'booted', bundleId]); } catch {}
-            }
-        }
-
-        if (resultText === undefined) {
-            throw new Error('iOS simulator probe completed without a result.');
-        }
-
-        const parsed = JSON.parse(resultText);
-        if (parsed?.portableProbeError) {
-            throw new Error(parsed.portableProbeError);
-        }
+        if (interrupted) throw new Error(`iOS probe interrupted by ${interrupted} before launch.`);
+        const launchOutput = await simctl(`${mode}-launch`,
+            ['launch', '--terminate-running-process', simulatorUdid, bundleId], launchEnv);
+        console.log(`iOS simulator launch attempt 1/1: ${launchOutput.trim()}`);
+        const parsed = JSON.parse(await waitForResult(resultPath));
+        if (parsed?.portableProbeError) throw new Error(parsed.portableProbeError);
         if (mode === 'produce') {
             await writeCorpus(parsed, outputPath);
             console.log(`iOS simulator producer wrote ${parsed.manifest?.cases?.length ?? 0} fixtures for ${parsed.manifest?.platformTag}.`);
@@ -197,10 +155,18 @@ async function runIos(mode, producerRoot, outputPath, commit, sdkVersion, target
             await fs.writeFile(outputPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
             const blocking = (parsed.results ?? []).filter(item => item.blocking).length;
             console.log(`iOS simulator consumer verified ${parsed.results?.length ?? 0} entries; blocking failures: ${blocking}.`);
-            if (blocking !== 0) process.exitCode = 1;
+            if (blocking !== 0) throw new Error(`iOS verification has ${blocking} blocking result(s).`);
         }
-    } finally {
-        try { simctl(['terminate', 'booted', bundleId]); } catch {}
+    } catch (error) { failure = error; }
+    if (interrupted && !failure) failure = new Error(`iOS probe interrupted by ${interrupted}.`);
+    const finalErrors = [];
+    if (failure) finalErrors.push(failure);
+    try { await simctl(`${mode}-terminate`, ['terminate', simulatorUdid, bundleId], process.env, true); }
+    catch (error) { finalErrors.push(error); }
+    try { await preserveResult(resultPath, `${mode}-after`); }
+    catch (error) { finalErrors.push(error); }
+    if (finalErrors.length) {
+        throw new AggregateError(finalErrors, finalErrors.map((error, index) => `Failure ${index + 1}: ${error.stack ?? error}`).join('\n'));
     }
 }
 
