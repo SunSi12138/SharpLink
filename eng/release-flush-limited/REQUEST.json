@@ -1,4 +1,12 @@
 {
-  "state": "review-required",
-  "campaign": "dev57-candidate8ae9-flush-FLUSH1"
+  "state": "authorized",
+  "campaign": "dev57-candidate8ae9-flush-FLUSH1",
+  "reviewedToolCommit": "28adc09c36cac77a38eed7f555cf608026a8e9c5",
+  "reviewedToolTree": "bca68462feb2aae166c11e85cb105f18d0d93a39",
+  "reviewStatus": "PASS",
+  "rootRelease": "authorized",
+  "baselineSource": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+  "baselineLabel": "dev57",
+  "devSource": "8ae9ee36ebec82f82e03185432601a830c865e95",
+  "devTree": "1f0c9291c7394d012d3241a9cf31482b0734b697"
 }
