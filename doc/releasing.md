@@ -49,6 +49,29 @@ bash eng/run-performance-matrix.sh
 
 OneWay 矩阵记录的是有界本地发送接受，不是接收端业务完成；需要接收端吞吐结论时必须另有业务完成计数和排空证据。#732 方法事实、#775 冷维护等具体改动还需各自的生命周期、生成代码尺寸和匹配性能证据，不能用通用矩阵替代。下述 2.0.3 有限例外不适用于 3.0；本节描述执行与证据要求，不宣称当前 3.0 候选已通过。
 
+### 当前 3.0 候选的有限验证记录（未发布）
+
+以下为 2026-10-30 的验证快照，不是发布日期或性能验收批准。负责人仅授权先运行有限范围、看结果再决定；尚未接受已知退化，也未批准完整矩阵的替代验收、merge、tag 或 NuGet 发布。三项性能实验的候选生产源码均固定为 `8ae9ee36ebec82f82e03185432601a830c865e95` / tree `1f0c9291c7394d012d3241a9cf31482b0734b697`；它们不是后续文档/诊断集成提交或最终 `main` 的新门禁结果。
+
+**正式 2.0.3 对照：[O203N4 run 41013106170](https://github.com/SunSi12138/SharpLink/actions/runs/41013106170)。** 正式 2.0.3 与候选各用自身五个核心包及 Generator，在同机 TCP server-stream 公共负载下比较；不是全部九个发布包或跨 major 互操作验证。SDK 为 10.0.102，实际测量 runtime 为独立 CoreCLR 10.0.14。60 个进程包含 4 个候选严格控制、8 个对称普通控制及 48 个测量进程；每格六组 AB/BA 配对、3 秒预热和 6 秒测量。下表是六个 **candidate/2.0.3 配对比值的中位变化**，不是 pooled 比值或两组中位数之比；QPS 指完成 stream 数/秒，P99 指完整 stream 延迟。
+
+| server-stream 场景 | QPS 变化 | P99 变化 | Process-wide B/stream 变化 |
+| --- | ---: | ---: | ---: |
+| static-intercepted，1 item | −8.640% | +7.654% | −10.255% |
+| dynamic-intercepted，1 item | +1.097% | +4.698% | −16.465% |
+| static-intercepted，100 items | −0.987% | +0.265% | −11.559% |
+| dynamic-intercepted，100 items | −2.681% | +2.218% | −16.595% |
+
+B/stream 是客户端、服务端及测量编排的进程总分配/完成 stream，不是每 item 或单线程分配。静态 1-item 的六组 QPS 均下降、P99 均上升，不能用分配降低抵消。四格均未达到原 `+10% QPS / −20% P99` 目标；数据完整性审核通过不等于性能通过。
+
+**发送刷新专项：[FLUSH1 run 41013193344](https://github.com/SunSi12138/SharpLink/actions/runs/41013193344)。** 这是开发基线 `57f06f172d29fa5cfd4ea8e9b86a23f122df24ab` 到上述候选的对照，不是正式 2.0.3 对照，也不是协作维护测试。Balanced、32/4096 B、c1，六种 ABC 顺序共 18 进程、180 轮、737,280 个样本。4 KiB no-update 配对中位为 QPS +9.606%、P99 −0.187%，但各组 P99 比值跨 0.173–2.791；本次基线 P99 绝对中位约 1,217 µs，与旧 #964 对照的约 162 µs 不同。不能据此认定等价、确定根因或解除旧 4 KiB/c1 的 QPS −31.86% / P99 +652.87% 风险。
+
+**受限协作维护专项：[MTL1 run 41014954521](https://github.com/SunSi12138/SharpLink/actions/runs/41014954521)。** 同一候选 binary 比较 off、on-no-update、post-update；固定认证 TLS 两连接、同 session/held proxy，18 进程、90 轮、450,000 RPC，并验证六次真实兼容实现替换。相对 off 的配对中位 QPS/P99 分别为 on-no-update +1.277%/−0.492%、post-update +0.501%/−0.773%；单组 P99 恶化 +20.504%/+34.500% 仍保留。六次本地已准备维护操作耗时 41.313–42.972 ms、进程分配 257,352–324,912 B，单列且不含制品传输、编译、加载、初始建连，也不混入稳态。此为 #933 的受限实现维护，不是完整 #775 或 2.0.3 版本比较；checkpoint I/O/JSON 与保留对象可扰动后续轮次，不证明零开销或等价。
+
+完整 378-shard 性能矩阵尚未完成；上述结果不豁免历史 #931/#964 不利结果，也不构成对当前退化的接受。原始失败、异常组及负面样本保留，不能只用有利 pooled 数字替代配对结果。三项 run 的临时 Actions artifacts 仅保留三天，run 链接不是永久原始数据存档；哈希不能恢复过期文件。MTL1 的实际 build DLL/config 已归档校验，但 runtime 原始字节未归档，仅保留安装及 loaded-hash 记录。
+
+**iOS 与最终门禁。** [诊断 run 41019690689](https://github.com/SunSi12138/SharpLink/actions/runs/41019690689) 和 [诊断 run 41022098807](https://github.com/SunSi12138/SharpLink/actions/runs/41022098807) 的 iOS CoreCLR（.NET 11 preview）simulator x64 均实际完成 codec produce/verify；每次为 58 个 producer fixture、98 个兼容验证结果，既有 builtin raw 排除项和单字节 segmented 不适用项保留。iOS arm64 当前仍未通过；既有 [mobile workflow](../.github/workflows/codec-mobile-compatibility.yml) 将 arm64 标为 experimental / continue-on-error，而 x64 为必需项，不因本次失败新增或放宽规则。诊断整体成功不表示 arm64 成功，也不替代旧 [Release Gate 41004413825](https://github.com/SunSi12138/SharpLink/actions/runs/41004413825) 的取消/summary 失败。最终文档与 iOS 诊断改动集成后的新候选完整 Gate、以及获准合并后的最终 `main` 精确提交 Gate 仍待完成；普通验证可继续，性能风险处置与发布授权分别待决定。
+
 ### 仅限 2.0.3 的性能验收例外
 
 2026-10-04，发布负责人在了解原采样干扰门禁失败及尚未证实的根因后，明确接受本次有限性能验收并要求继续发布工作。此例外只适用于 `2.0.3`，不改变后续版本的默认完整矩阵或采样器原分析器。

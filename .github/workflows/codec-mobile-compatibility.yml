@@ -36,6 +36,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Verify iOS harness with pure Node mocks
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/codec-compat/ios-harness
+          node --version > artifacts/codec-compat/ios-harness/node-version.txt
+          node --test --test-reporter=tap \
+            test/SharpLink.CodecCompatibility.iOS/run-ios.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/ios-command.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/boot-ios.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/ios-process-snapshot.test.mjs \
+            2>&1 | tee artifacts/codec-compat/ios-harness/results.tap
+
+      - name: Upload iOS harness mock report
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codec-mobile-ios-harness-${{ github.sha }}
+          path: artifacts/codec-compat/ios-harness
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Setup .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -206,11 +230,24 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       SHARPLINK_COMMIT: ${{ github.sha }}
       DOTNET_11_SDK: 11.0.100-preview.7.26381.103
+      SHARPLINK_IOS_DIAGNOSTICS: artifacts/codec-compat/ios-diagnostics
+      SHARPLINK_IOS_PROBE_ATTEMPTS: '1'
     steps:
       - name: Checkout
+        timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Reserve time for iOS failure evidence
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          mkdir -p "$SHARPLINK_IOS_DIAGNOSTICS"
+          # Reject normal completion after 40 minutes; step limits still bound filesystem/action work.
+          # Reserve remaining job time for best-effort cleanup/upload, not a host-loss guarantee.
+          node -e 'require("fs").appendFileSync(process.env.GITHUB_ENV, `SHARPLINK_IOS_EXECUTION_DEADLINE_MS=${Date.now() + 40 * 60 * 1000}\n`)'
+
       - name: Pin experimental .NET 11 SDK for iOS CoreCLR
+        timeout-minutes: 1
         shell: bash
         run: |
           cat > global.json <<EOF
@@ -224,72 +261,73 @@ jobs:
           EOF
 
       - name: Setup .NET 11 preview
+        timeout-minutes: 5
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: 11.0.100-preview.7.26381.103
 
       - name: Show Xcode version
-        run: xcodebuild -version
+        timeout-minutes: 1
+        run: node test/SharpLink.CodecCompatibility.iOS/ios-command.mjs xcode-version 15 xcodebuild -version
 
       - name: Install iOS workload
-        run: dotnet workload install ios
+        timeout-minutes: 6
+        run: node test/SharpLink.CodecCompatibility.iOS/ios-command.mjs workload-install 300 dotnet workload install ios
 
       - name: Record SDK version
+        timeout-minutes: 1
         shell: bash
         run: |
-          actual="$(dotnet --version)"
-          test "$actual" = "$DOTNET_11_SDK"
-          echo "SHARPLINK_SDK_VERSION=$actual" >> "$GITHUB_ENV"
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { runCommand } from './test/SharpLink.CodecCompatibility.iOS/ios-command.mjs';
+          const { stdout } = await runCommand('sdk-version', 'dotnet', ['--version'], { timeoutMs: 15_000 });
+          const actual = stdout.trim();
+          if (actual !== process.env.DOTNET_11_SDK) throw new Error(`Unexpected SDK: ${actual}`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `SHARPLINK_SDK_VERSION=${actual}\n`);
+          NODE
 
       - name: Download canonical desktop corpus
+        timeout-minutes: 3
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: codec-mobile-corpus-desktop-linux-x64
           path: artifacts/codec-compat/producers/codec-mobile-corpus-desktop-linux-x64
 
-      - name: Boot an iOS simulator
-        shell: bash
-        run: |
-          xcrun simctl shutdown all || true
-          udid="$(python3 - <<'PY'
-          import json, subprocess
-          data = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))
-          for runtime, devices in data['devices'].items():
-              if 'iOS' not in runtime:
-                  continue
-              for device in devices:
-                  if device.get('isAvailable') and device.get('name', '').startswith('iPhone'):
-                      print(device['udid'])
-                      raise SystemExit
-          raise SystemExit('No available iPhone simulator found')
-          PY
-          )"
-          echo "IOS_SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
-          xcrun simctl boot "$udid" || true
-          for attempt in $(seq 1 90); do
-            if xcrun simctl list devices | grep "$udid" | grep -q '(Booted)'; then
-              break
-            fi
-            sleep 2
-          done
-          xcrun simctl list devices | grep "$udid" | grep '(Booted)'
+      - name: Boot the exact iOS simulator with bounded readiness
+        timeout-minutes: 9
+        run: node test/SharpLink.CodecCompatibility.iOS/boot-ios.mjs
 
-      - name: Build and run experimental iOS CoreCLR producer
+      - name: Build experimental iOS CoreCLR producer
+        timeout-minutes: 16
         shell: bash
         run: |
           rm -rf test/SharpLink.CodecCompatibility.iOS/bin test/SharpLink.CodecCompatibility.iOS/obj
-          dotnet build -c Debug -f net11.0-ios -r "${{ matrix.rid }}" \
+          node test/SharpLink.CodecCompatibility.iOS/ios-command.mjs producer-build 900 \
+            dotnet build -c Debug -f net11.0-ios -r "${{ matrix.rid }}" \
             test/SharpLink.CodecCompatibility.iOS/SharpLink.CodecCompatibility.iOS.csproj \
-            -p:CodecRuntime=coreclr
+            -p:CodecRuntime=coreclr /nodeReuse:false -p:UseSharedCompilation=false
+
+      - name: Install experimental iOS CoreCLR producer
+        timeout-minutes: 3
+        shell: bash
+        run: |
           app="$(find test/SharpLink.CodecCompatibility.iOS/bin/Debug -path "*/net11.0-ios/${{ matrix.rid }}/*" -name '*.app' -type d | head -n 1)"
           test -n "$app"
-          xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
+          node test/SharpLink.CodecCompatibility.iOS/ios-command.mjs producer-install 120 \
+            xcrun simctl install "$IOS_SIMULATOR_UDID" "$app"
+
+      - name: Run experimental iOS CoreCLR producer once
+        timeout-minutes: 8
+        shell: bash
+        run: |
           node test/SharpLink.CodecCompatibility.iOS/run-ios.mjs \
             produce artifacts/codec-compat/ios-coreclr-corpus \
             "$SHARPLINK_COMMIT" "$SHARPLINK_SDK_VERSION" \
             "net11.0-ios/${{ matrix.rid }}"
 
       - name: Assemble iOS CoreCLR producer fan-in
+        timeout-minutes: 1
         shell: bash
         run: |
           mkdir -p artifacts/codec-compat/producers/codec-mobile-corpus-${{ matrix.id }}-coreclr
@@ -297,6 +335,7 @@ jobs:
             artifacts/codec-compat/producers/codec-mobile-corpus-${{ matrix.id }}-coreclr/
 
       - name: Verify desktop and self edges on experimental iOS CoreCLR
+        timeout-minutes: 8
         shell: bash
         env:
           SHARPLINK_SKIP_BUILTIN_RAW: '1'
@@ -308,6 +347,7 @@ jobs:
             "net11.0-ios/${{ matrix.rid }}"
 
       - name: Validate iOS CoreCLR semantic evidence
+        timeout-minutes: 1
         shell: bash
         run: |
           node - <<'NODE'
@@ -327,6 +367,7 @@ jobs:
           NODE
 
       - name: Upload experimental iOS CoreCLR evidence
+        timeout-minutes: 3
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -334,6 +375,7 @@ jobs:
           path: |
             artifacts/codec-compat/ios-coreclr-corpus
             artifacts/codec-compat/ios-coreclr-verification/verification.json
+            artifacts/codec-compat/ios-diagnostics
           if-no-files-found: warn
           retention-days: 30
 

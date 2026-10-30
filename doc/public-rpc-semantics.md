@@ -35,7 +35,7 @@ Timeout 来源按以下规则组合：
 - client interceptor 继续执行之前的 progress check；
 - endpoint selection / endpoint admission 以及 admission 返回的 retry-after 等待；
 - 选择等待型 pending-slot API 时的 slot wait；
-- deadline-bearing request 的 SendPump emission；
+- deadline-bearing Request 的 caller-side emission 等待；
 - Unary response wait；
 - 有 deadline 的 stream lifetime / producer progress；
 - retry decision、backoff/jitter 和后续所有 attempts。
@@ -43,7 +43,7 @@ Timeout 来源按以下规则组合：
 两个容易误读的本地容量边界：
 
 - 标准 generated Unary 当前使用有界 pending table 的**立即租用**。pending capacity 已满时会本地 `ResourceExhausted(PendingRequestCapacity)`，并不会默认排队等 slot。只有明确选择 wait-for-slot 的内部/扩展路径才存在 pending-slot wait；这种 wait 仍受同一个 deadline 约束。
-- Request 进入 session send queue 也不是一个隐含的无限等待点。标准 request enqueue 在 send queue 满时会本地 `ResourceExhausted(SendQueueCapacity)`；如果 deadline-bearing Request 已经成功入队，它的实际 emission/flush 仍必须在原 deadline 内完成。
+- Request 进入 session send queue 也不是一个隐含的无限等待点。标准 request enqueue 在 send queue 满时会本地 `ResourceExhausted(SendQueueCapacity)`；如果 deadline-bearing Request 已经成功入队，caller 对 emission/flush 的等待仍受原 deadline 约束，但这不保证物理 flush 必在 deadline 前完成，也不会从 SendPump 撤回已经入队的帧。
 
 服务端收到带 TimeBudget 的请求后，admission queue 也受该调用 budget/cancellation 约束。Client 自己的绝对 deadline 同时继续运行，所以网络发送、传输和响应等待不会因为跨进程 TimeBudget 重新开始而延长 caller 的总预算。
 
@@ -60,9 +60,15 @@ RPC deadline 只在 RPC logical call 创建时出现。因此下面这些**此�
 
 应用当然可以用同一个外部 `CancellationToken` 或更高层 orchestrator 同时限制“启动 + readiness + RPC”的总时间，但那是应用级 budget，不会把 SharpLink 的 RPC deadline 改造成 connect timeout。
 
-### 1.4 emission 时的 TimeBudget
+### 1.4 Request 创建时的 TimeBudget 与 emission
 
-Request 不会在逻辑调用刚创建时把一个静态 timeout 数字永久写进 wire。deadline-bearing Request 保留本地绝对 deadline，SendPump 在 transport emission 的最后边界重新计算剩余时间，然后写入 `TimeBudget` 并 flush。若在 emission 前预算已经耗尽，请求本地失败为 `DeadlineExceeded`，不会把过期 Request 发布到 transport。
+Client 的 `SendRpcCall` 在构造 Request 路由前缀时，从原 logical deadline 取一次剩余时间并写入 `TimeBudget`，随后才序列化 metadata 和请求 payload。它不是在 logical call 创建时写入完整 timeout，也不是在 transport emission 时重新采样。SendPump 原样复制已准备的帧，不重算 budget、不按 deadline 移除已入队 Request；显式 batch latency 也适用于带 budget 的 Request。
+
+因此这个 wire 快照不再扣除采样后的 metadata/payload 序列化、压缩、发送队列等待或网络时间。Server 首次解析 Request envelope 时，用收到的相对 budget 和本端单调时钟建立本地 `RpcDeadline`；解压后的重解析保留同一个 deadline，不重新开始计时。该 deadline 继续约束 Server admission、调用和流生命周期。它是 Server 的本地执行预算，不是两端共享的绝对时刻，也不延长 Client 原有的 logical deadline。
+
+Client 仍由 pending-call deadline 或普通 OneWay 的独立 emission/deadline 等待仲裁逻辑终态。序列化/压缩期间已经终止的 pending Request 不再发布；普通 OneWay 在准备完成、入队前再次检查 deadline。但 Request 一旦入队，之后 caller deadline 获胜也不表示该帧已被撤回：Request 仍可能到达 transport/Server，取消通过对应 Cancel 路径通知远端，不能证明 handler 未执行或副作用未提交。
+
+这些 deadline/取消边界不强制终止不合作的用户代码。逻辑调用结束与实际 `MoveNextAsync`、异步释放或 transport cleanup 完成是不同事件；仍在进行的物理工作及资源保持实际 owner，超时或取消本身不证明排空完成。
 
 ### 1.5 terminal precedence
 
@@ -92,7 +98,7 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 当前本地成功边界分两种：
 
 - **普通、无 deadline 的非 streaming OneWay**：调用成功表示 Request 已被本地 `RpcSession` 的 SendPump 接收/入队。若本地 send queue 满，会立即得到本地 `ResourceExhausted`。返回成功时数据可能尚未完成 transport flush。
-- **带 deadline 的 OneWay**：为了保证过期 Request 不被发布，客户端会观察该 Request 所在 batch 的 emission；只有 `PipeWriter.FlushAsync` 成功后该发送阶段才成功。若 deadline 在 emission 前耗尽，则本地 `DeadlineExceeded`。
+- **带 deadline 的 OneWay**：客户端观察该 Request 所在 batch 的 emission，并以原 deadline 约束等待；成功发送阶段观察到 `PipeWriter.FlushAsync` 成功。若 deadline 获胜，则本地 `DeadlineExceeded`，但不能据此断言已经入队的 Request 未到达 transport，见 §1.4。
 
 这两种成功都**不表示**：
 
@@ -103,7 +109,7 @@ OneWay 没有 response frame，因此不存在“远端业务成功”这一客�
 
 服务端 OneWay 在 admission overload 下还可能按配置直接丢弃；客户端因为没有 response 无法从返回值判断这一结果。
 
-带 client stream 的 OneWay 还需要完成本地 stream producer 生命周期；其初始 Request 必须先通过 emission deadline 检查，producer 才会启动。这仍然不是远端业务确认。
+带 client stream 的 OneWay 还需要完成本地 stream producer 生命周期；producer 在初始 Request 的本地发送等待结束后启动，发送等待和 producer 都受同一个 pending call 的 deadline/cancellation 控制，而不是由 SendPump 重新裁决 wire budget。这仍然不是远端业务确认。
 
 如果业务必须确认“远端 handler 已成功完成”或“副作用已经提交”，应使用有响应的 RPC，或在应用协议中设计明确 acknowledgement / idempotency mechanism，而不是把 `await OneWay` 当成远端确认。
 
@@ -199,7 +205,8 @@ Client `StopAsync` 是不同语义：它停止 reconnect、拒绝新调用、失
 | Semantic | Evidence |
 | --- | --- |
 | logical deadline 不重置、stream deadline | `test/SharpLink.UnitTests/Client/SharpLinkClientLogicalDeadlineTests.cs`, `ClientStreamProducerDeadlineTests.cs` |
-| TimeBudget 在 emission 边界采样、过期 request 不发送 | `SharpLinkClientTimeBudgetTests.cs`, `SharpLinkClientTrackedEmissionDeadlineTests.cs`, `SharpLinkClientOneWayTimeBudgetTests.cs` |
+| TimeBudget 在 Request 创建时采样、SendPump 原样发送；caller deadline 与入队前拒绝分别仲裁 | `SharpLinkClientTimeBudgetTests.cs`, `SharpLinkClientDeadlinePublicationTests.cs`, `SharpLinkClientOneWayTimeBudgetTests.cs`, `SendPumpTimeBudgetPublicationTests.cs` |
+| Server 将 wire budget 解析为本地 deadline，重解析不重置 | `ServerRequestEnvelopeReaderTests.cs`, `AdmissionDeadlineWaitArbitrationTests.cs`, `ServerCallCancellationDeadlinePriorityTests.cs` |
 | timeout/cancellation | `SharpLinkClientCallOptionsTests.cs`, `SharpLinkClientTimeoutTests.cs`, `SharpLinkClientCancellationTests.cs` |
 | connect / readiness snapshot / wait | `SharpLinkClientLifecycleStartStopTests.cs`, `SharpLinkClientReadinessStateTests.cs`, `SharpLinkClientReadinessWaitTests.cs`, `SharpLinkClientReadinessPublicationTests.cs` |
 | retry eligibility、endpoint reselection、deadline | `SharpLinkClientRetryBehaviorTests.cs`, `SharpLinkClientRetryDeadlineTests.cs`, `SharpLinkClientRuntimeRetryPolicyTests.cs` |

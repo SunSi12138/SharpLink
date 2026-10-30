@@ -32,7 +32,7 @@ Client interceptor 仍可通过 `SharpLinkClientInvocationContext.Metadata` 为�
 
 ## OneWay
 
-OneWay 成功表示请求已进入本地发送/服务端接收流程，不包含业务结果。服务端接入控制默认不排队 OneWay；超限时丢弃并记录指标。只有明确设置 `QueueOneWayCalls` 才允许等待。业务失败只能通过服务端日志、Activity、指标或应用补偿观察。
+`await OneWay` 成功只说明本地发送边界成功：无 deadline 的普通 OneWay 到 SendPump admission；带 deadline 的 OneWay 还观察 transport flush。带 client stream 的 OneWay 还需完成本地 stream producer 生命周期。这些都不证明 Server 已收到请求、handler 已执行或副作用已提交；需要远端成功确认时使用 request/response RPC。服务端接入控制默认不排队 OneWay；超限时丢弃并记录指标。只有明确设置 `QueueOneWayCalls` 才允许等待。业务失败只能通过服务端日志、Activity、指标或应用补偿观察。
 
 ## `[NonCancellable]`
 

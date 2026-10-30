@@ -4,7 +4,15 @@
 
 ## [Unreleased]
 
+### Breaking changes
+
+- SharpLink 3.0 is a breaking major upgrade, with no 2.0.3 source, in-process binary, or cross-major Client/Server interoperability promise. Use matching 3.0 packages, remove stale generated outputs, and regenerate/rebuild all contract, service, and plugin assemblies. Generated API 5 requires the exact identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`; Protocol v2 minor 4 remains a separate version axis. See [the 3.0 migration guide](doc/migration.md).
+- UnsafeBlit now requires owner-bound generated metadata, including on untrimmed JIT; arbitrary unmanaged reflection fallback and standalone runtime `AddCodec` / `UseCodecResolver` are removed. Caller-owned standalone RuntimeContext use of admitted generated Codecs and compile-time Codec/Adapter SPI remain supported. See [the Codec migration guide](doc/unsafe-blit-3.0-migration.md).
+
 ### Fixed
+
+- Fixed static ServerStreaming consumer abandonment without a caller token or deadline: early break/disposal cancels a cooperative producer and disposes its enumerator after `MoveNextAsync` finishes. Logical cancellation/deadline completion remains distinct from physical user-work cleanup; uncooperative execution or disposal is not forcibly terminated and can retain resources.
+- Made capacity-waiting sends retain intrinsic ownership until enqueue or terminal cleanup completes, closing missed-wakeup and premature-drain paths while preserving normal/progress queue budgets. Stop joins pending cleanup; a blocked custom writer return can keep cleanup pending. A cleanup join is not a delivery acknowledgement. See [send ownership](doc/adr/0002-intrinsic-send-capacity-ownership.md).
 
 - Preserve client-stream snapshot and writer ownership when `ReleaseSnapshot` throws. Release each non-null snapshot once, return unpublished writers even if cleanup fails, and retain the original serialization or cancellation exception.
 
@@ -13,6 +21,8 @@
 - Preserve receive-credit accounting for late client-stream frames while a completed server call still owns its request entry. Terminal processing drains only an existing already-discarding route, validates compressed original-byte lengths, and keeps route completion bound to the exact captured stream owner.
 
 ### Added
+
+- Added restricted opt-in cooperative maintenance for compatible server implementation-only replacement: local host authority, fixed endpoints, a complete authenticated TLS cohort, permanently sealed configuration, no queued admission, and physical quiescence before old implementation retirement. Contract/Codec owners remain unchanged. This is not the full #775 BindingId/ExactRegistration proposal, remote assembly loading, or client contract/Codec upgrading. Failure after Freeze begins fails closed; retired implementations are not rolled back or reopened, and observer cancellation does not prove physical release or prompt ALC collection. See [ADR 0004](doc/adr/0004-cooperative-session-maintenance.md). No performance improvement or equivalence is asserted by these changes.
 
 - Added the optional `SharpLink.GenerationControl` package for peer generation declaration and synchronization. The RPC surface is declaration-only: Client can query Server state and a Client-initiated duplex sync stream exchanges both endpoints' current inventories/revisions, while each peer reconciles locally through application-owned stage/validate/activate/drain policy. Artifact transport, rollout policy, dynamic loading, and NativeAOT process replacement remain local application/deployment concerns; Protocol v2 and ordinary RPC hot paths are unchanged.
 
