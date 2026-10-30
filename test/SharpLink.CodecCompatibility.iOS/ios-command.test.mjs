@@ -264,3 +264,133 @@ test('SIGTERM EPERM is recorded without an unhandled rejection and SIGKILL still
     await new Promise(resolve => setTimeout(resolve, 300));
     assert.equal(await fs.readFile(result.childEnv.TEST_HEARTBEAT_FILE, 'utf8'), heartbeat, 'SIGKILL left no active heartbeat');
 });
+
+test('diagnostic directory setup crossing the absolute deadline cannot start a command', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalMkdir = fs.mkdirSync;
+        fs.mkdirSync = function(name, ...args) {
+            if (String(name) === process.env.SHARPLINK_IOS_DIAGNOSTICS) {
+                console.log('MOCK_DIRECTORY_SETUP_WAIT');
+                const end = Date.now() + 900;
+                while (Date.now() < end) {}
+            }
+            return originalMkdir.call(fs, name, ...args);
+        };
+    `;
+    const result = await execute(t, {
+        code: `process.stdout.write('COMMAND_MUST_NOT_START_AFTER_SETUP');`, timeoutMs: 5000, preload,
+        env: { SHARPLINK_IOS_EXECUTION_DEADLINE_MS: String(Date.now() + 700) }
+    });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stdout, /MOCK_DIRECTORY_SETUP_WAIT/);
+    assert.doesNotMatch(result.stdout, /COMMAND_MUST_NOT_START_AFTER_SETUP/);
+    assert.equal(result.rawOut, '');
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].status, 'failure');
+    assert.equal(result.records[0].childExited, false, 'no subprocess was started');
+    assert.match(result.records[0].spawnError, /not started/);
+    assert.ok(result.elapsedMs < 4000);
+});
+
+test('final metadata writing across the absolute deadline cannot retain a successful record or exit', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalWrite = fs.writeFileSync;
+        let delayedSuccessWrite = false;
+        fs.writeFileSync = function(name, data, ...args) {
+            let record;
+            if (String(name).endsWith('.json') && typeof data === 'string') {
+                try { record = JSON.parse(data); } catch {}
+            }
+            if (!delayedSuccessWrite && record?.status === 'success') {
+                delayedSuccessWrite = true;
+                console.log('MOCK_FINAL_METADATA_WAIT');
+                const end = Number(process.env.SHARPLINK_IOS_EXECUTION_DEADLINE_MS) + 100;
+                while (Date.now() < end) {}
+            }
+            return originalWrite.call(fs, name, data, ...args);
+        };
+    `;
+    const result = await execute(t, {
+        code: `process.stdout.write('COMMAND_COMPLETED_BEFORE_FINAL_METADATA');`, timeoutMs: 5000, preload,
+        env: { SHARPLINK_IOS_EXECUTION_DEADLINE_MS: String(Date.now() + 1200) }
+    });
+    assert.notEqual(result.code, 0);
+    assert.equal(result.rawOut, 'COMMAND_COMPLETED_BEFORE_FINAL_METADATA');
+    assert.match(result.stdout, /MOCK_FINAL_METADATA_WAIT/, 'command reached its initial successful completion record');
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].status, 'failure', 'final evidence must not retain an obsolete success verdict');
+    assert.equal(result.records[0].exitCode, 0, 'failure is post-command budget exhaustion, not a command failure');
+    assert.equal(result.records[0].processGroupExited, true);
+    assert.ok(result.elapsedMs < 4000);
+});
+
+test('legal short raw-log writes preserve every output byte before reporting success', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalOpen = fs.openSync;
+        const originalWrite = fs.writeSync;
+        let rawStdoutFd;
+        fs.openSync = function(name, ...args) {
+            const descriptor = originalOpen.call(fs, name, ...args);
+            if (String(name).endsWith('.stdout.log')) rawStdoutFd = descriptor;
+            return descriptor;
+        };
+        fs.writeSync = function(descriptor, buffer, ...args) {
+            if (descriptor === rawStdoutFd && Buffer.isBuffer(buffer)) {
+                const offset = args[0] ?? 0;
+                const requested = args[1] ?? (buffer.length - offset);
+                const partial = Math.max(1, Math.floor(requested / 2));
+                process.stderr.write('MOCK_LEGAL_SHORT_WRITE\\n');
+                return originalWrite.call(fs, descriptor, buffer, offset, partial, args[2] ?? null);
+            }
+            return originalWrite.call(fs, descriptor, buffer, ...args);
+        };
+    `;
+    const result = await execute(t, { code: `process.stdout.write('EXACT_OUTPUT_BYTES');`, preload });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.rawOut, 'EXACT_OUTPUT_BYTES', 'legal short writes must be completed, never silently truncate evidence');
+    assert.ok((result.stderr.match(/MOCK_LEGAL_SHORT_WRITE/g) ?? []).length > 1, 'mock exercised multiple partial writes');
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].status, 'success');
+    assert.equal(result.records[0].outputError, null);
+});
+
+test('zero-byte raw-log write fails without spinning and stops the owned child', async t => {
+    const preload = `
+        import fs from 'node:fs';
+        const originalOpen = fs.openSync;
+        const originalWrite = fs.writeSync;
+        let rawStdoutFd;
+        fs.openSync = function(name, ...args) {
+            const descriptor = originalOpen.call(fs, name, ...args);
+            if (String(name).endsWith('.stdout.log')) rawStdoutFd = descriptor;
+            return descriptor;
+        };
+        fs.writeSync = function(descriptor, buffer, ...args) {
+            if (descriptor === rawStdoutFd && Buffer.isBuffer(buffer)) return 0;
+            return originalWrite.call(fs, descriptor, buffer, ...args);
+        };
+    `;
+    const code = `
+        const fs = require('node:fs');
+        fs.writeFileSync(process.env.TEST_PID_FILE, String(process.pid));
+        setInterval(() => fs.appendFileSync(process.env.TEST_HEARTBEAT_FILE, 'x'), 20);
+        setTimeout(() => process.stdout.write('TRIGGER_ZERO_WRITE'), 100);
+    `;
+    const result = await execute(t, { code, timeoutMs: 1000, preload });
+    assert.notEqual(result.code, 0);
+    assert.ok(result.elapsedMs < 4000, 'zero progress must not loop indefinitely');
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].status, 'failure');
+    assert.match(result.records[0].outputError, /write|progress/i);
+    assert.equal(result.records[0].pipesClosed, true);
+    assert.equal(result.records[0].processGroupExited, true);
+    assert.equal(result.rawOut, '');
+    assert.match(result.stdout, /TRIGGER_ZERO_WRITE/);
+    const heartbeat = await fs.readFile(result.childEnv.TEST_HEARTBEAT_FILE, 'utf8');
+    assert.ok(heartbeat.length > 0);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(await fs.readFile(result.childEnv.TEST_HEARTBEAT_FILE, 'utf8'), heartbeat);
+});

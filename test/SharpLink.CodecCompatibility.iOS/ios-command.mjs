@@ -22,7 +22,7 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     // The workflow reserves its final minutes for evidence upload. Cleanup retains its own short bound.
     const deadline = Number(process.env.SHARPLINK_IOS_EXECUTION_DEADLINE_MS || 0);
     if (!Number.isSafeInteger(deadline) || deadline < 0) throw new Error('Invalid iOS execution deadline.');
-    const budgetExpired = Boolean(deadline && !cleanup && deadline <= Date.now());
+    let budgetExpired = Boolean(deadline && !cleanup && deadline <= Date.now());
     if (deadline && !cleanup) timeoutMs = Math.min(timeoutMs, Math.max(1, deadline - Date.now()));
     const directory = process.env.SHARPLINK_IOS_DIAGNOSTICS || 'artifacts/codec-compat/ios-diagnostics';
     fs.mkdirSync(directory, { recursive: true });
@@ -36,14 +36,23 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     let stdout = '', stderr = '', child, exitCode = null, signal = null, spawnError, outputError, cleanupError;
     let exited = false, closed = false, timedOut = false, pipeLeak = false;
     let timer, pipeTimer, watchdog;
-    let interrupted = null;
+    let interrupted = null, commandStartedMs = null;
     let resolveClosed;
     const closePromise = new Promise(resolve => { resolveClosed = resolve; });
     const append = (fd, stream, chunk, isStdout) => {
-        try { fs.writeSync(fd, chunk); } catch (error) { outputError ??= error; }
+        try {
+            let offset = 0;
+            while (offset < chunk.length) {
+                const written = fs.writeSync(fd, chunk, offset, chunk.length - offset);
+                if (!Number.isInteger(written) || written <= 0 || written > chunk.length - offset) {
+                    throw new Error(`Raw log write made invalid progress: ${written}.`);
+                }
+                offset += written;
+            }
+        } catch (error) { outputError ??= error; }
         try { stream.write(chunk); } catch (error) { outputError ??= error; }
         if (outputError) void stop();
-        // Full output always remains in raw logs; only small command return values need memory capture.
+        // Success requires complete raw logs; logging failure is fatal. Only small return values need capture.
         if (capture) {
             if (isStdout) stdout += chunk.toString(); else stderr += chunk.toString();
         }
@@ -83,10 +92,18 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
     process.stdout.on('error', onOutputError); process.stderr.on('error', onOutputError);
     process.on('SIGTERM', onTerm); process.on('SIGINT', onInt);
     try {
+        // Directory/open/metadata I/O above can consume the shared budget. Recheck at the spawn boundary.
+        if (deadline && !cleanup) {
+            budgetExpired = deadline <= Date.now();
+            timeoutMs = Math.min(timeoutMs, Math.max(1, deadline - Date.now()));
+            record.timeoutMs = timeoutMs;
+        }
         if (budgetExpired) {
             spawnError = new Error('iOS execution budget exhausted; command was not started.');
             closed = true; resolveClosed();
         } else {
+            commandStartedMs = Date.now();
+            record.spawnedAt = new Date(commandStartedMs).toISOString();
             child = spawn(command, args, { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
             child.stdout.on('data', chunk => append(outFd, process.stdout, chunk, true));
             child.stderr.on('data', chunk => append(errFd, process.stderr, chunk, false));
@@ -104,19 +121,30 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
         clearTimeout(watchdog);
         clearTimeout(timer); clearTimeout(pipeTimer);
         // A delayed JS timer must not turn a command completed after its limit into success.
-        if (!budgetExpired && Date.now() >= Date.parse(startedAt) + timeoutMs) timedOut = true;
+        if (commandStartedMs !== null && Date.now() >= commandStartedMs + timeoutMs) timedOut = true;
         const lingering = groupAlive();
         if (!closed || lingering) await stop();
         if (stopping) await stopping;
         const groupExited = !groupAlive() && !cleanupError;
-        const ok = !cleanupError && !outputError && !interrupted && !spawnError && !timedOut && !pipeLeak && !lingering && closed && exitCode === 0 && signal === null && groupExited;
+        const completedPastDeadline = Boolean(deadline && !cleanup && Date.now() >= deadline);
+        budgetExpired ||= completedPastDeadline;
+        const ok = !completedPastDeadline && !cleanupError && !outputError && !interrupted && !spawnError && !timedOut && !pipeLeak && !lingering && closed && exitCode === 0 && signal === null && groupExited;
         Object.assign(record, { endedAt: new Date().toISOString(), status: ok ? 'success' : 'failure', exitCode, signal,
             timedOut, budgetExpired, interrupted, pipeLeak, lingeringDescendants: lingering, childExited: exited, pipesClosed: closed, processGroupExited: groupExited,
             spawnError: spawnError?.message ?? null, outputError: outputError?.message ?? null, cleanupError: cleanupError?.message ?? null });
         fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
+        if (record.status === 'success' && deadline && !cleanup && Date.now() >= deadline) {
+            Object.assign(record, { status: 'failure', budgetExpired: true, endedAt: new Date().toISOString() });
+            fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
+        }
         console.log(`[ios-command] END ${label} status=${record.status} exit=${exitCode} signal=${signal} timeout=${timedOut} groupExited=${groupExited}`);
-        if (!ok) {
-            const error = new Error(`${label} failed: exit=${exitCode}, signal=${signal}, timeout=${timedOut}, spawn=${spawnError?.message ?? 'none'}, output=${outputError?.message ?? 'none'}, cleanup=${cleanupError?.message ?? 'none'}, pipesClosed=${closed}, groupExited=${groupExited}; raw evidence: ${stem}`);
+        // Console/file output must not create a final successful-return window past the absolute budget.
+        if (record.status === 'success' && deadline && !cleanup && Date.now() >= deadline) {
+            Object.assign(record, { status: 'failure', budgetExpired: true, endedAt: new Date().toISOString() });
+            fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
+        }
+        if (record.status !== 'success') {
+            const error = new Error(`${label} failed: exit=${exitCode}, signal=${signal}, timeout=${timedOut}, budgetExpired=${record.budgetExpired}, spawn=${spawnError?.message ?? 'none'}, output=${outputError?.message ?? 'none'}, cleanup=${cleanupError?.message ?? 'none'}, pipesClosed=${closed}, groupExited=${groupExited}; raw evidence: ${stem}`);
             error.commandRecord = record;
             throw error;
         }
@@ -129,6 +157,11 @@ export async function runCommand(label, command, args, { timeoutMs, env = proces
         process.off('SIGTERM', onTerm); process.off('SIGINT', onInt);
         process.stdout.off('error', onOutputError); process.stderr.off('error', onOutputError);
         fs.closeSync(outFd); fs.closeSync(errFd);
+        if (record.status === 'success' && deadline && !cleanup && Date.now() >= deadline) {
+            Object.assign(record, { status: 'failure', budgetExpired: true, endedAt: new Date().toISOString() });
+            fs.writeFileSync(`${stem}.json`, JSON.stringify(record, null, 2) + '\n');
+            throw new Error(`${label} exceeded its execution deadline during final log cleanup; raw evidence: ${stem}`);
+        }
     }
 }
 
