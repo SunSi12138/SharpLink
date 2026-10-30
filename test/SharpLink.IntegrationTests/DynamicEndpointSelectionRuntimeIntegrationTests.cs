@@ -24,7 +24,6 @@ public sealed partial class DynamicEndpointIntegrationTests
             await using var client = SharpClientBuilder.Create().DisableRequestTimeout()
                 // Match TcpServerScope's 500 ms idle watchdog. The default 10 s heartbeat
                 // would legitimately reconnect idle siblings while the accepted stream drains.
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(500))
                 .UseEndpointResolver(
                     resolver,
                     endpoint => new RuntimeSelectionCountingTransportFactory(sockets(endpoint), counter, endpoint.Id))
