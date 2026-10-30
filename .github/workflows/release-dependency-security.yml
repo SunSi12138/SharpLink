@@ -1,0 +1,49 @@
+name: Frozen 3.0 explicit dependency security scan
+on:
+  push:
+    branches: ['validation/3.0-release-dependency-security-20261030']
+    paths: ['eng/release-dependency-security/request.json']
+permissions:
+  contents: read
+concurrency:
+  group: release-dependency-security-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  source-only-dependency-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      NUGET_PACKAGES: ${{ runner.temp }}/dependency-security-${{ github.run_id }}-${{ github.run_attempt }}/packages
+      NUGET_HTTP_CACHE_PATH: ${{ runner.temp }}/dependency-security-${{ github.run_id }}-${{ github.run_attempt }}/http
+    steps:
+      - name: Checkout reviewed request and tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout exact frozen source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: e8fcef3ddb93d76457b690dadc279e7a8f91b47d
+          path: source
+          persist-credentials: false
+      - name: Validate sole request and source identity
+        run: python3 eng/release-dependency-security/scan.py validate
+      - name: Install original source SDK selection
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: source/global.json
+      - name: Restore and record official transitive inventory vulnerability and deprecation JSON
+        timeout-minutes: 25
+        run: python3 eng/release-dependency-security/scan.py scan
+      - name: Upload raw exits logs reports and provenance even on failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dependency-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dependency-security-report
+          if-no-files-found: error
+          retention-days: 3
