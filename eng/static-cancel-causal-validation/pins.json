@@ -1,0 +1,44 @@
+{
+  "branch": "refs/heads/validation/static-cancel-causal-diag-20261030",
+  "request": "eng/static-cancel-causal-validation/request.json",
+  "arms": {
+    "baseline": {
+      "sha": "fd4f12fd41ecdb2137025ffc56ae46c06827617f",
+      "tree": "17430294ca9993936d5dd679d2cea2dbecc47a3c",
+      "parent": "57f06f172d29fa5cfd4ea8e9b86a23f122df24ab",
+      "parent_tree": "e5b72625377ffdcf5f5470e2ddd69be12a449d8e",
+      "added_paths": [
+        "test/SharpLink.IntegrationTests/StaticServerStreamCancellationCausalValidationTests.cs",
+        "test/SharpLink.IntegrationTests/StaticServerStreamCancellationTests.cs",
+        "test/SharpLink.UnitTests/Client/SharpLinkClientStreamingRequestFlagsTests.cs"
+      ],
+      "fixtures": {
+        "test/SharpLink.IntegrationTests/StaticServerStreamCancellationCausalValidationTests.cs": "75cf340f60d8bca77e72043c537d3d34eb41cdd7",
+        "test/SharpLink.IntegrationTests/StaticServerStreamCancellationTests.cs": "323f5d7a4acdaecce06b2cc2f5dbdb6d8b02ec4f",
+        "test/SharpLink.UnitTests/Client/SharpLinkClientStreamingRequestFlagsTests.cs": "2ec6129b9d75c09bf5cedf47fd3b91e392fb64b2"
+      }
+    },
+    "candidate": {
+      "sha": "09340a013580bbf0b938d7e0eb4a6c99fca7c322",
+      "tree": "bb74d0016b062d7e0daf04582cc9af2da24fa7e3",
+      "parent": "5cb05f49bbe9b8e2ddd181e3940d91f7780346ae",
+      "parent_tree": "cfb630b50c99874fb9def1bca771c4042650f8f5",
+      "added_paths": [
+        "test/SharpLink.IntegrationTests/StaticServerStreamCancellationCausalValidationTests.cs"
+      ],
+      "fixtures": {
+        "test/SharpLink.IntegrationTests/StaticServerStreamCancellationCausalValidationTests.cs": "95d2b72ad91504dd4e2e95c741f2d172ecb8fa5c",
+        "test/SharpLink.IntegrationTests/StaticServerStreamCancellationTests.cs": "323f5d7a4acdaecce06b2cc2f5dbdb6d8b02ec4f",
+        "test/SharpLink.UnitTests/Client/SharpLinkClientStreamingRequestFlagsTests.cs": "2ec6129b9d75c09bf5cedf47fd3b91e392fb64b2"
+      }
+    }
+  },
+  "tool_files": [
+    ".github/workflows/static-cancel-causal-validation.yml",
+    "eng/static-cancel-causal-validation/hosts.py",
+    "eng/static-cancel-causal-validation/pins.json",
+    "eng/static-cancel-causal-validation/run.py",
+    "eng/static-cancel-causal-validation/test_validation.py",
+    "eng/static-cancel-causal-validation/validate.py"
+  ]
+}
