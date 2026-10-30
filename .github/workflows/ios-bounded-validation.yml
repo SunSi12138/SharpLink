@@ -1,0 +1,47 @@
+name: iOS Bounded Evidence Validation
+
+# Independent diagnostic lane: no PR, tag, main, dev, or publishing trigger.
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - codex/3-ios-bounded-validation
+
+concurrency:
+  group: ios-bounded-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harness-mocks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact diagnostic source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify bounded iOS harness with pure Node mocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ios-bounded-harness
+          node --version > artifacts/ios-bounded-harness/node-version.txt
+          node --test --test-reporter=tap \
+            test/SharpLink.CodecCompatibility.iOS/run-ios.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/ios-command.test.mjs \
+            test/SharpLink.CodecCompatibility.iOS/boot-ios.test.mjs \
+            2>&1 | tee artifacts/ios-bounded-harness/results.tap
+
+      - name: Upload pure mock test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-bounded-harness-${{ github.sha }}
+          path: artifacts/ios-bounded-harness
+          if-no-files-found: error
+          retention-days: 30
+
+  mobile-evidence:
+    needs: harness-mocks
+    uses: ./.github/workflows/codec-mobile-compatibility.yml
