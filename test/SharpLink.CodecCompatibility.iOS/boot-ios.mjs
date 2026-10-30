@@ -36,9 +36,9 @@ function remainingPhaseMs() {
     }
     return remaining;
 }
-async function runPhase(label, args, capMs) {
+async function runPhase(label, args) {
     const result = await runCommand(label, 'xcrun', args, {
-        timeoutMs: Math.min(capMs, remainingPhaseMs()),
+        timeoutMs: remainingPhaseMs(),
         // Absolute in this Node process: log setup cannot restart or extend the phase.
         monotonicDeadlineMs: phaseStartedMono + phaseBudgetMs
     });
@@ -49,7 +49,7 @@ async function runPhase(label, args, capMs) {
 try {
     phaseEvent('phase-start');
     console.log(`iOS preparation budget: ${phaseBudgetMs} ms; effective deadline=${new Date(phaseDeadline).toISOString()}; no retries.`);
-    const { stdout } = await runPhase('simulator-list', ['simctl', 'list', 'devices', 'available', '-j'], 15_000);
+    const { stdout } = await runPhase('simulator-list', ['simctl', 'list', 'devices', 'available', '-j']);
     const data = JSON.parse(stdout);
     let selected;
     for (const [runtime, devices] of Object.entries(data.devices)) {
@@ -60,10 +60,10 @@ try {
     if (!selected || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selected.udid)) throw new Error('No available iPhone simulator found.');
     console.log(`Selected simulator: ${selected.name}, runtime=${selected.runtime}, udid=${selected.udid}, initialState=${selected.state}`);
     if (selected.state !== 'Shutdown') {
-        await runPhase('simulator-shutdown', ['simctl', 'shutdown', selected.udid], 30_000);
+        await runPhase('simulator-shutdown', ['simctl', 'shutdown', selected.udid]);
     }
-    await runPhase('simulator-boot', ['simctl', 'boot', selected.udid], 90_000);
-    await runPhase('simulator-ready', ['simctl', 'bootstatus', selected.udid, '-b'], 480_000);
+    await runPhase('simulator-boot', ['simctl', 'boot', selected.udid]);
+    await runPhase('simulator-ready', ['simctl', 'bootstatus', selected.udid, '-b']);
     if (!process.env.GITHUB_ENV) throw new Error('GITHUB_ENV is required to hand off the exact simulator.');
     remainingPhaseMs();
     phaseEvent('handoff-write-start', { udid: selected.udid });

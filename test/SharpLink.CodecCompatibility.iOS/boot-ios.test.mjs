@@ -12,9 +12,9 @@ const other = '11111111-2222-3333-4444-555555555555';
 const fake = `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_COMMAND_LOG, JSON.stringify(args) + '\\n');
 const delayMs = Number(process.env['FAKE_' + String(args[1]).toUpperCase() + '_DELAY_MS'] || 0);
 if (delayMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
-fs.appendFileSync(process.env.FAKE_COMMAND_LOG, JSON.stringify(args) + '\\n');
 if (args[0] !== 'simctl') process.exit(90);
 if (args[1] === 'list') {
     process.stdout.write(JSON.stringify({ devices: {
@@ -22,7 +22,7 @@ if (args[1] === 'list') {
         'com.apple.CoreSimulator.SimRuntime.iOS-26-0': process.env.FAKE_SCENARIO === 'no-available' ? [] : [
             { isAvailable: true, name: 'iPad Pro', udid: process.env.OTHER_UDID, state: 'Shutdown' },
             { isAvailable: false, name: 'iPhone unavailable', udid: process.env.OTHER_UDID, state: 'Shutdown' },
-            { isAvailable: true, name: 'iPhone chosen', udid: process.env.SELECTED_UDID, state: process.env.FAKE_SCENARIO === 'shutdown-failure' ? 'Booted' : 'Shutdown' },
+            { isAvailable: true, name: 'iPhone chosen', udid: process.env.SELECTED_UDID, state: ['shutdown-failure', 'already-booted'].includes(process.env.FAKE_SCENARIO) ? 'Booted' : 'Shutdown' },
             { isAvailable: true, name: 'iPhone later', udid: process.env.OTHER_UDID, state: 'Shutdown' }
         ]
     } }));
@@ -88,10 +88,14 @@ test('boot selects the first available iPhone, waits for readiness once, and han
         ['simctl', 'bootstatus', selected, '-b']
     ]);
     assert.equal(result.githubEnv, `IOS_SIMULATOR_UDID=${selected}\n`);
-    assert.equal(result.records.find(record => record.label === 'simulator-list').timeoutMs, 15000);
-    assert.equal(result.records.find(record => record.label === 'simulator-boot').timeoutMs, 90000);
-    const readyBudget = result.records.find(record => record.label === 'simulator-ready').timeoutMs;
-    assert.ok(readyBudget > 470000 && readyBudget < 480000, 'readiness receives remaining phase budget, not a reset');
+    const ordered = ['simulator-list', 'simulator-boot', 'simulator-ready'].map(label => result.records.find(record => record.label === label));
+    assert.ok(ordered[0].timeoutMs > 470000 && ordered[0].timeoutMs < 480000, 'list receives the shared phase remainder, not the former 15-second cap');
+    assert.ok(ordered[1].timeoutMs > 470000, 'boot is not restricted to the former 90-second cap');
+    for (let index = 1; index < ordered.length; index++) {
+        assert.ok(ordered[index].timeoutMs > 0 && ordered[index].timeoutMs < ordered[index - 1].timeoutMs, 'every phase command consumes one continuously decreasing budget');
+    }
+    assert.equal(new Set(ordered.map(record => record.monotonicDeadlineMs)).size, 1, 'one absolute monotonic deadline, never reset per command');
+    assert.equal(new Set(ordered.map(record => record.effectiveDeadlineMs)).size, 1, 'one absolute wall deadline, never reset per command');
     assert.ok(result.records.every(record => record.status === 'success'));
 });
 
@@ -238,4 +242,53 @@ test('metadata delay plus wall-clock rollback cannot spawn after the shared mono
     assert.equal(result.records[0].status, 'failure');
     assert.equal(result.records[0].budgetExpired, true);
     assert.ok(result.records[0].monotonicDeadlineMs > 0);
+});
+
+
+test('scaled slow list, conditional shutdown, boot and readiness can succeed within one shared phase', async t => {
+    const phaseBudget = 2200;
+    const result = await exercise(t, 'already-booted', {
+        SHARPLINK_IOS_PREP_TIMEOUT_MS: String(phaseBudget),
+        FAKE_LIST_DELAY_MS: '300', FAKE_SHUTDOWN_DELAY_MS: '150',
+        FAKE_BOOT_DELAY_MS: '400', FAKE_BOOTSTATUS_DELAY_MS: '150'
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(result.commands, [
+        ['simctl', 'list', 'devices', 'available', '-j'],
+        ['simctl', 'shutdown', selected],
+        ['simctl', 'boot', selected],
+        ['simctl', 'bootstatus', selected, '-b']
+    ]);
+    const ordered = ['simulator-list', 'simulator-shutdown', 'simulator-boot', 'simulator-ready'].map(label => result.records.find(record => record.label === label));
+    assert.equal(result.records.length, 4, 'each command runs once, with no retry');
+    for (let index = 0; index < ordered.length; index++) {
+        assert.equal(ordered[index].status, 'success');
+        assert.ok(ordered[index].timeoutMs > 0 && ordered[index].timeoutMs <= phaseBudget);
+        if (index) assert.ok(ordered[index].timeoutMs < ordered[index - 1].timeoutMs);
+    }
+    assert.equal(new Set(ordered.map(record => record.monotonicDeadlineMs)).size, 1);
+    assert.equal(new Set(ordered.map(record => record.effectiveDeadlineMs)).size, 1);
+    assert.equal(result.githubEnv, `IOS_SIMULATOR_UDID=${selected}\n`);
+    assert.equal(result.phaseEvents.at(-1).type, 'phase-success');
+    assert.ok(result.phaseEvents.at(-1).monotonicElapsedMs < phaseBudget);
+});
+
+test('scaled cumulative list and boot costs leave only the remainder for readiness, and exhaustion cannot hand off', async t => {
+    const result = await exercise(t, 'success', {
+        SHARPLINK_IOS_PREP_TIMEOUT_MS: '800',
+        FAKE_LIST_DELAY_MS: '200', FAKE_BOOT_DELAY_MS: '200', FAKE_BOOTSTATUS_DELAY_MS: '650'
+    });
+    assert.notEqual(result.code, 0);
+    const ordered = ['simulator-list', 'simulator-boot', 'simulator-ready'].map(label => result.records.find(record => record.label === label));
+    assert.ok(ordered.every(Boolean), 'negative control reaches readiness before the phase expires');
+    assert.equal(ordered[0].status, 'success');
+    assert.equal(ordered[1].status, 'success');
+    assert.equal(ordered[2].status, 'failure');
+    assert.ok(ordered[2].timeoutMs < ordered[1].timeoutMs && ordered[1].timeoutMs < ordered[0].timeoutMs);
+    assert.equal(new Set(ordered.map(record => record.monotonicDeadlineMs)).size, 1);
+    assert.equal(new Set(ordered.map(record => record.effectiveDeadlineMs)).size, 1);
+    assert.equal(result.commands.filter(command => command[1] === 'bootstatus').length, 1, 'no readiness retry');
+    assert.equal(result.githubEnv, '');
+    assert.equal(result.phaseEvents.at(-1).type, 'phase-failure');
+    assert.equal(result.phaseEvents.at(-1).handoffWritten, false);
 });
