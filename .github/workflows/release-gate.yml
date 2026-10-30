@@ -214,7 +214,7 @@ jobs:
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
 
-      - name: Verify Protocol v2 Cross-version Matrix
+      - name: Verify Protocol v2 Current-package Process Interoperability
         run: ./eng/verify-protocol-v2-cross-version.sh
 
       - name: Run NuGet package smoke
