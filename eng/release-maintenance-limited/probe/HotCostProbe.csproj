@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="TlsNetwork.cs" />
+    <ProjectReference Include="../contracts/HotCostDynamic.Contracts.csproj" />
+    <ProjectReference Include="../services/HotCostDynamic.Services.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="$(SubjectRoot)/src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="$(SubjectRoot)/src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="$(SubjectRoot)/src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="$(SubjectRoot)/src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,163 @@
+name: Maintenance finite TLS unary comparison (temporary 3-day reports)
+
+on:
+  push:
+    branches: [validation/release-maintenance-limited-20261030-r1]
+    paths: ['eng/release-maintenance-limited/REQUEST.json']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-limited-MTL1
+  cancel-in-progress: false
+
+jobs:
+  maintenance-comparison:
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/validation/release-maintenance-limited-20261030-r1' && github.run_attempt == 1 && github.event.head_commit.message == 'run: maintenance limited MTL1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER: '1'
+      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+    steps:
+      - name: Initialize failure-retaining evidence paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DOTNET_INSTALL_DIR="$RUNNER_TEMP/maintenance-limited-sdk-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export DOTNET_CLI_HOME="$RUNNER_TEMP/maintenance-limited-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/cli-home"
+          export PRIVATE_RUNTIME="$RUNNER_TEMP/maintenance-limited-runtime-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          export DIAGNOSTIC_ROOT="$RUNNER_TEMP/maintenance-limited-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          {
+            echo "DOTNET_INSTALL_DIR=$DOTNET_INSTALL_DIR"
+            echo "DOTNET_CLI_HOME=$DOTNET_CLI_HOME"
+            echo "PRIVATE_RUNTIME=$PRIVATE_RUNTIME"
+            echo "DIAGNOSTIC_ROOT=$DIAGNOSTIC_ROOT"
+          } >> "$GITHUB_ENV"
+          test ! -e "$DIAGNOSTIC_ROOT" && test ! -L "$DIAGNOSTIC_ROOT"
+          mkdir -p "$DIAGNOSTIC_ROOT/runtime-install" "$DOTNET_CLI_HOME"
+          printf 'request=%s\nrun=%s\nattempt=%s\nrunner=%s/%s\nimage=%s/%s\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$RUNNER_OS" "$RUNNER_ARCH" \
+            "${ImageOS:-unknown}" "${ImageVersion:-unknown}" > "$DIAGNOSTIC_ROOT/launch-environment.txt"
+      - name: Checkout bounded request commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify single request, exact review identity and explicit root release
+        id: request
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp eng/release-maintenance-limited/REQUEST.json "$DIAGNOSTIC_ROOT/submitted-request.json"
+          cp "$GITHUB_EVENT_PATH" "$DIAGNOSTIC_ROOT/push-event.json"
+          python3 eng/release-maintenance-limited/verify_request.py \
+            --record "$DIAGNOSTIC_ROOT/verified-request.json" > "$DIAGNOSTIC_ROOT/request-gate.log" 2>&1
+      - name: Pin all subsequent tools and workflow bytes to reviewed request parent
+        id: pin
+        working-directory: tools
+        env:
+          REVIEWED_TOOL_SHA: ${{ steps.request.outputs.reviewed_tool_sha }}
+          REVIEWED_TOOL_TREE: ${{ steps.request.outputs.reviewed_tool_tree }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach "$REVIEWED_TOOL_SHA"
+          test "$(git rev-parse HEAD)" = "$REVIEWED_TOOL_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$REVIEWED_TOOL_TREE"
+          test -z "$(git status --porcelain)"
+          cp .github/workflows/release-maintenance-limited.yml "$DIAGNOSTIC_ROOT/reviewed-workflow.yml"
+          printf '%s\n' "$REVIEWED_TOOL_SHA" > "$DIAGNOSTIC_ROOT/reviewed-tool-sha.txt"
+      - name: Checkout exact development product, not request or tool revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 8ae9ee36ebec82f82e03185432601a830c865e95
+          path: sources/dev
+          persist-credentials: false
+      - name: Install exact separate SDK102 and runtime14 with SHA512 verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$DOTNET_INSTALL_DIR" && test ! -L "$DOTNET_INSTALL_DIR"
+          test ! -e "$PRIVATE_RUNTIME" && test ! -L "$PRIVATE_RUNTIME"
+          cd "$DIAGNOSTIC_ROOT/runtime-install"
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.102/dotnet-sdk-10.0.102-linux-x64.tar.gz --output sdk.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz --output dotnet.tar.gz
+          curl --fail --silent --show-error --location https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.14/aspnetcore-runtime-10.0.14-linux-x64.tar.gz --output aspnetcore.tar.gz
+          {
+            echo '7adf40e8e5547970391cfbe474c3874c6918ce3575ac398f376c78502134e1c8a2fa3da9aca281fdaeda81671f56c851ebe9e74c5b57c5a298bd45deba63565d  sdk.tar.gz'
+            echo '634326028645f38731c8c4e71a68356e4ca0d6b6607139a234ab760687f742063edaf33a1f20dda615742d2dc8300ca2ff857619d51fbb38090383b71334af89  dotnet.tar.gz'
+            echo 'dd024fd2616926a555b75cbf7a836f6dce998199f0596d9d75676dca2b9d59c8ee8673c6ac23473c0f1a4bdd59eb5cd02fe9ab097eeaf2dd8c8bd117c85e7031  aspnetcore.tar.gz'
+          } | sha512sum --check | tee archive-verification.txt
+          mkdir "$DOTNET_INSTALL_DIR" "$PRIVATE_RUNTIME"
+          tar -xzf sdk.tar.gz -C "$DOTNET_INSTALL_DIR"
+          tar -xzf dotnet.tar.gz -C "$PRIVATE_RUNTIME"
+          tar -xzf aspnetcore.tar.gz -C "$PRIVATE_RUNTIME"
+          {
+            echo "DOTNET_ROOT=$DOTNET_INSTALL_DIR"
+            echo "DOTNET_ROOT_X64=$DOTNET_INSTALL_DIR"
+            echo "DOTNET_HOST_PATH=$DOTNET_INSTALL_DIR/dotnet"
+          } >> "$GITHUB_ENV"
+          echo "$DOTNET_INSTALL_DIR" >> "$GITHUB_PATH"
+          test "$("$DOTNET_INSTALL_DIR/dotnet" --list-sdks)" = "10.0.102 [$DOTNET_INSTALL_DIR/sdk]"
+          test -z "$("$PRIVATE_RUNTIME/dotnet" --list-sdks)"
+          echo 'HOST_INSTALL sdk=10.0.102 private-runtime=10.0.14 sha512=PASS'
+      - name: Offline protocol and fail-closed request tests
+        working-directory: tools
+        run: python3 -m unittest discover -s eng/release-maintenance-limited -p 'test_*.py' -v
+      - name: Build one exact candidate binary and retain identities
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/release-maintenance-limited/prepare.py \
+            --source "$GITHUB_WORKSPACE/sources/dev" \
+            --dotnet "$DOTNET_INSTALL_DIR/dotnet" \
+            --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --output "$DIAGNOSTIC_ROOT/build-evidence" > "$DIAGNOSTIC_ROOT/prepare.log" 2>&1
+      - name: Run eighteen serial finite processes without retries
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/release-maintenance-limited/run.py \
+            --build "$DIAGNOSTIC_ROOT/build-evidence" \
+            --runtime-dotnet "$PRIVATE_RUNTIME/dotnet" \
+            --output "$DIAGNOSTIC_ROOT/results" > "$DIAGNOSTIC_ROOT/run.log" 2>&1
+      - name: Independently revalidate retained receipts and loaded identity closure
+        working-directory: tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 eng/release-maintenance-limited/validate.py \
+            --output "$DIAGNOSTIC_ROOT/results" \
+            --build "$DIAGNOSTIC_ROOT/build-evidence" \
+            --summary "$DIAGNOSTIC_ROOT/offline-summary.json" > "$DIAGNOSTIC_ROOT/offline-validation.log" 2>&1
+      - name: Retain raw measurements, identities and failures for three days only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: maintenance-limited-MTL1-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ env.DIAGNOSTIC_ROOT }}/*.json
+            ${{ env.DIAGNOSTIC_ROOT }}/*.txt
+            ${{ env.DIAGNOSTIC_ROOT }}/*.log
+            ${{ env.DIAGNOSTIC_ROOT }}/*.yml
+            ${{ env.DIAGNOSTIC_ROOT }}/runtime-install/archive-verification.txt
+            ${{ env.DIAGNOSTIC_ROOT }}/build-evidence/*.json
+            ${{ env.DIAGNOSTIC_ROOT }}/build-evidence/*.txt
+            ${{ env.DIAGNOSTIC_ROOT }}/build-evidence/*.log
+            ${{ env.DIAGNOSTIC_ROOT }}/results/*.json
+            ${{ env.DIAGNOSTIC_ROOT }}/results/*.jsonl
+            ${{ env.DIAGNOSTIC_ROOT }}/results/*.log
+            ${{ env.DIAGNOSTIC_ROOT }}/results/actual-binaries/**
