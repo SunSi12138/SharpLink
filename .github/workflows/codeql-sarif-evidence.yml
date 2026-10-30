@@ -1,0 +1,105 @@
+name: Isolated CodeQL SARIF evidence CQL2
+on:
+  push:
+    branches: [validation/codeql-sarif-c22-20261030-r2]
+    paths: [eng/codeql-sarif-evidence/REQUEST.json]
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  security-events: write
+concurrency:
+  group: isolated-codeql-sarif-CQL2
+  cancel-in-progress: false
+jobs:
+  evidence:
+    if: >-
+      github.run_attempt == 1 && github.repository == 'SunSi12138/SharpLink' && github.event.head_commit.message == 'run: isolated CodeQL SARIF CQL2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout request and reviewed wrapper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify one authorized request child
+        run: python eng/codeql-sarif-evidence/verify_request.py --record "$RUNNER_TEMP/cql2-evidence/request.json"
+      - name: Offline validator controls
+        run: python -m unittest discover -s eng/codeql-sarif-evidence -p 'test_*.py' -v
+      - name: Preserve only eight hash-bound tools outside the scan workspace
+        run: python eng/codeql-sarif-evidence/evidence.py stage --stage-dir "$RUNNER_TEMP/cql2-tools" --output "$RUNNER_TEMP/cql2-evidence"
+      - name: Clean checkout exact product at Actions working-directory root
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: c22b945f71c075c878e93a7c92bf4e45a8d33a6f
+          clean: true
+          persist-credentials: false
+      - name: Bind exact source and separate wrapper identities
+        run: python "$RUNNER_TEMP/cql2-tools/eng/codeql-sarif-evidence/evidence.py" before --source "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/cql2-evidence"
+      - name: Fetch and verify frozen official CodeQL bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --max-time 600 --output "$RUNNER_TEMP/codeql-bundle-linux64.tar.gz" 'https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.3/codeql-bundle-linux64.tar.gz'
+          printf '%s  %s\n' '64518dc413c8e7b5733fee2489e830a899bb1e3f28c8873b5869d5cc90164c5c' "$RUNNER_TEMP/codeql-bundle-linux64.tar.gz" | sha256sum --check --strict
+      - name: Initialize unchanged default C# none analysis
+        id: init
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
+        with:
+          languages: csharp
+          build-mode: none
+          source-root: .
+          db-location: ${{ runner.temp }}/cql2-db
+          tools: ${{ runner.temp }}/codeql-bundle-linux64.tar.gz
+          debug: 'false'
+          trap-caching: 'false'
+          dependency-caching: 'false'
+      - name: Record actual CLI and query pack bytes
+        run: python "$RUNNER_TEMP/cql2-tools/eng/codeql-sarif-evidence/evidence.py" toolchain --source "$GITHUB_WORKSPACE" --db "$RUNNER_TEMP/cql2-db" --codeql '${{ steps.init.outputs.codeql-path }}' --bundle "$RUNNER_TEMP/codeql-bundle-linux64.tar.gz" --output "$RUNNER_TEMP/cql2-evidence"
+      - name: Analyze once without uploading a GitHub analysis or database
+        id: analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
+        with:
+          category: /language:csharp
+          checkout_path: ${{ github.workspace }}
+          output: ${{ runner.temp }}/cql2-sarif
+          upload: 'never'
+          upload-database: 'false'
+      - name: Preserve full SARIF and validate execution completeness
+        if: always()
+        run: python "$RUNNER_TEMP/cql2-tools/eng/codeql-sarif-evidence/evidence.py" collect --source "$GITHUB_WORKSPACE" --db "$RUNNER_TEMP/cql2-db" --sarif "$RUNNER_TEMP/cql2-sarif" --output "$RUNNER_TEMP/cql2-evidence" --init-outcome '${{ steps.init.outcome }}' --analyze-outcome '${{ steps.analyze.outcome }}'
+      - name: Hash allowlisted evidence including incomplete outcomes
+        if: always()
+        run: python "$RUNNER_TEMP/cql2-tools/eng/codeql-sarif-evidence/evidence.py" finalize --output "$RUNNER_TEMP/cql2-evidence"
+      - name: Temporary SARIF and identity evidence only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: CQL2-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/cql2-evidence/request.json
+            ${{ runner.temp }}/cql2-evidence/check-outcomes.json
+            ${{ runner.temp }}/cql2-evidence/staged-tools.json
+            ${{ runner.temp }}/cql2-evidence/workspace-scope-before.json
+            ${{ runner.temp }}/cql2-evidence/workspace-scope-after.json
+            ${{ runner.temp }}/cql2-evidence/sarif-scope.json
+            ${{ runner.temp }}/cql2-evidence/incomplete-stage.json
+            ${{ runner.temp }}/cql2-evidence/source-identity.json
+            ${{ runner.temp }}/cql2-evidence/toolchain.json
+            ${{ runner.temp }}/cql2-evidence/effective-scope-before.json
+            ${{ runner.temp }}/cql2-evidence/effective-scope-after.json
+            ${{ runner.temp }}/cql2-evidence/step-outcomes.json
+            ${{ runner.temp }}/cql2-evidence/query-result-hashes.json
+            ${{ runner.temp }}/cql2-evidence/csharp.sarif
+            ${{ runner.temp }}/cql2-evidence/findings.json
+            ${{ runner.temp }}/cql2-evidence/completion.json
+            ${{ runner.temp }}/cql2-evidence/incomplete-before.json
+            ${{ runner.temp }}/cql2-evidence/incomplete-toolchain.json
+            ${{ runner.temp }}/cql2-evidence/incomplete-collect.json
+            ${{ runner.temp }}/cql2-evidence/artifact-hashes.json
