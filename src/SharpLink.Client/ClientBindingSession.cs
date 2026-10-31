@@ -290,7 +290,7 @@ internal sealed class ClientBindingSession
             var owns = true;
             try
             {
-                var packet = writer.BeginPacket(type, ProtocolV2FrameFlags.None, operationId);
+                var packet = writer.BeginPacket(type, ProtocolV2FrameFlags.None, checked((ulong)operationId));
                 switch (type)
                 {
                     case ProtocolV2FrameType.BindContract:

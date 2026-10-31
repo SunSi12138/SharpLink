@@ -7,8 +7,9 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
 {
     private readonly SharpLinkRuntimeOptions _options;
     private readonly Lock _registrationGate = new();
-    private readonly HashSet<RpcGeneratedManifestRegistration> _manifestRegistrations = [];
-    private readonly Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> _manifestCodecProviders = [];
+    private HashSet<RpcGeneratedManifestRegistration> _manifestRegistrations = [];
+    private Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> _manifestCodecProviders = [];
+    private object _registrationVersion = new();
     private int _disposed;
 
     internal SharpLinkRuntimeContext(
@@ -141,17 +142,80 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations,
         RpcGeneratedManifestRegistration? pendingRegistration = null)
     {
+        // Existing callers retain explicit validation. Callers holding a publication lock must
+        // migrate to Prepare outside / Commit inside; this wrapper is not a validation bypass.
+        using var publication = PrepareGeneratedCodecPublication(registrations, pendingRegistration);
+        CommitGeneratedCodecPublication(publication);
+    }
+
+    internal PreparedGeneratedCodecPublication PrepareGeneratedCodecPublication(
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations,
+        RpcGeneratedManifestRegistration? pendingRegistration = null,
+        bool adoptPendingRegistration = false)
+        => PrepareGeneratedCodecPublicationCore(registrations, pendingRegistration, adoptPendingRegistration, null);
+
+    private PreparedGeneratedCodecPublication PrepareGeneratedCodecPublicationCore(
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations,
+        RpcGeneratedManifestRegistration? pendingRegistration,
+        bool adoptPendingRegistration,
+        object? requiredVersion)
+    {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ArgumentNullException.ThrowIfNull(registrations);
+        if (adoptPendingRegistration && pendingRegistration is null)
+            throw new ArgumentException("Adoption requires the exact pending manifest registration.", nameof(pendingRegistration));
         RpcGeneratedManifestRegistration[] manifests;
+        Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> providers;
+        object version;
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            version = _registrationVersion;
+            if (requiredVersion is not null && !ReferenceEquals(requiredVersion, version))
+                throw new InvalidOperationException("Runtime Codec registry changed before adoption preparation.");
             manifests = [.. _manifestRegistrations];
+            providers = _manifestCodecProviders.ToDictionary(static pair => pair.Key,
+                static pair => new List<ManifestCodecProviderEntry>(pair.Value));
         }
-        ValidateReferencedCodecDependencies(manifests, registrations);
+        var codecs = ((RpcCodecProvider)Codecs).PrepareGeneratedRegistrations(registrations);
+        foreach (var manifest in manifests)
+            manifest.ThrowIfDisposed();
+        ValidateReferencedCodecDependencies(manifests, codecs.Registrations);
         if (pendingRegistration is not null)
-            ValidateReferencedCodecDependencies([pendingRegistration], registrations);
-        ((RpcCodecProvider)Codecs).PublishGeneratedRegistrations(registrations);
+        {
+            pendingRegistration.ThrowIfDisposed();
+            ValidateReferencedCodecDependencies([pendingRegistration], codecs.Registrations);
+        }
+        var nextManifests = new HashSet<RpcGeneratedManifestRegistration>(manifests);
+        if (adoptPendingRegistration && nextManifests.Add(pendingRegistration!))
+        {
+            var owner = pendingRegistration!.OwnerAssembly;
+            var provider = RpcGeneratedCodecResolver.GetProvider(pendingRegistration);
+            if (!providers.TryGetValue(owner, out var list))
+                providers.Add(owner, list = []);
+            list.Add(new ManifestCodecProviderEntry(pendingRegistration, provider));
+        }
+        return new PreparedGeneratedCodecPublication(this, version,
+            new PreparedCodecPublicationPayload(codecs, nextManifests, providers, pendingRegistration));
+    }
+
+    internal void CommitGeneratedCodecPublication(PreparedGeneratedCodecPublication publication)
+    {
+        ArgumentNullException.ThrowIfNull(publication);
+        // Take is one-shot even when a stale/foreign/disposed commit fails. No callbacks replay.
+        var payload = publication.Take();
+        lock (_registrationGate)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (!ReferenceEquals(publication.Owner, this) || !ReferenceEquals(publication.Version, _registrationVersion))
+                throw new InvalidOperationException("Prepared Runtime Codec publication is stale or belongs to another context.");
+            payload.PendingRegistration?.ThrowIfDisposed();
+            // Only framework-owned immutable maps and pre-created adoption records reach commit.
+            ((RpcCodecProvider)Codecs).CommitGeneratedRegistrations(payload.Codecs);
+            _manifestRegistrations = payload.Manifests;
+            _manifestCodecProviders = payload.Providers;
+            _registrationVersion = payload.NextVersion;
+        }
     }
 
     private static void ValidateReferencedCodecDependencies(
@@ -201,19 +265,18 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     internal void AdoptGeneratedManifest(RpcGeneratedManifestRegistration registration)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs;
+        object version;
         lock (_registrationGate)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (!_manifestRegistrations.Add(registration))
+            if (_manifestRegistrations.Contains(registration))
                 return;
-            var provider = RpcGeneratedCodecResolver.GetProvider(registration);
-            if (!_manifestCodecProviders.TryGetValue(registration.Manifest.OwnerAssembly, out var providers))
-            {
-                providers = [];
-                _manifestCodecProviders.Add(registration.Manifest.OwnerAssembly, providers);
-            }
-            providers.Add(new ManifestCodecProviderEntry(registration, provider));
+            version = _registrationVersion;
+            codecs = CreateGeneratedCodecSnapshot();
         }
+        using var publication = PrepareGeneratedCodecPublicationCore(codecs, registration, true, version);
+        CommitGeneratedCodecPublication(publication);
     }
 
     IRpcCodecProvider IRpcContractCodecProviderResolver.GetContractCodecProvider(System.Reflection.Assembly ownerAssembly)
@@ -262,11 +325,12 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
 
     internal void ReleaseGeneratedManifest(RpcGeneratedManifestRegistration registration)
     {
+        var nextVersion = new object();
         ((RpcCodecProvider)Codecs).RemoveResolvedCodecs(registration);
         lock (_registrationGate)
         {
             _manifestRegistrations.Remove(registration);
-            if (_manifestCodecProviders.TryGetValue(registration.Manifest.OwnerAssembly, out var providers))
+            if (_manifestCodecProviders.TryGetValue(registration.OwnerAssembly, out var providers))
             {
                 for (var index = providers.Count - 1; index >= 0; index--)
                 {
@@ -274,8 +338,9 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
                         providers.RemoveAt(index);
                 }
                 if (providers.Count == 0)
-                    _manifestCodecProviders.Remove(registration.Manifest.OwnerAssembly);
+                    _manifestCodecProviders.Remove(registration.OwnerAssembly);
             }
+            _registrationVersion = nextVersion;
         }
         registration.Dispose();
     }
@@ -306,9 +371,38 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             throw new AggregateException(failures);
     }
 
-    private readonly record struct ManifestCodecProviderEntry(
+    internal readonly record struct ManifestCodecProviderEntry(
         RpcGeneratedManifestRegistration Registration,
         IRpcCodecProvider Provider);
+
+    // This is an exact-version foundation, not the still-required unrelated-publication merge.
+    // The owner of the preparation must keep dependency/candidate lifetimes until commit or rollback.
+    internal sealed class PreparedGeneratedCodecPublication : IDisposable
+    {
+        private PreparedCodecPublicationPayload? _payload;
+        internal SharpLinkRuntimeContext Owner { get; }
+        internal object Version { get; }
+        internal PreparedGeneratedCodecPublication(SharpLinkRuntimeContext owner, object version,
+            PreparedCodecPublicationPayload payload)
+        { Owner = owner; Version = version; _payload = payload; }
+        internal PreparedCodecPublicationPayload Take()
+            => Interlocked.Exchange(ref _payload, null)
+                ?? throw new InvalidOperationException("Prepared Codec publication has already been consumed or disposed.");
+        public void Dispose() => Interlocked.Exchange(ref _payload, null);
+    }
+
+    internal sealed class PreparedCodecPublicationPayload(
+        RpcCodecProvider.PreparedGeneratedRegistrations codecs,
+        HashSet<RpcGeneratedManifestRegistration> manifests,
+        Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> providers,
+        RpcGeneratedManifestRegistration? pendingRegistration)
+    {
+        internal RpcCodecProvider.PreparedGeneratedRegistrations Codecs { get; } = codecs;
+        internal HashSet<RpcGeneratedManifestRegistration> Manifests { get; } = manifests;
+        internal Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> Providers { get; } = providers;
+        internal RpcGeneratedManifestRegistration? PendingRegistration { get; } = pendingRegistration;
+        internal object NextVersion { get; } = new();
+    }
 }
 
 /// <summary>Builds and validates an immutable <see cref="SharpLinkRuntimeContext"/>.</summary>

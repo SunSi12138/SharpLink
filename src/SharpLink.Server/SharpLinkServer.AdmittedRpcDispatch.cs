@@ -44,54 +44,15 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!serviceSelection.TryGetService(out var serviceInfo))
-            {
-                ValueTask responseSend;
-                try
-                {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unavailable,
-                            "RPC module is draining"),
-                        connection.ConnectionToken);
-                }
-                finally
-                {
-                    if (admittedCallState is not null)
-                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
-                }
-                return responseSend;
-            }
-            if (!serviceInfo.AcceptsCalls)
-            {
-                ValueTask responseSend;
-                try
-                {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unavailable,
-                            "RPC module is draining"),
-                        connection.ConnectionToken);
-                }
-                finally
-                {
-                    if (admittedCallState is not null)
-                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
-                }
-                return responseSend;
-            }
-
-            var resolved = new ResolvedMethodCall(serviceInfo, retainedAdmissionPayload!.SelectedMethod);
-            if (!resolved.Method.IsKnown)
+            var selected = new SelectedMethodCall(serviceSelection, retainedAdmissionPayload!.SelectedMethod);
+            if (!selected.Method.IsKnown)
             {
                 try
                 {
                     return session.SendRpcErrorWithBackpressureAsync(requestId,
-                        new SharpLinkException(ReferenceEquals(resolved.Method, RpcMethodFacts.UnknownMethod)
+                        new SharpLinkException(ReferenceEquals(selected.Method, RpcMethodFacts.UnknownMethod)
                                 ? SharpLinkErrorCode.Unimplemented : SharpLinkErrorCode.Internal,
-                            ReferenceEquals(resolved.Method, RpcMethodFacts.UnknownMethod)
+                            ReferenceEquals(selected.Method, RpcMethodFacts.UnknownMethod)
                                 ? $"Method {request.MethodHash} is not implemented." : "The RPC stub returned invalid method facts."),
                         connection.ConnectionToken);
                 }
@@ -127,6 +88,26 @@ internal sealed partial class SharpLinkServer
                     requestId, rejection, connection.ConnectionToken);
             }
             var requestOwner = requestPermit;
+
+            ResolvedMethodCall resolved;
+            bool protectedSelection;
+            try
+            {
+                protectedSelection = TryProtectSelectedInvocation(selected.Selection, selected.Method, requestOwner, out resolved);
+            }
+            catch
+            {
+                try { retainedAdmissionPayload?.Dispose(); }
+                finally { ReleaseDispatchResources(admittedCallState, requestId, requestCancellationMap, connection, requestOwner); }
+                throw;
+            }
+            if (!protectedSelection)
+            {
+                return RejectRetiredSelectedRpcAsync(connection, requestId, admittedCallState,
+                    requestCancellationMap, requestOwner, retainedAdmissionPayload);
+            }
+            var serviceInfo = resolved.Registration;
+
 
             if (isCompressed && ShouldUsePersistentDecode(flags, serviceInfo, request, payload))
             {

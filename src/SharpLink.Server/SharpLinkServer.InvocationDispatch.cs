@@ -10,7 +10,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
-        ResolvedMethodCall boundMethod,
+        SelectedMethodCall boundMethod,
         ServerRequestEnvelope boundRequest,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
@@ -42,17 +42,16 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            var resolved = boundMethod;
-            var serviceInfo = resolved.Registration;
+            var selected = boundMethod;
 
-            if (!resolved.Method.IsKnown)
+            if (!selected.Method.IsKnown)
             {
                 try
                 {
                     return session.SendRpcErrorWithBackpressureAsync(requestId,
-                        new SharpLinkException(ReferenceEquals(resolved.Method, RpcMethodFacts.UnknownMethod)
+                        new SharpLinkException(ReferenceEquals(selected.Method, RpcMethodFacts.UnknownMethod)
                                 ? SharpLinkErrorCode.Unimplemented : SharpLinkErrorCode.Internal,
-                            ReferenceEquals(resolved.Method, RpcMethodFacts.UnknownMethod)
+                            ReferenceEquals(selected.Method, RpcMethodFacts.UnknownMethod)
                                 ? $"Method {request.MethodHash} is not implemented." : "The RPC stub returned invalid method facts."),
                         connection.ConnectionToken);
                 }
@@ -70,7 +69,7 @@ internal sealed partial class SharpLinkServer
                     requestId,
                     request.RpcDeadline,
                     serverLoopToken,
-                    serviceInfo.ModuleCancellation,
+                    selected.ModuleCancellation,
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
@@ -78,7 +77,7 @@ internal sealed partial class SharpLinkServer
                 try
                 {
                     admissionTask = admissionProgram.Controller.AcquireAsync(
-                        CreateAdmissionContext(connection, resolved.Method, request),
+                        CreateAdmissionContext(connection, selected.Method, request),
                         checked((int)payload.Length),
                         allowQueue: true,
                         deadline: request.RpcDeadline,
@@ -110,7 +109,7 @@ internal sealed partial class SharpLinkServer
                 }
                 if (!admissionTask.IsCompletedSuccessfully)
                 {
-                    if (!TryCopySelectedAdmissionPayload(payload, flags, serviceInfo, resolved.Method, request, out var queuedRetainedPayload))
+                    if (!TryCopySelectedAdmissionPayload(payload, flags, selected.Selection, selected.Method, request, out var queuedRetainedPayload))
                     {
                         admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
                         return RejectQueuedAdmissionForRetainedBudgetAsync(
@@ -125,7 +124,7 @@ internal sealed partial class SharpLinkServer
                     ReservePreAdmissionRequestStreams(
                         session,
                         requestId,
-                        resolved.ClientStreamCount,
+                        selected.ClientStreamCount,
                         admittedCallState);
                     return AwaitRpcAdmissionAsync(
                         admissionTask,
@@ -187,6 +186,26 @@ internal sealed partial class SharpLinkServer
                     requestId, rejection, connection.ConnectionToken);
             }
             var requestOwner = requestPermit;
+
+            ResolvedMethodCall resolved;
+            bool protectedSelection;
+            try
+            {
+                protectedSelection = TryProtectSelectedInvocation(selected.Selection, selected.Method, requestOwner, out resolved);
+            }
+            catch
+            {
+                try { retainedAdmissionPayload?.Dispose(); }
+                finally { ReleaseDispatchResources(admittedCallState, requestId, requestCancellationMap, connection, requestOwner); }
+                throw;
+            }
+            if (!protectedSelection)
+            {
+                return RejectRetiredSelectedRpcAsync(connection, requestId, admittedCallState,
+                    requestCancellationMap, requestOwner, retainedAdmissionPayload);
+            }
+            var serviceInfo = resolved.Registration;
+
 
             if (isCompressed && ShouldUsePersistentDecode(flags, serviceInfo, request, payload))
             {
@@ -544,6 +563,7 @@ internal sealed partial class SharpLinkServer
         {
             if (requestPermit.IsActive)
                 requestPermit.TransferDecodedBytesTo(callState);
+            requestPermit.PreserveCallStateForPhysicalCompletion(callState, requestId);
             requestCancellationMap.TryRemove(requestId, callState);
             callState.Dispose();
         }

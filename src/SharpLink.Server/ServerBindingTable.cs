@@ -110,32 +110,13 @@ internal sealed class ServerBindingTable
         return entry is not null && entry.Token == token ? entry : null;
     }
 
-    internal bool TryAcquire(ulong token, out ServerBindingLease lease)
-    {
-        var entry = Capture(token);
-        if (entry is null)
-        {
-            lease = default;
-            return false;
-        }
-        return TryAcquireCaptured(entry, out lease);
-    }
-
-    internal bool TryAcquireCaptured(ServerBindingEntry entry, out ServerBindingLease lease)
+    // A captured-before-Release entry remains its exact old selection, never the next
+    // slot occupant. This check is not a disposal fence or a physical admission lease.
+    // Existing request permits and the post-permit module Running gate own that boundary.
+    internal bool CanUseCaptured(ServerBindingEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        lease = default;
-        if (!ReferenceEquals(entry.Owner, this) || IsClosed || !entry.Registration.TryAcquire(out var acquired))
-            return false;
-        // This final observation is the Session admission linearization point. If Close
-        // wins first, undo the physical owner. A previously admitted lease may finish.
-        if (IsClosed)
-        {
-            acquired.Release();
-            return false;
-        }
-        lease = acquired;
-        return true;
+        return ReferenceEquals(entry.Owner, this) && !IsClosed && !entry.Registration.IsRetired;
     }
 
     internal bool Release(ulong token)

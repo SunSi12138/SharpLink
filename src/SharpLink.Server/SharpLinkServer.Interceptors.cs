@@ -2,6 +2,8 @@ namespace SharpLink.Server;
 
 internal sealed partial class SharpLinkServer
 {
+    internal Action<ServerCallCancellationLease>? BeforeGeneratedPhysicalInvocationForTesting { get; set; }
+
     private ValueTask InvokeServiceAsync(
         in ResolvedMethodCall resolved,
         ServerConnectionState connection,
@@ -10,11 +12,25 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
-        SharpLinkCallContextSnapshot context)
+        SharpLinkCallContextSnapshot context,
+        ServerRequestPermit requestOwner)
     {
         var registration = resolved.Registration;
+        requestOwner.VerifyProtectedRegistration(registration);
+        IRpcGeneratedServerBridge generatedBridge = connection.GeneratedBridge;
+        if (generatedBridge is ServerGeneratedBridge bridge &&
+            resolved.Method.Kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
+        {
+            if (!connection.CallCancellations.TryCapture(requestId,
+                    static (id, state) => state.CaptureLease(id), out var callLease))
+                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.InternalState,
+                    "Generated streaming requires its original call-state owner before invocation.");
+            requestOwner.RememberPhysicalCallState(in callLease);
+            BeforeGeneratedPhysicalInvocationForTesting?.Invoke(callLease);
+            generatedBridge = bridge.WithPhysicalOwner(requestOwner);
+        }
         if (registration.TryGetStaticSingleton(
-                connection.GeneratedBridge,
+                generatedBridge,
                 requestId,
                 out var singleton))
         {
@@ -22,7 +38,7 @@ internal sealed partial class SharpLinkServer
                 resolved,
                 singleton,
                 session,
-                connection.GeneratedBridge,
+                generatedBridge,
                 requestId,
                 arguments,
                 output,
@@ -30,65 +46,15 @@ internal sealed partial class SharpLinkServer
                 context);
         }
 
-        var isStream = false;
-        var hasRequestStreams = false;
-        if (resolved.IsDynamicModule)
-        {
-            isStream = resolved.Method.Kind is RpcMethodKind.ClientStreaming or
-                RpcMethodKind.ServerStreaming or
-                RpcMethodKind.DuplexStreaming;
-            hasRequestStreams = resolved.Method.Kind is RpcMethodKind.ClientStreaming or
-                RpcMethodKind.DuplexStreaming;
-        }
-
-        SharpLinkDynamicModuleLease dynamicSingletonLease = default;
-        try
-        {
-            if (registration.TryAcquireDynamicSingleton(
-                    isStream,
-                    connection.GeneratedBridge,
-                    requestId,
-                    out var dynamicSingleton,
-                    out dynamicSingletonLease))
-            {
-                var invocation = InvokeServiceTrackedAsync(
-                    resolved,
-                    dynamicSingleton,
-                    session,
-                    connection.GeneratedBridge,
-                    requestId,
-                    arguments,
-                    output,
-                    cancellationToken,
-                    context);
-                return CompleteDynamicSingletonInvocationAsync(
-                    invocation,
-                    dynamicSingletonLease,
-                    session,
-                    requestId,
-                    hasRequestStreams);
-            }
-        }
-        catch (Exception exception)
-        {
-            var failedTelemetry = StartServerTelemetryCall(
-                resolved.Method, requestId);
-            failedTelemetry.Complete(exception);
-            return CompleteDynamicSingletonInvocationAsync(
-                ValueTask.FromException(exception),
-                dynamicSingletonLease,
-                session,
-                requestId,
-                hasRequestStreams);
-        }
+        var hasRequestStreams = resolved.ClientStreamCount != 0;
 
         ValueTask<ServiceLease> acquisition;
         try
         {
-            acquisition = registration.AcquireAsync(
+            acquisition = registration.AcquirePreparedAsync(
                 connection,
-                isStream,
-                connection.GeneratedBridge,
+                requestOwner,
+                generatedBridge,
                 requestId);
         }
         catch (Exception exception)
@@ -105,66 +71,26 @@ internal sealed partial class SharpLinkServer
                 acquisition,
                 resolved,
                 session,
-                connection.GeneratedBridge,
+                generatedBridge,
                 requestId,
                 arguments,
                 output,
                 cancellationToken,
                 context,
-                hasRequestStreams);
+                hasRequestStreams, requestOwner);
         }
 
         return InvokeAcquiredServiceAsync(
             resolved,
             acquisition.Result,
             session,
-            connection.GeneratedBridge,
+            generatedBridge,
             requestId,
             arguments,
             output,
             cancellationToken,
             context,
-            hasRequestStreams);
-    }
-
-    private static async ValueTask CompleteDynamicSingletonInvocationAsync(
-        ValueTask invocation,
-        SharpLinkDynamicModuleLease moduleLease,
-        RpcSession session,
-        long requestId,
-        bool hasRequestStreams)
-    {
-        Exception? terminalException = null;
-        try
-        {
-            await invocation.ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            terminalException = exception;
-        }
-
-        try
-        {
-            await CompleteDynamicRequestStreamsAsync(session, requestId, hasRequestStreams)
-                .ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            terminalException = CombineTerminalExceptions(terminalException, exception);
-        }
-
-        try
-        {
-            moduleLease.Dispose();
-        }
-        catch (Exception exception)
-        {
-            terminalException = CombineTerminalExceptions(terminalException, exception);
-        }
-
-        if (terminalException is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalException).Throw();
+            hasRequestStreams, requestOwner);
     }
 
     private ValueTask InvokeAcquiredServiceAsync(
@@ -177,9 +103,10 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams)
+        bool hasRequestStreams,
+        ServerRequestPermit requestOwner)
     {
-        if (!lease.RequiresDisposal)
+        if (!lease.RequiresDisposal && !hasRequestStreams)
         {
             return InvokeServiceTrackedAsync(
                 resolved,
@@ -203,7 +130,7 @@ internal sealed partial class SharpLinkServer
             output,
             cancellationToken,
             context,
-            hasRequestStreams);
+            hasRequestStreams, requestOwner);
     }
 
     private async ValueTask InvokeServiceAfterAcquisitionAsync(
@@ -216,7 +143,8 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams)
+        bool hasRequestStreams,
+        ServerRequestPermit requestOwner)
     {
         ServiceLease lease;
         try
@@ -241,7 +169,7 @@ internal sealed partial class SharpLinkServer
             output,
             cancellationToken,
             context,
-            hasRequestStreams).ConfigureAwait(false);
+            hasRequestStreams, requestOwner).ConfigureAwait(false);
     }
 
     private ValueTask InvokeServiceTrackedAsync(
@@ -296,7 +224,8 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams)
+        bool hasRequestStreams,
+        ServerRequestPermit requestOwner)
     {
         Exception? terminalException = null;
         try
@@ -315,6 +244,18 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             terminalException = exception;
+        }
+
+        if (requestOwner.HasPhysicalTails)
+        {
+            // Keep the logical terminal prompt. Physical cleanup, including service/scope
+            // disposal, transfers to a supervised owner rather than delaying the RPC result.
+            var cleanup = CompletePhysicalServiceCleanupAsync(requestOwner, lease, session, requestId, hasRequestStreams);
+            requestOwner.AttachPhysicalServiceCleanup(cleanup);
+            TrackServerRuntimeTask(cleanup, "GeneratedPhysicalServiceCleanup");
+            if (terminalException is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalException).Throw();
+            return;
         }
 
         try
@@ -338,6 +279,22 @@ internal sealed partial class SharpLinkServer
 
         if (terminalException is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalException).Throw();
+    }
+
+    private static async Task CompletePhysicalServiceCleanupAsync(ServerRequestPermit owner,
+        ServiceLease lease, RpcSession session, long requestId, bool hasRequestStreams)
+    {
+        await owner.JoinPhysicalTailsAsync().ConfigureAwait(false);
+        Exception? failure = null;
+        try
+        {
+            await CompleteDynamicRequestStreamsAsync(session, requestId, hasRequestStreams).ConfigureAwait(false);
+        }
+        catch (Exception exception) { failure = exception; }
+        try { await lease.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception exception) { failure = CombineTerminalExceptions(failure, exception); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private static Exception CombineTerminalExceptions(Exception? first, Exception next)

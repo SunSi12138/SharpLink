@@ -129,7 +129,7 @@ internal sealed partial class SharpLinkServer
                 using var callContextScope = SharpLinkCallContext.Push(callContext);
                 var invokeTask = InvokeServiceAsync(
                     in resolved, connection, session, requestId,
-                    request.Arguments, output: null, invokeToken, callContext);
+                    request.Arguments, output: null, invokeToken, callContext, requestOwner);
                 if (!invokeTask.IsCompletedSuccessfully)
                 {
                     callState = EnsureTrackedCallState(
@@ -242,7 +242,7 @@ internal sealed partial class SharpLinkServer
             using var callContextScope = SharpLinkCallContext.Push(responseCallContext);
             var invokeTask = InvokeServiceAsync(
                 in resolved, connection, session, requestId,
-                request.Arguments, writer, invokeToken, responseCallContext);
+                request.Arguments, writer, invokeToken, responseCallContext, requestOwner);
             if (!invokeTask.IsCompletedSuccessfully)
             {
                 callState = EnsureTrackedCallState(

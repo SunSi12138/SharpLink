@@ -435,30 +435,49 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
         var runtimeContext = _runtimeContextBuilder.Compile();
         var manifests = runtimeContext.GeneratedManifests;
-        var services = CompileServicePlan(
-            manifests,
-            _automaticServiceRegistration,
-            _enabledServices.ToFrozenSet(),
-            _excludedServices.ToFrozenSet(),
-            [.. _replacementServices]);
+        ServerStaticFactsPreparation? factsPreparation = null;
+        try
+        {
+            factsPreparation = ServerStaticFactsPreparation.Capture(manifests);
+            var services = CompileServicePlan(
+                manifests,
+                factsPreparation,
+                _automaticServiceRegistration,
+                _enabledServices.ToFrozenSet(),
+                _excludedServices.ToFrozenSet(),
+                [.. _replacementServices]);
+            factsPreparation.SealForPlan(services);
 
-        return new ServerBuildPlan(
-            new ServerRuntimeResources(transport),
-            runtimeContext,
-            services,
-            _responseCompressionPolicy,
-            _heartbeatCheckInterval,
-            _heartbeatTimeout,
-            _rpcSessionFlushOptions,
-            _loggerFactory ?? NullLoggerFactory.Instance,
-            _authenticator,
-            _authenticationRequired,
-            [.. _interceptors],
-            _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
-            _serviceProvider,
-            _admissionControlOptions?.CloneValidated(),
-            _connectionAdmissionOptions?.CloneValidated() ??
-                new SharpLinkConnectionAdmissionOptions().CloneValidated());
+            return new ServerBuildPlan(
+                new ServerRuntimeResources(transport, factsPreparation),
+                runtimeContext,
+                factsPreparation,
+                services,
+                _responseCompressionPolicy,
+                _heartbeatCheckInterval,
+                _heartbeatTimeout,
+                _rpcSessionFlushOptions,
+                _loggerFactory ?? NullLoggerFactory.Instance,
+                _authenticator,
+                _authenticationRequired,
+                [.. _interceptors],
+                _exceptionMapper ?? new DefaultRpcExceptionMapper(_includeExceptionDetails),
+                _serviceProvider,
+                _admissionControlOptions?.CloneValidated(),
+                _connectionAdmissionOptions?.CloneValidated() ??
+                    new SharpLinkConnectionAdmissionOptions().CloneValidated());
+        }
+        catch (ServerDeclaredMethodFactsException exception) when (
+            exception.Code == SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded)
+        {
+            factsPreparation?.Dispose();
+            throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, exception.Message, exception);
+        }
+        catch
+        {
+            factsPreparation?.Dispose();
+            throw;
+        }
     }
 
     private void ValidateTransportSecurity(IServerTransportListener transport)
@@ -556,6 +575,7 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                         .Build(serviceProvider),
                     static value => SharpLinkAsyncCleanup.DisposeSynchronously(value),
                     SynchronousBuildResourceMetadata.FrameworkOwned("Server service registration"));
+                plan.FactsPreparation.Prepare(entry.ContractId, registration);
                 registrationsByContract.Add(entry.ContractId, registration);
             }
 
@@ -580,12 +600,14 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 plan.ExceptionMapper,
                 new ServerServiceCleanup(services.Values, ownedServiceProvider),
                 serviceProvider,
+                plan.DeclaredFactsQuota,
                 staticManifests,
                 admissionController,
                 connectionAdmission,
                 ServerShutdownPlan.Default,
                 SharpLinkServer.CreateFrameworkTaskSupervisor(logger));
             var server = new SharpLinkServer(composition);
+            plan.FactsPreparation.Commit();
             transaction.Commit();
             plan.Resources.MarkTransferred();
             CompleteBuild();
@@ -609,6 +631,7 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
 
     private static ServerServiceRegistrationPlanEntry[] CompileServicePlan(
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
+        ServerStaticFactsPreparation factsPreparation,
         bool automaticServiceRegistration,
         FrozenSet<Type> enabledServices,
         FrozenSet<Type> excludedServices,
@@ -619,27 +642,36 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
             replacementTypes.Add(replacementServices[replacementIndex].Key);
         var contracts = new Dictionary<long, (SharpLinkGeneratedContractDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
         var services = new Dictionary<long, (SharpLinkGeneratedServiceDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
+        foreach (var captured in factsPreparation.Contracts)
+            contracts.Add(captured.Contract!.ContractId, (captured.Contract, captured.Manifest!));
         for (var manifestIndex = 0; manifestIndex < manifests.Count; manifestIndex++)
         {
             var manifest = manifests[manifestIndex];
             ValidateManifest(manifest);
-            for (var index = 0; index < manifest.Contracts.Count; index++)
+            var declaredServices = manifest.Services;
+            var serviceCount = declaredServices.Count;
+            if (serviceCount < 0 || serviceCount > factsPreparation.ContractCount)
+                throw new ServerDeclaredMethodFactsException(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    "Static service enumeration exceeds the bounded declared contract domain.");
+            var index = 0;
+            foreach (var incoming in declaredServices)
             {
-                var incoming = manifest.Contracts[index];
-                if (contracts.TryGetValue(incoming.ContractId, out var existing))
-                    throw CreateBuildConflict("Contract", incoming, manifest, existing.Descriptor, existing.Manifest);
-                contracts.Add(incoming.ContractId, (incoming, manifest));
-            }
-            for (var index = 0; index < manifest.Services.Count; index++)
-            {
-                var incoming = manifest.Services[index];
+                if (index == serviceCount || incoming is null || !ReferenceEquals(declaredServices[index], incoming) ||
+                    !contracts.ContainsKey(incoming.ContractId))
+                    throw new ServerDeclaredMethodFactsException(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                        "Static service count, identity or declared contract changed during compilation.");
                 if (services.TryGetValue(incoming.ContractId, out var existing) &&
                     !replacementTypes.Contains(incoming.ContractType))
                 {
                     throw CreateBuildConflict("Service", incoming, manifest, existing.Descriptor, existing.Manifest);
                 }
                 services.TryAdd(incoming.ContractId, (incoming, manifest));
+                index++;
             }
+            if (index != serviceCount || declaredServices.Count != serviceCount ||
+                !ReferenceEquals(manifest.Services, declaredServices))
+                throw new ServerDeclaredMethodFactsException(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    "Static service enumeration changed during compilation.");
         }
 
         var definitions = new List<ServerServiceRegistrationPlanEntry>(services.Count);

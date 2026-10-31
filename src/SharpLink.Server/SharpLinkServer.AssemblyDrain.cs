@@ -9,6 +9,7 @@ internal sealed partial class SharpLinkServer
         TimeSpan gracefulTimeout,
         CancellationToken cancellationToken = default)
     {
+        ThrowIfRegistrationCallbackReentry();
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
         Task<SharpLinkAssemblyUnregisterResult> operation;
@@ -52,6 +53,7 @@ internal sealed partial class SharpLinkServer
                     _unregisterOperations.Remove(assembly);
                     throw;
                 }
+                module.TryBeginDraining();
                 RetireBindingGroup(retiringBindings);
                 Volatile.Write(ref _services, nextServices);
                 _registryGeneration = generation;
@@ -77,10 +79,7 @@ internal sealed partial class SharpLinkServer
         TimeSpan gracefulTimeout)
     {
         module.TryBeginDraining();
-        ServerBindingAdmissionGroup[] bindingGroups;
-        lock (_registryGate)
-            bindingGroups = CaptureModuleBindingGroupsLocked(module);
-        var drainTask = Task.WhenAll(module.WaitForDrainAsync(), BindingGroupsDrained(bindingGroups));
+        var drainTask = module.WaitForDrainAsync();
         if (!drainTask.IsCompleted)
         {
             if (!await SharpLinkDynamicModule.WaitForDrainAsync(
@@ -99,7 +98,7 @@ internal sealed partial class SharpLinkServer
                     return new SharpLinkAssemblyUnregisterResult
                     {
                         ReferencesReleased = false,
-                        RemainingCalls = Math.Max(module.RemainingCalls, RemainingBindingCalls(bindingGroups)),
+                        RemainingCalls = module.RemainingCalls,
                         RemainingStreams = module.RemainingStreams
                     };
                 }
@@ -143,12 +142,9 @@ internal sealed partial class SharpLinkServer
 
     private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
     {
-        ServerBindingAdmissionGroup[] bindingGroups;
-        lock (_registryGate)
-            bindingGroups = CaptureModuleBindingGroupsLocked(module);
-        // This is an additional mandatory owner fence, not a substitute for the still
-        // required persistent-decode/physical-tail lease transfer described in the S1 collision note.
-        await BindingGroupsDrained(bindingGroups).ConfigureAwait(false);
+        // This exact existing module fence now includes cold preparations and the single
+        // post-permit physical invocation lease; there is no binding-group call counter.
+        await module.WaitForDrainAsync().ConfigureAwait(false);
         ServiceRegistration[] removedServices;
         RpcGeneratedManifestRegistration codecRegistration;
         lock (_registryGate)
@@ -260,6 +256,8 @@ internal sealed partial class SharpLinkServer
             modules = [.. _dynamicModules.Values];
             var currentServices = _services.Values.ToArray();
             var detachedServices = _detachedModuleServices.Values.ToArray();
+            foreach (var module in modules)
+                module.TryBeginDraining();
             RetireBindingGroup(currentServices);
             foreach (var registrations in detachedServices)
                 RetireBindingGroup(registrations);

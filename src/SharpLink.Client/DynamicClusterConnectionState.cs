@@ -128,7 +128,7 @@ internal sealed partial class SharpLinkClient
             }
             else
             {
-                if (!connection.HasExhaustedProtocolIdentity)
+                if (!connection.RequiresCapacitySafeDrain)
                     _retiringConnections.Add(connection);
                 disposeNow = false;
             }

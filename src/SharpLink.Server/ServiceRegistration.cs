@@ -110,6 +110,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal IRpcStub Stub { get; }
     internal SharpLinkServiceLifetime Lifetime { get; }
     internal ServerBindingRegistration? Binding { get; set; }
+    internal ServerDeclaredMethodFacts? DeclaredFacts { get; set; }
     internal SharpLinkDynamicModule? Module { get; }
     // One immutable weak identity per dynamic registration. Queued attempts borrow it without
     // allocating a weak handle, and the identity never owns the registration's lifetime.
@@ -179,6 +180,35 @@ internal sealed class ServiceRegistration : IAsyncDisposable
 
         service = Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId);
         return true;
+    }
+
+    // Called only after the original request permit. No activation/provider/stub access
+    // occurs until the existing module gate has admitted this exact selected registration.
+    internal bool TryAcquireInvocationOwnership(RpcMethodFacts method, out SharpLinkDynamicModuleLease lease)
+    {
+        lease = default;
+        if (Volatile.Read(ref _disposed) != 0)
+            return false;
+        var isStream = method.ClientStreamCount != 0 || method.Kind is
+            RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming;
+        return !_hasModule || Module!.TryAcquire(isStream, out lease);
+    }
+
+    internal ValueTask<ServiceLease> AcquirePreparedAsync(
+        ServerConnectionState connection, ServerRequestPermit requestOwner,
+        IRpcGeneratedServerBridge generatedBridge, long requestId)
+    {
+        requestOwner.VerifyProtectedRegistration(this);
+        if (Volatile.Read(ref _disposed) != 0)
+            throw CreateDisposedRegistrationException();
+        // The request permit owns the sole module lease through decode and physical tails.
+        // Activation consumes its proof; it must not call TryAcquire again.
+        if (Lifetime == SharpLinkServiceLifetime.Singleton)
+            return ValueTask.FromResult(new ServiceLease(
+                Volatile.Read(ref _singleton) ?? GetOrCreateSingleton(generatedBridge, requestId)));
+        if (Lifetime == SharpLinkServiceLifetime.Connection)
+            return connection.AcquireServiceAsync(this, default, generatedBridge, requestId);
+        return AcquirePerCallAsync(default, generatedBridge, requestId);
     }
 
     internal static ServiceRegistration CreateSingleton(
@@ -323,24 +353,35 @@ internal sealed class ServiceRegistration : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        // Scoped registrations never own a singleton and never enter GetOrCreateSingleton.
+        object? singleton = null;
         var singletonGate = _singletonGate;
         if (singletonGate is null)
         {
-            Interlocked.Exchange(ref _disposed, 1);
-            return;
-        }
-
-        object? singleton;
-        lock (singletonGate)
-        {
             if (Interlocked.Exchange(ref _disposed, 1) != 0)
                 return;
-            singleton = _singleton;
-            _singleton = null;
         }
-        if (_ownsSingleton && singleton is not null)
-            await ServiceLease.DisposeServiceAsync(singleton).ConfigureAwait(false);
+        else
+        {
+            lock (singletonGate)
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                    return;
+                singleton = _singleton;
+                _singleton = null;
+            }
+        }
+        try
+        {
+            if (_ownsSingleton && singleton is not null)
+                await ServiceLease.DisposeServiceAsync(singleton).ConfigureAwait(false);
+        }
+        finally
+        {
+            // This disposal runs only after published physical owners or failed preparation
+            // cleanup have finished. Cleanup failure must not strand the facts reservation.
+            DeclaredFacts?.Dispose();
+            DeclaredFacts = null;
+        }
     }
 
     private object GetOrCreateSingleton(

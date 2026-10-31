@@ -20,7 +20,7 @@ public sealed class Protocol3IdentityExhaustionPublicationTests
             "identity-exhaustion-publication", input.Reader, output.Writer,
             RpcSessionTestFixture.ClientOptions(context), completeHandshake: false);
         var authority = new Protocol3BindingAuthority(Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default);
-        Ensure(session.TryCompleteHandshake(new NegotiatedSessionOptions(0,
+        Ensure(session.TryCompleteHandshake(new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
             ProtocolV2Negotiator.MandatoryCapabilities, context.Protocol.MaxFramePayloadBytes,
             context.FlowControl.StreamReceiveWindowBytes, context.FlowControl.ConnectionReceiveWindowBytes,
             authority: authority)));

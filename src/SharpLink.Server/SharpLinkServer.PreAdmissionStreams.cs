@@ -11,7 +11,7 @@ internal sealed partial class SharpLinkServer
     private bool TryCopySelectedAdmissionPayload(
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
-        ServiceRegistration service,
+        QueuedServiceSelection service,
         RpcMethodFacts method,
         in ServerRequestEnvelope request,
         out ServerRetainedAdmissionPayload? retainedPayload)
@@ -278,13 +278,13 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
     internal ServerRequestEnvelope SelectedRequest { get; private set; }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    internal void CaptureSelectedService(ServiceRegistration service, RpcMethodFacts method, in ServerRequestEnvelope request)
+    internal void CaptureSelectedService(SharpLinkServer.QueuedServiceSelection service, RpcMethodFacts method, in ServerRequestEnvelope request)
     {
         var payload = Payload;
         if (request.PrefixBytes < request.FixedPrefixBytes || request.PrefixBytes > payload.Length)
             throw new InvalidOperationException("Selected request prefix does not fit its retained owner.");
         SelectedRequest = request with { Arguments = payload.Slice(request.PrefixBytes) };
-        SelectedService = new SharpLinkServer.QueuedServiceSelection(service);
+        SelectedService = service;
         SelectedMethod = method;
     }
 

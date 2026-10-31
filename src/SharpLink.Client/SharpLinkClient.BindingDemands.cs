@@ -117,7 +117,7 @@ internal sealed partial class SharpLinkClient
             var result = resultOwner.Result;
             if (result.Status != Protocol3BindStatus.Success)
             {
-                site.BindingFailed(connection, MapBindingFailure(result.Status));
+                site.BindingFailed(connection, ApplyBindingRejection(connection, result.Status));
                 return;
             }
             var published = false;
@@ -147,6 +147,13 @@ internal sealed partial class SharpLinkClient
             // business pending/reservation counts. This callback runs outside every binding gate.
             RetireDrainingConnectionIfIdle(connection);
         }
+    }
+
+    internal static SharpLinkException ApplyBindingRejection(ClientConnection connection, Protocol3BindStatus status)
+    {
+        if (status == Protocol3BindStatus.SessionDraining)
+            connection.OnBindingSessionDraining();
+        return MapBindingFailure(status);
     }
 
     private static SharpLinkException MapBindingFailure(Protocol3BindStatus status) => status switch

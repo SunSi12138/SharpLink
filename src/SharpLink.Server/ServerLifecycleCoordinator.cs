@@ -273,7 +273,13 @@ internal sealed partial class SharpLinkServer
 
                 _terminalFailure ??= failure;
                 if (state != ServerState.Faulted)
-                    _server.TransitionTo(ServerState.Faulted);
+                {
+                    lock (_server._registryGate)
+                    {
+                        _server.SealRegistrationPreparationsLocked();
+                        _server.TransitionTo(ServerState.Faulted);
+                    }
+                }
                 return _stopTask ??= CompleteFaultedStopAsync();
             }
         }
@@ -360,7 +366,10 @@ internal sealed partial class SharpLinkServer
             List<Exception>? stopFailures = null;
 
             lock (_server._registryGate)
+            {
+                _server.SealRegistrationPreparationsLocked();
                 _server.TransitionTo(ServerState.Draining);
+            }
             _server._admissionController?.StopAccepting();
             _server.BeginDrainDynamicModules();
             _server._frameworkTasks.Seal();

@@ -1,84 +1,69 @@
 namespace SharpLink.Server;
 
-/// <summary>One admission cut for an entire local registration transaction's contract group.</summary>
+/// <summary>Cold publication/retirement metadata, never an RPC lifetime counter.</summary>
 internal sealed class ServerBindingAdmissionGroup
 {
-    private long _state; // sign bit: retired; remaining bits: physical owners
+    private int _retired;
     private ServerBindingRegistration[] _members = [];
     private bool _sealed;
-    private int _payloadsDetached;
-    private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    // Construction and retirement are serialized by the registry publication owner.
     internal void Seal(ServerBindingRegistration[] members)
     {
-        if (_sealed || members.Any(member => !ReferenceEquals(member.Group, this)))
+        ArgumentNullException.ThrowIfNull(members);
+        if (_sealed || IsRetired || members.Any(member => member is null || !ReferenceEquals(member.Group, this)))
             throw new InvalidOperationException("Binding group must be sealed once with its exact members.");
-        _members = members;
+        _members = (ServerBindingRegistration[])members.Clone();
         _sealed = true;
     }
 
-    internal bool IsRetired => Volatile.Read(ref _state) < 0;
-    internal long PhysicalOwnerCount => Volatile.Read(ref _state) & long.MaxValue;
-    internal Task WaitForDrainAsync() => _drained.Task;
+    internal bool IsRetired => Volatile.Read(ref _retired) != 0;
 
-    internal bool TryAcquire()
-    {
-        while (true)
-        {
-            var state = Volatile.Read(ref _state);
-            if (state < 0 || state == long.MaxValue)
-                return false;
-            if (Interlocked.CompareExchange(ref _state, state + 1, state) == state)
-                return true;
-        }
-    }
-
-    // Single cut precedes replacement publication; all fallible preparation happens before this.
+    // The existing dynamic module Running cut precedes this cold metadata cut.
+    // Static physical ownership remains with existing request permits, not this group.
     internal void Retire()
     {
-        if (Interlocked.Or(ref _state, long.MinValue) < 0)
+        if (Interlocked.Exchange(ref _retired, 1) != 0)
             return;
         foreach (var member in _members)
-            member.DetachPayload();
-        // The control group must not indefinitely retain a collectible payload through a sibling.
+            member.DetachPayloadAndFacts();
         _members = [];
-        Volatile.Write(ref _payloadsDetached, 1);
-        if (Volatile.Read(ref _state) == long.MinValue)
-            _drained.TrySetResult();
-    }
-
-    internal void Release()
-    {
-        if (Interlocked.Decrement(ref _state) == long.MinValue && Volatile.Read(ref _payloadsDetached) != 0)
-            _drained.TrySetResult();
     }
 }
 
-/// <summary>Scalar contract identity plus the explicitly detachable selected payload.</summary>
+/// <summary>
+/// Exact host-owned identity and weak payload selection. Capturing this control never
+/// authorizes payload access or pins a collectible registration across policy waiting.
+/// </summary>
 internal sealed class ServerBindingRegistration
 {
-    private ServiceRegistration? _payload;
+    private WeakReference<ServiceRegistration>? _payload;
+    private ServerDeclaredMethodFacts? _facts;
 
     internal ServerBindingRegistration(ServiceRegistration payload, long contractId, RpcHash128 hash,
-        long registrationId, long publicationGeneration)
-        : this(payload, contractId, hash, registrationId, publicationGeneration, new ServerBindingAdmissionGroup())
+        long registrationId, long publicationGeneration, ServerDeclaredMethodFacts facts)
+        : this(payload, contractId, hash, registrationId, publicationGeneration, facts, new ServerBindingAdmissionGroup())
     {
         Group.Seal([this]);
     }
 
     internal ServerBindingRegistration(ServiceRegistration payload, long contractId, RpcHash128 hash,
-        long registrationId, long publicationGeneration, ServerBindingAdmissionGroup group)
+        long registrationId, long publicationGeneration, ServerDeclaredMethodFacts facts, ServerBindingAdmissionGroup group)
     {
         ArgumentNullException.ThrowIfNull(payload);
+        ArgumentNullException.ThrowIfNull(facts);
         ArgumentNullException.ThrowIfNull(group);
         if (contractId == 0 || hash.IsEmpty || registrationId <= 0 || publicationGeneration <= 0)
             throw new ArgumentException("A binding registration requires a complete positive identity.");
-        _payload = payload;
+        _payload = new WeakReference<ServiceRegistration>(payload);
+        _facts = facts;
         Group = group;
         ContractId = contractId;
         Hash = hash;
         RegistrationId = registrationId;
         PublicationGeneration = publicationGeneration;
+        IsDynamicModule = payload.HasModule;
+        ModuleCancellation = payload.ModuleCancellation;
     }
 
     internal ServerBindingAdmissionGroup Group { get; }
@@ -87,35 +72,35 @@ internal sealed class ServerBindingRegistration
     internal long RegistrationId { get; }
     internal long PublicationGeneration { get; }
     internal bool IsRetired => Group.IsRetired;
-    internal long PhysicalOwnerCount => Group.PhysicalOwnerCount;
+    internal bool IsDynamicModule { get; }
+    // Existing cancellation infrastructure is not literally scalar. Its queued callbacks
+    // must retain call state only, never the collectible registration/module payload.
+    internal CancellationToken ModuleCancellation { get; }
 
-    internal bool TryAcquire(out ServerBindingLease lease)
+    // Read once for synchronous lookup and retain only the selected RpcMethodFacts across
+    // a wait. Retirement detaches the full table; its quota owner remains ServiceRegistration.
+    internal ServerDeclaredMethodFacts? Facts => Volatile.Read(ref _facts);
+
+    // Call only at the post-permit boundary. Recovery is identity, NOT a lease: dynamic
+    // callers must still win the original module Running gate before decode/activation.
+    internal bool TryGetExactPayload(out ServiceRegistration payload)
     {
-        if (!Group.TryAcquire())
+        var weak = Volatile.Read(ref _payload);
+        if (!IsRetired && weak is not null && weak.TryGetTarget(out var selected) &&
+            ReferenceEquals(selected.Binding, this) && !IsRetired)
         {
-            lease = default;
-            return false;
+            payload = selected;
+            return true;
         }
-        var payload = Volatile.Read(ref _payload);
-        if (payload is null || Group.IsRetired)
-        {
-            Group.Release();
-            lease = default;
-            return false;
-        }
-        lease = new ServerBindingLease(this, payload);
-        return true;
+        payload = null!;
+        return false;
     }
 
     internal void Retire() => Group.Retire();
-    internal void DetachPayload() => Interlocked.Exchange(ref _payload, null);
-    internal void Release() => Group.Release();
-}
 
-// Owned by one dispatch, then transferred to its physical terminal owner. Never duplicate release.
-internal readonly struct ServerBindingLease(ServerBindingRegistration control, ServiceRegistration registration)
-{
-    internal ServiceRegistration Registration { get; } = registration;
-    internal ServerBindingRegistration Control { get; } = control;
-    internal void Release() => Control.Release();
+    internal void DetachPayloadAndFacts()
+    {
+        Interlocked.Exchange(ref _payload, null);
+        Interlocked.Exchange(ref _facts, null);
+    }
 }

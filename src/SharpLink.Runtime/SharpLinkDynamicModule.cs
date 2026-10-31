@@ -201,6 +201,7 @@ internal sealed class SharpLinkDynamicModule
     private ISharpLinkGeneratedAssemblyManifest? _manifest;
     private RpcGeneratedManifestRegistration? _codecRegistration;
     private int _state;
+    private int _preparationOwners; // Cold registration callbacks only; never ordinary RPC admission.
 
     internal SharpLinkDynamicModule(
         Assembly assembly,
@@ -273,13 +274,36 @@ internal sealed class SharpLinkDynamicModule
         return false;
     }
 
+    internal bool TryAcquirePreparation()
+    {
+        if (State != SharpLinkDynamicModuleState.Running)
+            return false;
+        Interlocked.Increment(ref _preparationOwners);
+        if (State == SharpLinkDynamicModuleState.Running)
+            return true;
+        ReleasePreparation();
+        return false;
+    }
+
+    internal void ReleasePreparation()
+    {
+        if (Interlocked.Decrement(ref _preparationOwners) < 0)
+            throw new InvalidOperationException("Dynamic module preparation owner underflowed.");
+        if (State is (SharpLinkDynamicModuleState.Draining or SharpLinkDynamicModuleState.DrainTimedOut) &&
+            Volatile.Read(ref _preparationOwners) == 0 && RemainingCalls == 0)
+            _drained.TrySetResult();
+    }
+
+    internal int PreparationOwnersForDiagnostics => Volatile.Read(ref _preparationOwners);
+
     internal bool TryBeginDraining()
     {
         var changed = Interlocked.CompareExchange(
             ref _state,
             (int)SharpLinkDynamicModuleState.Draining,
             (int)SharpLinkDynamicModuleState.Running) == (int)SharpLinkDynamicModuleState.Running;
-        if ((changed || State == SharpLinkDynamicModuleState.Draining) && RemainingCalls == 0)
+        if ((changed || State == SharpLinkDynamicModuleState.Draining) && RemainingCalls == 0 &&
+            Volatile.Read(ref _preparationOwners) == 0)
             _drained.TrySetResult();
         return changed;
     }
@@ -337,7 +361,7 @@ internal sealed class SharpLinkDynamicModule
         if (Interlocked.Decrement(ref _callCounters[stripe].Value) < 0)
             throw new InvalidOperationException("Dynamic module call counter underflowed.");
         if (State is (SharpLinkDynamicModuleState.Draining or SharpLinkDynamicModuleState.DrainTimedOut) &&
-            RemainingCalls == 0)
+            RemainingCalls == 0 && Volatile.Read(ref _preparationOwners) == 0)
         {
             _drained.TrySetResult();
         }

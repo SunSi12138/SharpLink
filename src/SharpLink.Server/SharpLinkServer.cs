@@ -71,6 +71,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         ArgumentNullException.ThrowIfNull(composition);
         _transportListener = composition.TransportListener;
         _serviceModuleRegistry = new ServerServiceModuleRegistry(composition.Services);
+        _declaredFactsQuota = composition.DeclaredFactsQuota;
         _heartbeatCheckInterval = composition.HeartbeatCheckInterval;
         _heartbeatTimeout = composition.HeartbeatTimeout;
         _logger = composition.Logger;
@@ -118,7 +119,10 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     public ValueTask StopAsync(
         TimeSpan gracefulTimeout,
         CancellationToken cancellationToken = default)
-        => _lifecycle.StopAsync(gracefulTimeout, cancellationToken);
+    {
+        ThrowIfRegistrationCallbackReentry();
+        return _lifecycle.StopAsync(gracefulTimeout, cancellationToken);
+    }
 
     internal void TrackFrameworkTask(
         Task task,
@@ -169,16 +173,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         => exception is OperationCanceledException or ObjectDisposedException or
             System.IO.IOException or SocketException or
             SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
-
-    private static ResolvedMethodCall ResolveMethodCall(ServiceRegistration registration, long methodId)
-    {
-        var method = registration.Stub.ResolveMethodFacts(methodId);
-        if (method is null ||
-            (!method.IsKnown && !ReferenceEquals(method, RpcMethodFacts.UnknownMethod)) ||
-            (method.IsKnown && (method.ContractId != registration.Stub.InterfaceHash || method.MethodId != methodId)))
-            method = RpcMethodFacts.Invalid;
-        return new ResolvedMethodCall(registration, method);
-    }
 
     private SharpLinkCallContextSnapshot CreateCallContext(
         ServerConnectionState connection,

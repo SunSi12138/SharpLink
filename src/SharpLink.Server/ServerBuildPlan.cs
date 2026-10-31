@@ -15,9 +15,13 @@ internal sealed record ReplacementServiceDefinition(
 internal sealed class ServerRuntimeResources
 {
     private int _state;
+    private readonly ServerStaticFactsPreparation? _factsPreparation;
 
-    internal ServerRuntimeResources(IServerTransportListener transport)
-        => Transport = transport ?? throw new ArgumentNullException(nameof(transport));
+    internal ServerRuntimeResources(IServerTransportListener transport, ServerStaticFactsPreparation? factsPreparation = null)
+    {
+        Transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        _factsPreparation = factsPreparation;
+    }
 
     /// <summary>Framework-owned by the completed Server; rollback disposes this listener.</summary>
     internal IServerTransportListener Transport { get; }
@@ -26,6 +30,9 @@ internal sealed class ServerRuntimeResources
     {
         ArgumentNullException.ThrowIfNull(transaction);
         EnsurePending();
+        if (_factsPreparation is not null)
+            transaction.Own(_factsPreparation, static owner => owner.Dispose(),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Server static facts preparation"));
         transaction.Own(
             Transport,
             static listener => SharpLinkAsyncCleanup.DisposeSynchronously(listener),
@@ -50,6 +57,9 @@ internal sealed class ServerRuntimeResources
             return;
 
         using var transaction = new SynchronousBuildTransaction();
+        if (_factsPreparation is not null)
+            transaction.Own(_factsPreparation, static owner => owner.Dispose(),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Unmaterialized Server static facts preparation"));
         transaction.Own(
             Transport,
             static listener => SharpLinkAsyncCleanup.DisposeSynchronously(listener),
@@ -134,7 +144,7 @@ internal readonly record struct ServerServiceRegistrationPlanEntry(
     ServerServiceRegistrationPlan Registration);
 
 /// <summary>Immutable Server build input. It has no disposal behavior and is materialized once.</summary>
-internal sealed class ServerBuildPlan
+internal sealed class ServerBuildPlan : IDisposable
 {
     private readonly ISharpLinkServerInterceptor[] _interceptors;
     private readonly ServerServiceRegistrationPlanEntry[] _services;
@@ -143,6 +153,7 @@ internal sealed class ServerBuildPlan
     internal ServerBuildPlan(
         ServerRuntimeResources resources,
         SharpLinkRuntimeContextBuildPlan runtimeContext,
+        ServerStaticFactsPreparation factsPreparation,
         ServerServiceRegistrationPlanEntry[] services,
         SharpLinkCompressionSendPolicy responseCompressionPolicy,
         TimeSpan heartbeatCheckInterval,
@@ -159,6 +170,7 @@ internal sealed class ServerBuildPlan
     {
         Resources = resources ?? throw new ArgumentNullException(nameof(resources));
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
+        FactsPreparation = factsPreparation ?? throw new ArgumentNullException(nameof(factsPreparation));
         ArgumentNullException.ThrowIfNull(services);
         _services = [.. services];
         ResponseCompressionPolicy = responseCompressionPolicy ?? throw new ArgumentNullException(nameof(responseCompressionPolicy));
@@ -182,6 +194,8 @@ internal sealed class ServerBuildPlan
 
     internal ServerRuntimeResources Resources { get; }
     internal SharpLinkRuntimeContextBuildPlan RuntimeContext { get; }
+    internal ServerStaticFactsPreparation FactsPreparation { get; }
+    internal ServerDeclaredMethodFactsQuota DeclaredFactsQuota => FactsPreparation.Quota;
     internal int ServiceCount => _services.Length;
     internal SharpLinkCompressionSendPolicy ResponseCompressionPolicy { get; }
     internal ServerServiceRegistrationPlanEntry GetService(int index) => _services[index];
@@ -208,5 +222,13 @@ internal sealed class ServerBuildPlan
     {
         if (Interlocked.CompareExchange(ref _materializationState, 1, 0) != 0)
             throw new InvalidOperationException("This Server build plan has already been materialized.");
+    }
+
+    public void Dispose()
+    {
+        // An unpublished abandoned plan has no service callbacks in flight. Materialization
+        // owns its separate transaction and must never be torn down by a concurrent Dispose.
+        if (Interlocked.CompareExchange(ref _materializationState, 2, 0) == 0)
+            Resources.DisposeUnmaterialized();
     }
 }

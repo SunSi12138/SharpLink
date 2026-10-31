@@ -1,7 +1,7 @@
 namespace SharpLink.IntegrationTests;
 
 // Actual generated proxy + TCP source controls, not the earlier scalar MODEL suite.
-public sealed class ContractBindingTcpVerticalSliceTests
+public sealed partial class ContractBindingTcpVerticalSliceTests
 {
     [Test]
     public async Task ColdProxyMustWaitForConfirmedBindingBeforeUnaryOrOneWayBusiness()

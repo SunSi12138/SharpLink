@@ -169,9 +169,9 @@ internal sealed partial class SharpLinkClient
                     PublishReadySnapshotLocked();
                     retireImmediately = true;
                 }
-                else if (connection.HasExhaustedProtocolIdentity)
+                else if (connection.RequiresCapacitySafeDrain)
                 {
-                    // Exhaustion must never force-close old calls to make retiring space.
+                    // Local exhaustion/status12 must never force-close old calls to make retiring space.
                     // The connection remains charged to normal endpoint/pool capacity instead.
                     PublishReadySnapshotLocked();
                 }

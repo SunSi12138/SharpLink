@@ -8,68 +8,73 @@ internal sealed partial class SharpLinkServer
     {
         if (_services.Count != 0 && _registryGeneration == 0)
             _registryGeneration = 1;
-        PrepareBindingRegistrations(_services, _registryGeneration);
+        // Construction is still private here. All facts callbacks were completed by the builder;
+        // this bounded metadata plan is created before any server registry lock is exposed.
+        PublishBindingRegistrations(CreateBindingRegistrationPlans(_services, [], null), _registryGeneration);
     }
 
-    // Fallible cold preparation only. Call before closing any old registration group.
-    private void PrepareBindingRegistrations(IReadOnlyDictionary<long, ServiceRegistration> services, long generation)
+    private readonly record struct PreparedBindingMember(ServiceRegistration Registration, long ContractId, RpcHash128 Hash);
+    private readonly record struct PreparedBindingGroup(PreparedBindingMember[] Members);
+
+    // Called only by the cold preparation owner, outside registry locks. Manifest getters are
+    // never invoked from final publication. Each member carries its CONTRACT manifest hash,
+    // even when its service implementation belongs to a different assembly registration.
+    private PreparedBindingGroup[] CreateBindingRegistrationPlans(
+        IReadOnlyDictionary<long, ServiceRegistration> services,
+        SharpLinkDynamicModule[] currentModules,
+        ISharpLinkGeneratedAssemblyManifest? incoming)
     {
-        if (services.Count == 0)
+        var groups = new Dictionary<System.Reflection.Assembly, List<PreparedBindingMember>>(ReferenceEqualityComparer.Instance);
+        foreach (var pair in services)
+        {
+            var registration = pair.Value;
+            if (registration.Binding is not null)
+                continue;
+            if (registration.DeclaredFacts is null)
+                throw new InvalidOperationException("A service must have complete cold declared facts before binding publication.");
+            var contractAssembly = registration.ContractType.Assembly;
+            var manifest = incoming is not null && ReferenceEquals(incoming.OwnerAssembly, contractAssembly)
+                ? incoming
+                : FindManifest(contractAssembly, currentModules)
+                    ?? throw new InvalidOperationException("The exact contract manifest is unavailable.");
+            var owner = registration.Module?.Assembly ?? contractAssembly;
+            if (!groups.TryGetValue(owner, out var members))
+                groups.Add(owner, members = []);
+            members.Add(new(registration, pair.Key, manifest.RpcAssemblyHash));
+        }
+        return groups.Values.Select(static members => new PreparedBindingGroup(members.ToArray())).ToArray();
+    }
+
+    // Scalar metadata/allocation only. All fallible preparation precedes the old admission cut.
+    private void PublishBindingRegistrations(PreparedBindingGroup[] plans, long generation)
+    {
+        if (plans.Length == 0)
             return;
         if (generation <= 0)
             throw new InvalidOperationException("A nonempty registration publication requires a positive generation.");
-        foreach (var registrations in services.Where(static pair => pair.Value.Binding is null)
-                     .GroupBy(static pair => pair.Value.ContractType.Assembly))
+        foreach (var plan in plans)
         {
             if (!_bindingRegistrationIds.TryIssue(out var registrationId))
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
                     "The server registration identity domain is exhausted; a new server epoch is required.");
-            var first = registrations.First().Value;
-            var manifest = first.Module?.Manifest ??
-                _staticManifests.Single(item => ReferenceEquals(item.OwnerAssembly, registrations.Key));
             var group = new ServerBindingAdmissionGroup();
-            var members = registrations.Select(pair => new ServerBindingRegistration(pair.Value,
-                pair.Key, manifest.RpcAssemblyHash, registrationId, generation, group)).ToArray();
+            var members = new ServerBindingRegistration[plan.Members.Length];
+            for (var index = 0; index < members.Length; index++)
+            {
+                var member = plan.Members[index];
+                members[index] = new(member.Registration, member.ContractId, member.Hash, registrationId,
+                    generation, member.Registration.DeclaredFacts!, group);
+            }
             group.Seal(members);
-            var index = 0;
-            foreach (var registration in registrations)
-                registration.Value.Binding = members[index++];
+            for (var index = 0; index < members.Length; index++)
+                plan.Members[index].Registration.Binding = members[index];
         }
     }
 
     private static void RetireBindingGroup(ServiceRegistration[] registrations)
     {
-        // Every member of one assembly registration shares one group. Repeated Retire is idempotent.
         foreach (var registration in registrations)
             registration.Binding?.Retire();
-    }
-
-    private ServerBindingAdmissionGroup[] CaptureModuleBindingGroupsLocked(SharpLinkDynamicModule module)
-    {
-        var registrations = _detachedModuleServices.TryGetValue(module, out var detached)
-            ? detached
-            : _services.Values.Where(service => ReferenceEquals(service.Module, module)).ToArray();
-        return registrations.Where(static service => service.Binding is not null)
-            .Select(static service => service.Binding!.Group).Distinct().ToArray();
-    }
-
-    private static Task BindingGroupsDrained(ServerBindingAdmissionGroup[] groups)
-    {
-        if (groups.Any(static group => !group.IsRetired))
-            throw new InvalidOperationException("Binding groups must be retired before their payloads can be released.");
-        return Task.WhenAll(groups.Select(static group => group.WaitForDrainAsync()));
-    }
-
-    private static int RemainingBindingCalls(ServerBindingAdmissionGroup[] groups)
-    {
-        long remaining = 0;
-        foreach (var group in groups)
-        {
-            remaining += Math.Min(int.MaxValue, group.PhysicalOwnerCount);
-            if (remaining >= int.MaxValue)
-                return int.MaxValue;
-        }
-        return (int)remaining;
     }
 
     private long NextBindingPublicationGeneration()

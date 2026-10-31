@@ -309,13 +309,18 @@ internal sealed partial class SharpLinkClient
     internal void MarkProtocolIdentityExhaustionDraining(ClientConnection connection)
         => MarkConnectionDraining(connection, reportInfrastructureFailure: false, preserveAdmittedPublication: true);
 
+    // A validated status12 can represent server drain or token-incarnation exhaustion.
+    // Neither authorizes force-closing admitted tails or exceeding the ordinary pool limit.
+    internal void MarkBindingSessionDraining(ClientConnection connection)
+        => MarkConnectionDraining(connection, reportInfrastructureFailure: false, preserveAdmittedPublication: true);
+
     private void MarkConnectionDraining(
         ClientConnection connection,
         bool reportInfrastructureFailure = true,
         bool preserveAdmittedPublication = false)
     {
         if (!(preserveAdmittedPublication
-                ? connection.MarkDrainingForIdentityExhaustion()
+                ? connection.MarkDrainingPreservingAdmittedPublication()
                 : connection.MarkDraining()))
             return;
         if (reportInfrastructureFailure)
@@ -375,7 +380,7 @@ internal sealed partial class SharpLinkClient
         {
             return;
         }
-        if (connection.HasExhaustedProtocolIdentity)
+        if (connection.RequiresCapacitySafeDrain)
             EnsureReconnectLoop();
     }
 

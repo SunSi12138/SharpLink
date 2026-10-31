@@ -85,6 +85,9 @@ internal sealed partial class SharpLinkServer
 
         private async Task DisposeRegisteredServicesAsync()
         {
+            // Inline preparation callbacks cannot be cancelled safely. The existing Stop budget
+            // bounds its waiter, not the physical provider/codec ownership of these callbacks.
+            await _server.CaptureRegistrationPreparationsDrain().ConfigureAwait(false);
             List<Exception>? failures = null;
             try
             {

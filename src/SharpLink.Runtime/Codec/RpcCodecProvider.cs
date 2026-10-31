@@ -1,5 +1,6 @@
 using System.Text;
 using System.Linq;
+using System.Collections.Frozen;
 
 namespace SharpLink.Runtime;
 
@@ -161,12 +162,28 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
 
     internal void PublishGeneratedRegistrations(
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
+        => CommitGeneratedRegistrations(PrepareGeneratedRegistrations(registrations));
+
+    internal PreparedGeneratedRegistrations PrepareGeneratedRegistrations(
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        Volatile.Write(
-            ref _generatedRegistrationSnapshot,
-            new GeneratedRegistrationSnapshot(registrations));
-        foreach (var pair in registrations)
+        ArgumentNullException.ThrowIfNull(registrations);
+        var expected = Volatile.Read(ref _generatedRegistrationSnapshot);
+        // Caller-owned dictionaries never become the live lookup map. Enumerate/copy only here,
+        // before the Runtime/Server publication lock; commit sees a framework-owned frozen map.
+        return new PreparedGeneratedRegistrations(this, expected,
+            new GeneratedRegistrationSnapshot(registrations.ToFrozenDictionary()));
+    }
+
+    internal void CommitGeneratedRegistrations(PreparedGeneratedRegistrations publication)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (!ReferenceEquals(publication.Owner, this) ||
+            !ReferenceEquals(Interlocked.CompareExchange(ref _generatedRegistrationSnapshot,
+                publication.Snapshot, publication.Expected), publication.Expected))
+            throw new InvalidOperationException("Prepared Codec publication is stale or belongs to another provider.");
+        foreach (var pair in publication.Snapshot.Registrations)
         {
             while (_resolvedCodecs.TryGetValue(pair.Key, out var cached) &&
                    !ReferenceEquals(cached.Registration, pair.Value))
@@ -216,7 +233,16 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
             => new(Codec, Registration, snapshotIdentity);
     }
 
-    private sealed class GeneratedRegistrationSnapshot(
+    internal sealed class PreparedGeneratedRegistrations(
+        RpcCodecProvider owner, GeneratedRegistrationSnapshot expected, GeneratedRegistrationSnapshot snapshot)
+    {
+        internal RpcCodecProvider Owner { get; } = owner;
+        internal GeneratedRegistrationSnapshot Expected { get; } = expected;
+        internal GeneratedRegistrationSnapshot Snapshot { get; } = snapshot;
+        internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Registrations => Snapshot.Registrations;
+    }
+
+    internal sealed class GeneratedRegistrationSnapshot(
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
     {
         internal object Identity { get; } = new();
@@ -239,6 +265,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         IRpcCodecAdapterScope[] scopes)
     {
         Manifest = manifest;
+        OwnerAssembly = manifest.OwnerAssembly ?? throw new InvalidOperationException("Generated manifest owner is missing.");
         ContractCodecs = contractCodecs;
         Codecs = codecs;
         BaseProvider = baseProvider;
@@ -246,6 +273,8 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     }
 
     internal ISharpLinkGeneratedAssemblyManifest Manifest { get; }
+    // Captured during private preparation, never invoke a manifest getter during adoption/removal.
+    internal System.Reflection.Assembly OwnerAssembly { get; }
 
     /// <summary>Gets Codec bindings visible only to RPC Contracts owned by this manifest.</summary>
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> ContractCodecs { get; }

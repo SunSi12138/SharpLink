@@ -32,7 +32,7 @@ internal sealed class ClientConnection :
     private int _plannedSessionRefreshRetirement;
     private SessionRefreshRedirect? _sessionRefreshRedirect;
     private int _disposed;
-    private int _protocolIdentityExhausted;
+    private int _localAdmissionDrainReasons; // bit0: identity exhaustion; bit1: peer binding status12
 
     public ClientConnection(
         SharpLinkClient client,
@@ -89,20 +89,31 @@ internal sealed class ClientConnection :
 
     internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
 
-    // ID exhaustion is not spare retiring capacity: the old physical connection remains charged
+    // Local exhaustion/status12 is not spare retiring capacity: the physical connection stays charged
     // against the ordinary pool until its admitted owners leave and it is detached for cleanup.
-    internal bool HasExhaustedProtocolIdentity => Volatile.Read(ref _protocolIdentityExhausted) != 0 ||
+    internal bool HasExhaustedProtocolIdentity => (Volatile.Read(ref _localAdmissionDrainReasons) & 1) != 0 ||
+        PendingCalls.RequestIdsExhausted;
+    internal bool RequiresCapacitySafeDrain => Volatile.Read(ref _localAdmissionDrainReasons) != 0 ||
         PendingCalls.RequestIdsExhausted;
 
     internal bool OccupiesConnectionCapacity => State == ClientConnectionState.Ready ||
-        State == ClientConnectionState.Draining && HasExhaustedProtocolIdentity;
+        State == ClientConnectionState.Draining && RequiresCapacitySafeDrain;
 
     internal void OnProtocolIdentityExhausted()
     {
-        if (Interlocked.Exchange(ref _protocolIdentityExhausted, 1) == 0)
+        if ((Interlocked.Or(ref _localAdmissionDrainReasons, 1) & 1) == 0)
         {
             Binding.SealAdmission();
             _client.MarkProtocolIdentityExhaustionDraining(this);
+        }
+    }
+
+    internal void OnBindingSessionDraining()
+    {
+        if ((Interlocked.Or(ref _localAdmissionDrainReasons, 2) & 2) == 0)
+        {
+            Binding.SealAdmission();
+            _client.MarkBindingSessionDraining(this);
         }
     }
 
@@ -221,7 +232,7 @@ internal sealed class ClientConnection :
     {
         get
         {
-            if (Volatile.Read(ref _fatalFailureObservedForAdmission) != 0 || HasExhaustedProtocolIdentity)
+            if (Volatile.Read(ref _fatalFailureObservedForAdmission) != 0 || RequiresCapacitySafeDrain)
                 return false;
 
             var redirect = Volatile.Read(ref _sessionRefreshRedirect);
@@ -272,7 +283,7 @@ internal sealed class ClientConnection :
             if (observed == 1)
             {
                 _client.TryAdvancePlannedSessionRefreshRetirement(this);
-                if (HasExhaustedProtocolIdentity)
+                if (RequiresCapacitySafeDrain)
                     _client.RetireDrainingConnectionIfIdle(this);
             }
             return;
@@ -305,7 +316,7 @@ internal sealed class ClientConnection :
             throw new InvalidOperationException(
                 "A Ready client connection must reference a Session that accepts new calls at a stable lifecycle boundary.");
         }
-        if (state == ClientConnectionState.Draining && sessionAcceptsCalls && !HasExhaustedProtocolIdentity)
+        if (state == ClientConnectionState.Draining && sessionAcceptsCalls && !RequiresCapacitySafeDrain)
         {
             throw new InvalidOperationException(
                 "A Draining client connection must not reference a Session that accepts new calls at a stable lifecycle boundary.");
@@ -325,9 +336,9 @@ internal sealed class ClientConnection :
 
     public bool MarkDraining() => MarkDrainingCore(drainPhysicalSession: true);
 
-    // Exhaustion withdraws owner admission, not the wire publication rights of reservations
+    // Local exhaustion/status12 withdraws owner admission, not publication rights of reservations
     // already issued before the cut. Their final Request/Bind must still enqueue in Ready.
-    internal bool MarkDrainingForIdentityExhaustion() => MarkDrainingCore(drainPhysicalSession: false);
+    internal bool MarkDrainingPreservingAdmittedPublication() => MarkDrainingCore(drainPhysicalSession: false);
 
     private bool MarkDrainingCore(bool drainPhysicalSession)
     {
@@ -381,7 +392,7 @@ internal sealed class ClientConnection :
         // observation even while physical teardown is waiting for the topology gate.
         if (!HasObservedFatalFailureForAdmission &&
             (State == ClientConnectionState.Ready ||
-             State == ClientConnectionState.Draining && HasExhaustedProtocolIdentity && Session.CanAcceptCalls) &&
+             State == ClientConnectionState.Draining && RequiresCapacitySafeDrain && Session.CanAcceptCalls) &&
             Session.IsConnected)
             return true;
 

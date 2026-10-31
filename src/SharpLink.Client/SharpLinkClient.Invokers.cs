@@ -544,11 +544,12 @@ internal sealed partial class SharpLinkClient
                 SharpLinkTelemetry.RecordClientAttempt();
 
             ClientConnection? connection = null;
+            ulong bindingId;
             var reservationOwned = false;
             try
             {
                 EnsureLogicalCallProgress(control);
-                connection = ReserveBoundConnection(method, retrySelection: null, outcome, out var bindingId);
+                connection = ReserveBoundConnection(method, retrySelection: null, outcome, out bindingId);
                 reservationOwned = true;
                 EnsureLogicalCallProgress(control);
             }
@@ -674,11 +675,12 @@ internal sealed partial class SharpLinkClient
                 SharpLinkTelemetry.RecordClientAttempt();
 
             ClientConnection? connection = null;
+            ulong bindingId;
             var reservationOwned = false;
             try
             {
                 EnsureLogicalCallProgress(control);
-                connection = ReserveBoundConnection(method, retrySelection: null, outcome, out var bindingId);
+                connection = ReserveBoundConnection(method, retrySelection: null, outcome, out bindingId);
                 reservationOwned = true;
                 EnsureLogicalCallProgress(control);
             }
@@ -767,13 +769,14 @@ internal sealed partial class SharpLinkClient
             if (outcome is null)
                 SharpLinkTelemetry.RecordClientAttempt();
             ClientConnection? connection = null;
+            ulong bindingId;
             var reservationOwned = false;
             long requestId;
             RpcRequestOperation<TResponse> operation;
             try
             {
                 EnsureLogicalCallProgress(control);
-                connection = ReserveBoundConnection(method, retrySelection: null, outcome, out var bindingId);
+                connection = ReserveBoundConnection(method, retrySelection: null, outcome, out bindingId);
                 reservationOwned = true;
                 EnsureLogicalCallProgress(control);
                 operation = connection.PendingCalls.Rent(

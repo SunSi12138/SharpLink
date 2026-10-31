@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Server;
@@ -54,42 +55,51 @@ public class ServerBindingTableTests
     }
 
     [Test]
-    public async Task GroupDrainRequiresAllExactLeasesAfterTheSharedRetirementCut()
+    public void SharedRetirementDetachesEveryExactWeakSelectionAndFullFactsTable()
     {
         var group = new ServerBindingAdmissionGroup();
-        var first = Registration(1, group);
-        var second = Registration(2, group);
+        var (first, firstPayload) = RegistrationWithPayload(1, group);
+        var (second, secondPayload) = RegistrationWithPayload(2, group);
         group.Seal([first, second]);
-        Ensure(first.TryAcquire(out var firstLease));
-        Ensure(second.TryAcquire(out var secondLease));
-        var exactFirstPayload = firstLease.Registration;
-        var exactSecondPayload = secondLease.Registration;
+        Ensure(first.TryGetExactPayload(out var selectedFirst) && ReferenceEquals(selectedFirst, firstPayload));
+        Ensure(second.TryGetExactPayload(out var selectedSecond) && ReferenceEquals(selectedSecond, secondPayload));
+        var selectedFacts = first.Facts!.Resolve(11);
         group.Retire();
         Ensure(first.IsRetired && second.IsRetired);
-        Ensure(!first.TryAcquire(out _) && !second.TryAcquire(out _));
-        Ensure(!group.WaitForDrainAsync().IsCompleted && group.PhysicalOwnerCount == 2);
-        Ensure(ReferenceEquals(firstLease.Registration, exactFirstPayload));
-        Ensure(ReferenceEquals(secondLease.Registration, exactSecondPayload));
-        firstLease.Release();
-        Ensure(!group.WaitForDrainAsync().IsCompleted && group.PhysicalOwnerCount == 1);
-        secondLease.Release();
-        await group.WaitForDrainAsync();
-        group.Retire();
-        Ensure(group.PhysicalOwnerCount == 0);
+        Ensure(!first.TryGetExactPayload(out _) && !second.TryGetExactPayload(out _));
+        Ensure(first.Facts is null && second.Facts is null);
+        Ensure(selectedFacts.IsKnown && selectedFacts.ContractId == 7 && selectedFacts.MethodId == 11);
+        group.Retire(); // Metadata retirement is idempotent, not a physical drain owner.
+        GC.KeepAlive(firstPayload);
+        GC.KeepAlive(secondPayload);
     }
 
     [Test]
-    public async Task StaticServiceCleanupWaitsForItsAcquiredBindingOwner()
+    public void CapturedFactsLookupReusesTheExactPreparedInstanceWithoutCallingStubAgain()
     {
-        var registration = Registration(1);
-        Ensure(registration.TryAcquire(out var lease));
-        var cleanup = new ServerServiceCleanup([lease.Registration], ownedServiceProvider: null);
-        var completion = cleanup.DisposeAsync().AsTask();
-        Ensure(registration.IsRetired && !completion.IsCompleted);
-        Ensure(!registration.TryAcquire(out _));
-        lease.Release();
-        await completion;
-        Ensure(registration.PhysicalOwnerCount == 0);
+        var (registration, payload) = RegistrationWithPayload(1);
+        var facts = registration.Facts!;
+        var first = facts.Resolve(11);
+        Ensure(ReferenceEquals(first, facts.Resolve(11)));
+        Ensure(ReferenceEquals(facts.Resolve(12), RpcMethodFacts.UnknownMethod));
+        Ensure(ReferenceEquals(facts.Resolve(long.MinValue), RpcMethodFacts.UnknownMethod));
+        // The fixture stub throws on any second callback, including undeclared IDs.
+        // Selected facts remain scalar even after the control detaches the whole table.
+        registration.Retire();
+        Ensure(registration.Facts is null && first.IsKnown && first.MethodId == 11);
+        GC.KeepAlive(payload);
+    }
+
+    [Test]
+    public async Task StaticCleanupRetiresMetadataWithoutInventingABindingLease()
+    {
+        var (registration, payload) = RegistrationWithPayload(1);
+        var cleanup = new ServerServiceCleanup([payload], ownedServiceProvider: null);
+        await cleanup.DisposeAsync();
+        Ensure(registration.IsRetired && registration.Facts is null);
+        Ensure(!registration.TryGetExactPayload(out _));
+        // This component owns no invocation. In real dispatch, existing request permits
+        // must finish before service cleanup; the old outer binding lease is not retained.
     }
 
     [Test]
@@ -97,8 +107,8 @@ public class ServerBindingTableTests
     {
         var quota = new ServerBindingSlotQuota(1);
         var table = new ServerBindingTable(1, quota);
-        var oldRegistration = Registration(1);
-        var replacement = Registration(2);
+        var (oldRegistration, oldPayload) = RegistrationWithPayload(1);
+        var (replacement, newPayload) = RegistrationWithPayload(2);
         var old = Bind(table, 1, oldRegistration);
         var captured = table.Capture(old.Token) ?? throw new InvalidOperationException("Missing captured entry.");
         Ensure(ReferenceEquals(old, captured));
@@ -109,23 +119,23 @@ public class ServerBindingTableTests
         Ensure(!table.Release(old.Token) && !table.Cancel(1));
         Ensure(ReferenceEquals(table.Capture(current.Token), current));
 
-        // Captured-before-release is an exact old control, not an implicit lease or
-        // registry relookup. It may still acquire while that control remains open.
-        Ensure(table.TryAcquireCaptured(captured, out var oldLease));
-        Ensure(ReferenceEquals(oldLease.Control, oldRegistration));
-        Ensure(oldRegistration.PhysicalOwnerCount == 1 && replacement.PhysicalOwnerCount == 0);
-        oldLease.Release();
+        // Capture is an exact old identity, not an implicit disposal fence or a lookup
+        // of the replacement. Payload use would still need post-permit physical admission.
+        Ensure(table.CanUseCaptured(captured));
+        Ensure(captured.Registration.TryGetExactPayload(out var oldSelected));
+        Ensure(ReferenceEquals(oldSelected, oldPayload) && !ReferenceEquals(oldSelected, newPayload));
         oldRegistration.Retire();
-        Ensure(!table.TryAcquireCaptured(captured, out _));
-        Ensure(table.TryAcquire(current.Token, out var newLease));
-        Ensure(ReferenceEquals(newLease.Control, replacement));
-        newLease.Release();
+        Ensure(!table.CanUseCaptured(captured) && !captured.Registration.TryGetExactPayload(out _));
+        Ensure(table.CanUseCaptured(current));
+        Ensure(current.Registration.TryGetExactPayload(out var newSelected) && ReferenceEquals(newSelected, newPayload));
+        GC.KeepAlive(oldPayload);
+        GC.KeepAlive(newPayload);
         table.Close();
         Ensure(quota.Used == 0);
     }
 
     [Test]
-    public void CaptureThenClosePreventsAcquisitionAndLeavesNoPhysicalOwner()
+    public void CaptureThenCloseRejectsSelectionWithoutASecondPhysicalOwner()
     {
         var quota = new ServerBindingSlotQuota(2);
         var table = new ServerBindingTable(2, quota);
@@ -134,8 +144,7 @@ public class ServerBindingTableTests
         var captured = table.Capture(entry.Token) ?? throw new InvalidOperationException("Missing captured entry.");
         table.Close();
         Ensure(table.IsClosed && quota.Used == 0);
-        Ensure(!table.TryAcquireCaptured(captured, out _) && !table.TryAcquire(entry.Token, out _));
-        Ensure(registration.PhysicalOwnerCount == 0);
+        Ensure(!table.CanUseCaptured(captured) && table.Capture(entry.Token) is null);
         Ensure(!table.Release(entry.Token) && !table.Cancel(1));
         table.Close();
         Ensure(quota.Used == 0);
@@ -144,21 +153,45 @@ public class ServerBindingTableTests
     }
 
     [Test]
-    public void AdmittedPhysicalLeaseSurvivesSessionCloseAndRegistrationRetirement()
+    public void RetainedEntryAndControlDoNotRootRetiredPayloadOrFullFactsTable()
     {
-        var quota = new ServerBindingSlotQuota(1);
-        var table = new ServerBindingTable(1, quota);
-        var registration = Registration(1);
-        var entry = Bind(table, 1, registration);
-        Ensure(table.TryAcquire(entry.Token, out var lease));
-        var exactPayload = lease.Registration;
+        var (table, captured, payload, stub, facts) = CaptureRetiredWeakSelection();
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        Ensure(!payload.TryGetTarget(out _) && !stub.TryGetTarget(out _) && !facts.TryGetTarget(out _));
+        Ensure(captured.Registration.Facts is null && !captured.Registration.TryGetExactPayload(out _));
+        Ensure(!table.CanUseCaptured(captured));
+        GC.KeepAlive(captured);
         table.Close();
+    }
+
+    [Test]
+    public void ExactWeakControlRejectsPayloadWhoseBindingIdentityWasChanged()
+    {
+        var (original, payload) = RegistrationWithPayload(1);
+        var replacement = Registration(2);
+        payload.Binding = replacement;
+        Ensure(!original.TryGetExactPayload(out _));
+        Ensure(ReferenceEquals(payload.Binding, replacement));
+        GC.KeepAlive(payload);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (ServerBindingTable Table, ServerBindingEntry Entry,
+        WeakReference<ServiceRegistration> Payload, WeakReference<IRpcStub> Stub,
+        WeakReference<ServerDeclaredMethodFacts> Facts) CaptureRetiredWeakSelection()
+    {
+        var (registration, payload) = RegistrationWithPayload(1);
+        var facts = registration.Facts!;
+        var table = new ServerBindingTable(1, new ServerBindingSlotQuota(1));
+        var captured = Bind(table, 1, registration);
+        var weakPayload = new WeakReference<ServiceRegistration>(payload);
+        var weakStub = new WeakReference<IRpcStub>(payload.Stub);
+        var weakFacts = new WeakReference<ServerDeclaredMethodFacts>(facts);
         registration.Retire();
-        Ensure(quota.Used == 0 && registration.PhysicalOwnerCount == 1);
-        Ensure(ReferenceEquals(lease.Registration, exactPayload));
-        Ensure(!table.TryAcquireCaptured(entry, out _));
-        lease.Release();
-        Ensure(registration.PhysicalOwnerCount == 0);
+        facts.Dispose(); // Mirrors the independent service cleanup quota owner, not retirement.
+        return (table, captured, weakPayload, weakStub, weakFacts);
     }
 
     [Test]
@@ -173,8 +206,7 @@ public class ServerBindingTableTests
         Ensure(table.Cancel(1) && !table.Cancel(1));
         Ensure(table.Capture(first.Token) is null && ReferenceEquals(table.Capture(second.Token), second));
         Ensure(quota.Used == 1);
-        Ensure(table.TryAcquire(second.Token, out var lease));
-        lease.Release();
+        Ensure(table.CanUseCaptured(second));
         table.Close();
         Ensure(quota.Used == 0);
     }
@@ -195,8 +227,7 @@ public class ServerBindingTableTests
         var secondEntry = Bind(second, 2, registration);
         Ensure(Protocol3BindingToken.Incarnation(secondEntry.Token) == 1);
         // Equal numeric tokens in different physical Sessions convey no cross-Session ownership.
-        Ensure(!second.TryAcquireCaptured(entry, out _));
-        Ensure(registration.PhysicalOwnerCount == 0);
+        Ensure(!second.CanUseCaptured(entry));
         Ensure(second.Release(secondEntry.Token));
         second.Close();
         Ensure(quota.Used == 0);
@@ -218,7 +249,7 @@ public class ServerBindingTableTests
         registration.Retire();
         table.ObserveBindId(3);
         Ensure(table.TryBind(3, registration, out var retired) == Protocol3BindStatus.RegistrationRetiring && retired is null);
-        Ensure(quota.Used == 0 && registration.PhysicalOwnerCount == 0);
+        Ensure(quota.Used == 0);
         table.Close();
     }
 
@@ -295,16 +326,32 @@ public class ServerBindingTableTests
     }
 
     private static ServerBindingRegistration Registration(long id, ServerBindingAdmissionGroup? group = null)
+        => RegistrationWithPayload(id, group).Control;
+
+    private static (ServerBindingRegistration Control, ServiceRegistration Payload) RegistrationWithPayload(
+        long id, ServerBindingAdmissionGroup? group = null)
     {
-        // Factory, provider, facts and invocation are poison pills. Table acquisition only
-        // captures the actual registration payload and must never activate/dispatch it.
-        var payload = ServiceRegistration.CreateSingletonFactory(typeof(object), new NoBusinessStub(),
+        // Only cold preparation calls the facts getter. Provider/factory/invocation stay poison.
+        var stub = new NoBusinessStub();
+        var payload = ServiceRegistration.CreateSingletonFactory(typeof(object), stub,
             new NoServices(), static _ => throw new InvalidOperationException("Business factory called."), ownsService: false);
+        var descriptor = new SharpLinkGeneratedContractDescriptor(typeof(object), "BindingTableFixture", 7, "fixture",
+            [new SharpLinkGeneratedMethodDescriptor("Known", 11, RpcMethodKind.Unary, false, "", "", "fixture")],
+            static (_, _) => throw new InvalidOperationException("Proxy factory called."),
+            static _ => throw new InvalidOperationException("Stub factory called."));
+        var quota = new ServerDeclaredMethodFactsQuota();
+        using var preparation = quota.BeginGroup();
+        var slot = preparation.ReserveContract();
+        slot.SetMethodCount(descriptor.Methods.Count);
+        preparation.Seal();
+        var facts = ServerDeclaredMethodFacts.Prepare(descriptor, stub, slot);
+        preparation.Commit();
+        payload.DeclaredFacts = facts;
         var registration = group is null
-            ? new ServerBindingRegistration(payload, 7, new RpcHash128(1, 2), id, id)
-            : new ServerBindingRegistration(payload, 7, new RpcHash128(1, 2), id, id, group);
+            ? new ServerBindingRegistration(payload, 7, new RpcHash128(1, 2), id, id, facts)
+            : new ServerBindingRegistration(payload, 7, new RpcHash128(1, 2), id, id, facts, group);
         payload.Binding = registration;
-        return registration;
+        return (registration, payload);
     }
 
     private static void Ensure(bool condition)
@@ -328,7 +375,15 @@ public class ServerBindingTableTests
     private sealed class NoBusinessStub : IRpcStub
     {
         public long InterfaceHash => 7;
-        public RpcMethodFacts ResolveMethodFacts(long methodHash) => throw new InvalidOperationException("Method facts called.");
+        private readonly RpcMethodFacts _facts = new(7, 11, RpcMethodKind.Unary, 0, false, true);
+        private bool _resolved;
+        public RpcMethodFacts ResolveMethodFacts(long methodHash)
+        {
+            if (_resolved || methodHash != 11)
+                throw new InvalidOperationException("Facts callback repeated or called for an undeclared method.");
+            _resolved = true;
+            return _facts;
+        }
         public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method,
             long requestId, ReadOnlySequence<byte> args) => throw new InvalidOperationException("Business callback called.");
         public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method,

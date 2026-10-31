@@ -394,7 +394,8 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private async Task DispatchRequestAsync(
+    // Internal visibility permits exact component-boundary controls without a parallel test dispatcher.
+    internal async Task DispatchRequestAsync(
         ServerConnectionState connection,
         long requestId,
         ProtocolV2FrameFlags flags,
@@ -404,13 +405,11 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameType frameType)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
-        ServerBindingLease bindingLease = default;
-        var ownsBindingLease = false;
         try
         {
             var routing = ReadRequestEnvelope(connection.Session, payload, flags, frameType: frameType);
             var table = connection.Bindings;
-            if (table is null || !table.TryAcquire(unchecked((ulong)routing.InterfaceHash), out bindingLease))
+            if (!TrySelectBoundMethod(table, unchecked((ulong)routing.InterfaceHash), routing.MethodHash, out var boundMethod))
             {
                 if ((flags & ProtocolV2FrameFlags.OneWay) == 0)
                     await connection.Session.SendRpcErrorWithBackpressureAsync(requestId,
@@ -419,14 +418,15 @@ internal sealed partial class SharpLinkServer
                         connection.ConnectionToken).ConfigureAwait(false);
                 return;
             }
-            ownsBindingLease = true;
-            var boundMethod = ResolveMethodCall(bindingLease.Registration, routing.MethodHash);
             if (!boundMethod.Method.IsKnown)
             {
+                var unknown = ReferenceEquals(boundMethod.Method, RpcMethodFacts.UnknownMethod);
                 if ((flags & ProtocolV2FrameFlags.OneWay) == 0)
                     await connection.Session.SendRpcErrorWithBackpressureAsync(requestId,
-                        new SharpLinkException(SharpLinkErrorCode.NotFound,
-                            SharpLinkErrorDetails.NotFound.UnknownBoundMethod, "Method is not in the bound registration."),
+                        unknown
+                            ? new SharpLinkException(SharpLinkErrorCode.NotFound,
+                                SharpLinkErrorDetails.NotFound.UnknownBoundMethod, "Method is not in the bound registration.")
+                            : new SharpLinkException(SharpLinkErrorCode.Internal, "The RPC stub returned invalid method facts."),
                         connection.ConnectionToken).ConfigureAwait(false);
                 return;
             }
@@ -467,58 +467,54 @@ internal sealed partial class SharpLinkServer
             }
 
             var admissionProgram = CaptureAdmissionProgram(requestId);
-            ValueTask dispatchTask;
-            try
-            {
-                dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
-                    ? DispatchOneWayRpc(
-                        connection,
-                        requestId,
-                        flags,
-                        payload,
-                        requestCancellationMap,
-                        serverLoopToken,
-                        admissionProgram,
-                        boundMethod,
-                        routing)
-                    : DispatchRpcAsync(
-                        connection,
-                        requestId,
-                        flags,
-                        payload,
-                        requestCancellationMap,
-                        serverLoopToken,
-                        admissionProgram,
-                        boundMethod,
-                        routing);
-            }
-            catch (SharpLinkException exception) when (
-                exception.Code == SharpLinkErrorCode.ProtocolViolation)
-            {
-                SharpLinkTelemetry.RecordProtocolFailure("server");
-                var reason = SharpLinkProtocolViolationException.Classify(exception);
-                if (reason == ProtocolViolationReason.InternalState)
-                {
-                    LogServerBackgroundLoopUnhandledException(
-                        _logger,
-                        nameof(ProcessRequestLoop),
-                        exception);
-                }
-                else
-                {
-                    LogProtocolViolationRateLimited(reason);
-                }
-
-                payload = default;
-                var closeTask = connection.CloseAsync();
-                if (!closeTask.IsCompletedSuccessfully)
-                    await closeTask.ConfigureAwait(false);
-                return;
-            }
+            var dispatchTask = (flags & ProtocolV2FrameFlags.OneWay) != 0
+                ? DispatchOneWayRpc(
+                    connection,
+                    requestId,
+                    flags,
+                    payload,
+                    requestCancellationMap,
+                    serverLoopToken,
+                    admissionProgram,
+                    boundMethod,
+                    routing)
+                : DispatchRpcAsync(
+                    connection,
+                    requestId,
+                    flags,
+                    payload,
+                    requestCancellationMap,
+                    serverLoopToken,
+                    admissionProgram,
+                    boundMethod,
+                    routing);
 
             payload = default;
             if (!dispatchTask.IsCompletedSuccessfully)
                 await dispatchTask.ConfigureAwait(false);
+        }
+        catch (SharpLinkException exception) when (
+            exception.Code == SharpLinkErrorCode.ProtocolViolation)
+        {
+            SharpLinkTelemetry.RecordProtocolFailure("server");
+            var reason = SharpLinkProtocolViolationException.Classify(exception);
+            if (reason == ProtocolViolationReason.InternalState)
+            {
+                LogServerBackgroundLoopUnhandledException(
+                    _logger,
+                    nameof(ProcessRequestLoop),
+                    exception);
+            }
+            else
+            {
+                LogProtocolViolationRateLimited(reason);
+            }
+
+            payload = default;
+            var closeTask = connection.CloseAsync();
+            if (!closeTask.IsCompletedSuccessfully)
+                await closeTask.ConfigureAwait(false);
+            return;
         }
         catch (OperationCanceledException)
         {
@@ -530,11 +526,6 @@ internal sealed partial class SharpLinkServer
         catch (Exception ex)
         {
             LogRpcDispatchUnhandledException(_logger, ex);
-        }
-        finally
-        {
-            if (ownsBindingLease)
-                bindingLease.Release();
         }
     }
 

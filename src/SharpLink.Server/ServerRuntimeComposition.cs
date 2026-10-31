@@ -26,6 +26,7 @@ internal sealed class ServerRuntimeComposition
         IRpcExceptionMapper exceptionMapper,
         ServerServiceCleanup serviceCleanup,
         IServiceProvider serviceProvider,
+        ServerDeclaredMethodFactsQuota declaredFactsQuota,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,
         SharpLinkAdmissionController admissionController,
         ServerConnectionAdmission connectionAdmission,
@@ -47,6 +48,12 @@ internal sealed class ServerRuntimeComposition
         ExceptionMapper = exceptionMapper ?? throw new ArgumentNullException(nameof(exceptionMapper));
         ServiceCleanup = serviceCleanup ?? throw new ArgumentNullException(nameof(serviceCleanup));
         ServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+        DeclaredFactsQuota = declaredFactsQuota ?? throw new ArgumentNullException(nameof(declaredFactsQuota));
+        foreach (var registration in services.Values)
+        {
+            if (registration.DeclaredFacts is not { } facts || !ReferenceEquals(facts.Group.Quota, declaredFactsQuota))
+                throw new InvalidOperationException("Runtime composition requires prepared facts charged to its exact server quota.");
+        }
         ArgumentNullException.ThrowIfNull(staticManifests);
         ShutdownPlan = shutdownPlan ?? throw new ArgumentNullException(nameof(shutdownPlan));
         FrameworkTasks = frameworkTasks ?? throw new ArgumentNullException(nameof(frameworkTasks));
@@ -95,6 +102,8 @@ internal sealed class ServerRuntimeComposition
     internal ServerServiceCleanup ServiceCleanup { get; }
 
     internal IServiceProvider ServiceProvider { get; }
+
+    internal ServerDeclaredMethodFactsQuota DeclaredFactsQuota { get; }
 
     internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> StaticManifests => _staticManifests;
 

@@ -15,7 +15,6 @@ internal sealed partial class SharpLinkClient
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(manifest);
 
-        var isInitial = false;
         lock (_remoteContractManifestGate)
         {
             PruneDisconnectedRemoteContractManifestsLocked();
@@ -28,7 +27,6 @@ internal sealed partial class SharpLinkClient
             else
             {
                 _remoteContractManifests.Add(session, manifest);
-                isInitial = true;
             }
 
             var snapshot = new RemoteContractManifestBinding[_remoteContractManifests.Count];

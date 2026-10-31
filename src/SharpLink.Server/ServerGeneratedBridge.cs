@@ -7,9 +7,13 @@ namespace SharpLink.Server;
 internal sealed class ServerGeneratedBridge(
     SharpLinkServer server,
     RpcSession session,
-    StripedLongMap<ServerCallCancellationState> callCancellations) : IRpcGeneratedServerBridge
+    StripedLongMap<ServerCallCancellationState> callCancellations,
+    ServerRequestPermit? physicalOwner = null) : IRpcGeneratedServerBridge
 {
-    private readonly RpcSessionGeneratedServerBridge _protocolBridge = new(session);
+    private readonly RpcSessionGeneratedServerBridge _protocolBridge = new(session, physicalOwner);
+
+    internal ServerGeneratedBridge WithPhysicalOwner(ServerRequestPermit owner)
+        => new(server, session, callCancellations, owner);
 
     public void EnsureUserCodeEntry(long requestId)
     {

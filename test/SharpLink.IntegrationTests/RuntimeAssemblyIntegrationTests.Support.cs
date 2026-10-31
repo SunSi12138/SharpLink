@@ -394,12 +394,14 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         internal static async Task<DynamicHarness> CreateAsync(
             bool registerDynamicServiceDependencies = true,
             IManifestReadinessControl? control = null,
-            ISharpLinkCompressionProvider? compressionProvider = null)
+            ISharpLinkCompressionProvider? compressionProvider = null,
+            Action<IServiceCollection>? configureServices = null)
         {
             var serverCancellation = new CancellationTokenSource();
             var services = new ServiceCollection();
             if (registerDynamicServiceDependencies)
                 services.AddSingleton(TimeProvider.System);
+            configureServices?.Invoke(services);
             var serviceProvider = services.BuildServiceProvider();
             var serverBuilder = SharpLinkServerBuilder.Create()
                 .UseTcp(0, IPAddress.Loopback)

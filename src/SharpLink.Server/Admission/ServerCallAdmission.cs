@@ -180,7 +180,7 @@ internal sealed class ServerCallAdmission
 /// A Reserved permit already owns local/global call capacity; activation is only a lifecycle phase
 /// transition, preserving the existing drain-safe accounting until the two-phase lifecycle changes.
 /// </summary>
-internal sealed class ServerRequestPermit : IDisposable
+internal sealed class ServerRequestPermit : IDisposable, IGeneratedStreamPhysicalOwner
 {
     private const int Reserved = 0;
     private const int Activating = 1;
@@ -207,6 +207,135 @@ internal sealed class ServerRequestPermit : IDisposable
         _admission = admission ?? throw new ArgumentNullException(nameof(admission));
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _testHooks = testHooks;
+    }
+
+    private ServiceRegistration? _protectedRegistration;
+    private SharpLinkDynamicModuleLease _moduleLease;
+
+    internal bool TryProtectRegistration(ServiceRegistration registration, RpcMethodFacts method)
+    {
+        if (!IsReserved || _protectedRegistration is not null)
+            throw new InvalidOperationException("Invocation ownership is acquired once after the request permit.");
+        if (!registration.TryAcquireInvocationOwnership(method, out var lease))
+            return false;
+        _moduleLease = lease;
+        _protectedRegistration = registration;
+        return true;
+    }
+
+    internal void VerifyProtectedRegistration(ServiceRegistration registration)
+    {
+        if (!ReferenceEquals(_protectedRegistration, registration) ||
+            registration.HasModule && !_moduleLease.IsAcquired ||
+            Volatile.Read(ref _state) is Releasing or Disposed)
+            throw new InvalidOperationException("Activation requires the exact pre-decode invocation owner.");
+    }
+
+    private int _physicalTails;
+    private int _disposeAfterPhysicalTails;
+    private TaskCompletionSource? _physicalTailsCompleted;
+    private Task? _physicalServiceCleanup;
+    private ServerCallCancellationState? _physicalCallState;
+    private ServerCallCancellationLease? _capturedPhysicalCallState;
+    private Lock? _physicalTailGate;
+    private int _physicalCallStateLost;
+
+    internal void RememberPhysicalCallState(in ServerCallCancellationLease lease)
+        => _capturedPhysicalCallState = lease;
+
+    internal void PreserveCallStateForPhysicalCompletion(ServerCallCancellationState state, long requestId)
+    {
+        if (!HasPendingPhysicalOwnership || Volatile.Read(ref _physicalCallState) is not null ||
+            Volatile.Read(ref _physicalCallStateLost) != 0)
+            return;
+        var lease = state.CaptureLease(requestId);
+        if (!lease.TryAcquire())
+            throw new InvalidOperationException("Physical producer lost its exact call-state generation.");
+        if (Interlocked.CompareExchange(ref _physicalCallState, state, null) is not null)
+            lease.ReleaseUse();
+    }
+
+    internal bool HasPhysicalTails => Volatile.Read(ref _physicalTails) != 0;
+
+    internal void AttachPhysicalServiceCleanup(Task cleanup)
+    {
+        if (Interlocked.CompareExchange(ref _physicalServiceCleanup, cleanup, null) is not null)
+            throw new InvalidOperationException("Physical service cleanup is transferred once.");
+        _ = ResumeReleaseAfterPhysicalCleanupAsync(cleanup);
+    }
+
+    private async Task ResumeReleaseAfterPhysicalCleanupAsync(Task cleanup)
+    {
+        try { await cleanup.ConfigureAwait(false); }
+        catch { } // The server's runtime-task supervisor owns cleanup diagnostics.
+        finally
+        {
+            if (Volatile.Read(ref _disposeAfterPhysicalTails) != 0)
+                Dispose();
+        }
+    }
+
+    private bool HasPendingPhysicalOwnership => HasPhysicalTails ||
+        Volatile.Read(ref _physicalServiceCleanup) is { IsCompleted: false };
+
+    public void RetainPhysicalTail()
+    {
+        // Only an actual detach allocates/takes this gate. Ordinary module acquisition and
+        // successful streaming completion do not touch another physical-owner counter/lock.
+        var gate = Volatile.Read(ref _physicalTailGate);
+        if (gate is null)
+            gate = Interlocked.CompareExchange(ref _physicalTailGate, new Lock(), null) ?? _physicalTailGate!;
+        SharpLinkProtocolViolationException? lostGeneration = null;
+        lock (gate)
+        {
+            if (Volatile.Read(ref _state) is Releasing or Disposed)
+                throw new InvalidOperationException("A detached producer cannot borrow a released request owner.");
+            if (_physicalCallState is null && _capturedPhysicalCallState is { } captured)
+            {
+                if (captured.TryAcquire())
+                    _physicalCallState = captured.State;
+                else
+                    lostGeneration = new SharpLinkProtocolViolationException(ProtocolViolationReason.InternalState,
+                        "Generated physical ownership lost its original call-state generation.");
+            }
+            // Even an impossible lost-generation fault must retain the remaining module,
+            // service/scope and linked CTS until Runtime completes its ordered tail. Never
+            // substitute another pooled generation or throw away the pending producer.
+            Interlocked.Increment(ref _physicalTails);
+        }
+        if (lostGeneration is not null)
+        {
+            Volatile.Write(ref _physicalCallStateLost, 1);
+            try { _connection.Session.NotifyDisconnected(lostGeneration); }
+            catch { } // Terminal publication must not undo the physical handoff.
+        }
+    }
+
+    public void ReleasePhysicalTail()
+    {
+        var remaining = Interlocked.Decrement(ref _physicalTails);
+        if (remaining < 0)
+            throw new InvalidOperationException("Generated physical tail released more than once.");
+        if (remaining != 0)
+            return;
+        Volatile.Read(ref _physicalTailsCompleted)?.TrySetResult();
+        if (Volatile.Read(ref _disposeAfterPhysicalTails) != 0)
+            Dispose();
+    }
+
+    internal ValueTask JoinPhysicalTailsAsync()
+    {
+        if (Volatile.Read(ref _physicalTails) == 0)
+            return ValueTask.CompletedTask;
+        var completion = Volatile.Read(ref _physicalTailsCompleted);
+        if (completion is null)
+        {
+            var created = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            completion = Interlocked.CompareExchange(ref _physicalTailsCompleted, created, null) ?? created;
+        }
+        if (Volatile.Read(ref _physicalTails) == 0)
+            completion.TrySetResult();
+        return new ValueTask(completion.Task);
     }
 
     internal bool IsReserved => Volatile.Read(ref _state) == Reserved;
@@ -361,6 +490,15 @@ internal sealed class ServerRequestPermit : IDisposable
 
     public void Dispose()
     {
+        // Logical completion cannot free module/call capacity while Runtime owns an abandoned
+        // producer. The generated bridge also joins before service/scope disposal.
+        if (HasPendingPhysicalOwnership)
+        {
+            Volatile.Write(ref _disposeAfterPhysicalTails, 1);
+            if (HasPendingPhysicalOwnership)
+                return;
+        }
+
         var spinner = new SpinWait();
         while (true)
         {
@@ -425,7 +563,24 @@ internal sealed class ServerRequestPermit : IDisposable
             }
             finally
             {
-                _admission.ReleaseCall(_connection);
+                try
+                {
+                    try
+                    {
+                        Interlocked.Exchange(ref _physicalCallState, null)?.ReleaseUse();
+                        _capturedPhysicalCallState = null;
+                    }
+                    finally
+                    {
+                        _moduleLease.Dispose();
+                        _moduleLease = default;
+                        _protectedRegistration = null;
+                    }
+                }
+                finally
+                {
+                    _admission.ReleaseCall(_connection);
+                }
             }
         }
         finally

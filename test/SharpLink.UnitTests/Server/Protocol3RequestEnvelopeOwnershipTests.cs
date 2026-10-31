@@ -88,7 +88,7 @@ public sealed class Protocol3RequestEnvelopeOwnershipTests
         var context = session.RuntimeContext;
         var authority = new Protocol3BindingAuthority(Guid.NewGuid(), Guid.NewGuid(),
             Protocol3BindingLimits.Default with { MaxClientStreamsPerCall = 2 });
-        Ensure(session.TryCompleteHandshake(new NegotiatedSessionOptions(0,
+        Ensure(session.TryCompleteHandshake(new NegotiatedSessionOptions(ProtocolV2Constants.MinorVersion,
             ProtocolV2Negotiator.MandatoryCapabilities | ProtocolV2Capabilities.Metadata,
             context.Protocol.MaxFramePayloadBytes, context.FlowControl.StreamReceiveWindowBytes,
             context.FlowControl.ConnectionReceiveWindowBytes, authority: authority)));
