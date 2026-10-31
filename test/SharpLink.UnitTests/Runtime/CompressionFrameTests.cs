@@ -2,6 +2,8 @@ using System.IO.Pipelines;
 using System.Buffers.Binary;
 using System.Linq;
 using System.Threading;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace SharpLink.UnitTests.Runtime;
 
@@ -72,59 +74,113 @@ public class CompressionFrameTests
             .Build();
         var input = new Pipe();
         var output = new Pipe();
-        await using var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+        var observedWriter = new ObservedPipeWriter(output.Writer);
+        var session = RpcSessionTestFixture.CreateSessionOverTestTransport(
             "compression-zero-body",
             input.Reader,
-            output.Writer,
+            observedWriter,
             RpcSessionTestFixture.ClientOptions(context),
             completeHandshake: false);
-        RpcSessionTestFixture.CompleteHandshake(
-            session,
-            ProtocolV2Capabilities.Compression,
-            compressionBinding: context.Compression.ProviderBindings[0]);
-
-        var original = new byte[2048];
-        var frame = context.Buffers.Rent(ProtocolV2Constants.HeaderBytes + original.Length);
-        var frameToken = ProtocolV2FrameWriter.BeginFrame(
-            frame,
-            ProtocolV2FrameType.Response,
-            ProtocolV2FrameFlags.None,
-            requestId: 1);
-        frame.Write(original);
-        ProtocolV2FrameWriter.EndFrame(frame, frameToken);
-
-        session.SendPacket(frame);
-        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-
-        var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        var wire = read.Buffer;
-        Ensure(ProtocolV2FrameParser.TryReadFrame(
-            ref wire,
-            session.RuntimeContext.Protocol,
-            out var header,
-            out var payload), "compressed response frame should be published");
-        Ensure((header.Flags & ProtocolV2FrameFlags.Compressed) != 0,
-            "zero-byte representation should remain a compressed frame");
-        Ensure(payload.Length == sizeof(uint),
-            "zero-byte representation should contain only the original-length envelope");
-
-        var decoded = session.DecodeInboundPayload(
-            header.Type,
-            header.Flags,
-            payload,
-            CancellationToken.None,
-            out var owner);
+        Task? flushTask = null;
+        Exception? primaryFailure = null;
         try
         {
-            Ensure(decoded.Length == original.Length, "zero-byte representation decoded length");
-            Ensure(decoded.ToArray().SequenceEqual(original), "zero-byte representation round-trip payload");
+            RpcSessionTestFixture.CompleteHandshake(
+                session,
+                ProtocolV2Capabilities.Compression,
+                compressionBinding: context.Compression.ProviderBindings[0]);
+
+            var original = new byte[2048];
+            var frame = context.Buffers.Rent(ProtocolV2Constants.HeaderBytes + original.Length);
+            var frameToken = ProtocolV2FrameWriter.BeginFrame(
+                frame,
+                ProtocolV2FrameType.Response,
+                ProtocolV2FrameFlags.None,
+                requestId: 1);
+            frame.Write(original);
+            ProtocolV2FrameWriter.EndFrame(frame, frameToken);
+
+            observedWriter.Record("before-send");
+            session.SendPacket(frame);
+            observedWriter.Record("send-returned");
+            flushTask = session.FlushSendQueueAsync().AsTask();
+            observedWriter.Record("flush-request-returned");
+            await flushTask.WaitAsync(TimeSpan.FromSeconds(2));
+            observedWriter.Record("flush-marker-completed");
+
+            var read = await output.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            try
+            {
+                var wire = read.Buffer;
+                Ensure(ProtocolV2FrameParser.TryReadFrame(
+                    ref wire,
+                    session.RuntimeContext.Protocol,
+                    out var header,
+                    out var payload), "compressed response frame should be published");
+                Ensure((header.Flags & ProtocolV2FrameFlags.Compressed) != 0,
+                    "zero-byte representation should remain a compressed frame");
+                Ensure(payload.Length == sizeof(uint),
+                    "zero-byte representation should contain only the original-length envelope");
+
+                var decoded = session.DecodeInboundPayload(
+                    header.Type,
+                    header.Flags,
+                    payload,
+                    CancellationToken.None,
+                    out var owner);
+                try
+                {
+                    Ensure(decoded.Length == original.Length, "zero-byte representation decoded length");
+                    Ensure(decoded.ToArray().SequenceEqual(original), "zero-byte representation round-trip payload");
+                    observedWriter.Record("wire-round-trip-verified");
+                }
+                finally
+                {
+                    session.ReturnDecodedPayload(owner);
+                }
+            }
+            finally
+            {
+                output.Reader.AdvanceTo(read.Buffer.End);
+            }
+        }
+        catch (Exception exception)
+        {
+            primaryFailure = exception;
+            observedWriter.Snapshot("failure-before-cleanup", session, provider, flushTask);
+            observedWriter.Dump();
+            throw;
         }
         finally
         {
-            session.ReturnDecodedPayload(owner);
-            output.Reader.AdvanceTo(read.Buffer.End);
-            await output.Reader.CompleteAsync();
-            await input.Writer.CompleteAsync();
+            observedWriter.Record("cleanup-entered");
+            Exception? cleanupFailure = null;
+            await Cleanup("output-reader", () => output.Reader.CompleteAsync());
+            await Cleanup("input-writer", () => input.Writer.CompleteAsync());
+            await Cleanup("session", () => session.DisposeAsync());
+            if (flushTask is { } pendingFlush)
+                await Cleanup("flush-marker", () => new ValueTask(pendingFlush));
+            observedWriter.Snapshot("cleanup-finished", session, provider, flushTask);
+            observedWriter.Dump();
+            if (cleanupFailure is not null && primaryFailure is null)
+                throw cleanupFailure;
+
+            async Task Cleanup(string name, Func<ValueTask> action)
+            {
+                observedWriter.Record($"cleanup-{name}-started");
+                observedWriter.Dump();
+                try
+                {
+                    await action();
+                    observedWriter.Record($"cleanup-{name}-completed");
+                }
+                catch (Exception exception)
+                {
+                    observedWriter.Record($"cleanup-{name}-failed:{exception}");
+                    cleanupFailure = cleanupFailure is null
+                        ? exception : new AggregateException(cleanupFailure, exception);
+                }
+            }
         }
     }
 
@@ -344,8 +400,81 @@ public class CompressionFrameTests
     }
 
 
+    // Observe the real pipe operations without consuming or wrapping their ValueTasks.
+    // Snapshot fields are concurrent observations, not an atomic scheduler-state proof.
+    private sealed class ObservedPipeWriter(PipeWriter inner) : PipeWriter
+    {
+        private readonly ConcurrentQueue<string> _events = new();
+        private int _advancedBytes;
+        private int _flushCalls;
+        private int _completedFlushValueTasks;
+
+        internal void Record(string phase) => _events.Enqueue(
+            $"zero-body phase={phase} timestamp={Stopwatch.GetTimestamp()} thread={Environment.CurrentManagedThreadId}");
+
+        internal void Snapshot(string phase, RpcSession session, ZeroBodyCompressionProvider provider, Task? flush)
+        {
+            ThreadPool.GetAvailableThreads(out var workers, out var io);
+            Record($"{phase} compression={provider.CompressCount} advanced={Volatile.Read(ref _advancedBytes)} " +
+                $"flushCalls={Volatile.Read(ref _flushCalls)} completedFlushValueTasks={Volatile.Read(ref _completedFlushValueTasks)} " +
+                $"marker={flush?.Status.ToString() ?? "not-created"} queuedBytes={session.QueuedSendBytes} " +
+                $"idleWait={session.HasPendingSendPumpIdleWait} connected={session.IsConnected} " +
+                $"availableWorkers={workers} availableIo={io} pendingWork={ThreadPool.PendingWorkItemCount} " +
+                $"threadCount={ThreadPool.ThreadCount} completedWork={ThreadPool.CompletedWorkItemCount}");
+        }
+
+        internal void Dump()
+        {
+            while (_events.TryDequeue(out var entry))
+                Console.WriteLine(entry);
+        }
+
+        public override Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            Record("get-memory-entered");
+            var memory = inner.GetMemory(sizeHint);
+            Record("get-memory-returned");
+            return memory;
+        }
+
+        public override Span<byte> GetSpan(int sizeHint = 0)
+        {
+            Record("get-span-entered");
+            var span = inner.GetSpan(sizeHint);
+            Record("get-span-returned");
+            return span;
+        }
+
+        public override void Advance(int bytes)
+        {
+            Record($"advance-entered:{bytes}");
+            inner.Advance(bytes);
+            Interlocked.Add(ref _advancedBytes, bytes);
+            Record($"advance-returned:{bytes}");
+        }
+
+        public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _flushCalls);
+            Record("pipe-flush-entered");
+            var result = inner.FlushAsync(cancellationToken);
+            if (result.IsCompletedSuccessfully)
+                Interlocked.Increment(ref _completedFlushValueTasks);
+            Record($"pipe-flush-returned:completed={result.IsCompleted}:success={result.IsCompletedSuccessfully}");
+            return result;
+        }
+
+        public override void CancelPendingFlush() => inner.CancelPendingFlush();
+        public override void Complete(Exception? exception = null) => inner.Complete(exception);
+        public override ValueTask CompleteAsync(Exception? exception = null) => inner.CompleteAsync(exception);
+        public override bool CanGetUnflushedBytes => inner.CanGetUnflushedBytes;
+        public override long UnflushedBytes => inner.UnflushedBytes;
+    }
+
     private sealed class ZeroBodyCompressionProvider : ISharpLinkCompressionProvider
     {
+        private int _compressCount;
+        internal int CompressCount => Volatile.Read(ref _compressCount);
         public string WireProfile => "test.zero-body/v1";
 
         public bool TryCompress(
@@ -354,6 +483,7 @@ public class CompressionFrameTests
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
+            Interlocked.Increment(ref _compressCount);
             cancellationToken.ThrowIfCancellationRequested();
             return true;
         }
