@@ -926,6 +926,7 @@ public class PooledAsyncStreamDispatcherTests
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
         using var entered = new ManualResetEventSlim();
+        using var producerStarted = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
         var blockingCodec = new ReferenceItemCodec(
             marker: null,
@@ -939,23 +940,61 @@ public class PooledAsyncStreamDispatcherTests
         manager.Register(77, 0, first);
         first.SetConsumerAbandonedCallback(_ => manager.Unregister(77, 0), 77);
 
-        var producer = Task.Run(async () => await manager.DispatchChunkAsync(77, 0, Payload));
-        Ensure(entered.Wait(TimeSpan.FromSeconds(3)), "producer must enter decode");
-        var disposing = first.DisposeAsync().AsTask();
-        Ensure(!disposing.IsCompleted, "early disposal must wait for an acquired decode");
+        Task? producer = null;
+        Task? disposing = null;
+        PooledAsyncStreamDispatcher<ReferenceItem>? second = null;
+        try
+        {
+            // The blocking decoder needs a test-owned worker, not the shared pool whose
+            // scheduling delay would otherwise consume the decode-entry assertion budget.
+            producer = Task.Factory.StartNew(() =>
+            {
+                producerStarted.Set();
+                manager.DispatchChunkAsync(77, 0, Payload).GetAwaiter().GetResult();
+            }, CancellationToken.None,
+                TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            Ensure(producerStarted.Wait(TimeSpan.FromSeconds(3)), "the owned producer must start");
+            var enteredDecode = entered.Wait(TimeSpan.FromSeconds(3));
+            if (!enteredDecode && producer.IsCompleted)
+                await producer;
+            Ensure(enteredDecode, "producer must enter decode");
+            disposing = first.DisposeAsync().AsTask();
+            Ensure(!disposing.IsCompleted, "early disposal must wait for an acquired decode");
 
-        release.Set();
-        await disposing.WaitAsync(TimeSpan.FromSeconds(3));
+            release.Set();
+            await disposing.WaitAsync(TimeSpan.FromSeconds(3));
 
-        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
-            default,
-            new ReferenceItemCodec());
-        await producer.WaitAsync(TimeSpan.FromSeconds(3));
-        second.Complete(exception: null);
-        await second.DisposeAsync();
-        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
-            "the safely reused dispatcher should return exactly once");
-        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+            second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+                default,
+                new ReferenceItemCodec());
+            await producer.WaitAsync(TimeSpan.FromSeconds(3));
+            second.Complete(exception: null);
+            await second.DisposeAsync();
+            second = null;
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "the safely reused dispatcher should return exactly once");
+        }
+        finally
+        {
+            release.Set();
+            if (producer is not null)
+                await LongRunningTestWorker.JoinAsync(producer, TimeSpan.FromSeconds(3));
+            manager.Unregister(77, 0);
+            if (disposing is not null)
+                await LongRunningTestWorker.JoinAsync(disposing, TimeSpan.FromSeconds(3));
+            else
+            {
+                first.Complete(exception: null);
+                await first.DisposeAsync();
+            }
+            if (second is not null)
+            {
+                second.Complete(exception: null);
+                await second.DisposeAsync();
+            }
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
     }
 
     [Test]

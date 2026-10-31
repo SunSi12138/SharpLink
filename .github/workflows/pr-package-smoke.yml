@@ -4,6 +4,9 @@ permissions:
   contents: read
 
 on:
+  push:
+    branches:
+      - 'validation/dependency-forward-dev-20261030'
   pull_request:
     types: [opened, synchronize, reopened]
     paths:

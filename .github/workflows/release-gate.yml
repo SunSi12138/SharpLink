@@ -8,6 +8,8 @@ on:
     branches:
       - main
   push:
+    branches:
+      - 'validation/dependency-forward-dev-20261030'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -74,6 +76,15 @@ jobs:
 
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
+
+      - name: Upload Unit Test Diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unit-release-${{ runner.os }}-${{ github.sha }}
+          path: test/SharpLink.UnitTests/bin/Release/net10.0/TestResults/*report.html
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
