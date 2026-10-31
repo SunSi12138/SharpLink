@@ -2,7 +2,7 @@
 
 **Status: selected design for [#775](https://github.com/SunSi12138/SharpLink/issues/775), not an implemented, validated, released, or shipped protocol.** Source preparation does not establish interoperability, performance acceptance, completion of all five RPC families, or adoption of physical-ownership changes. This document fixes one breaking wire/API direction.
 
-The wire identity is **ProtocolVersion 3, handshake revision 0, magic `0x8A`, generated API version 6**, with generated schema identity `sharplink-3.0-api6-contract-channel-complete-method-facts-v1`. The revision of this design document is not the handshake revision. There is no Protocol2 parser fallback, legacy grammar probe, downgrade, compatibility mode, or optional binding capability. Historical old-wire byte fixtures remain negative compatibility controls; they must not be rewritten into new-wire success fixtures.
+The wire identity is **ProtocolVersion 3, handshake revision 1, magic `0x8A`, generated API version 5**, with generated schema identity `sharplink-3.0-api5-contract-channel-complete-method-facts-v1`. The revision of this design document is not the handshake revision. Generated API5 is the single release boundary after published 2.0.3/API4; unreleased full-facts and channel drafts do not create additional released API epochs. The distinct exact ABI identity rejects incompatible API5 development artifacts. Protocol3 starts its own revision domain at 1; published Protocol2 minor 4 is not a same-domain predecessor or downgrade target. There is no Protocol2 parser fallback, legacy grammar probe, downgrade, compatibility mode, or optional binding capability. Historical old-wire byte fixtures remain negative compatibility controls; they must not be rewritten into new-wire success fixtures.
 
 This is a companion to [the contract-channel API proposal](issue-775-clean-contract-channel-design.md), not a replacement or an edit of that proposal. It consolidates the wire grammar, finite preparation, bounded publication, invalidation, and ownership requirements into a self-contained technical reference. Terms such as “must” describe acceptance requirements, not claims about currently shipped behavior. Error detail reservations below remain subject to collision verification against the integrated source/API inventory.
 
@@ -46,27 +46,27 @@ Factories are synchronous local construction: validate input, terminal state, is
 
 Both factories atomically register bounded cold demand before returning. Prepare attaches a bounded waiter to that same demand/channel; it does not resolve the latest local contract or install a second identity. Demand may converge without Prepare. Business calls remain FailFast/NoBoundRoute until a real confirmed eligible route exists, before serializer or producer work. A successful Prepare is not a call-capacity reservation or a registration lifetime lease.
 
-Generated factories and current manual consumers use only the API6/Protocol3 schema tuple above. An old API5/Protocol2 or otherwise mismatched generated manifest must fail before a proxy/stub factory runs. Current-source migration must preserve complete method facts rather than erase them to obtain compatibility.
+Generated factories and current manual consumers use only the API5/Protocol3 schema tuple above. An old API5/Protocol2 or otherwise mismatched generated manifest must fail before a proxy/stub factory runs. Current-source migration must preserve complete method facts rather than erase them to obtain compatibility.
 
 
 ## Bootstrap and common encoding
 
 Magic **0x8A**, header15 bytes: magic@0, payloadLength signed little-endian i32@1, typeu8@5, flagsu8@6, correlationu64LE@7. Negative/overlimit payload, unknown type/flags, wrong direction/phase/correlation domain close Session without business decode. **0x89 and all other magic reject at header**, never try another parser. Old Protocol2 and #861’s 36-byte grammar are retained negative fixture bytes, not recompiled/migrated into new frames.
 
-Protocol3 initial handshake **Revision=0 exactly**, no range downgrade. Binding is intrinsic, not an optional capability bit. Supported/required capabilities retain useful optional metadata0,compression1,flowcontrol2,health3,cancellation-reason4,manifest5,session-refresh6 bits; bits>=7 unknown and rejected in required/negotiated sets. Protocol3 implementations require flowcontrol, cancellation-reason and manifest for this complete RPC model (bits 2|4|5); authentication/metadata/compression remain separately enforced. Cancellation is always the single reason-byte grammar; Unspecified0 remains a meaningful reason, not permission to omit the byte. No old empty-Cancel parser.
+Protocol3 initial handshake **Revision=1 exactly**, no range downgrade. Binding is intrinsic, not an optional capability bit. Supported/required capabilities retain useful optional metadata0,compression1,flowcontrol2,health3,cancellation-reason4,manifest5,session-refresh6 bits; bits>=7 unknown and rejected in required/negotiated sets. Protocol3 implementations require flowcontrol, cancellation-reason and manifest for this complete RPC model (bits 2|4|5); authentication/metadata/compression remain separately enforced. Cancellation is always the single reason-byte grammar; Unspecified0 remains a meaningful reason, not permission to omit the byte. No old empty-Cancel parser.
 
 All multibyte integers LE. ContractId/MethodId preserve signed64 bit patterns; token/operation/generations are unsigned. Hash is Highu64LE then Lowu64LE, the hash is rejected only when High == 0 && Low == 0. GUID encoding is exactly .NET Guid.TryWriteBytes default 16-byte layout (first4/2/2 little-endian, final8 unchanged), explicitly identical for every Protocol3 authority/receipt/Manifest/Refresh field. Canonical varuint32 is1..5 bytes, fifth high nibble zero, no redundant terminal zero; truncated/overlong rejected. UTF8 is strict, metadata/error field limits retained. No business codec, service activation or user compression provider is invoked for handshake/binding-control parsing.
 
 ## Complete handshake payloads
 
 Request type 0, flagsNone,id0, only Handshaking/client→server. Fields in exact order:
-- Revisionu16@0 (=0); Supportedu64@2; Requiredu64@10; MaxFramei32@18; StreamWindowi32@22; ConnectionWindowi32@26; ResponseCompressionPreferenceGenerationu64@30; AllowResponseCompressionu8@38 (0/1).
+- Revisionu16@0 (=1); Supportedu64@2; Requiredu64@10; MaxFramei32@18; StreamWindowi32@22; ConnectionWindowi32@26; ResponseCompressionPreferenceGenerationu64@30; AllowResponseCompressionu8@38 (0/1).
 - **BindingLimits16@39..54** (below).
 - CompressionProfileCountu8@55,0..16; each Lengthu8(1..64) then validated ASCII token; unique ordinal names, profile bytes must each be in the inclusive ASCII range 0x21..0x7E. Count 0 is valid if compression unrequested.
 - AuthLength canonical varuint32 then exactly AuthLength opaque bytes; auth<=local MaxMetadataBytes and complete frame<=localMaxFrame. No trailing bytes. Authenticator called only after full structural validation/negotiation constraints, before SessionReady.
 
 Success response type 1,flagsNone,id0, only Handshaking/server→client:
-- Revisionu16@0 (=0); NegotiatedCapabilitiesu64@2; MaxFramei32@10; StreamWindowi32@14; ConnectionWindowi32@18.
+- Revisionu16@0 (=1); NegotiatedCapabilitiesu64@2; MaxFramei32@10; StreamWindowi32@14; ConnectionWindowi32@18.
 - **Authority48@22..69** = ServerInstanceIdGuid16, RegistryEpochGuid16, negotiated BindingLimits16; GUIDs nonempty.
 - CompressionProfileLengthu8@70 (0 if no compression), followed by exactly0..64 ASCII bytes; total length71..135, no trailing bytes.
 - Chosen capability set subset of offered supported and includes both sides' mandatory requirements; response bound limits positive and <=offer/local policy, not silently larger. MaxFrame/windows use existing safe negotiated min semantics/validation. Authority stored on this exact physical Session; same authority on replacement Session does not transfer tokens.
