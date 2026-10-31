@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/StreamFlowControllerLeaseRaceTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/StreamFlowControllerLeaseRaceTests/*"
 FOCUSED_COUNT = 8
-FULL_COUNT = 2202  # 2188 dev cases plus 6 static-stream request-flags cases and 8 unchanged injected controls.
+FULL_COUNT = 2220  # 2194 prior ordinary cases + 18 ColdStop cases + 8 unchanged injected controls.
 
 
 def digest(path):

@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/SendCreditTerminalAccountingTests.cs"
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/SendCreditTerminalAccountingTests/*"
 FOCUSED_COUNT = 1
-FULL_COUNT = 2194  # 2188 dev cases plus 6 static-stream request-flags cases.
+FULL_COUNT = 2212  # 2194 prior ordinary cases + 18 ColdStop cases; focused controls unchanged.
 
 
 def digest(path):
