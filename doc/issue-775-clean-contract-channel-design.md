@@ -46,12 +46,12 @@ public sealed class RpcProxy<TContract> where TContract : IService
 {
     // Internal constructor: caller cannot pair a Service with a different channel.
     public TContract Service { get; }
-    public ValueTask PrepareAsync(CancellationToken cancellationToken = default);
+    public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
 }
 public interface IRpcContractChannel
 {
     IRpcRuntimeContext RuntimeContext { get; }
-    ValueTask PrepareAsync(CancellationToken cancellationToken = default);
+    ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
     // Five Invoke* members keep their complete current generic, in/ref, codec,
     // stream-writer, metadata, cancellation and return shapes; see the Five invocation members section below.
 }
@@ -64,7 +64,7 @@ Manual callers without a generic contract use the exact overload `GetLocalContra
 ```csharp
 var local = client.GetLocalContract<IMyContract>();
 var channel = client.CreateContractChannel(local, new RpcProxyOptions { Requirement = requirement });
-await channel.PrepareAsync(cancellationToken); // caller controls timeout via linked token
+await channel.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken); // explicit finite readiness budget
 var answer = await channel.InvokeUnaryAsync(method, in request, requestCodec,
     responseCodec, metadata: null, cancellationToken);
 // No ((IRpcChannel)client), no SetDefaultIdentity, no BindId/Session supplied by app.
@@ -74,7 +74,7 @@ Generated callers use the same exact-site preparation without casting or resolvi
 
 ```csharp
 var rpc = client.CreateProxy<IMyContract>(new RpcProxyOptions { Requirement = requirement });
-await rpc.PrepareAsync(cancellationToken);
+await rpc.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken);
 var answer = await rpc.Service.MyMethodAsync(request, cancellationToken);
 ```
 
@@ -82,7 +82,7 @@ The immutable sealed RpcProxy<T> holds the generated Service and precisely its c
 
 Both CreateProxy and CreateContractChannel atomically register bounded local demand before returning; demand creation is local and never waits for Connect/Manifest/Bind. Existing/new Ready Session/topology/Manifest/receipt events may schedule bounded coalesced Bind operations. On factory failure/limit rejection no partial escaped demand is left. A live receiver retains its demand; controller/cache tracking is weak or explicitly released on local retirement/client stop, with hard live-demand/cache/waiter quotas. Prepare adds only its bounded waiter and triggers/pulses existing demand, never installs a second identity. Thus a call may become ready without Prepare, while immediate calls still FailFast until actual confirmation. Before-Connect, after-Connect and receipt handles all prepare THAT original site, even if registry replacement occurs while waiting. Retired local generation fails; no reacquisition of latest.
 
-Prepare is optional and bounded; it waits for the channel's exact requirement. Calls default FailFast/NoBoundRoute until a confirmed route exists, without serialization/producer start. Prepare does not itself reserve call capacity, prolong registration lifetime, or allow old local generation calls. Cancellation of one waiter does not cancel unrelated coalesced demand; hard waiter/operation quotas and original deadlines remain. Already-ready Prepare returns synchronously after local lifetime/state validation; it must not create a fresh Bind operation. A separate deterministic scalar model does not establish this production behavior.
+Prepare is optional and bounded; it waits for the channel's exact requirement. Its timeout is mandatory, positive and no greater than SharpLinkTimer.MaximumDelay; there is no timeoutless/infinite overload. Invalid timeout precedes caller cancellation, then terminal client/local-generation checks, then one original monotonic readiness deadline. Ready completion checks this budget and cancellation before committing; reconnect, rebind and wakeups never reset it. Each background Bind has a separate bounded lifecycle, including prepublication enqueue/backpressure, and cannot extend this waiter deadline. Calls default FailFast/NoBoundRoute until a confirmed route exists, without serialization/producer start. Prepare does not itself reserve call capacity, prolong registration lifetime, or allow old local generation calls. Cancellation of one waiter does not cancel unrelated coalesced demand; hard waiter/operation quotas and original deadlines remain. Already-ready Prepare returns synchronously after local lifetime/state validation; it must not create a fresh Bind operation. A separate deterministic scalar model does not establish this production behavior.
 
 Generated CreateProxy creates the same local token/key internally and passes the direct ContractCallSite as IRpcContractChannel to the generated proxy factory. Static channels may be the CallSite itself; dynamic channels retain the existing module-owned wrapper, which obtains local invocation protection before touching collectible codecs. Metadata wrappers delegate to the same site and retain immutable metadata without weakening identity. The RpcProxy handle is never captured as an extra invocation receiver; generated Service stores its direct channel. All-five async entry/core/interceptor/retry/telemetry/send pipeline stays owned once by the CallSite; no new forwarding async layer.
 
