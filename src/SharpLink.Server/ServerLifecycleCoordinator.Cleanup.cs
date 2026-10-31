@@ -151,7 +151,18 @@ internal sealed partial class SharpLinkServer
                 timeProvider.TimestampFrequency);
             if (remaining <= TimeSpan.Zero)
                 return false;
-            return await SharpLinkTimer.WaitAsync(task, remaining, timeProvider).ConfigureAwait(false);
+            // Keep the original Stop boundary across sequential cleanup phases and timer
+            // registration. A relative wait would sample a new origin and could extend it.
+            if (await SharpLinkTimer.WaitAsync(
+                    task, RpcDeadline.FromTimestamp(deadline), timeProvider).ConfigureAwait(false))
+                return true;
+
+            // Graceful cleanup, unlike an RPC, preserves an already-completed source's
+            // success/fault/cancellation when it races the timer after the initial expiry check.
+            if (!task.IsCompleted)
+                return false;
+            await task.ConfigureAwait(false);
+            return true;
         }
 
         private static Task StartListenerDispose(IServerTransportListener listener)
