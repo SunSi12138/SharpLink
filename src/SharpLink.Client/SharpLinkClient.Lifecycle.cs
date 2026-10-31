@@ -334,9 +334,10 @@ internal sealed partial class SharpLinkClient
             if (existing is not null)
                 return (T)existing;
 
+            var site = GetOrCreateCallSite(registration);
             var channel = registration.Module is null
-                ? (IRpcChannel)this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
+                ? (IRpcChannel)site
+                : new SharpLinkModuleRpcChannel(site, registration.Module);
             var created = registration.Descriptor.ProxyFactory(channel, registration.Codecs);
             var published = Interlocked.CompareExchange(ref registration.Proxy, created, null);
             return (T)(published ?? created);
@@ -354,9 +355,10 @@ internal sealed partial class SharpLinkClient
         if (Volatile.Read(ref _proxies).TryGetValue(typeof(T), out var registration))
         {
             ValidateRemoteContractAssembly(registration);
+            var site = GetOrCreateCallSite(registration);
             IRpcChannel channel = registration.Module is null
-                ? this
-                : new SharpLinkModuleRpcChannel(this, registration.Module);
+                ? site
+                : new SharpLinkModuleRpcChannel(site, registration.Module);
             channel = new SharpLinkMetadataRpcChannel(channel, metadata);
             return (T)registration.Descriptor.ProxyFactory(channel, registration.Codecs);
         }

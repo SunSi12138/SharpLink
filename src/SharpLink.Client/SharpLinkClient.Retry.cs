@@ -2,130 +2,201 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
-    private ValueTask<TResponse> InvokeUnaryWithOptionalRetryAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
-        TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        ResolvedCallControl control,
-        CancellationToken cancellationToken)
+    internal sealed partial class ContractCallSite
     {
-        // This helper is reached through the unary invocation pipeline, including
-        // telemetry and interceptor terminals. Generated unary calls use Unary descriptors.
-        if (!method.IsIdempotent)
+        private ValueTask<TResponse> InvokeUnaryWithOptionalRetryAsync<TRequest, TResponse>(
+            RpcMethodDescriptor method,
+            TRequest request,
+            IRpcCodec<TRequest> requestCodec,
+            IRpcCodec<TResponse> responseCodec,
+            ResolvedCallControl control,
+            CancellationToken cancellationToken)
         {
-            return InvokeUnaryCoreAsync(
-                method,
-                request, requestCodec, responseCodec, control, cancellationToken);
-        }
-
-        var generation = control.RetryGeneration ?? CaptureRetryGeneration();
-        if (!generation.Enabled)
-        {
-            return InvokeUnaryCoreAsync(
-                method,
-                request, requestCodec, responseCodec, control, cancellationToken);
-        }
-
-        return InvokeUnaryWithRetryAsync(
-            method, request, requestCodec, responseCodec, control, generation, cancellationToken);
-    }
-
-    private async ValueTask<TResponse> InvokeUnaryWithRetryAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
-        TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        ResolvedCallControl control,
-        ClientRetryGeneration generation,
-        CancellationToken cancellationToken)
-    {
-        var settings = generation.Settings;
-        Exception? lastFailure = null;
-        var selection = _cluster is null ? null : new EndpointRetrySelectionState();
-        var requiresRetryOutcome = generation.Policy is not null;
-        AttemptOutcomeState? outcome = null;
-        for (var attempt = 1; attempt <= settings.MaxAttempts; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            EnsureLogicalCallProgress(control);
-            if (outcome is not null)
+            // This helper is reached through the unary invocation pipeline, including
+            // telemetry and interceptor terminals. Generated unary calls use Unary descriptors.
+            if (!method.IsIdempotent)
             {
-                outcome.ResetForRetryAttempt();
-            }
-            else if (requiresRetryOutcome || _endpointAdmissionPolicy is not null)
-            {
-                outcome = new AttemptOutcomeState(this, method);
-            }
-            else
-            {
-                SharpLinkTelemetry.RecordClientAttempt();
-            }
-            var attemptScope = StartClientAttemptTelemetry(control, method, attempt);
-            try
-            {
-                var response = await InvokeUnaryRetryAttemptAsync(
+                return InvokeUnaryCoreAsync(
                     method,
-                    method.ContractId, method.MethodId, method.HasResponsePayload,
-                    request, requestCodec, responseCodec, control, selection, outcome, cancellationToken).ConfigureAwait(false);
-                EnsureLogicalCallProgress(control);
-                attemptScope.Complete();
-                return response;
+                    request, requestCodec, responseCodec, control, cancellationToken);
             }
-            catch (OperationCanceledException exception)
+
+            var generation = control.RetryGeneration ?? _owner.CaptureRetryGeneration();
+            if (!generation.Enabled)
             {
-                attemptScope.Complete(exception);
-                throw;
+                return InvokeUnaryCoreAsync(
+                    method,
+                    request, requestCodec, responseCodec, control, cancellationToken);
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+
+            return InvokeUnaryWithRetryAsync(
+                method, request, requestCodec, responseCodec, control, generation, cancellationToken);
+        }
+
+        private async ValueTask<TResponse> InvokeUnaryWithRetryAsync<TRequest, TResponse>(
+            RpcMethodDescriptor method,
+            TRequest request,
+            IRpcCodec<TRequest> requestCodec,
+            IRpcCodec<TResponse> responseCodec,
+            ResolvedCallControl control,
+            ClientRetryGeneration generation,
+            CancellationToken cancellationToken)
+        {
+            var settings = generation.Settings;
+            Exception? lastFailure = null;
+            var selection = _owner._cluster is null ? null : new EndpointRetrySelectionState();
+            var requiresRetryOutcome = generation.Policy is not null;
+            AttemptOutcomeState? outcome = null;
+            for (var attempt = 1; attempt <= settings.MaxAttempts; attempt++)
             {
-                attemptScope.Complete(exception);
-                if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
-                    _ = control.LogicalCall?.TryClaimDeadline();
+                cancellationToken.ThrowIfCancellationRequested();
                 EnsureLogicalCallProgress(control);
-
-                lastFailure = exception;
-                if (attempt == settings.MaxAttempts)
-                    throw;
-
-                SharpLinkRetryDecision decision;
+                if (outcome is not null)
+                {
+                    outcome.ResetForRetryAttempt();
+                }
+                else if (requiresRetryOutcome || _owner._endpointAdmissionPolicy is not null)
+                {
+                    outcome = new AttemptOutcomeState(_owner, method);
+                }
+                else
+                {
+                    SharpLinkTelemetry.RecordClientAttempt();
+                }
+                var attemptScope = StartClientAttemptTelemetry(control, method, attempt);
                 try
                 {
-                    decision = outcome is null
-                        ? EvaluateDefaultRetryDecision(attempt, GetErrorCode(exception), settings)
-                        : EvaluateRetryDecision(outcome.CreateRetryContext(attempt, exception), generation);
+                    var response = await InvokeUnaryRetryAttemptAsync(
+                        method,
+                        method.ContractId, method.MethodId, method.HasResponsePayload,
+                        request, requestCodec, responseCodec, control, selection, outcome, cancellationToken).ConfigureAwait(false);
+                    EnsureLogicalCallProgress(control);
+                    attemptScope.Complete();
+                    return response;
+                }
+                catch (OperationCanceledException exception)
+                {
+                    attemptScope.Complete(exception);
+                    throw;
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    attemptScope.Complete(exception);
+                    if (exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded })
+                        _ = control.LogicalCall?.TryClaimDeadline();
+                    EnsureLogicalCallProgress(control);
+
+                    lastFailure = exception;
+                    if (attempt == settings.MaxAttempts)
+                        throw;
+
+                    SharpLinkRetryDecision decision;
+                    try
+                    {
+                        decision = outcome is null
+                            ? EvaluateDefaultRetryDecision(attempt, GetErrorCode(exception), settings)
+                            : EvaluateRetryDecision(outcome.CreateRetryContext(attempt, exception), generation);
+                    }
+                    catch
+                    {
+                        EnsureLogicalCallProgress(control);
+                        throw;
+                    }
+                    EnsureLogicalCallProgress(control);
+                    if (!decision.ShouldRetry)
+                        throw;
+                    SharpLinkTelemetry.RecordClientRetry();
+                    if (decision.Delay < TimeSpan.Zero)
+                    {
+                        throw new SharpLinkException(
+                            SharpLinkErrorCode.FailedPrecondition,
+                            "The retry policy returned a negative delay.");
+                    }
+                    var delay = decision.Delay;
+                    if (outcome?.RetryAfter is { } admissionDelay && admissionDelay > delay)
+                        delay = admissionDelay;
+                    if (delay == TimeSpan.Zero)
+                    {
+                        EnsureLogicalCallProgress(control);
+                        continue;
+                    }
+
+                    await DelayForRetryOrAdmissionAsync(
+                        delay, control.Deadline, cancellationToken).ConfigureAwait(false);
+                    EnsureLogicalCallProgress(control);
+                }
+            }
+
+            throw lastFailure ?? new SharpLinkException(SharpLinkErrorCode.Internal, "Retry exhausted without an attempt result.");
+        }
+
+        private ValueTask<TResponse> InvokeUnaryRetryAttemptAsync<TRequest, TResponse>(
+            RpcMethodDescriptor method,
+            long contractId,
+            long methodId,
+            bool hasResponsePayload,
+            TRequest request,
+            IRpcCodec<TRequest> requestCodec,
+            IRpcCodec<TResponse> responseCodec,
+            ResolvedCallControl control,
+            EndpointRetrySelectionState? selection,
+            AttemptOutcomeState? outcome,
+            CancellationToken cancellationToken)
+        {
+            ClientConnection? connection = null;
+            try
+            {
+                EnsureLogicalCallProgress(control);
+                connection = _owner.GetReadyConnection(method, selection, outcome);
+                try
+                {
+                    EnsureLogicalCallProgress(control);
                 }
                 catch
                 {
-                    EnsureLogicalCallProgress(control);
+                    connection.ReleaseCallAdmissionReservation();
                     throw;
-                }
-                EnsureLogicalCallProgress(control);
-                if (!decision.ShouldRetry)
-                    throw;
-                SharpLinkTelemetry.RecordClientRetry();
-                if (decision.Delay < TimeSpan.Zero)
-                {
-                    throw new SharpLinkException(
-                        SharpLinkErrorCode.FailedPrecondition,
-                        "The retry policy returned a negative delay.");
-                }
-                var delay = decision.Delay;
-                if (outcome?.RetryAfter is { } admissionDelay && admissionDelay > delay)
-                    delay = admissionDelay;
-                if (delay == TimeSpan.Zero)
-                {
-                    EnsureLogicalCallProgress(control);
-                    continue;
                 }
 
-                await DelayForRetryOrAdmissionAsync(
-                    delay, control.Deadline, cancellationToken).ConfigureAwait(false);
-                EnsureLogicalCallProgress(control);
+                RpcRequestOperation<TResponse> operation;
+                long requestId;
+                try
+                {
+                    operation = connection.PendingCalls.Rent(
+                        responseCodec,
+                        PendingCallKind.Unary,
+                        control.Deadline,
+                        cancellationToken,
+                        out requestId,
+                        outcome,
+                        hasResponsePayload: hasResponsePayload,
+                        responseNullable: method.ResponseNullable);
+                }
+                catch
+                {
+                    connection.ReleaseCallAdmissionReservation();
+                    throw;
+                }
+
+                return StartUnaryCall(
+                    connection,
+                    contractId,
+                    methodId,
+                    requestId,
+                    hasResponsePayload,
+                    request,
+                    requestCodec,
+                    operation,
+                    control,
+                    cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                exception = ArbitrateLogicalCallFailure(control, exception);
+                outcome?.CompleteLocalFailure(exception);
+                return ValueTask.FromException<TResponse>(exception);
             }
         }
-
-        throw lastFailure ?? new SharpLinkException(SharpLinkErrorCode.Internal, "Retry exhausted without an attempt result.");
     }
 
     internal static SharpLinkTelemetry.AttemptScope StartClientAttemptTelemetry(
@@ -221,71 +292,4 @@ internal sealed partial class SharpLinkClient
         return TimeSpan.FromTicks(clampedTicks);
     }
 
-    private ValueTask<TResponse> InvokeUnaryRetryAttemptAsync<TRequest, TResponse>(
-        RpcMethodDescriptor method,
-        long contractId,
-        long methodId,
-        bool hasResponsePayload,
-        TRequest request,
-        IRpcCodec<TRequest> requestCodec,
-        IRpcCodec<TResponse> responseCodec,
-        ResolvedCallControl control,
-        EndpointRetrySelectionState? selection,
-        AttemptOutcomeState? outcome,
-        CancellationToken cancellationToken)
-    {
-        ClientConnection? connection = null;
-        try
-        {
-            EnsureLogicalCallProgress(control);
-            connection = GetReadyConnection(method, selection, outcome);
-            try
-            {
-                EnsureLogicalCallProgress(control);
-            }
-            catch
-            {
-                connection.ReleaseCallAdmissionReservation();
-                throw;
-            }
-
-            RpcRequestOperation<TResponse> operation;
-            long requestId;
-            try
-            {
-                operation = connection.PendingCalls.Rent(
-                    responseCodec,
-                    PendingCallKind.Unary,
-                    control.Deadline,
-                    cancellationToken,
-                    out requestId,
-                    outcome,
-                    hasResponsePayload: hasResponsePayload,
-                    responseNullable: method.ResponseNullable);
-            }
-            catch
-            {
-                connection.ReleaseCallAdmissionReservation();
-                throw;
-            }
-
-            return StartUnaryCall(
-                connection,
-                contractId,
-                methodId,
-                requestId,
-                hasResponsePayload,
-                request,
-                requestCodec,
-                operation,
-                control,
-                cancellationToken);
-        }
-        catch (Exception exception)
-        {
-            exception = ArbitrateLogicalCallFailure(control, exception);
-            outcome?.CompleteLocalFailure(exception);
-            return ValueTask.FromException<TResponse>(exception);
-        }
-    }
 }

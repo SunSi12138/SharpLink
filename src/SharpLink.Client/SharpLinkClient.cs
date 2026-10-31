@@ -13,6 +13,7 @@ internal sealed partial class SharpLinkClient :
     private readonly SharpLinkEndpoint? _fixedEndpoint;
     private readonly SharpLinkRuntimeContext _runtimeContext;
     private readonly ClientAssemblyRegistry _assemblyRegistry;
+    private readonly ContractCallSite _rawCallSite;
     // Stable lookup facade retained on the outer Client so Get<T>() keeps its direct acquisition path.
     // The registry owns and atomically publishes the immutable snapshots behind this object.
     private ClientProxyLookup _proxies;
@@ -62,6 +63,7 @@ internal sealed partial class SharpLinkClient :
     internal SharpLinkClient(ClientRuntimeComposition composition)
     {
         ArgumentNullException.ThrowIfNull(composition);
+        _rawCallSite = new ContractCallSite(this, contractId: 0);
         _maximumReadinessWaitThreshold = composition.Readiness.MaximumWaitThreshold;
         _readinessFacts = new ClientReadinessFacts(
             composition.Readiness.InitialActiveEndpoints,

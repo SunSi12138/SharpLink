@@ -31,8 +31,8 @@ internal sealed partial class SharpLinkClient
             SharpLinkClientInvocationContext context)
             => GetState(context).InvokeComposedTerminalAsync(context);
 
-        private static ClientInterceptorState GetState(SharpLinkClientInvocationContext context)
-            => context.InterceptorPipelineState as ClientInterceptorState
+        private static ContractCallSite.ClientInterceptorState GetState(SharpLinkClientInvocationContext context)
+            => context.InterceptorPipelineState as ContractCallSite.ClientInterceptorState
                 ?? throw new InvalidOperationException("The Client interceptor pipeline state is unavailable.");
 
         private sealed class ClientInterceptorNode(

@@ -52,5 +52,7 @@ internal sealed partial class SharpLinkClient
         internal IRpcCodecProvider Codecs { get; }
 
         internal object? Proxy;
+
+        internal ContractCallSite? CallSite;
     }
 }

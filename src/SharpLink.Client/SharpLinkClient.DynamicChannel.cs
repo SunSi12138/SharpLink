@@ -1,6 +1,6 @@
 namespace SharpLink.Client;
 
-internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLinkDynamicModule module) : IRpcChannel
+internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite inner, SharpLinkDynamicModule module) : IRpcChannel
 {
     public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;
 
