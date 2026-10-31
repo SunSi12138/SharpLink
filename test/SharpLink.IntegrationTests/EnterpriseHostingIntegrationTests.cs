@@ -219,7 +219,7 @@ public class EnterpriseHostingIntegrationTests
         {
             var serverCts = new CancellationTokenSource();
             var builder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback)
 
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
             configure(builder);

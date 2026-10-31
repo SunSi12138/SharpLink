@@ -272,7 +272,7 @@ public sealed class AdmissionDynamicUpdateReviewRegressionTests
 
     private static SharpLinkServer CreateServer()
     {
-        var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback.ToString());
+        var builder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback);
         return (SharpLinkServer)builder.Build();
     }
 

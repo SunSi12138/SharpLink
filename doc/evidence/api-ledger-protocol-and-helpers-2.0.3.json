@@ -1,0 +1,165 @@
+{
+  "status": "observed-section-equality-not-release-approval",
+  "candidateSource": "87aeaf66cba5f804b8a33d312b9878143adbc9dd",
+  "candidateEvidence": "eng/public-api/3.0.0/{assembly}.api.txt (reviewed snapshot; not a new candidate nupkg extraction)",
+  "publishedPackages": [
+    {
+      "package": "SharpLink.Abstractions",
+      "version": "2.0.3",
+      "url": "https://api.nuget.org/v3-flatcontainer/sharplink.abstractions/2.0.3/sharplink.abstractions.2.0.3.nupkg",
+      "repositoryCommit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+      "dll": "lib/net10.0/SharpLink.Abstractions.dll",
+      "assemblyIdentity": {
+        "Name": "SharpLink.Abstractions",
+        "Version": "2.0.3.0",
+        "FullName": "SharpLink.Abstractions, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+        "ModuleVersionId": "cc224e24-5ef4-4081-87ba-6554bb7c15b2",
+        "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+      }
+    },
+    {
+      "package": "SharpLink.Runtime",
+      "version": "2.0.3",
+      "url": "https://api.nuget.org/v3-flatcontainer/sharplink.runtime/2.0.3/sharplink.runtime.2.0.3.nupkg",
+      "repositoryCommit": "4f9295ffb37ce68985051c11bfd9afc0e23166f3",
+      "dll": "lib/net10.0/SharpLink.Runtime.dll",
+      "assemblyIdentity": {
+        "Name": "SharpLink.Runtime",
+        "Version": "2.0.3.0",
+        "FullName": "SharpLink.Runtime, Version=2.0.3.0, Culture=neutral, PublicKeyToken=null",
+        "ModuleVersionId": "07d8520b-2648-41e2-abf3-b98019efbc8c",
+        "InformationalVersion": "2.0.3+4f9295ffb37ce68985051c11bfd9afc0e23166f3"
+      }
+    }
+  ],
+  "protocolSections": [
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2CancelReason",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 7,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2Capabilities",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 11,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2Constants",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 8,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2Error",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 8,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2FrameFlags",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 12,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2FrameHeader",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 7,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2FrameType",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 20,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2HandshakeRequest",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 14,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2HandshakeResponse",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 10,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2ResponseCompressionPreferenceAck",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 5,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2ResponseCompressionPreferenceUpdate",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 6,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2SessionRefreshRequested",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 6,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.ProtocolV2WindowUpdate",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 6,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Runtime.ProtocolV2FrameParser",
+      "assembly": "SharpLink.Runtime",
+      "publicApiSectionLines": 4,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Runtime.ProtocolV2PayloadCodec",
+      "assembly": "SharpLink.Runtime",
+      "publicApiSectionLines": 22,
+      "equal": true
+    }
+  ],
+  "retainedHelperSections": [
+    {
+      "type": "T:SharpLink.Abstractions.RpcGeneratedCodecSizing",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 6,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedAssemblyCatalog",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 5,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Abstractions.SharpLinkGeneratedClusterRouteCatalog",
+      "assembly": "SharpLink.Abstractions",
+      "publicApiSectionLines": 5,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Runtime.BufferWriterPoolOptions",
+      "assembly": "SharpLink.Runtime",
+      "publicApiSectionLines": 11,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Runtime.RuntimeConcurrencyOptions",
+      "assembly": "SharpLink.Runtime",
+      "publicApiSectionLines": 10,
+      "equal": true
+    },
+    {
+      "type": "T:SharpLink.Runtime.SharpLinkProtocolOptions",
+      "assembly": "SharpLink.Runtime",
+      "publicApiSectionLines": 18,
+      "equal": true
+    }
+  ]
+}

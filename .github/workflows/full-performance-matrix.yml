@@ -1,0 +1,183 @@
+name: Full Performance Matrix Structure (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Frozen candidate full 40-character SHA (must contain the reviewed #954 runner contract)
+        required: true
+        type: string
+      baseline_sha:
+        description: Optional frozen baseline SHA, recorded ONLY; this workflow does not compare versions
+        required: false
+        type: string
+      mode:
+        description: Plan only by default; execution does NOT assess performance equivalence
+        required: true
+        type: choice
+        default: plan-only
+        options: [plan-only, selected-shards, full-structural]
+      shards:
+        description: Selected mode only, 1..6 comma-separated platform:shard IDs from the plan
+        required: false
+        type: string
+      resources_confirmed:
+        description: Confirm execution/storage/concurrency authorization; full mode schedules 378 jobs
+        required: true
+        type: boolean
+        default: false
+      max_parallel:
+        description: Maximum parallel jobs PER PLATFORM (total up to three times this)
+        required: true
+        type: choice
+        default: '1'
+        options: ['1', '2', '3', '4']
+
+permissions:
+  contents: read
+
+# Never cancel an earlier campaign to make room for a new attempt.
+concurrency:
+  group: full-performance-${{ github.run_id }}-${{ github.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      linux: ${{ steps.plan.outputs.linux }}
+      linux_count: ${{ steps.plan.outputs.linux_count }}
+      macos: ${{ steps.plan.outputs.macos }}
+      macos_count: ${{ steps.plan.outputs.macos_count }}
+      windows: ${{ steps.plan.outputs.windows }}
+      windows_count: ${{ steps.plan.outputs.windows_count }}
+    steps:
+      - name: Checkout exact workflow and tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          persist-credentials: false
+      - name: Checkout frozen candidate (never overlay tools into it)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Resolve optional baseline reference without executing it
+        if: inputs.baseline_sha != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.baseline_sha }}
+          path: baseline
+          persist-credentials: false
+      - name: Enumerate all coverage without dotnet or load
+        id: plan
+        shell: bash
+        env:
+          CANDIDATE: ${{ inputs.candidate_sha }}
+          BASELINE: ${{ inputs.baseline_sha }}
+          MODE: ${{ inputs.mode }}
+          SHARDS: ${{ inputs.shards }}
+          CONFIRMED: ${{ inputs.resources_confirmed }}
+          PARALLEL: ${{ inputs.max_parallel }}
+        run: |
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+          extra=()
+          if [[ "$CONFIRMED" == true ]]; then extra+=(--resources-confirmed); fi
+          python3 tools/eng/performance-matrix-scheduler.py plan \
+            --root candidate --campaign campaign --candidate-sha "$CANDIDATE" \
+            --baseline-sha "$BASELINE" --tool-sha "$GITHUB_SHA" \
+            --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --mode "$MODE" --shards "$SHARDS" --max-parallel "$PARALLEL" \
+            --github-output "$GITHUB_OUTPUT" "${extra[@]}"
+      - name: Preserve complete plans, including failed planning output
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: full-matrix-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: campaign
+          if-no-files-found: error
+          retention-days: 30
+
+  # Split by OS: 135 + 135 + 108. Never put all 378 in one matrix.
+  linux:
+    needs: plan
+    if: needs.plan.outputs.linux_count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.linux) }}
+    uses: ./.github/workflows/full-performance-shard.yml
+    with:
+      platform: linux
+      shard: ${{ matrix.shard }}
+      candidate_sha: ${{ inputs.candidate_sha }}
+  macos:
+    needs: plan
+    if: needs.plan.outputs.macos_count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.macos) }}
+    uses: ./.github/workflows/full-performance-shard.yml
+    with:
+      platform: macos
+      shard: ${{ matrix.shard }}
+      candidate_sha: ${{ inputs.candidate_sha }}
+  windows:
+    needs: plan
+    if: needs.plan.outputs.windows_count != '0'
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.windows) }}
+    uses: ./.github/workflows/full-performance-shard.yml
+    with:
+      platform: windows
+      shard: ${{ matrix.shard }}
+      candidate_sha: ${{ inputs.candidate_sha }}
+
+  aggregate:
+    needs: [plan, linux, macos, windows]
+    if: always() && needs.plan.result == 'success' && inputs.mode != 'plan-only'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tools
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: full-matrix-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: campaign
+      - name: Assemble only this run attempt (disjoint platform/shard paths)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: full-matrix-shard-${{ inputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: assembled
+          merge-multiple: true
+      - name: Revalidate raw evidence, not matrix job success or sidecar summaries
+        if: always()
+        shell: bash
+        run: |
+          python3 tools/eng/performance-matrix-scheduler.py aggregate \
+            --root candidate --campaign campaign --output assembled \
+            --tool-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" --summary summary/structural-check.json
+      - name: Preserve structural result (never an equivalence verdict)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: full-matrix-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: summary
+          if-no-files-found: error
+          retention-days: 30

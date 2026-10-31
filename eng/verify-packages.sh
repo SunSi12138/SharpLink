@@ -17,6 +17,7 @@ PACKAGES=(
   SharpLink.Abstractions
   SharpLink.Client
   SharpLink.Compression.Zstd
+  SharpLink.GenerationControl
   SharpLink.Hosting
   SharpLink.Runtime
   SharpLink.Sdk
@@ -51,7 +52,7 @@ for package_id in "${PACKAGES[@]}"; do
   unzip -Z1 "$nupkg" | grep -Fx "lib/net10.0/$package_id.xml" >/dev/null
   unzip -Z1 "$nupkg" | grep -Fx "sharplink-icon.png" >/dev/null
   unzip -Z1 "$snupkg" | grep -Fx "lib/net10.0/$package_id.pdb" >/dev/null
-  unzip -p "$nupkg" "$package_id.nuspec" | grep -F "commit=\"$EXPECTED_COMMIT\"" >/dev/null
+  python3 "$ROOT/eng/verify-package-identities.py" "$nupkg" "$snupkg" "$package_id" "$EXPECTED_VERSION" "$EXPECTED_COMMIT"
 done
 
 unzip -Z1 "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" |
@@ -61,6 +62,17 @@ unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nus
 if unzip -p "$ARTIFACT_DIR/SharpLink.Sdk.$EXPECTED_VERSION.nupkg" SharpLink.Sdk.nuspec |
    grep -F '<dependency id="SharpLink.Runtime"' >/dev/null; then
   echo "SharpLink.Sdk must not depend on SharpLink.Runtime." >&2
+  exit 1
+fi
+
+if ! unzip -p "$ARTIFACT_DIR/SharpLink.GenerationControl.$EXPECTED_VERSION.nupkg" SharpLink.GenerationControl.nuspec |
+   grep -F "<dependency id=\"SharpLink.Abstractions\" version=\"$EXPECTED_VERSION\"" >/dev/null; then
+  echo "SharpLink.GenerationControl must directly depend on SharpLink.Abstractions $EXPECTED_VERSION." >&2
+  exit 1
+fi
+if unzip -p "$ARTIFACT_DIR/SharpLink.GenerationControl.$EXPECTED_VERSION.nupkg" SharpLink.GenerationControl.nuspec |
+   grep -E '<dependency id="SharpLink\.(Runtime|Sdk|Generator)"' >/dev/null; then
+  echo "SharpLink.GenerationControl must keep Runtime/Sdk/Generator out of its runtime package dependency graph." >&2
   exit 1
 fi
 

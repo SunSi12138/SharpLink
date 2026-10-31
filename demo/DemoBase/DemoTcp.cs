@@ -16,7 +16,7 @@ public static class DemoTcp
         where TService : class, TInterface, new()
     {
         var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(port, IPAddress.Loopback.ToString())
+            .UseTcp(port, IPAddress.Loopback)
             ;
 
         configure?.Invoke(builder);

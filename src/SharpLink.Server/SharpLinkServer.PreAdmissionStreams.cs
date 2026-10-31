@@ -4,6 +4,49 @@ internal sealed partial class SharpLinkServer
 {
     private const int UnresolvedClientStreamCount = -1;
 
+    // Keep this queued-only resource skeleton in exact parity with TryCopyAdmissionPayload.
+    // Combining capture with the existing cold call preserves normal dispatch register lifetimes.
+    // The source-parity test guards the deliberate copy; no lease is acquired here.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private bool TryCopySelectedAdmissionPayload(
+        ReadOnlySequence<byte> payload,
+        ProtocolV2FrameFlags flags,
+        ServiceRegistration service,
+        RpcMethodFacts method,
+        out ServerRetainedAdmissionPayload? retainedPayload)
+    {
+        retainedPayload = null;
+        ServerRetainedCompressedPermit? retainedPermit = null;
+        var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
+        if (isCompressed &&
+            !ResourceGovernor.TryAcquireRetained(payload.Length, out retainedPermit))
+        {
+            return false;
+        }
+
+        IRpcByteBufferWriter? owner = null;
+        try
+        {
+            owner = _runtimeContext.Buffers.Rent(checked((int)payload.Length));
+            foreach (var segment in payload)
+                owner.Write(segment.Span);
+            retainedPayload = new ServerRetainedAdmissionPayload(
+                _runtimeContext.Buffers,
+                owner,
+                retainedPermit);
+            retainedPayload.CaptureSelectedService(service, method);
+            owner = null;
+            retainedPermit = null;
+            return true;
+        }
+        finally
+        {
+            if (owner is not null)
+                _runtimeContext.Buffers.Return(owner);
+            retainedPermit?.Dispose();
+        }
+    }
+
     private bool TryCopyAdmissionPayload(
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
@@ -203,10 +246,8 @@ internal sealed partial class SharpLinkServer
             return UnresolvedClientStreamCount;
         }
 
-        // A rejected OneWay request needs an exact stream count to drain the peer's receive credit;
-        // anything the stub cannot describe keeps the connection-terminating sentinel.
-        var shape = registration.Stub.ResolveMethodShape(methodId);
-        return shape.IsKnown ? shape.ClientStreamCount : UnresolvedClientStreamCount;
+        var method = ResolveMethodCall(registration, methodId).Method;
+        return method.IsKnown ? method.ClientStreamCount : UnresolvedClientStreamCount;
     }
 
     private static void CompleteFailedRequestStreams(
@@ -227,20 +268,20 @@ internal sealed partial class SharpLinkServer
 
         session.StreamManager.DrainRejectedRequestStreams(requestId, clientStreamCount);
     }
-
-    private static ValueTask TerminateUnresolvableOneWayRequest(
-        RpcSession session,
-        long requestId)
-    {
-        session.NotifyDisconnected(new SharpLinkException(
-            SharpLinkErrorCode.ConnectionClosed,
-            $"OneWay request {requestId} could not resolve its service or method registration; closing the connection because its client-stream shape is unknown."));
-        return ValueTask.CompletedTask;
-    }
 }
 
 internal sealed class ServerRetainedAdmissionPayload : IDisposable
 {
+    internal SharpLinkServer.QueuedServiceSelection SelectedService { get; private set; }
+    internal RpcMethodFacts SelectedMethod { get; private set; } = RpcMethodFacts.UnknownMethod;
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    internal void CaptureSelectedService(ServiceRegistration service, RpcMethodFacts method)
+    {
+        SelectedService = new SharpLinkServer.QueuedServiceSelection(service);
+        SelectedMethod = method;
+    }
+
     private readonly SharpLinkBufferWriterPool _pool;
     private readonly IRpcByteBufferWriter _owner;
     private readonly ServerRetainedCompressedPermit? _retainedPermit;
@@ -332,6 +373,7 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
 
     private void ReleaseCore()
     {
+        SelectedService = default;
         try
         {
             _pool.Return(_owner);
@@ -341,5 +383,4 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
             _retainedPermit?.Dispose();
         }
     }
-
 }

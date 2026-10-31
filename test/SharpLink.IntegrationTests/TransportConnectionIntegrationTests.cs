@@ -197,7 +197,7 @@ public partial class TransportConnectionIntegrationTests
     {
         using var cts = new CancellationTokenSource();
         var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString())
+            .UseTcp(0, IPAddress.Loopback)
 
             .UseProtocol(options => options.MaxFramePayloadBytes = serverLimit)
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
@@ -326,7 +326,7 @@ public partial class TransportConnectionIntegrationTests
             {
                 case TransportKind.Tcp:
                     {
-                        serverBuilder.UseTcp(endpoint.Port, IPAddress.Loopback.ToString());
+                        serverBuilder.UseTcp(endpoint.Port, IPAddress.Loopback);
                         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
                         clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port);
                         resolvedEndpoint = new TransportEndpoint(kind, port, string.Empty, string.Empty);

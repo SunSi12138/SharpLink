@@ -1,7 +1,7 @@
 namespace SharpLink.Client;
 
 /// <summary>Configures and creates an independently owned SharpLink RPC client.</summary>
-public partial class SharpClientBuilder
+public sealed partial class SharpClientBuilder
 {
     private const string ConsumedBuilderMessage = "This SharpLink builder has already been consumed.";
     private static readonly TimeSpan RecommendedRequestTimeout = TimeSpan.FromSeconds(30);
@@ -150,7 +150,7 @@ public partial class SharpClientBuilder
     }
 
     /// <summary>Sets an application-owned logger factory only when none was explicitly configured.</summary>
-    public void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
+    internal void UseLoggerFactoryIfUnset(ILoggerFactory loggerFactory)
     {
         Configure(() =>
         {

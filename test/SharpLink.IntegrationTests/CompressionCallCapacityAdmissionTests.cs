@@ -177,11 +177,14 @@ public class CompressionCallCapacityAdmissionTests
 
     [Test]
     [NotInParallel]
-    public async Task CompressedUnaryShouldRejectIfDeadlineExpiresDuringDecompression()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CompressedUnaryShouldRejectIfDeadlineExpiresDuringDecompression(
+        bool completeDecodeAfterCancellation)
     {
         DeadlineCompressionProbeService.Reset();
         var serverProvider = new BlockingDecompressionProvider(
-            new TestCompressionProvider());
+            new TestCompressionProvider(), completeDecodeAfterCancellation);
         var requestTimeout = TimeSpan.FromMilliseconds(100);
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
@@ -196,9 +199,14 @@ public class CompressionCallCapacityAdmissionTests
         {
             await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
             await EnsureDeadlineExceededAsync(call, "compressed unary post-decode deadline");
+            // Client expiry alone does not establish expiry of the server's own deadline.
+            await serverProvider.WaitForCancellationAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            harness.EnsureDecodeDeadlineExpired(serverProvider.ObservedCancellationToken);
             serverProvider.ReleaseDecompression();
             await WaitUntilAsync(() => harness.ActiveCalls == 0, "expired unary call release");
 
+            Ensure(serverProvider.CompletedDecodes == (completeDecodeAfterCancellation ? 1 : 0),
+                "unary decode must exercise the selected cancellation behavior");
             Ensure(DeadlineCompressionProbeService.UnaryInvocations == 0,
                 "expired compressed unary request must not execute the service");
         }
@@ -210,11 +218,14 @@ public class CompressionCallCapacityAdmissionTests
 
     [Test]
     [NotInParallel]
-    public async Task CompressedOneWayShouldDropIfDeadlineExpiresDuringDecompression()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CompressedOneWayShouldDropIfDeadlineExpiresDuringDecompression(
+        bool completeDecodeAfterCancellation)
     {
         DeadlineCompressionProbeService.Reset();
         var serverProvider = new BlockingDecompressionProvider(
-            new TestCompressionProvider());
+            new TestCompressionProvider(), completeDecodeAfterCancellation);
         var requestTimeout = TimeSpan.FromMilliseconds(100);
         await using var harness = await CapacityHarness.CreateAsync(
             serverProvider,
@@ -229,10 +240,13 @@ public class CompressionCallCapacityAdmissionTests
                 .AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(2));
             await serverProvider.WaitForDecompressionAsync().WaitAsync(TimeSpan.FromSeconds(2));
-            await Task.Delay(requestTimeout + TimeSpan.FromMilliseconds(150));
+            await serverProvider.WaitForCancellationAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            harness.EnsureDecodeDeadlineExpired(serverProvider.ObservedCancellationToken);
             serverProvider.ReleaseDecompression();
             await WaitUntilAsync(() => harness.ActiveCalls == 0, "expired one-way call release");
 
+            Ensure(serverProvider.CompletedDecodes == (completeDecodeAfterCancellation ? 1 : 0),
+                "one-way decode must exercise the selected cancellation behavior");
             Ensure(DeadlineCompressionProbeService.OneWayInvocations == 0,
                 "expired compressed one-way request must not execute the service");
         }
@@ -325,16 +339,27 @@ public class CompressionCallCapacityAdmissionTests
         }
     }
 
-    private sealed class BlockingDecompressionProvider(ISharpLinkCompressionProvider inner)
+    private sealed class BlockingDecompressionProvider(
+        ISharpLinkCompressionProvider inner,
+        bool completeDecodeAfterCancellation)
         : ISharpLinkCompressionProvider
     {
         private readonly TaskCompletionSource _decompressionStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _cancellationObserved =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly ManualResetEventSlim _release = new(initialState: false);
+        private int _completedDecodes;
 
         public string WireProfile => inner.WireProfile;
 
+        public int CompletedDecodes => Volatile.Read(ref _completedDecodes);
+
+        public CancellationToken ObservedCancellationToken { get; private set; }
+
         public Task WaitForDecompressionAsync() => _decompressionStarted.Task;
+
+        public Task WaitForCancellationAsync() => _cancellationObserved.Task;
 
         public void ReleaseDecompression() => _release.Set();
 
@@ -351,9 +376,15 @@ public class CompressionCallCapacityAdmissionTests
             int maxOutputBytes,
             CancellationToken cancellationToken = default)
         {
+            ObservedCancellationToken = cancellationToken;
+            using var registration = cancellationToken.Register(
+                () => _cancellationObserved.TrySetResult());
             _decompressionStarted.TrySetResult();
             _release.Wait();
-            inner.Decompress(input, output, maxOutputBytes, cancellationToken);
+            // The non-cooperative case must finish decode so framework dispatch guards are exercised.
+            inner.Decompress(input, output, maxOutputBytes,
+                completeDecodeAfterCancellation ? CancellationToken.None : cancellationToken);
+            Interlocked.Increment(ref _completedDecodes);
             return;
         }
     }
@@ -372,6 +403,35 @@ public class CompressionCallCapacityAdmissionTests
             ReadDiagnosticProperty<long>("RetainedCompressedBytesForDiagnostics");
         public long DecodedBytesInFlight =>
             ReadDiagnosticProperty<long>("DecodedBytesInFlightForDiagnostics");
+
+        public void EnsureDecodeDeadlineExpired(CancellationToken providerToken)
+        {
+            var connections = ReadField<ServerConnectionRegistry>("_connectionRegistry").SnapshotActive();
+            Ensure(connections.Length == 1, "deadline probe must have exactly one connection");
+            var connection = connections[0];
+            Ensure(!_serverCts.IsCancellationRequested && !connection.ConnectionToken.IsCancellationRequested,
+                "deadline probe must retain a live server connection");
+            Ensure(connection.CallCancellations.TryGetValue(connection.LastAcceptedRequestId, out var state),
+                "blocked decode must retain its tracked call state");
+            Ensure(state!.InvocationToken == providerToken,
+                "deadline observation must belong to the blocked provider invocation");
+            Ensure(state.Reason == ServerCallCancellationReason.DeadlineExceeded,
+                $"decode cancellation must be deadline expiry, actual {state.Reason}");
+            Ensure(IsDecodeDeadlineExpired(state),
+                "server's own monotonic deadline must expire before decode is released");
+        }
+
+        private bool IsDecodeDeadlineExpired(ServerCallCancellationState state)
+        {
+            var deadline = typeof(ServerCallCancellationState).GetProperty("Deadline")!.GetValue(state)
+                ?? throw new Exception("cannot read tracked call deadline");
+            var method = deadline.GetType().GetMethod("IsExpired",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+                binder: null, types: [typeof(TimeProvider)], modifiers: null)
+                ?? throw new Exception("cannot find monotonic deadline expiry predicate");
+            return (bool)method.Invoke(deadline,
+                [ReadField<SharpLinkRuntimeContext>("_runtimeContext").TimeProvider])!;
+        }
 
         private CapacityHarness(
             CancellationTokenSource serverCts,
@@ -416,7 +476,7 @@ public class CompressionCallCapacityAdmissionTests
                     options.Global.UseConcurrency(admissionConcurrency));
             }
 
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>

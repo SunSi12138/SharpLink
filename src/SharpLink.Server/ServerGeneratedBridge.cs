@@ -70,11 +70,12 @@ internal sealed class ServerGeneratedBridge(
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
         bool payloadNullable,
-        long contractId,
-        long methodId,
+        RpcMethodFacts method,
         CancellationToken cancellationToken)
     {
-        var resolved = CaptureResolvedMethod(requestId, contractId, methodId);
+        ArgumentNullException.ThrowIfNull(method);
+        if (!method.IsKnown || method.Kind is not (RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming))
+            throw new InvalidOperationException("Outbound streaming requires the original resolved stream method facts.");
         try
         {
             await _protocolBridge.PumpOutboundStreamAsync(
@@ -83,8 +84,7 @@ internal sealed class ServerGeneratedBridge(
                 new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
                 codec,
                 payloadNullable,
-                contractId,
-                methodId,
+                method,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (
@@ -105,29 +105,9 @@ internal sealed class ServerGeneratedBridge(
                 callCancellations,
                 session,
                 requestId,
-                resolved,
+                method,
                 exception);
             session.SendStreamErrorAsync(requestId, streamId, protocolError);
-        }
-    }
-
-    private ResolvedMethodCall CaptureResolvedMethod(long requestId, long contractId, long methodId)
-    {
-        if (!callCancellations.TryCapture(
-                requestId,
-                static (id, state) => state.CaptureLease(id),
-                out var lease) || !lease.TryAcquire())
-            throw new InvalidOperationException("Outbound streaming requires an active original method snapshot.");
-        try
-        {
-            var resolved = lease.State.ResolvedMethod;
-            if (resolved is not { } value || value.ContractId != contractId || value.MethodHash != methodId)
-                throw new InvalidOperationException("Outbound stream identity does not match its original method snapshot.");
-            return value;
-        }
-        finally
-        {
-            lease.ReleaseUse();
         }
     }
 

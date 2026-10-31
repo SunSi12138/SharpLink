@@ -25,7 +25,6 @@ public partial class SharpLinkServerInvocationTests
         await using var session = new RpcSession(
             new TestTransportConnection(),
             RpcSessionTestFixture.ServerOptions());
-        var stub = new ThrowingStub();
         var lease = new ServiceLease(
             new ThrowingService(),
             new ThrowingScope(),
@@ -34,13 +33,14 @@ public partial class SharpLinkServerInvocationTests
             "InvokeServiceWithLeaseAsync",
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find leased invocation path");
-        var registration = ServiceRegistration.CreateSingleton(
-            typeof(ThrowingService), stub, lease.Service, ownsService: false);
-        var resolved = new ResolvedMethodCall(registration, methodHash: 1L, stub.ResolveMethodShape(1L));
 
         Exception failure;
         try
         {
+            var stub = new ThrowingStub();
+            var resolved = new ResolvedMethodCall(
+                ServiceRegistration.CreateSingleton(typeof(object), stub, lease.Service, ownsService: false),
+                stub.ResolveMethodFacts(1));
             var invocation = (ValueTask)method.Invoke(server,
             [
                 resolved,

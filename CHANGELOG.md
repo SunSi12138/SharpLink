@@ -4,17 +4,21 @@
 
 ## [Unreleased]
 
-### Breaking changes
+### Fixed
 
-- The unreleased 3.0 generated contract uses the neutral exact identity `sharplink-3.0-api5-v1` for both owner-bound UnsafeBlit factories and single-resolution method facts. Numeric API remains 5; both earlier feature-specific API5 identities are rejected before construction. Future incompatible contracts must use a different exact identity.
+- Preserve client-stream snapshot and writer ownership when `ReleaseSnapshot` throws. Release each non-null snapshot once, return unpublished writers even if cleanup fails, and retain the original serialization or cancellation exception.
 
-- Server method facts are now resolved once per RPC as one packed value. `IRpcStub` no longer declares `TryGetMethodDescriptor(long, out RpcMethodDescriptor)` or `SupportsCancellation(long)`; it declares `RpcMethodShape ResolveMethodShape(long methodHash)` and `void DescribeMethod(long methodHash, RpcMethodShape shape, out RpcMethodDescriptor descriptor)` instead. Custom `IRpcStub` implementations must implement `ResolveMethodShape`; unknown IDs return `UnknownMethod`, while a default/invalid shape is rejected. Shapes use validated typed construction and keep their packed representation private.
-- `RpcMethodDescriptor` is now an observability projection with explicit readonly fields and no `init` accessors, so `with` expressions and object initializers over it no longer compile. Use the constructor or `RpcMethodDescriptor.FromShape`.
-- `SharpLinkGeneratedMethodDescriptor` carries `RpcMethodShape Shape` instead of `RpcMethodKind Kind` and `bool SupportsCancellation`.
-- `SharpLinkServerInvocationContext` gained `Shape`, and its immutable `Method` snapshot is projected only when an interceptor or exception-mapper context is created. Contexts retain no generated stub, and the no-observer path does not materialize a descriptor.
-- Generated stubs no longer publish a per-method descriptor table or a separate cancellation table; both are replaced by typed readonly `RpcMethodShape` fields and one resolver. The generated ABI version is advanced from API 4 to API 5 at the 3.0 release boundary, so 2.0-generated assemblies are rejected rather than silently treated as unresolvable. The 3.0 public API baseline is regenerated and versioned separately from 2.x.
+- Fixed a deadline wait that could remain pending when the clock crossed its absolute deadline between sampling the remaining time and installing the relative timer delay. Task waits and deadline-limited retry backoff now claim an expiry observed immediately after arming, without requiring another timer tick.
+
+- Preserve receive-credit accounting for late client-stream frames while a completed server call still owns its request entry. Terminal processing drains only an existing already-discarding route, validates compressed original-byte lengths, and keeps route completion bound to the exact captured stream owner.
+
+### Added
+
+- Added the optional `SharpLink.GenerationControl` package for peer generation declaration and synchronization. The RPC surface is declaration-only: Client can query Server state and a Client-initiated duplex sync stream exchanges both endpoints' current inventories/revisions, while each peer reconciles locally through application-owned stage/validate/activate/drain policy. Artifact transport, rollout policy, dynamic loading, and NativeAOT process replacement remain local application/deployment concerns; Protocol v2 and ordinary RPC hot paths are unchanged.
 
 ### Changed
+
+- Server dispatch resolves complete immutable method facts once and carries them through admission, invocation, observers, and stream error mapping. Generated API remains 5 for the 3.0 release boundary, with exact identity `sharplink-3.0-api5-complete-method-facts-v1`; rebuild every generated assembly and migrate hand-written stubs to the mandatory facts resolver. Protocol v2 minor 4 is unchanged. See [the generated method facts migration](doc/generated-method-facts-3.0-migration.md).
 
 - Client calls now allocate the shared logical-call state only for the shapes that can observe one deadline claim from more than one participant: client/server/duplex streaming, OneWay with client streams, and any shape with a client interceptor. Plain unary and plain oneway calls re-check their frozen deadline directly from the resolved call control, which brings unary/oneway allocation back to the 1.1.1 per-call level. That state now holds only the mutable deadline-claim flag: the frozen deadline, time provider, telemetry detail, and captured retry generation live on the call control and survive control copies intact.
 

@@ -5,7 +5,7 @@ namespace SharpLink.Generator;
 /// compile-time contract diagnostics.
 /// </summary>
 [Generator]
-public partial class RpcGenerator : IIncrementalGenerator
+public sealed partial class RpcGenerator : IIncrementalGenerator
 {
     private static readonly CultureInfo InvariantCulture = CultureInfo.InvariantCulture;
     private static readonly SymbolDisplayFormat FullyQualifiedNullableFormat =
@@ -41,7 +41,7 @@ public partial class RpcGenerator : IIncrementalGenerator
 
         var services = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcServiceAttributeMetadataName,
-                static (node, _) => node is ClassDeclarationSyntax,
+                static (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
                 static (attributeContext, ct) => GetServiceModelOrNull(attributeContext, ct))
             .Where(m => m != null);
         var unions = context.SyntaxProvider.ForAttributeWithMetadataName(
@@ -51,7 +51,7 @@ public partial class RpcGenerator : IIncrementalGenerator
             .Where(static model => model is not null);
         var serviceDiagnostics = context.SyntaxProvider.ForAttributeWithMetadataName(
                 RpcServiceAttributeMetadataName,
-                static (node, _) => node is ClassDeclarationSyntax,
+                static (node, _) => node is ClassDeclarationSyntax or RecordDeclarationSyntax,
                 static (attributeContext, ct) => GetRpcServiceDiagnosticOrNull(attributeContext, ct))
             .Where(static diagnostic => diagnostic is not null);
         var staticRouteConflicts = context.CompilationProvider.Select(static (compilation, ct) =>

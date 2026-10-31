@@ -76,7 +76,7 @@ namespace SharpLink.Server
         public static void EnableAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
         public static void UpdateAdmissionControl(this SharpLink.Abstractions.ISharpLinkServer server, System.Action<SharpLink.Server.SharpLinkAdmissionControlOptions> configure) { }
     }
-    public class SharpLinkServerBuilder : SharpLink.Server.ISharpLinkServerBuilder
+    public sealed class SharpLinkServerBuilder : SharpLink.Server.ISharpLinkServerBuilder
     {
         public SharpLinkServerBuilder() { }
         public SharpLink.Abstractions.IServerTransportListener? Transport { get; }
@@ -107,7 +107,6 @@ namespace SharpLink.Server
         public SharpLink.Server.SharpLinkServerBuilder UseHeartbeatCheckInterval(System.TimeSpan checkInterval) { }
         public SharpLink.Server.SharpLinkServerBuilder UseHeartbeatTimeout(System.TimeSpan timeout) { }
         public SharpLink.Server.SharpLinkServerBuilder UseLoggerFactory(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
-        public void UseLoggerFactoryIfUnset(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
         public SharpLink.Server.SharpLinkServerBuilder UseProtocol(System.Action<SharpLink.Runtime.SharpLinkProtocolOptions> configure) { }
         public SharpLink.Server.SharpLinkServerBuilder UseResponseCompressionPolicy(SharpLink.Abstractions.SharpLinkCompressionSendPolicy policy) { }
         public SharpLink.Server.SharpLinkServerBuilder UseRpcSessionFlush(int flushSizeThreshold, System.TimeSpan maxLatency) { }
@@ -166,10 +165,8 @@ namespace SharpLink.Server
             public SharpLink.Server.SharpLinkServerBuilder UseNamedPipe(string name, System.Action<SharpLink.Runtime.NamedPipeTransportOptions>? configure = null) { }
             public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, int backlog = 512) { }
             public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.IPAddress address, int backlog = 512) { }
-            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, string ip, int backlog = 512) { }
             public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
             public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, System.Net.IPAddress address, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
-            public SharpLink.Server.SharpLinkServerBuilder UseTcp(int port, System.Net.Security.SslServerAuthenticationOptions tlsOptions, string ip, int backlog = 512, System.TimeSpan? tlsHandshakeTimeout = default) { }
             public SharpLink.Server.SharpLinkServerBuilder UseUds(string socketPath, int backlog = 512) { }
             public SharpLink.Server.SharpLinkServerBuilder UseAnonymousPipe() { }
             public SharpLink.Server.SharpLinkServerBuilder UseSharedMemory(string name, System.Action<SharpLink.Runtime.SharedMemoryTransportOptions>? configure = null) { }

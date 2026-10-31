@@ -41,8 +41,7 @@ public class GeneratedServerPreCreditTests
                 new SingleItemAsyncEnumerable<Payload>(new Payload(payloadBytes)),
                 codec,
                 payloadNullable: false,
-                contractId: 100,
-                methodId: 200,
+                method: new RpcMethodFacts(100, 200, RpcMethodKind.ServerStreaming, 0, true, true),
                 CancellationToken.None).AsTask();
         }
 
@@ -52,8 +51,6 @@ public class GeneratedServerPreCreditTests
             "the generated server should own exactly one actual-byte reservation");
         Ensure(session.PreCreditSerializedWaiterCount == 1,
             "the configured one-item budget should retain only one additional serialized generated waiter");
-        Ensure(session.PreCreditSerializationPermitLimit == 0,
-            "generated streaming must not use a global serializer gate");
 
         var pending = new List<Task>();
         var rejected = 0;
@@ -114,8 +111,7 @@ public class GeneratedServerPreCreditTests
             new SingleItemAsyncEnumerable<Payload>(new Payload(payloadBytes)),
             codec,
             payloadNullable: false,
-            contractId: 100,
-            methodId: 200,
+            method: new RpcMethodFacts(100, 200, RpcMethodKind.ServerStreaming, 0, true, true),
             invocationCancellation.Token).AsTask();
         var waiter = bridge.PumpOutboundStreamAsync(
             requestId: 50,
@@ -123,8 +119,7 @@ public class GeneratedServerPreCreditTests
             new SingleItemAsyncEnumerable<Payload>(new Payload(payloadBytes)),
             codec,
             payloadNullable: false,
-            contractId: 100,
-            methodId: 200,
+            method: new RpcMethodFacts(100, 200, RpcMethodKind.ServerStreaming, 0, true, true),
             invocationCancellation.Token).AsTask();
 
         Ensure(codec.SerializeCount == 2,

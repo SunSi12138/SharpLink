@@ -1,3 +1,6 @@
+using System.Collections.Frozen;
+using System.Reflection;
+
 namespace SharpLink.IntegrationTests;
 
 public class CompressionPersistentDecodeDrainAndFailureTests
@@ -95,6 +98,123 @@ public class CompressionPersistentDecodeDrainAndFailureTests
             static () => new InvalidOperationException("synthetic provider failure"),
             SharpLinkErrorCode.Internal,
             "persistent D Internal");
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [NotInParallel]
+    public async Task PersistentDecodeContinuationShouldRetainOriginalFactsAfterRegistryChange(bool remove)
+    {
+        PersistentDecodeControlPlaneService.Reset();
+        var provider = new BlockingServerCompressionProvider(new TestCompressionProvider());
+        await using var harness = await PersistentDecodeHarness.CreateAsync(provider);
+        await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
+        var registry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
+            "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(harness.Server)!;
+        var originalServices = registry.ServicesStorage;
+        var registration = originalServices.Values.Single(item =>
+            item.ContractType == typeof(IPersistentDecodeControlPlaneService));
+        Ensure(!registration.HasModule,
+            "this facts continuation probe uses a static registration, not dynamic retirement");
+        Ensure(registration.TryGetStaticSingleton(out var serviceInstance), "original singleton is available");
+        var original = new CountingPersistentFactsStub(registration.Stub);
+        var replacement = new CountingPersistentFactsStub(registration.Stub);
+        var installed = originalServices.ToDictionary(item => item.Key, item => item.Value);
+        installed[original.InterfaceHash] = ServiceRegistration.CreateSingleton(
+            registration.ContractType, original, serviceInstance, ownsService: false);
+        using var cancellation = new CancellationTokenSource();
+        Task<int>? call = null;
+        try
+        {
+            Volatile.Write(ref registry.ServicesStorage, installed.ToFrozenDictionary());
+            call = harness.Client.Get<IPersistentDecodeControlPlaneService>()
+                .MeasureAsync(CreateLargePayload(0xB2), cancellation.Token).AsTask();
+            await provider.WaitForStartedCountAsync(1);
+            await WaitUntilAsync(() => harness.ActiveDecodes == 1, "one physical decode is blocked");
+            Ensure(harness.DecodeWorkerCount > 0 && harness.DecodeStartedWorkCount == 1 &&
+                   provider.StartedCount == 1 && harness.ActiveDecodes == 1,
+                "the request must actually enter one persistent decode operation");
+            Ensure(original.Resolutions == 1 && original.LastResolved is { IsKnown: true } &&
+                   original.Invocations == 0 && PersistentDecodeControlPlaneService.Invocations == 0,
+                "facts resolve once before decoding, with no business invocation yet");
+            var selectedFacts = original.LastResolved;
+            var changed = originalServices.ToDictionary(item => item.Key, item => item.Value);
+            if (remove)
+                changed.Remove(original.InterfaceHash);
+            else
+                changed[original.InterfaceHash] = ServiceRegistration.CreateSingleton(
+                    registration.ContractType, replacement, new PersistentDecodeControlPlaneService(), ownsService: false);
+            Volatile.Write(ref registry.ServicesStorage, changed.ToFrozenDictionary());
+            provider.ReleaseAll();
+            Ensure(await call.WaitAsync(TimeSpan.FromSeconds(5)) == LargePayloadBytes,
+                "the original provider/service must finish the retained request");
+            Ensure(original.Resolutions == 1 && original.Invocations == 1 &&
+                   ReferenceEquals(original.LastResolved, selectedFacts) && original.OriginalFactsForwarded &&
+                   replacement.Resolutions == 0 && replacement.Invocations == 0 &&
+                   PersistentDecodeControlPlaneService.Invocations == 1,
+                "persistent continuation neither resolves again nor retargets registry replacement");
+            Ensure(provider.StartedCount == 1 && harness.DecodeStartedWorkCount == 1,
+                "registry mutation must not restart physical decoding");
+            await AssertResourcesReleasedAsync(harness, "persistent original-facts continuation");
+        }
+        finally
+        {
+            provider.ReleaseAll();
+            try
+            {
+                if (call is not null)
+                    await ObserveTerminalAsync(call);
+            }
+            finally
+            {
+                Volatile.Write(ref registry.ServicesStorage, originalServices);
+            }
+        }
+    }
+
+    private sealed class CountingPersistentFactsStub(IRpcStub inner) : IRpcStub
+    {
+        internal int Resolutions;
+        internal int Invocations;
+        internal RpcMethodFacts? LastResolved;
+        internal bool OriginalFactsForwarded = true;
+        public long InterfaceHash => inner.InterfaceHash;
+        public RpcMethodFacts ResolveMethodFacts(long methodHash)
+        {
+            Interlocked.Increment(ref Resolutions);
+            return LastResolved = inner.ResolveMethodFacts(methodHash);
+        }
+        private void Observe(RpcMethodFacts method)
+        {
+            Interlocked.Increment(ref Invocations);
+            OriginalFactsForwarded &= ReferenceEquals(LastResolved, method);
+        }
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge,
+            RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args)
+        {
+            Observe(method);
+            return inner.InvokeNoReturnAsync(service, bridge, method, requestId, args);
+        }
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge,
+            RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+        {
+            Observe(method);
+            return inner.InvokeNoReturnCancellableAsync(service, bridge, method, requestId, args, cancellationToken);
+        }
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge,
+            RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+        {
+            Observe(method);
+            return inner.InvokeAsync(service, bridge, method, requestId, args, output);
+        }
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge,
+            RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
+            CancellationToken cancellationToken)
+        {
+            Observe(method);
+            return inner.InvokeCancellableAsync(service, bridge, method, requestId, args, output, cancellationToken);
+        }
+    }
 
     private static async Task RunProviderFailureCaseAsync(
         Func<Exception> failureFactory,
@@ -277,6 +397,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         }
 
         internal ISharpLinkClient Client { get; }
+        internal ISharpLinkServer Server => _server;
 
         internal int ActiveCalls => ServerCallAdmissionDiagnostics.ActiveCallCount(_server);
         internal int ActiveDecodes => ReadDiagnosticProperty<int>("ActiveDecodeCountForDiagnostics");
@@ -307,7 +428,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
                     options.FlowControl.MaxDecodedBytesInFlightPerServer = 128L * 1024 * 1024;
                     options.Compression.Providers.Add(serverProvider);
                 })
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>

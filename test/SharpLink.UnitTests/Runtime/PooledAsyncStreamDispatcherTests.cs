@@ -926,6 +926,7 @@ public class PooledAsyncStreamDispatcherTests
     {
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
         using var entered = new ManualResetEventSlim();
+        using var producerStarted = new ManualResetEventSlim();
         using var release = new ManualResetEventSlim();
         var blockingCodec = new ReferenceItemCodec(
             marker: null,
@@ -936,26 +937,64 @@ public class PooledAsyncStreamDispatcherTests
             });
         var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, blockingCodec);
         var manager = new StreamManager();
-        manager.Register(77, first);
-        first.SetConsumerAbandonedCallback(_ => manager.Unregister(77), 77);
+        manager.Register(77, 0, first);
+        first.SetConsumerAbandonedCallback(_ => manager.Unregister(77, 0), 77);
 
-        var producer = Task.Run(async () => await manager.DispatchChunkAsync(77, Payload));
-        Ensure(entered.Wait(TimeSpan.FromSeconds(3)), "producer must enter decode");
-        var disposing = first.DisposeAsync().AsTask();
-        Ensure(!disposing.IsCompleted, "early disposal must wait for an acquired decode");
+        Task? producer = null;
+        Task? disposing = null;
+        PooledAsyncStreamDispatcher<ReferenceItem>? second = null;
+        try
+        {
+            // The blocking decoder needs a test-owned worker, not the shared pool whose
+            // scheduling delay would otherwise consume the decode-entry assertion budget.
+            producer = Task.Factory.StartNew(() =>
+            {
+                producerStarted.Set();
+                manager.DispatchChunkAsync(77, 0, Payload).GetAwaiter().GetResult();
+            }, CancellationToken.None,
+                TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            Ensure(producerStarted.Wait(TimeSpan.FromSeconds(3)), "the owned producer must start");
+            var enteredDecode = entered.Wait(TimeSpan.FromSeconds(3));
+            if (!enteredDecode && producer.IsCompleted)
+                await producer;
+            Ensure(enteredDecode, "producer must enter decode");
+            disposing = first.DisposeAsync().AsTask();
+            Ensure(!disposing.IsCompleted, "early disposal must wait for an acquired decode");
 
-        release.Set();
-        await disposing.WaitAsync(TimeSpan.FromSeconds(3));
+            release.Set();
+            await disposing.WaitAsync(TimeSpan.FromSeconds(3));
 
-        var second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
-            default,
-            new ReferenceItemCodec());
-        await producer.WaitAsync(TimeSpan.FromSeconds(3));
-        second.Complete(exception: null);
-        await second.DisposeAsync();
-        Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
-            "the safely reused dispatcher should return exactly once");
-        PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+            second = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
+                default,
+                new ReferenceItemCodec());
+            await producer.WaitAsync(TimeSpan.FromSeconds(3));
+            second.Complete(exception: null);
+            await second.DisposeAsync();
+            second = null;
+            Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
+                "the safely reused dispatcher should return exactly once");
+        }
+        finally
+        {
+            release.Set();
+            if (producer is not null)
+                await LongRunningTestWorker.JoinAsync(producer, TimeSpan.FromSeconds(3));
+            manager.Unregister(77, 0);
+            if (disposing is not null)
+                await LongRunningTestWorker.JoinAsync(disposing, TimeSpan.FromSeconds(3));
+            else
+            {
+                first.Complete(exception: null);
+                await first.DisposeAsync();
+            }
+            if (second is not null)
+            {
+                second.Complete(exception: null);
+                await second.DisposeAsync();
+            }
+            PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
+        }
     }
 
     [Test]
@@ -989,7 +1028,7 @@ public class PooledAsyncStreamDispatcherTests
                     releaseDispatch.Wait(RaceCoordinationTimeout);
                 }));
         const long requestId = 93;
-        manager.Register(requestId, dispatcher);
+        manager.Register(requestId, 0, dispatcher);
         dispatcher.SetConsumerAbandonedCallback(
             (abandonedRequestId, dispatchState) =>
             {
@@ -1000,12 +1039,12 @@ public class PooledAsyncStreamDispatcherTests
                 Interlocked.Increment(ref abandonmentCallbackCount);
                 events.Add("consumer-abandoned");
                 abandonmentCallback.TrySetResult(drainedDispatchState);
-                manager.Unregister(abandonedRequestId);
+                manager.Unregister(abandonedRequestId, 0);
                 return ValueTask.CompletedTask;
             },
             requestId);
 
-        var producer = Task.Run(async () => await manager.DispatchChunkAsync(requestId, Payload));
+        var producer = Task.Run(async () => await manager.DispatchChunkAsync(requestId, 0, Payload));
         Ensure(dispatchEntered.Wait(RaceCoordinationTimeout),
             "the producer must hold the stream-manager dispatch lease before disposal starts");
         var disposing = dispatcher.DisposeAsync().AsTask();
@@ -1138,7 +1177,7 @@ public class PooledAsyncStreamDispatcherTests
         PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();
         var manager = new StreamManager();
         var first = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(default, new ReferenceItemCodec());
-        manager.Register(91, first);
+        manager.Register(91, 0, first);
         first.SetConsumerAbandonedCallback(_ => { }, 91);
 
         await first.DisposeAsync();
@@ -1149,7 +1188,7 @@ public class PooledAsyncStreamDispatcherTests
         Ensure(!ReferenceEquals(first, second),
             "a delayed pending completion must not share its dispatcher with a new lease");
 
-        manager.Unregister(91);
+        manager.Unregister(91, 0);
         Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 1,
             "detaching the old entry should make its disposed dispatcher reusable");
         second.Complete(exception: null);
@@ -1165,7 +1204,7 @@ public class PooledAsyncStreamDispatcherTests
         var dispatcher = PooledAsyncStreamDispatcher<ReferenceItem>.Rent(
             default,
             new ReferenceItemCodec());
-        manager.Register(92, dispatcher);
+        manager.Register(92, 0, dispatcher);
         var callbackEntered = new TaskCompletionSource<IStreamDispatchState>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseCallback = new TaskCompletionSource(
@@ -1176,7 +1215,7 @@ public class PooledAsyncStreamDispatcherTests
                 callbackEntered.TrySetResult(dispatchState ?? throw new Exception(
                     "registered dispatcher must expose its dispatch state"));
                 await releaseCallback.Task.ConfigureAwait(false);
-                manager.Unregister(requestId);
+                manager.Unregister(requestId, 0);
             },
             92);
 
@@ -1460,14 +1499,14 @@ public class PooledAsyncStreamDispatcherTests
             Ensure(PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
                 "registration retention must keep a disposed but unregistered dispatcher out of the pool");
 
-            manager.Register(requestId, dispatcher);
-            await manager.DispatchChunkAsync(requestId, Payload);
+            manager.Register(requestId, 0, dispatcher);
+            await manager.DispatchChunkAsync(requestId, 0, Payload);
             Ensure(Volatile.Read(ref decodedItems) == 0,
                 "late StreamManager binding after consumer disposal must close the entry before it accepts a frame");
             Ensure(manager.ActiveStreamCount == 1,
                 "late registration must remain owned by StreamManager until its explicit detach");
 
-            manager.Unregister(requestId);
+            manager.Unregister(requestId, 0);
             Ensure(manager.ActiveStreamCount == 0 &&
                    PooledAsyncStreamDispatcher<ReferenceItem>.RetainedCountForTests == 0,
                 "detach alone must not pool the dispatcher while registration retention is still held");
@@ -1479,7 +1518,7 @@ public class PooledAsyncStreamDispatcherTests
         }
         finally
         {
-            manager.Unregister(requestId);
+            manager.Unregister(requestId, 0);
             if (!registrationReleased)
                 dispatcher.ReleaseRegistrationRetention(registrationLease);
             PooledAsyncStreamDispatcher<ReferenceItem>.ClearPoolForTests();

@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Reflection;
+using SharpLink.Client;
 using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Runtime;
@@ -9,14 +10,19 @@ public sealed class LegacyCodecConfigurationRemovalTests
     [Test]
     public void LegacyStandaloneAndEndpointCodecMethodsMustNotBePublicIn3x()
     {
-        var runtimeMethods = typeof(SharpLinkRuntimeContextBuilder).GetMethods(
-            BindingFlags.Public | BindingFlags.Instance);
+        const BindingFlags instanceMethods =
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        var runtimeMethods = typeof(SharpLinkRuntimeContextBuilder).GetMethods(instanceMethods);
         Ensure(!runtimeMethods.Any(static method => method.Name is "AddCodec" or "UseCodecResolver"),
-            "3.0 must not expose the retired standalone Codec registration or runtime resolver");
-        var serverMethods = typeof(SharpLinkServerBuilder).GetMethods(
-            BindingFlags.Public | BindingFlags.Instance);
-        Ensure(!serverMethods.Any(static method => method.Name == "UseSerializer"),
-            "3.0 must not expose a Server serializer override that is ignored by generated RPC");
+            "3.0 must not restore standalone Codec registration or runtime fallback resolver methods");
+
+        var clientMethods = typeof(SharpClientBuilder).GetMethods(instanceMethods);
+        Ensure(!clientMethods.Any(static method => method.Name is "UseCodec" or "UseSerializer"),
+            "3.0 Client Builder must not reintroduce runtime Codec/Serializer injection");
+
+        var serverMethods = typeof(SharpLinkServerBuilder).GetMethods(instanceMethods);
+        Ensure(!serverMethods.Any(static method => method.Name is "UseCodec" or "UseSerializer"),
+            "3.0 Server Builder must not reintroduce a wire Codec/Serializer override");
     }
 
     [Test]

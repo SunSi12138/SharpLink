@@ -37,7 +37,7 @@ internal sealed class ChaosServer(SharpLinkServer server, Task runTask, int port
         if (transport == ChaosTransport.SharedMemory)
             builder.UseSharedMemory(sharedMemoryName);
         else
-            builder.UseTcp(port, IPAddress.Loopback.ToString());
+            builder.UseTcp(port, IPAddress.Loopback);
         var boundPort = transport == ChaosTransport.Tcp
             ? ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port
             : 0;

@@ -2,7 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-v1";
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-complete-method-facts-v1";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -59,19 +59,29 @@ public partial class RpcGenerator
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
+        sb.AppendLine("/// <summary>Provides the generated manifest for this assembly's SharpLink artifacts.</summary>");
         sb.AppendLine("[System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]");
         sb.AppendLine($"public sealed partial class {manifestTypeName} : ISharpLinkGeneratedAssemblyManifest, ISharpLinkReferencedCodecDependencyManifest");
         sb.AppendLine("{");
+        sb.AppendLine("    /// <summary>Gets the canonical compile-time descriptor for downstream generated-artifact analysis.</summary>");
         sb.AppendLine($"    public const string CompileTimeDescriptor = \"{EscapeString(compileTimeDescriptor)}\";");
+        sb.AppendLine("    /// <summary>Gets the singleton generated manifest instance registered by module initialization.</summary>");
         sb.AppendLine($"    public static readonly {manifestTypeName} Instance = new();");
         sb.AppendLine();
+        sb.AppendLine("    /// <summary>Creates a generated assembly manifest instance.</summary>");
         sb.AppendLine($"    public {manifestTypeName}() {{ }}");
+        sb.AppendLine("    /// <summary>Registers the generated manifest with the weak generated assembly catalog.</summary>");
         sb.AppendLine("    public static void Register()");
         sb.AppendLine("        => SharpLinkGeneratedAssemblyCatalog.Register(Instance);");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public int ApiVersion => 5;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public int ProtocolVersion => 2;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine($"    public Assembly OwnerAssembly => typeof({manifestTypeName}).Assembly;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine($"    public RpcHash128 RpcAssemblyHash => new RpcHash128({rpcIdentity.AssemblyHash.High.ToString(InvariantCulture)}UL, {rpcIdentity.AssemblyHash.Low.ToString(InvariantCulture)}UL);");
         sb.AppendLine("    string ISharpLinkGeneratedAssemblyManifest.CompileTimeDescriptor => CompileTimeDescriptor;");
         sb.AppendLine();
@@ -107,12 +117,19 @@ public partial class RpcGenerator
         sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyDependencies = Array.AsReadOnly(__dependencies);");
         sb.AppendLine("    private static readonly IReadOnlyList<string> __readOnlyContractDependencies = Array.AsReadOnly(__contractDependencies);");
         sb.AppendLine("    private static readonly IReadOnlyList<SharpLinkReferencedCodecDependency> __readOnlyReferencedCodecDependencies = Array.AsReadOnly(__referencedCodecDependencies);");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => __readOnlyContracts;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => __readOnlyServices;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => __readOnlyCodecs;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs => __readOnlyContractCodecs;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public IReadOnlyList<string> Dependencies => __readOnlyDependencies;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public IReadOnlyList<string> ContractDependencies => __readOnlyContractDependencies;");
+        sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine("    public IReadOnlyList<SharpLinkReferencedCodecDependency> ReferencedCodecDependencies => __readOnlyReferencedCodecDependencies;");
         sb.AppendLine("}");
         sb.AppendLine();
@@ -180,7 +197,8 @@ public partial class RpcGenerator
                 sb.AppendLine("                new SharpLinkGeneratedMethodDescriptor(");
                 sb.AppendLine($"                    \"{EscapeString(method.Name)}\",");
                 sb.AppendLine($"                    {method.Hash}L,");
-                sb.AppendLine($"                    {GetMethodShapeExpression(method)},");
+                sb.AppendLine($"                    RpcMethodKind.{GetMethodKind(method)},");
+                sb.AppendLine($"                    {(method.HasCancellationToken || method.IsStreamReturn || method.Parameters.Any(static parameter => parameter.IsStream) ? "true" : "false")},");
                 sb.AppendLine($"                    \"{EscapeString(method.RequestSchema)}\",");
                 sb.AppendLine($"                    \"{EscapeString(method.ResponseSchema)}\",");
                 sb.AppendLine($"                    \"{method.Fingerprint}\"),");

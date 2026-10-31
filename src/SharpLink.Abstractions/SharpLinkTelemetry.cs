@@ -176,15 +176,13 @@ public static class SharpLinkTelemetry
     }
 
     internal static CallScope StartServerCall(
-        long contractId,
-        long methodId,
-        RpcMethodShape shape,
+        RpcMethodFacts method,
         long requestId)
         => StartCall(
             ServerActivitySource,
             ActivityKind.Server,
             "server",
-            new CallIdentity(contractId, methodId, shape.Kind),
+            new CallIdentity(method.ContractId, method.MethodId, method.Kind),
             requestId);
 
     internal static bool ClientCallsEnabled =>

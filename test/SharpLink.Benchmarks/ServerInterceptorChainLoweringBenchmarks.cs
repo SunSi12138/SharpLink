@@ -59,6 +59,8 @@ namespace SharpLink.Benchmarks;
 [SimpleJob(BenchmarkDotNet.Engines.RunStrategy.Throughput, launchCount: 1, warmupCount: 5, iterationCount: 20)]
 public class ServerInterceptorChainLoweringBenchmarks
 {
+    // Historical chain reproduction: its old method-id slot now carries the complete-facts ABI.
+    // Facts are constructed only by GlobalSetup; prior benchmark numbers are not rebound to this representation.
     private static readonly IServerInterceptor[] Interceptors = [new PassThroughInterceptor()];
 
     private ServerPipelineFacts _syncFacts;
@@ -162,7 +164,7 @@ public class ServerInterceptorChainLoweringBenchmarks
         private readonly object _service;
         private readonly object _session;
         private readonly IRpcGeneratedServerBridge _generatedBridge;
-        private readonly long _methodId;
+        private readonly RpcMethodFacts _method;
         private readonly long _requestId;
         private readonly ReadOnlySequence<byte> _arguments;
         private readonly IRpcByteBufferWriter? _output;
@@ -189,7 +191,7 @@ public class ServerInterceptorChainLoweringBenchmarks
             _service = service;
             _session = session;
             _generatedBridge = generatedBridge;
-            _methodId = methodId;
+            _method = new RpcMethodFacts(stub.InterfaceHash, methodId, RpcMethodKind.Unary, 0, true, output is not null);
             _requestId = requestId;
             _arguments = arguments;
             _output = output;
@@ -443,13 +445,13 @@ public class ServerInterceptorChainLoweringBenchmarks
                 if (_output is null)
                 {
                     await _stub.InvokeNoReturnCancellableAsync(
-                        _service, _generatedBridge, _methodId, _requestId, _arguments, _cancellationToken)
+                        _service, _generatedBridge, _method, _requestId, _arguments, _cancellationToken)
                         .ConfigureAwait(false);
                 }
                 else
                 {
                     await _stub.InvokeCancellableAsync(
-                        _service, _generatedBridge, _methodId, _requestId, _arguments, _output, _cancellationToken)
+                        _service, _generatedBridge, _method, _requestId, _arguments, _output, _cancellationToken)
                         .ConfigureAwait(false);
                 }
                 if (context.Status == SharpLinkInvocationStatus.Pending)
@@ -522,33 +524,31 @@ public class ServerInterceptorChainLoweringBenchmarks
 
     private sealed class CompletedStub : IRpcStub
     {
-        public RpcMethodShape ResolveMethodShape(long methodHash)
-            => new(RpcMethodKind.Unary, 0, true, false);
         public CompletedSource Source { get; } = new();
         public long InterfaceHash => 0;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
+        public RpcMethodFacts ResolveMethodFacts(long methodHash) => RpcMethodFacts.UnknownMethod;
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash, long requestId, ReadOnlySequence<byte> args)
             => Source.AsValueTask();
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => Source.AsValueTask();
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => Source.AsValueTask();
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
             => Source.AsValueTask();
     }
 
     private sealed class SuspendedStub : IRpcStub
     {
-        public RpcMethodShape ResolveMethodShape(long methodHash)
-            => new(RpcMethodKind.Unary, 0, true, false);
         public SuspendedSource Source { get; } = new();
         public long InterfaceHash => 0;
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
+        public RpcMethodFacts ResolveMethodFacts(long methodHash) => RpcMethodFacts.UnknownMethod;
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash, long requestId, ReadOnlySequence<byte> args)
             => Source.AsValueTask();
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => Source.AsValueTask();
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => Source.AsValueTask();
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
             => Source.AsValueTask();
     }
 

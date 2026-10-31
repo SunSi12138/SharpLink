@@ -98,7 +98,7 @@ internal sealed partial class SharpLinkServer
 
         var supportsCooperativeCancellation =
             (isCancellable || resolved.IsDynamicModule) &&
-            resolved.Shape.SupportsCancellation;
+            resolved.Method.SupportsCancellation;
         callState ??= CreateTrackedCallState(
             connection,
             requestId,
@@ -107,13 +107,6 @@ internal sealed partial class SharpLinkServer
             resolved.ModuleCancellation,
             supportsCooperativeCancellation,
             requestCancellationMap);
-        if (resolved.Shape.Kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
-        {
-            callState = EnsureTrackedCallState(
-                connection, callState, requestId, request.RpcDeadline,
-                serverLoopToken, resolved.ModuleCancellation, requestCancellationMap);
-            callState.AttachResolvedMethod(in resolved);
-        }
         if (decodedRequestOwner is not null)
         {
             callState = EnsureTrackedCallState(
@@ -150,7 +143,7 @@ internal sealed partial class SharpLinkServer
                         requestCancellationMap,
                         connection,
                         callContext,
-                        resolved,
+                        resolved.Method,
                         invokeToken,
                         requestOwner);
                 }
@@ -217,9 +210,7 @@ internal sealed partial class SharpLinkServer
                             exception,
                             callContext,
                             session,
-                            resolved.Stub,
-                            resolved.MethodHash,
-                            resolved.Shape,
+                            resolved.Method,
                             requestId,
                             invokeToken),
                         connection.ConnectionToken);
@@ -267,7 +258,7 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap,
                     connection,
                     responseCallContext,
-                    resolved,
+                    resolved.Method,
                     invokeToken,
                     requestOwner);
             }
@@ -361,9 +352,7 @@ internal sealed partial class SharpLinkServer
                         exception,
                         responseCallContext,
                         session,
-                        resolved.Stub,
-                        resolved.MethodHash,
-                        resolved.Shape,
+                        resolved.Method,
                         requestId,
                         invokeToken),
                     connection.ConnectionToken);

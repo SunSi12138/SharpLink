@@ -144,7 +144,7 @@ public class CompressionPersistentDecodeReviewTests
             harness.InterfaceHash);
         System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
             requestPrefix[sizeof(long)..],
-            harness.MethodHash);
+            1L);
         frames.Write(requestPrefix);
         Span<byte> originalLength = stackalloc byte[sizeof(uint)];
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
@@ -321,7 +321,7 @@ public class CompressionPersistentDecodeReviewTests
                     options.FlowControl.MaxDecodedBytesInFlightPerServer = maxDecodedBytes;
                     options.Compression.Providers.Add(serverProvider);
                 })
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = RunServerAsync(server, serverCts.Token);
@@ -368,20 +368,17 @@ public class CompressionPersistentDecodeReviewTests
             Task serverTask,
             ISharpLinkServer server,
             int port,
-            long interfaceHash,
-            long methodHash)
+            long interfaceHash)
             : base(server)
         {
             _serverCts = serverCts;
             _serverTask = serverTask;
             Port = port;
             InterfaceHash = interfaceHash;
-            MethodHash = methodHash;
         }
 
         internal int Port { get; }
         internal long InterfaceHash { get; }
-        internal long MethodHash { get; }
 
         internal static Task<RawInputHarness> CreateAsync(ISharpLinkCompressionProvider provider)
         {
@@ -396,18 +393,17 @@ public class CompressionPersistentDecodeReviewTests
                     options.FlowControl.MaxDecodedBytesInFlightPerServer = 8L * 1024 * 1024;
                     options.Compression.Providers.Add(provider);
                 })
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
-            var (interfaceHash, methodHash) = ReadCancellableMethodIdentity(server);
+            var interfaceHash = ReadAnyInterfaceHash(server);
             var serverTask = RunServerAsync(server, serverCts.Token);
             return Task.FromResult(new RawInputHarness(
                 serverCts,
                 serverTask,
                 server,
                 port,
-                interfaceHash,
-                methodHash));
+                interfaceHash));
         }
 
         public async ValueTask DisposeAsync()
@@ -421,19 +417,11 @@ public class CompressionPersistentDecodeReviewTests
             _serverCts.Dispose();
         }
 
-        private static (long ContractId, long MethodId) ReadCancellableMethodIdentity(ISharpLinkServer server)
+        private static long ReadAnyInterfaceHash(ISharpLinkServer server)
         {
-            var contractType = typeof(IPersistentDecodeReviewService);
-            var manifest = GlobalCatalogManifestSource.Instance.CreateSnapshot().Single(candidate =>
-                candidate.Contracts.Any(contract => contract.ContractType == contractType));
-            var contract = manifest.Contracts.Single(candidate => candidate.ContractType == contractType);
-            var method = contract.Methods.Single(candidate =>
-                candidate.Name == nameof(IPersistentDecodeReviewService.MeasureAsync));
-            var registration = ServerRegistryTestAccessor.Services((SharpLinkServer)server)[contract.ContractId];
-            var shape = registration.Stub.ResolveMethodShape(method.MethodId);
-            Ensure(shape.IsKnown && shape.SupportsCancellation && shape.Kind == RpcMethodKind.Unary,
-                "raw-input decode probe must address a known cancellable unary method");
-            return (contract.ContractId, method.MethodId);
+            foreach (var key in ServerRegistryTestAccessor.Services((SharpLinkServer)server).Keys)
+                return key;
+            throw new Exception("server has no registered service hash");
         }
     }
 

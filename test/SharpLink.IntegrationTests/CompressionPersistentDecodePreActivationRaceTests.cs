@@ -205,7 +205,7 @@ public class CompressionPersistentDecodePreActivationRaceTests
                     options.FlowControl.MaxDecodedBytesInFlightPerServer = 16L * 1024 * 1024;
                     options.Compression.Providers.Add(provider);
                 })
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = Task.Run(async () =>

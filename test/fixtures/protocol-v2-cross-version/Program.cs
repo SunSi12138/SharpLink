@@ -27,7 +27,7 @@ public static class Program
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
         await using var server = builder.Build();
         var runTask = server.RunUntilStoppedAsync(timeout.Token).AsTask();
@@ -70,21 +70,21 @@ public static class Program
                 .AddAsync(20, 22)
                 .ConfigureAwait(false);
             if (result != 42)
-                throw new InvalidOperationException($"Unexpected cross-version result: {result}.");
+                throw new InvalidOperationException($"Unexpected current-package process result: {result}.");
 
             var service = client.Get<ICrossVersionService>();
             var upload = await service.SumAsync(ToAsyncEnumerable([3, 5, 7])).ConfigureAwait(false);
             if (upload != 15)
-                throw new InvalidOperationException($"Unexpected cross-version upload sum: {upload}.");
+                throw new InvalidOperationException($"Unexpected current-package process upload sum: {upload}.");
 
             var download = await CollectAsync(service.RangeAsync(4)).ConfigureAwait(false);
             if (!download.SequenceEqual([0, 1, 2, 3]))
-                throw new InvalidOperationException("Unexpected cross-version server stream.");
+                throw new InvalidOperationException("Unexpected current-package process server stream.");
 
             var duplex = await CollectAsync(service.DoubleAsync(
                 ToAsyncEnumerable([2, 4, 6]))).ConfigureAwait(false);
             if (!duplex.SequenceEqual([4, 8, 12]))
-                throw new InvalidOperationException("Unexpected cross-version duplex stream.");
+                throw new InvalidOperationException("Unexpected current-package process duplex stream.");
 
             await service.CompleteAsync().ConfigureAwait(false);
             Console.WriteLine("CLIENT_PASS");

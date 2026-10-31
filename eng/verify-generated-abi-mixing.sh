@@ -35,32 +35,61 @@ verify_rejected() {
   local name="$1"
   local project="$2"
   local assembly="$3"
-  local log="$ARTIFACT_ROOT/$name.log"
   local project_directory
   project_directory="$(dirname "$project")"
+  local restore_log="$ARTIFACT_ROOT/$name.restore.log"
+  local build_log="$ARTIFACT_ROOT/$name.build.log"
+  local validator="$ROOT/eng/validate-generated-abi-mixing.py"
 
+  # Before accepting a *negative* outcome, prove the intended source and exact
+  # 1.1.1/current package graph exist (not a typo, missing file or unrelated build).
+  python3 "$validator" fixture "$project" "$name" || return 1
   rm -rf "$project_directory/bin" "$project_directory/obj"
-  if NUGET_PACKAGES="$PACKAGE_CACHE" dotnet restore "$project" \
+
+  # Each negative must have a corresponding same-version positive control:
+  # this catches malformed source, missing workload, and fixture-only failures.
+  local positive_dir="$ARTIFACT_ROOT/positive/$name"
+  python3 "$validator" positive "$project" "$positive_dir" || return 1
+  local positive_project="$positive_dir/$(basename "$project")"
+  if ! NUGET_PACKAGES="$PACKAGE_CACHE" dotnet restore "$positive_project" \
       --force --no-cache --configfile "$CONFIG" \
-      -p:SharpLinkCurrentVersion="$current_version" >"$log" 2>&1; then
-    if NUGET_PACKAGES="$PACKAGE_CACHE" dotnet build "$project" \
-        -c Release --no-restore -m:1 -p:UseSharedCompilation=false -nodeReuse:false \
-        -p:SharpLinkCurrentVersion="$current_version" \
-        >>"$log" 2>&1; then
-      echo "$name unexpectedly restored and compiled." >&2
-      return 1
-    fi
+      -p:SharpLinkCurrentVersion="$current_version" \
+      >"$ARTIFACT_ROOT/$name.positive-restore.log" 2>&1 ||
+     ! NUGET_PACKAGES="$PACKAGE_CACHE" dotnet build "$positive_project" \
+      -c Release --no-restore -m:1 -p:UseSharedCompilation=false -nodeReuse:false \
+      -p:SharpLinkCurrentVersion="$current_version" \
+      >"$ARTIFACT_ROOT/$name.positive-build.log" 2>&1; then
+    echo "$name: same-version positive control failed, so the negative is inconclusive." >&2
+    return 1
+  fi
+  if [[ ! -f "$positive_dir/bin/Release/net10.0/$assembly.dll" ]]; then
+    echo "$name: positive control did not produce its expected assembly." >&2
+    return 1
+  fi
+
+  local phase
+  if ! NUGET_PACKAGES="$PACKAGE_CACHE" dotnet restore "$project" \
+      --force --no-cache --configfile "$CONFIG" \
+      -p:SharpLinkCurrentVersion="$current_version" >"$restore_log" 2>&1; then
+    phase=restore
+  elif ! NUGET_PACKAGES="$PACKAGE_CACHE" dotnet build "$project" \
+      -c Release --no-restore -m:1 -p:UseSharedCompilation=false -nodeReuse:false \
+      -p:SharpLinkCurrentVersion="$current_version" >"$build_log" 2>&1; then
+    phase=build
+  else
+    echo "$name unexpectedly restored and compiled." >&2
+    return 1
   fi
 
   if [[ -f "$project_directory/bin/Release/net10.0/$assembly.dll" ]]; then
     echo "$name produced an assembly despite the incompatible package graph." >&2
     return 1
   fi
-  if ! grep -Eiq \
-      "NU1605|downgrade|version conflict|IRpcStub|Invoke(NoReturn)?(Cancellable)?Async|SharpLinkGeneratedContractDescriptor|could not be found|does not exist" \
-      "$log"; then
-    echo "$name failed without an explicit package or generated-ABI diagnostic." >&2
-    tail -n 40 "$log" >&2
+  local error_log="$restore_log"
+  [[ "$phase" == build ]] && error_log="$build_log"
+  if ! python3 "$validator" classify "$phase" "$error_log"; then
+    echo "$name: $phase failed without a valid SharpLink version/ABI diagnostic." >&2
+    tail -n 40 "$error_log" >&2
     return 1
   fi
 }

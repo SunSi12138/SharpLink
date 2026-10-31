@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net;
@@ -6,6 +7,7 @@ using System.Net.Sockets;
 using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Compression.Zstd;
+using SharpLink.GenerationControl;
 using SharpLink.Runtime;
 using SharpLink.Sdk;
 using SharpLink.Server;
@@ -14,6 +16,7 @@ using SharpPack;
 [assembly: SharpLinkClusterContractAssembly(
     "runtime",
     typeof(SharpLink.PackageSmoke.IPackageSmokeService))]
+
 
 namespace SharpLink.PackageSmoke;
 
@@ -40,6 +43,75 @@ public sealed partial class PackageSmokeEnvelope
     public string Name { get; set; } = string.Empty;
     public PackageSmokeAddress Address { get; set; } = new();
     public List<int> Values { get; set; } = [];
+}
+
+/// <summary>
+/// Package-smoke peer declaration service. It validates declarations across an epoch change and returns server declarations.
+/// </summary>
+[RpcService]
+public sealed class PackageSmokeGenerationControl : ISharpLinkGenerationControl
+{
+    private int _queries;
+
+    public ValueTask<SharpLinkGenerationInventory> GetInventoryAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(CreateServerInventory(restarted: Interlocked.Increment(ref _queries) > 1));
+    }
+
+    public async IAsyncEnumerable<SharpLinkGenerationInventory> SynchronizeAsync(
+        IAsyncEnumerable<SharpLinkGenerationInventory> clientInventories,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var observedClients = 0;
+        await foreach (var clientInventory in clientInventories.WithCancellation(cancellationToken))
+        {
+            var restarted = observedClients > 0;
+            if (observedClients >= 2 ||
+                clientInventory.EndpointEpoch != (restarted ? "package-smoke-client-restarted" : "package-smoke-client-epoch") ||
+                clientInventory.Revision != (restarted ? 0 : 7) ||
+                clientInventory.Generations.Length != 1 ||
+                clientInventory.Generations[0].Descriptor.Identity.CapabilityId != "package-smoke-client")
+            {
+                throw new InvalidOperationException("Package smoke server received an unexpected client generation declaration.");
+            }
+
+            observedClients++;
+            yield return CreateServerInventory(restarted);
+        }
+
+        if (observedClients != 2)
+            throw new InvalidOperationException("Package smoke server did not receive both client generation epochs.");
+        // Remain subscribed until the caller cancels/disposes the declaration stream.
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+    }
+
+    private static SharpLinkGenerationInventory CreateServerInventory(bool restarted) =>
+        new()
+        {
+            EndpointEpoch = restarted ? "package-smoke-server-restarted" : "package-smoke-server-epoch",
+            Revision = restarted ? 0 : 1,
+            Generations =
+            [
+                new SharpLinkGenerationSnapshot
+                {
+                    Descriptor = new SharpLinkGenerationDescriptor
+                    {
+                        Identity = new SharpLinkGenerationIdentity
+                        {
+                            CapabilityId = "package-smoke-server",
+                            GenerationId = "g1"
+                        },
+                        WireIdentity = "wire-v1",
+                        GeneratedAbiIdentity = "abi-v1",
+                        ArtifactHash = "sha256:package-smoke-server",
+                        ArtifactReference = "package-smoke://server/g1",
+                        CompatibilityMetadata = "compatible"
+                    },
+                    State = SharpLinkGenerationState.Active
+                }
+            ]
+        };
 }
 
 [RpcService]
@@ -71,6 +143,10 @@ public static class Program
 
     public static async Task Main()
     {
+        MethodFactsContractSmoke.Run();
+        ExternalApiBoundaryProbe.Run();
+        GenerationControlSerializationProbe.Run();
+        AssertGenerationControlPackageSurface();
         AssertEnginePublicApiBoundary();
         AssertStandaloneUnsafeBlitRequiresRegistration();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -81,7 +157,8 @@ public static class Program
     }
 
     private static void ConfigureZstd(SharpLinkRuntimeOptions options)
-    {        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
+    {
+        options.Compression.Providers.Add(new SharpLinkZstdCompressionProvider());
     }
 
     private static void AssertStandaloneUnsafeBlitRequiresRegistration()
@@ -110,7 +187,7 @@ public static class Program
         if (useSharedMemory)
             serverBuilder.UseSharedMemory(sharedMemoryName);
         else
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
 
         var localEndPoint = serverBuilder.Transport!.LocalEndPoint as IPEndPoint;
         if (!useSharedMemory && localEndPoint is null)
@@ -144,6 +221,64 @@ public static class Program
             if (result != 42)
                 throw new InvalidOperationException($"Package smoke returned {result} instead of 42.");
 
+            var generationControl = client.Get<ISharpLinkGenerationControl>();
+            var peerInventory = await generationControl.GetInventoryAsync(cancellationToken);
+            if (peerInventory.EndpointEpoch != "package-smoke-server-epoch" ||
+                peerInventory.Revision != 1 ||
+                peerInventory.Generations.Length != 1 ||
+                peerInventory.Generations[0].Descriptor.Identity.CapabilityId != "package-smoke-server" ||
+                peerInventory.Generations[0].State != SharpLinkGenerationState.Active)
+            {
+                throw new InvalidOperationException(
+                    "Generation-control peer inventory RPC did not expose the expected local declaration.");
+            }
+
+            var restartedInventory = await generationControl.GetInventoryAsync(cancellationToken);
+            if (restartedInventory.EndpointEpoch != "package-smoke-server-restarted" || restartedInventory.Revision != 0)
+                throw new InvalidOperationException("Generation query lost a new epoch with a lower revision.");
+
+            using var syncCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            await using var sync = generationControl
+                .SynchronizeAsync(CreateClientGenerationInventories(syncCancellation.Token), syncCancellation.Token)
+                .GetAsyncEnumerator(syncCancellation.Token);
+            if (!await sync.MoveNextAsync() ||
+                sync.Current.EndpointEpoch != "package-smoke-server-epoch" ||
+                sync.Current.Revision != 1 ||
+                sync.Current.Generations.Length != 1 ||
+                sync.Current.Generations[0].Descriptor.Identity.CapabilityId != "package-smoke-server")
+            {
+                throw new InvalidOperationException(
+                    "Generation-control duplex synchronization did not exchange endpoint declarations.");
+            }
+
+            if (!await sync.MoveNextAsync() ||
+                sync.Current.EndpointEpoch != "package-smoke-server-restarted" || sync.Current.Revision != 0)
+                throw new InvalidOperationException("Generation duplex lost a new epoch with a lower revision.");
+
+            var waitingForNextDeclaration = sync.MoveNextAsync().AsTask();
+            syncCancellation.Cancel();
+            try
+            {
+                await waitingForNextDeclaration.WaitAsync(cancellationToken);
+                throw new InvalidOperationException("Cancelled generation synchronization did not terminate with cancellation.");
+            }
+            catch (OperationCanceledException) when (syncCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+            }
+
+            using var cancelledQuery = new CancellationTokenSource();
+            cancelledQuery.Cancel();
+            try
+            {
+                await generationControl.GetInventoryAsync(cancelledQuery.Token);
+                throw new InvalidOperationException("Generation inventory query ignored its cancelled token.");
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+            }
+
+            Console.WriteLine($"GENERATION_CONTROL_RPC_PASS transport={(useSharedMemory ? "SharedMemory" : "TCP")} epochs=query+duplex cancellation=query+duplex");
+
             var expected = new PackageSmokeEnvelope
             {
                 Name = new string('p', 4096),
@@ -166,6 +301,45 @@ public static class Program
             await server.DisposeAsync();
             await Task.WhenAny(serverTask, Task.Delay(TimeSpan.FromSeconds(2), CancellationToken.None));
         }
+    }
+
+    private static async IAsyncEnumerable<SharpLinkGenerationInventory> CreateClientGenerationInventories(
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
+        var initial = new SharpLinkGenerationInventory
+        {
+            EndpointEpoch = "package-smoke-client-epoch",
+            Revision = 7,
+            Generations =
+            [
+                new SharpLinkGenerationSnapshot
+                {
+                    Descriptor = new SharpLinkGenerationDescriptor
+                    {
+                        Identity = new SharpLinkGenerationIdentity
+                        {
+                            CapabilityId = "package-smoke-client",
+                            GenerationId = "g7"
+                        },
+                        WireIdentity = "wire-v1",
+                        GeneratedAbiIdentity = "abi-v1",
+                        ArtifactHash = "sha256:package-smoke-client",
+                        ArtifactReference = "package-smoke://client/g7",
+                        CompatibilityMetadata = "compatible"
+                    },
+                    State = SharpLinkGenerationState.Active
+                }
+            ]
+        };
+        yield return initial;
+        yield return new SharpLinkGenerationInventory
+        {
+            EndpointEpoch = "package-smoke-client-restarted",
+            Revision = 0,
+            Generations = initial.Generations
+        };
     }
 
     private static async Task RunRuntimeMultiClusterSmokeAsync(
@@ -224,10 +398,10 @@ public static class Program
     {
         var firstBuilder = SharpLinkServerBuilder.Create()
             .UseAdmissionControl(options => options.Global.UseConcurrency(64))
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var secondBuilder = SharpLinkServerBuilder.Create()
             .UseAdmissionControl(options => options.Global.UseConcurrency(64))
-            .UseTcp(0, IPAddress.Loopback.ToString());
+            .UseTcp(0, IPAddress.Loopback);
         var firstPort = ((IPEndPoint)firstBuilder.Transport!.LocalEndPoint!).Port;
         var secondPort = ((IPEndPoint)secondBuilder.Transport!.LocalEndPoint!).Port;
         var firstServer = firstBuilder.Build();
@@ -410,6 +584,65 @@ public static class Program
         if (!File.Exists(path))
             throw new FileNotFoundException("The reference-rooting package smoke assembly was not built.", path);
         return path;
+    }
+
+    private static void AssertGenerationControlPackageSurface()
+    {
+        var contract = typeof(ISharpLinkGenerationControl);
+        if (!typeof(IService).IsAssignableFrom(contract) ||
+            contract.GetCustomAttributes(typeof(RpcContractAttribute), inherit: false).Length != 1)
+        {
+            throw new InvalidOperationException(
+                "Generation-control package did not expose the expected static RPC contract.");
+        }
+
+        var methods = contract.GetMethods()
+            .Select(static method => method.Name)
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        string[] expectedMethods = ["GetInventoryAsync", "SynchronizeAsync"];
+        if (!methods.SequenceEqual(expectedMethods, StringComparer.Ordinal))
+            throw new InvalidOperationException("Generation-control RPC surface must remain declaration-only.");
+
+        var manifests = contract.Assembly.GetCustomAttributes(typeof(SharpLinkGeneratedAssemblyManifestAttribute), inherit: false);
+        if (manifests.Length != 1 || manifests[0] is not SharpLinkGeneratedAssemblyManifestAttribute manifest ||
+            manifest.ApiVersion != 5 || manifest.ProtocolVersion != 2 || string.IsNullOrEmpty(manifest.AbiIdentity))
+            throw new InvalidOperationException("Generation-control package must carry exact generated API 5 metadata.");
+        if (typeof(IService).IsAssignableFrom(typeof(ISharpLinkGenerationProvider)) ||
+            typeof(ISharpLinkGenerationProvider).GetCustomAttributes(typeof(RpcContractAttribute), inherit: false).Length != 0)
+            throw new InvalidOperationException("Generation provider must remain a local SPI, never a remote contract.");
+
+        var providerMethods = typeof(ISharpLinkGenerationProvider).GetMethods()
+            .Select(static method => method.Name)
+            .Where(static name => name.EndsWith("Async", StringComparison.Ordinal))
+            .OrderBy(static name => name, StringComparer.Ordinal)
+            .ToArray();
+        string[] expectedProviderMethods = ["ActivateAsync", "DrainAsync", "StageAsync", "ValidateAsync"];
+        if (!providerMethods.SequenceEqual(expectedProviderMethods, StringComparer.Ordinal))
+            throw new InvalidOperationException("Generation-control local provider surface changed unexpectedly.");
+
+        var descriptor = new SharpLinkGenerationDescriptor
+        {
+            Identity = new SharpLinkGenerationIdentity
+            {
+                CapabilityId = "package-smoke",
+                GenerationId = "g1"
+            },
+            WireIdentity = "wire-v1",
+            GeneratedAbiIdentity = "abi-v1",
+            ArtifactHash = "sha256:package-smoke",
+            ArtifactReference = "package-smoke://g1"
+        };
+        var inventory = new SharpLinkGenerationInventory
+        {
+            EndpointEpoch = "package-smoke-local-epoch",
+            Revision = 1,
+            Generations = [new SharpLinkGenerationSnapshot { Descriptor = descriptor, State = SharpLinkGenerationState.Active }]
+        };
+        if (inventory.EndpointEpoch != "package-smoke-local-epoch" ||
+            inventory.Generations.Length != 1 ||
+            inventory.Generations[0].State != SharpLinkGenerationState.Active)
+            throw new InvalidOperationException("Generation-control package DTO surface could not be consumed.");
     }
 
     private static void AssertEnginePublicApiBoundary()

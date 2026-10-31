@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "scope": "synthetic-fixture",
+  "projectGlob": "src/**/*.csproj",
+  "requiredGeneratedProjects": ["src/Consumer/Consumer.csproj"],
+  "requiredTargets": [
+    {"project": "src/Consumer/Consumer.csproj", "framework": "net10.0"},
+    {"project": "src/Consumer/Consumer.csproj", "framework": "net10.0-windows"}
+  ],
+  "excludedScopes": ["Synthetic inventory fixture; not production API evidence."]
+}

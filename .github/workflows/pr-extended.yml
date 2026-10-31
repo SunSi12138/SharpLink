@@ -61,6 +61,9 @@ jobs:
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
 
+      - name: Verify reviewed public and protected API
+        run: bash ./eng/verify-public-api.sh artifacts/nuget
+
       - name: Verify NuGet package contracts
         uses: ./.github/actions/verify-packages
 

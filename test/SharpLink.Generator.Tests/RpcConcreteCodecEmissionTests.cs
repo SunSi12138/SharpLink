@@ -307,7 +307,7 @@ using SharpLink.Abstractions;
     5,
     2,
     "2.0.0",
-    "sharplink-3.0-api5-v1")]
+    "sharplink-3.0-api5-complete-method-facts-v1")]
 
 namespace Vendor
 {

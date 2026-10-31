@@ -26,8 +26,13 @@ serverBuilder
 
 `UseTcp(port)` 现在默认绑定 `IPAddress.Loopback`。`ListenOnAnyAddress()`、`ListenOn(IPAddress)` 和
 `UseTls(...)` 彼此独立；非 loopback 且无 TLS 的 TCP 配置会在 `Build()` 时被拒绝，直到调用
-`AllowUnencrypted()` 与 `AllowUnauthenticated()` 分别显式 opt-in。旧的字符串式 `UseTcp(port, ip)` 重载保留兼容，
-但新代码应优先使用 typed `IPAddress` 重载或 `ListenOn(address)`。
+`AllowUnencrypted()` 与 `AllowUnauthenticated()` 分别显式 opt-in。3.0 移除了 Server 两个旧的字符串地址重载：`UseTcp(port, stringIp, backlog)` 与
+`UseTcp(port, tlsOptions, stringIp, backlog, tlsHandshakeTimeout)`。需显式解析字符串，
+改用 `UseTcp(port, IPAddress.Parse(ip), backlog)` 或
+`UseTcp(port, tlsOptions, IPAddress.Parse(ip), backlog, tlsHandshakeTimeout)`；
+也可使用 `UseTcp(port).ListenOn(IPAddress.Parse(ip))`。建议持有 `IPAddress`
+时直接传值，避免无意义的 `ToString()` / `Parse()` 往返。Client 端
+`UseTcp(string ip, int port)` 及其 TLS 重载**保持不变**（当前要求 IP 字符串）。
 
 TLS 在 SharpLink 握手前完成，拥有独立的 TLS handshake timeout。Client 默认保留系统证书验证；不要在生产中用总是返回 true 的回调。多 endpoint TLS factory 会复制认证选项，并优先使用 endpoint `Authority` 作为 SNI/TargetHost。
 
@@ -113,6 +118,12 @@ Session 是 transport 的唯一直接 owner：`Fault`、shutdown 和 `DisposeAsy
 transport 的 `DisposeAsync` 只会启动一次，所有显式 Session disposal 等待者观察同一个
 结果。EOF 或物理错误应由 transport 完成/fault Input/Output 暴露；不要再维护第二个
 `isConnected` 回调。不要让多个 Client/Server 隐式共享一个可释放 factory/listener。
+
+内置流式 transport（包括 TLS）和 AnonymousPipe 在发送泵已停止且所有输出操作实际结束后，
+若该泵故障赢得 Session 的终止状态，清理会丢弃尚未成功完成的输出缓冲，不会通过 disposal
+再次发送它们。写入失败前可能已有部分字节到达对端，因此调用结果仍可能未知；这不是自动重试。
+正常 `DisposeAsync`、graceful drain、先发生的 shutdown 或其他来源故障，以及自定义 transport
+的既有完成契约保持不变。
 
 ## 可运行矩阵
 

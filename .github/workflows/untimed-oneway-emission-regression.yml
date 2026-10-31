@@ -1,0 +1,44 @@
+name: Untimed OneWay Emission Regression
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'test/SharpLink.UnitTests/Client/SharpLinkClientTimeBudgetTests.cs'
+      - '.github/workflows/untimed-oneway-emission-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      TUNIT_MAX_PARALLEL_TESTS: '8'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET CI environment
+        uses: ./.github/actions/setup-dotnet
+
+      - name: Build the unchanged full UnitTests binary once
+        run: dotnet build test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release -v minimal
+
+      - name: Exercise the untimed OneWay observer barrier 12 independent times
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Subject: $(git rev-parse HEAD)"
+          echo "TUNIT_MAX_PARALLEL_TESTS=${TUNIT_MAX_PARALLEL_TESTS}"
+          for iteration in $(seq 1 12); do
+            echo "::group::Untimed OneWay focused run ${iteration}/12"
+            dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj \
+              -c Release --no-build \
+              --treenode-filter '/*/*/SharpLinkClientTimeBudgetTests/ClientDefaultTimeoutShouldNotEnforceAPlainOneWayDeadline'
+            echo "::endgroup::"
+          done
+          echo "PASS: all 12 focused runs of the same Release test binary"

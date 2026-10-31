@@ -8,7 +8,7 @@ namespace SharpLink.Client
         public System.Threading.Tasks.ValueTask<SharpLink.Abstractions.SharpLinkEndpointSnapshot> ResolveAsync(System.Threading.CancellationToken cancellationToken) { }
         public System.Collections.Generic.IAsyncEnumerable<SharpLink.Abstractions.SharpLinkEndpointSnapshot> WatchAsync([System.Runtime.CompilerServices.EnumeratorCancellation] System.Threading.CancellationToken cancellationToken) { }
     }
-    public class SharpClientBuilder
+    public sealed class SharpClientBuilder
     {
         public SharpClientBuilder() { }
         public SharpLink.Client.SharpClientBuilder AddInterceptor(SharpLink.Abstractions.ISharpLinkClientInterceptor interceptor) { }
@@ -30,7 +30,6 @@ namespace SharpLink.Client
         public SharpLink.Client.SharpClientBuilder UseHeartbeatTimeout(System.TimeSpan timeout) { }
         public SharpLink.Client.SharpClientBuilder UseLoadBalancing(SharpLink.Client.SharpLinkLoadBalancingStrategy strategy) { }
         public SharpLink.Client.SharpClientBuilder UseLoggerFactory(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
-        public void UseLoggerFactoryIfUnset(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
         public SharpLink.Client.SharpClientBuilder UseProtocol(System.Action<SharpLink.Runtime.SharpLinkProtocolOptions> configure) { }
         public SharpLink.Client.SharpClientBuilder UseReconnectPolicy(SharpLink.Abstractions.SharpLinkReconnectPolicy policy) { }
         public SharpLink.Client.SharpClientBuilder UseRequestCompressionPolicy(SharpLink.Abstractions.SharpLinkCompressionSendPolicy policy) { }
@@ -277,7 +276,7 @@ namespace SharpLink.Client
         public SharpLink.Abstractions.ISharpLinkMultiClusterClient Build() { }
         public SharpLink.Client.SharpLinkMultiClusterClientBuilder Configure(System.Action<SharpLink.Client.SharpLinkMultiClusterOptions> configure) { }
         public SharpLink.Client.SharpLinkMultiClusterClientBuilder DisableRequestTimeout() { }
-        public void UseLoggerFactoryIfUnset(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
+        public SharpLink.Client.SharpLinkMultiClusterClientBuilder UseLoggerFactory(Microsoft.Extensions.Logging.ILoggerFactory loggerFactory) { }
         public SharpLink.Client.SharpLinkMultiClusterClientBuilder UseRequestTimeout() { }
         public SharpLink.Client.SharpLinkMultiClusterClientBuilder UseRequestTimeout(System.TimeSpan timeout) { }
         public static SharpLink.Client.SharpLinkMultiClusterClientBuilder Create() { }

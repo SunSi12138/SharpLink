@@ -337,6 +337,15 @@ internal sealed partial class RpcSession
             throw GetTerminalException();
     }
 
+    /// <summary>
+    /// Captures pending capacity-waiting send producers for a cold maintenance boundary.
+    /// The caller must first seal ingress and physically drain every other producer,
+    /// including control and terminal callbacks. This does not seal future sends,
+    /// wait for transport flush, or replace a subsequent normal-FIFO fence.
+    /// </summary>
+    internal Task CaptureBackpressuredSendDrain()
+        => Volatile.Read(ref _pump)?.CaptureBackpressuredSendDrain() ?? Task.CompletedTask;
+
     private static OwnedFrame CreateFrame(
         IRpcByteBufferWriter packet,
         bool forceFlush,
@@ -511,10 +520,19 @@ internal sealed partial class RpcSession
         => Fault(exception ?? new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Transport closed."));
 
     private void Fault(Exception exception)
+        => Fault(exception, SessionTerminalState.Faulted);
+
+    // A quiescent pump failure can originate in write/flush, copy, time-provider or
+    // owner cleanup. Every output await has terminated when its terminal catch reports.
+    // Read-side/other session faults cannot certify release of an in-flight writer.
+    private void FaultAfterSendPumpFailure(Exception exception)
+        => Fault(exception, SessionTerminalState.QuiescentPumpFault);
+
+    private void Fault(Exception exception, SessionTerminalState state)
     {
         var structured = exception as SharpLinkException ??
             new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Transport closed.", exception);
-        var terminal = new SessionTerminal(SessionTerminalState.Faulted, structured);
+        var terminal = new SessionTerminal(state, structured);
         if (Interlocked.CompareExchange(ref _terminal, terminal, null) is not null)
             return;
 
@@ -685,7 +703,11 @@ internal sealed partial class RpcSession
 
             try
             {
-                _transportDisposeTask = _transport.DisposeAsync().AsTask();
+                var terminal = Volatile.Read(ref _terminal);
+                _transportDisposeTask = terminal is { State: SessionTerminalState.QuiescentPumpFault } &&
+                    _transport is IQuiescentPumpFaultDisposal faultedOutput
+                    ? faultedOutput.DisposeAfterPumpFaultAsync(terminal.Exception).AsTask()
+                    : _transport.DisposeAsync().AsTask();
             }
             catch (Exception ex)
             {
@@ -719,6 +741,7 @@ internal sealed partial class RpcSession
     private enum SessionTerminalState
     {
         Faulted,
+        QuiescentPumpFault,
         Stopping
     }
 

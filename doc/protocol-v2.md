@@ -1,8 +1,10 @@
 # SharpLink Protocol v2
 
-Protocol v2 是 SharpLink v1 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
+Protocol v2 是当前 SharpLink 的唯一线协议，不提供 Protocol v1 兼容或恢复扫描。任何 magic、长度、类型、标志或载荷结构错误都作为连接级 `ProtocolViolation` 处理并关闭连接。
 
-当前 protocol minor 为 4，能力包含 metadata、compression、flow control、health check 和 cancellation reason。minor 4 是 `TimeBudget` wire 语义的破坏性边界；低于 4 的 peer 在握手阶段以 `Unimplemented` 拒绝，不会把旧 absolute-deadline 字段按新 duration 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+当前 protocol minor 为 4，能力包含 metadata、compression、flow control、health check、cancellation reason、contract manifest 和 session refresh。minor 4 是 `TimeBudget` wire 语义的破坏性边界；低于 4 的 peer 在握手阶段以 `Unimplemented` 拒绝，不会把旧 absolute-deadline 字段按新 duration 解释。未启用压缩、只有单方启用或 wire profile 无交集时使用未压缩连接。
+
+3.0 的进程内 Generated ABI 为 API 5，与此处 wire minor 是独立版本轴；不因 API 号变化而自动改变 wire grammar。当前包双进程门禁不是 2.0.3 ↔ 3.0 兼容矩阵，跨 major 成功互操作不属于 3.0 的发布承诺；不兼容输入仍必须在握手或契约绑定边界拒绝，不能误解释后执行业务。
 
 ## 固定帧头
 
@@ -69,6 +71,8 @@ Transport（TCP 使用 TLS 时先完成 TLS）建立后，Client 首先发送 `H
 minor 4 的 `HandshakeRequest` 在三个固定限制字段后编码：
 
 ```text
+responseCompressionPreferenceGeneration:uint64
+allowResponseCompression:uint8  // 0 or 1
 profileCount:uint8
 repeat profileCount { profileLength:uint8 + canonical ASCII profile }
 authenticationLength:varuint32 + authentication bytes

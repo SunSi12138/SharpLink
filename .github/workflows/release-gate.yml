@@ -8,6 +8,10 @@ on:
     branches:
       - main
   push:
+    branches:
+      - 'validation/dependency-forward-dev-20261030'
+      - 'validation/933-absolute-stop-budget-20261031'
+      - 'optimize/732-resolve-method-facts-once'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -37,7 +41,7 @@ jobs:
 
       - name: Upload allocation evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: allocation-release-gate-${{ github.sha }}
           path: artifacts/perf/allocation-gate
@@ -75,6 +79,15 @@ jobs:
       - name: Unit Tests
         run: dotnet test --project test/SharpLink.UnitTests/SharpLink.UnitTests.csproj -c Release --no-build
 
+      - name: Upload Unit Test Diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unit-release-${{ runner.os }}-${{ github.sha }}
+          path: test/SharpLink.UnitTests/bin/Release/net10.0/TestResults/*report.html
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Generator Tests
         run: dotnet test --project test/SharpLink.Generator.Tests/SharpLink.Generator.Tests.csproj -c Release --no-build
 
@@ -99,7 +112,7 @@ jobs:
 
       - name: Upload Integration Diagnostics
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-${{ runner.os }}-diagnostics
           path: artifacts/test-results/integration-${{ runner.os }}
@@ -128,11 +141,16 @@ jobs:
             rid: linux-x64
           - os: windows-latest
             rid: win-x64
-          - os: macos-14
+          - os: macos-15
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
+      - name: Preserve shell script LF before Windows checkout
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -174,10 +192,42 @@ jobs:
           python3 ./eng/verify-release-versions.py
           bash ./eng/verify-runtime-architecture.sh
 
+      - name: Compare actual published 2.0.3 package APIs
+        run: >-
+          python3 eng/compare-published-api.py artifacts/nuget
+          --current-commit "$(git rev-parse HEAD)"
+          --output artifacts/public-api/published-2.0.3
+
+      - name: Upload published API comparison evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: published-api-comparison
+          path: artifacts/public-api/published-2.0.3
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Verify Roslyn inventory fixtures and failure controls
+        run: python3 -m unittest discover -s eng/tests -p 'test_api_inventory.py' -v
+
+      - name: Inventory actual production project declarations
+        run: python3 eng/run-api-inventory.py --output artifacts/api-inventory/release
+
+      - name: Upload Roslyn inventory and failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: roslyn-api-inventory
+          path: |
+            artifacts/api-inventory
+            artifacts/api-inventory-fixtures
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Verify Generated ABI Package Mixing
         run: ./eng/verify-generated-abi-mixing.sh
 
-      - name: Verify Protocol v2 Cross-version Matrix
+      - name: Verify Protocol v2 Current-package Process Interoperability
         run: ./eng/verify-protocol-v2-cross-version.sh
 
       - name: Run NuGet package smoke
@@ -189,18 +239,24 @@ jobs:
           test -n "$(find artifacts/nuget -name '*.nupkg' -type f)"
 
       - name: Upload NuGet artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nuget-packages
           path: |
             artifacts/nuget/*.nupkg
             artifacts/nuget/*.snupkg
 
+  packaged-trim-aot:
+    needs: pack
+    uses: ./.github/workflows/packaged-trim-smoke.yml
+    with:
+      package-artifact: nuget-packages
+
   chaos-smoke:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-14]
+        os: [ubuntu-latest, windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -240,7 +296,7 @@ jobs:
 
       - name: Upload Chaos Report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chaos-release-smoke-${{ runner.os }}
           path: |
@@ -255,7 +311,7 @@ jobs:
 
   release-summary:
     runs-on: ubuntu-latest
-    needs: [codec-compatibility, codec-mobile-evidence, allocation-gate, matrix-build-test, aot-smoke, pack, chaos-smoke]
+    needs: [codec-compatibility, codec-mobile-evidence, allocation-gate, matrix-build-test, aot-smoke, pack, packaged-trim-aot, chaos-smoke]
     if: ${{ always() }}
     steps:
       - name: Verify every required release job succeeded
@@ -288,7 +344,7 @@ jobs:
         uses: ./.github/actions/setup-dotnet
 
       - name: Download release-gated packages
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nuget-packages
           path: artifacts/nuget
@@ -317,6 +373,7 @@ jobs:
         run: |
           packages=(
             SharpLink.Abstractions
+            SharpLink.GenerationControl
             SharpLink.Runtime
             SharpLink.Sdk
             SharpLink.Serializer.SharpPack

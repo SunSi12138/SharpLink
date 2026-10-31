@@ -354,12 +354,13 @@ public class SharpLinkServerRequestScopeTests
 
             var registration = ServiceRegistration.CreateSingleton(
                 typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
-            ((ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
+            var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
                     "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(Server)!).PublishServices(new Dictionary<long, ServiceRegistration>
-                {
-                    [stub.InterfaceHash] = registration
-                }.ToFrozenDictionary());
+                .GetValue(Server)!;
+            Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
+            {
+                [stub.InterfaceHash] = registration
+            }.ToFrozenDictionary());
             typeof(SharpLinkServer).GetField(
                     "_state", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .SetValue(Server, 2);
@@ -384,8 +385,6 @@ public class SharpLinkServerRequestScopeTests
                 null,
                 null,
                 false,
-                null,
-                // No pre-resolved call: the dispatch path resolves the shape from the stub.
                 null
             ])!;
 
@@ -402,8 +401,6 @@ public class SharpLinkServerRequestScopeTests
                 null,
                 false,
                 0,
-                null,
-                // No pre-resolved call: the dispatch path resolves the shape from the stub.
                 null
             ])!;
 
@@ -434,6 +431,11 @@ public class SharpLinkServerRequestScopeTests
         bool asynchronous,
         long interfaceHash = 248) : IRpcStub
     {
+        public RpcMethodFacts ResolveMethodFacts(long methodHash)
+            => TryGetMethodDescriptor(methodHash, out var descriptor)
+                ? MethodFactsTestHelper.FromDescriptor(descriptor)
+                : RpcMethodFacts.UnknownMethod;
+
         internal const long MethodHash = 1;
         private readonly TaskCompletionSource? _completion = asynchronous
             ? new(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -441,28 +443,32 @@ public class SharpLinkServerRequestScopeTests
 
         public long InterfaceHash { get; } = interfaceHash;
 
-        public RpcMethodShape ResolveMethodShape(long methodHash)
-            => methodHash == MethodHash
-                ? new RpcMethodShape(
-                    kind,
-                    clientStreamCount: 0,
-                    supportsCancellation: true,
-                    hasResponsePayload: false)
-                : RpcMethodShape.UnknownMethod;
+        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
+        {
+            descriptor = new RpcMethodDescriptor(
+                InterfaceHash,
+                methodHash,
+                kind,
+                HasResponsePayload: false,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+            return methodHash == MethodHash;
+        }
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args)
             => _completion is null ? ValueTask.CompletedTask : new ValueTask(_completion.Task);
 
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
 
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);
 
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken)
             => InvokeNoReturnAsync(service, bridge, methodHash, requestId, args);

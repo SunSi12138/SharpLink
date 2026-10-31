@@ -11,6 +11,16 @@ services.AddSharpLinkClient(builder => builder
     .UseRequestTimeout());
 ```
 
+重复调用同一种 `AddSharpLinkServer`、`AddSharpLinkClient` 或
+`AddSharpLinkMultiClusterClient` 会复用 **DI 中实际注册的 Builder 实例**，
+并对该实例执行后续 `configure` 回调；HostedService 和同名 health check
+只注册一次。已存在的 Builder 如果通过类型/工厂（而非 Singleton 实例）
+注册，或同一 Builder 类型存在多份非 keyed 注册，则调用会明确抛出配置错误。
+不会创建新的、随后被 `TryAddSingleton` 忽略的临时 Builder，
+也不会把后续 `Use*` 配置悄悄丢弃。
+每个角色的 health check 独立保持幂等；提前注册 HostedService 不会阻止
+Hosting 扩展补齐对应的 readiness health check。
+
 Hosted Client 与直接构建的 Client 一样，必须显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；未指定会在 Host materialize Client 时失败。
 
 Host 启动 Client/Server，停止时执行有界排空和异步释放。Server HostedService 直接映射 `StartAsync / StopAsync`，不再持有独立的 accept-loop task 或 lifetime CTS；长期 accept/background runtime 由 Server 自己持有和观察。Client HostedService 调用 `StartAsync` 启动本地 runtime 与连接 supervisor；它不会等待远端 endpoint ready，因此远端暂时不可用不会阻塞整个 Generic Host 启动。通过 `ISharpLinkClientAccessor.GetClientAsync` 等待 hosted Client 本地 runtime 发布；不要在容器构建期间同步阻塞获取连接。
@@ -38,6 +48,8 @@ Generator 为 `[RpcService]` 产生 Manifest，并在引用它的应用编译中
 
 `UseServiceProvider` 接受应用拥有的 provider。Server 不释放它，但会为 Connection/Call 生命周期创建和释放 scope。开启 `ValidateScopes` 有助于在启动时发现 singleton 捕获 scoped 依赖。
 
+Hosted Server 的 provider 优先级为：启动前最后一次显式 `UseServiceProvider(...)` > Host 的 provider（仅在未显式配置时使用）。这同时适用于 `AddSharpLinkServer` 的配置回调和返回 builder 后的 fluent 配置。选中的 provider 独立负责所有业务服务依赖及 scope；缺少依赖时不会再向另一个 provider 回退。Hosting 自身的 readiness、日志和 `IHostApplicationLifetime` 仍由 Host 容器提供。无论启动成功、失败或停止，SharpLink 都不会释放应用或 Host 拥有的根 provider。
+
 Service lifetime：
 
 - Singleton：Server 实例共享，必须线程安全。
@@ -50,6 +62,6 @@ Service lifetime：
 
 ## AnonymousPipe Hosting
 
-若 Server transport 实现 `IAnonymousPipeAllocator`，Hosting 注册 `IAnonymousPipeAllocatorAccessor`，供父进程服务安全生成一次性子进程句柄。不要把 allocator 或 offer 暴露给不可信调用方。
+`AddSharpLinkServer` 注册 `IAnonymousPipeAllocatorAccessor`。若最终配置的 Server transport 实现 `IAnonymousPipeAllocator`，accessor 会返回该 allocator；其他 transport 返回 `null`。配置既可以写在回调中，也可以在返回的 builder 上链式追加。启动前和启动后首次解析 accessor 均可访问同一 allocator；accessor 从 Builder 冻结后的同一 transport 快照捕获引用；与启动竞争的首次配置若先完成，会同时进入构建与 accessor，若 Build 先冻结则配置以 consumed 异常失败。accessor 不拥有 transport，关闭和构建失败时的释放仍由 Server 或构建事务负责。不要把 allocator 或 offer 暴露给不可信调用方。
 
 完整用法见 `demo/HostApplication`。

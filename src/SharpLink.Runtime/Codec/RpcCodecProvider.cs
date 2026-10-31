@@ -413,12 +413,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         }
     }
 
-    private static void ValidateCodec(IRpcGeneratedCodecFactory factory, IRpcCodec codec)
-    {
-        if (!factory.IsCompatibleCodec(codec))
-            throw new InvalidOperationException(
-                $"Codec returned for '{factory.TargetType.FullName}' implements an incompatible IRpcCodec<T>.");
-    }
+
 
     public void Dispose()
     {

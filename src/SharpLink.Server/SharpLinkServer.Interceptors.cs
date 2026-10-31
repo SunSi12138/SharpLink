@@ -34,10 +34,10 @@ internal sealed partial class SharpLinkServer
         var hasRequestStreams = false;
         if (resolved.IsDynamicModule)
         {
-            isStream = resolved.Shape.Kind is RpcMethodKind.ClientStreaming or
+            isStream = resolved.Method.Kind is RpcMethodKind.ClientStreaming or
                 RpcMethodKind.ServerStreaming or
                 RpcMethodKind.DuplexStreaming;
-            hasRequestStreams = resolved.Shape.Kind is RpcMethodKind.ClientStreaming or
+            hasRequestStreams = resolved.Method.Kind is RpcMethodKind.ClientStreaming or
                 RpcMethodKind.DuplexStreaming;
         }
 
@@ -72,7 +72,7 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
-                resolved.ContractId, resolved.MethodHash, resolved.Shape, requestId);
+                resolved.Method, requestId);
             failedTelemetry.Complete(exception);
             return CompleteDynamicSingletonInvocationAsync(
                 ValueTask.FromException(exception),
@@ -94,7 +94,7 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
-                resolved.ContractId, resolved.MethodHash, resolved.Shape, requestId);
+                resolved.Method, requestId);
             failedTelemetry.Complete(exception);
             throw;
         }
@@ -226,7 +226,7 @@ internal sealed partial class SharpLinkServer
         catch (Exception exception)
         {
             var failedTelemetry = StartServerTelemetryCall(
-                resolved.ContractId, resolved.MethodHash, resolved.Shape, requestId);
+                resolved.Method, requestId);
             failedTelemetry.Complete(exception);
             throw;
         }
@@ -256,7 +256,7 @@ internal sealed partial class SharpLinkServer
         SharpLinkCallContextSnapshot context)
     {
         var telemetry = StartServerTelemetryCall(
-            resolved.ContractId, resolved.MethodHash, resolved.Shape, requestId);
+            resolved.Method, requestId);
         try
         {
             var invocation = InvokeServiceCoreAsync(
@@ -264,7 +264,7 @@ internal sealed partial class SharpLinkServer
                 service,
                 session,
                 generatedBridge,
-                resolved.MethodHash,
+                resolved.Method,
                 requestId,
                 arguments,
                 output,
@@ -363,7 +363,7 @@ internal sealed partial class SharpLinkServer
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
+        RpcMethodFacts method,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -381,9 +381,9 @@ internal sealed partial class SharpLinkServer
         {
             return output is null
                 ? stub.InvokeNoReturnCancellableAsync(
-                    service, generatedBridge, methodId, requestId, arguments, cancellationToken)
+                    service, generatedBridge, method, requestId, arguments, cancellationToken)
                 : stub.InvokeCancellableAsync(
-                    service, generatedBridge, methodId, requestId, arguments, output, cancellationToken);
+                    service, generatedBridge, method, requestId, arguments, output, cancellationToken);
         }
 
         return InvokeInterceptedWithOwnedArgumentsAsync(
@@ -392,7 +392,7 @@ internal sealed partial class SharpLinkServer
             service,
             session,
             generatedBridge,
-            methodId,
+            method,
             requestId,
             arguments,
             output,
@@ -406,7 +406,7 @@ internal sealed partial class SharpLinkServer
         object service,
         RpcSession session,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
+        RpcMethodFacts method,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -429,7 +429,7 @@ internal sealed partial class SharpLinkServer
                 stub,
                 service,
                 generatedBridge,
-                methodId,
+                method,
                 requestId,
                 ReadOnlySequence<byte>.Empty,
                 output,
@@ -448,7 +448,7 @@ internal sealed partial class SharpLinkServer
                 stub,
                 service,
                 generatedBridge,
-                methodId,
+                method,
                 requestId,
                 ownedArguments,
                 output,
@@ -466,7 +466,7 @@ internal sealed partial class SharpLinkServer
         IRpcStub stub,
         object service,
         IRpcGeneratedServerBridge generatedBridge,
-        long methodId,
+        RpcMethodFacts method,
         long requestId,
         ReadOnlySequence<byte> arguments,
         IRpcByteBufferWriter? output,
@@ -477,7 +477,7 @@ internal sealed partial class SharpLinkServer
         context.InterceptorStub = stub;
         context.InterceptorService = service;
         context.InterceptorGeneratedBridge = generatedBridge;
-        context.InterceptorMethodId = methodId;
+        // The context already owns the same immutable scalar facts.
         context.InterceptorArguments = arguments;
         context.InterceptorOutput = output;
         context.InterceptorTimeProvider = timeProvider;
@@ -532,18 +532,14 @@ internal sealed partial class SharpLinkServer
         Exception exception,
         SharpLinkCallContextSnapshot callContext,
         RpcSession session,
-        IRpcStub stub,
-        long methodId,
-        RpcMethodShape shape,
+        RpcMethodFacts method,
         long requestId,
         CancellationToken cancellationToken)
     {
         var invocationContext = callContext as SharpLinkServerInvocationContext ??
             CreateServerInvocationContext(
                 session,
-                stub,
-                methodId,
-                shape,
+                method,
                 requestId,
                 callContext.Authentication,
                 callContext.LocalRpcDeadline,
@@ -580,7 +576,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> callCancellations,
         RpcSession session,
         long requestId,
-        ResolvedMethodCall resolved,
+        RpcMethodFacts method,
         Exception exception)
     {
         if (exception is OperationCanceledException &&
@@ -610,9 +606,7 @@ internal sealed partial class SharpLinkServer
                 exception,
                 callContext,
                 session,
-                resolved.Stub,
-                resolved.MethodHash,
-                resolved.Shape,
+                method,
                 requestId,
                 CancellationToken.None);
         }

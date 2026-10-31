@@ -218,7 +218,7 @@ public class CompressionPersistentDecodeWorkerSaturationTests
                     options.Compression.Providers.Add(new Provider("review-saturation-a", "A", coordinator));
                     options.Compression.Providers.Add(new Provider("review-saturation-b", "B", coordinator));
                 })
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)builder.Transport!.LocalEndPoint!).Port;
             var server = builder.Build();
             var serverTask = RunServerAsync(server, cts.Token);

@@ -393,7 +393,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         internal static async Task<DynamicHarness> CreateAsync(
             bool registerDynamicServiceDependencies = true,
-            IManifestReadinessControl? control = null)
+            IManifestReadinessControl? control = null,
+            ISharpLinkCompressionProvider? compressionProvider = null)
         {
             var serverCancellation = new CancellationTokenSource();
             var services = new ServiceCollection();
@@ -401,18 +402,22 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 services.AddSingleton(TimeProvider.System);
             var serviceProvider = services.BuildServiceProvider();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
                 .UseServiceProvider(serviceProvider);
             if (control is not null)
                 serverBuilder.ReplaceService(control);
+            if (compressionProvider is not null)
+                serverBuilder.UseRuntime(options => options.Compression.Providers.Add(compressionProvider));
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
-            var client = SharpClientBuilder.Create().DisableRequestTimeout()
+            var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
                 .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5))
-                .Build();
+                .UseHeartbeat(TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(5));
+            if (compressionProvider is not null)
+                clientBuilder.UseRuntime(options => options.Compression.Providers.Add(compressionProvider));
+            var client = clientBuilder.Build();
             await client.ConnectAsync();
             return new DynamicHarness(server, client, port, serverCancellation, serverTask, serviceProvider);
         }

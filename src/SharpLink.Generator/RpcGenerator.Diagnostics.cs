@@ -254,7 +254,7 @@ public partial class RpcGenerator
     private static readonly DiagnosticDescriptor InvalidClusterRouteAttributeRule = new(
         id: "SHARPLINK041",
         title: "Multi-Cluster Route Attribute Is Invalid",
-        messageFormat: "SharpLinkClusterContractAssembly requires a literal cluster key and a concrete marker type",
+        messageFormat: "SharpLinkClusterContractAssembly requires a literal cluster key and a concrete marker type accessible from generated code",
         category: "SharpLink.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);

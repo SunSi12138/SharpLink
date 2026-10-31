@@ -345,7 +345,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
             BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find connection registry");
         var registry = (ServerConnectionRegistry)field.GetValue(server)!;
-        return registry.IsRetired(connection);
+        return Array.Exists(registry.SnapshotOwned(), owned => ReferenceEquals(owned, connection));
     }
 
     private static ServiceRegistration CreateConnectionRegistration(
@@ -450,14 +450,14 @@ public class ServerLifecycleOwnershipCharacterizationTests
 
     private sealed class StubMarker : IRpcStub
     {
-        public RpcMethodShape ResolveMethodShape(long methodHash) => RpcMethodShape.UnknownMethod;
+        public RpcMethodFacts ResolveMethodFacts(long methodHash) => RpcMethodFacts.UnknownMethod;
 
         public long InterfaceHash => 1;
 
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args)
             => ValueTask.CompletedTask;
@@ -465,7 +465,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken)
@@ -474,7 +474,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output)
@@ -483,7 +483,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,

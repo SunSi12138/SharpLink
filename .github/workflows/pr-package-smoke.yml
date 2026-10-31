@@ -4,6 +4,9 @@ permissions:
   contents: read
 
 on:
+  push:
+    branches:
+      - 'validation/dependency-forward-dev-20261030'
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
@@ -12,6 +15,8 @@ on:
       - '.github/actions/package-smoke/**'
       - '.github/actions/verify-packages/**'
       - '.github/workflows/pr-package-smoke.yml'
+      - 'eng/run-packaged-trim-smoke.py'
+      - 'eng/tests/test_packaged_trim_smoke.py'
       - 'eng/run-quickstart-package-smoke.sh'
       - 'eng/verify-packages.sh'
       - 'eng/run-project-reference-trim-smoke.sh'
@@ -21,8 +26,10 @@ on:
       - 'src/SharpLink.Generator/**'
       - 'src/SharpLink.Sdk/**'
       - 'src/SharpLink.Abstractions/**'
+      - 'src/SharpLink.GenerationControl/**'
       - 'src/SharpLink.Client/**'
       - 'src/SharpLink.Server/**'
+      - 'src/SharpLink.Hosting/**'
       - 'test/SharpLink.PackageSmoke/**'
       - 'test/SharpLink.PackageAotSmoke/**'
       - 'test/SharpLink.PackageTrimSmoke/**'
@@ -70,18 +77,25 @@ jobs:
       - name: Pack
         run: dotnet pack Sharplink.slnx --no-build --no-restore -c Release -o artifacts/nuget -v minimal
 
-      - name: Verify reviewed public API and release versions
-        run: |
-          if ! bash ./eng/verify-public-api.sh; then
-            if test -f artifacts/public-api/current/public-api.diff; then
-              cat artifacts/public-api/current/public-api.diff
-            fi
-            exit 1
-          fi
-          python3 ./eng/verify-release-versions.py
-
       - name: Verify NuGet package contracts
         uses: ./.github/actions/verify-packages
 
+      - name: Verify reviewed public API
+        shell: bash
+        run: |
+          if ! bash ./eng/verify-public-api.sh; then
+            cat artifacts/public-api/current/public-api.diff || true
+            exit 1
+          fi
+
       - name: Run NuGet package smoke
         uses: ./.github/actions/package-smoke
+
+      - name: Upload packaged Trim and NativeAOT evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-package-trim-${{ github.sha }}
+          path: artifacts/packaged-trim
+          if-no-files-found: warn
+          retention-days: 30

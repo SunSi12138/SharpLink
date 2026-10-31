@@ -44,26 +44,6 @@ internal sealed class ServerServiceModuleRegistry
 
     internal DetachedModuleServiceTable DetachedModuleServices { get; }
 
-    internal void PublishServices(FrozenDictionary<long, ServiceRegistration> services)
-    {
-        ArgumentNullException.ThrowIfNull(services);
-        Volatile.Write(ref _services, services);
-    }
-
-    /// <summary>Captures all registry ownership counters under the same synchronization boundary.</summary>
-    internal ServerServiceModuleRegistrySnapshot CaptureSnapshot()
-    {
-        lock (_gate)
-        {
-            return new ServerServiceModuleRegistrySnapshot(
-                Volatile.Read(ref _services),
-                _generation,
-                [.. _dynamicModules.Keys],
-                _unregisterOperations.Count,
-                _detachedModuleServices.Count);
-        }
-    }
-
     internal sealed class DynamicModuleTable : IEnumerable<KeyValuePair<Assembly, SharpLinkDynamicModule>>
     {
         private readonly ServerServiceModuleRegistry _owner;
@@ -163,9 +143,3 @@ internal sealed class ServerServiceModuleRegistry
     }
 }
 
-internal readonly record struct ServerServiceModuleRegistrySnapshot(
-    FrozenDictionary<long, ServiceRegistration> Services,
-    long Generation,
-    Assembly[] DynamicAssemblies,
-    int UnregisterOperationCount,
-    int DetachedModuleServiceCount);

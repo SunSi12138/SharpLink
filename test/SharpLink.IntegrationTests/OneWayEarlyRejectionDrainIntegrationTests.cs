@@ -194,7 +194,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         {
             var cts = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString())
+                .UseTcp(0, IPAddress.Loopback)
                 .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
                 .UseRuntime(runtimeConfigure);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -266,19 +266,25 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         private sealed class UnknownMethodShapeStub(long interfaceHash) : IRpcStub
         {
             public long InterfaceHash { get; } = interfaceHash;
+            public RpcMethodFacts ResolveMethodFacts(long methodHash) => RpcMethodFacts.UnknownMethod;
 
-            // The removed TryGetMethodDescriptor always answered false here; UnknownMethod carries
-            // the same observable facts (not known, no cancellation, no client streams).
-            public RpcMethodShape ResolveMethodShape(long methodHash)
+            public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
             {
                 _ = methodHash;
-                return RpcMethodShape.UnknownMethod;
+                descriptor = default;
+                return false;
+            }
+
+            public bool SupportsCancellation(long methodHash)
+            {
+                _ = methodHash;
+                return false;
             }
 
             public ValueTask InvokeNoReturnAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                RpcMethodFacts methodHash,
                 long requestId,
                 ReadOnlySequence<byte> args)
                 => throw UnexpectedInvocation();
@@ -286,7 +292,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeNoReturnCancellableAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                RpcMethodFacts methodHash,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 CancellationToken cancellationToken)
@@ -295,7 +301,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                RpcMethodFacts methodHash,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 IBufferWriter<byte> output)
@@ -304,7 +310,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeCancellableAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                RpcMethodFacts methodHash,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 IBufferWriter<byte> output,

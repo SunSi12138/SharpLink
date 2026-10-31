@@ -73,7 +73,6 @@ internal sealed class ServerCallCancellationState : IDisposable
     private IRpcByteBufferWriter? _payloadOwner;
     private ServerDecodedBytesPermit? _decodedBytesPermit;
     private TimeProvider? _timeProvider;
-    private ResolvedMethodCall? _resolvedMethod;
 
     private ServerCallCancellationState()
     {
@@ -88,20 +87,6 @@ internal sealed class ServerCallCancellationState : IDisposable
 
     public ServerCallCancellationReason Reason
         => (ServerCallCancellationReason)Volatile.Read(ref _reason);
-
-    internal void AttachResolvedMethod(in ResolvedMethodCall resolved)
-    {
-        lock (_lifetimeGate)
-        {
-            ObjectDisposedException.ThrowIf(_disposeRequested, this);
-            if (_resolvedMethod is not null)
-                throw new InvalidOperationException("The call already owns resolved method facts.");
-            _resolvedMethod = resolved;
-        }
-    }
-
-    // The caller holds a generation-checked use lease until it finishes consuming the snapshot.
-    internal ResolvedMethodCall? ResolvedMethod => _resolvedMethod;
 
     public bool IsAbandoned => Reason is not (ServerCallCancellationReason.None or ServerCallCancellationReason.Completed);
 
@@ -448,7 +433,6 @@ internal sealed class ServerCallCancellationState : IDisposable
         RequestId = 0;
         Deadline = default;
         _timeProvider = null;
-        _resolvedMethod = null;
         _reason = (int)ServerCallCancellationReason.None;
         _abandonedRecorded = 0;
         _moduleDrainResponseClaimed = 0;

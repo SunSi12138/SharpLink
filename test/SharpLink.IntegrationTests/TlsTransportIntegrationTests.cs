@@ -269,7 +269,7 @@ public class TlsTransportIntegrationTests
         string? expectedAuthenticationToken = null)
     {
         var builder = SharpLinkServerBuilder.Create()
-            .UseTcp(port, options, IPAddress.Loopback.ToString(), tlsHandshakeTimeout: TimeSpan.FromSeconds(2))
+            .UseTcp(port, options, IPAddress.Loopback, tlsHandshakeTimeout: TimeSpan.FromSeconds(2))
             .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2));
         if (expectedAuthenticationToken is not null)
         {

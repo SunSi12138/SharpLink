@@ -882,9 +882,7 @@ internal sealed partial class SharpLinkClient
                     method.ContractId,
                     method.MethodId,
                     requestId,
-                    cancellationToken.CanBeCanceled || control.Deadline.HasValue
-                        ? ProtocolV2FrameFlags.Cancellable
-                        : ProtocolV2FrameFlags.None,
+                    ProtocolV2FrameFlags.Cancellable,
                     request,
                     requestCodec,
                     control.Deadline,

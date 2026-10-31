@@ -88,9 +88,7 @@ public interface ISharpLinkClientInterceptor
 public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnapshot
 {
     internal SharpLinkServerInvocationContext(
-        IRpcStub stub,
-        long methodId,
-        RpcMethodShape shape,
+        RpcMethodFacts method,
         long requestId,
         string connectionId,
         EndPoint? localEndPoint,
@@ -104,35 +102,26 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
         : base(connectionId, authentication, deadline, deadlineTimeProvider, metadata)
     {
         InterceptorGeneration = interceptorGeneration;
-        stub.DescribeMethod(methodId, shape, out var descriptor);
-        Method = descriptor;
-        _shape = shape;
+        Method = method.ToDescriptor();
+        MethodFacts = method;
         RequestId = requestId;
         LocalEndPoint = localEndPoint;
         RemoteEndPoint = remoteEndPoint;
         CancellationToken = cancellationToken;
     }
 
-    private readonly RpcMethodShape _shape;
-
     internal object? InterceptorGeneration { get; }
     internal bool InterceptorTerminalReached { get; set; }
     internal object? InterceptorStub { get; set; }
     internal object? InterceptorService { get; set; }
     internal object? InterceptorGeneratedBridge { get; set; }
-    internal long InterceptorMethodId { get; set; }
+    internal RpcMethodFacts MethodFacts { get; }
     internal ReadOnlySequence<byte> InterceptorArguments { get; set; }
     internal object? InterceptorOutput { get; set; }
     internal TimeProvider? InterceptorTimeProvider { get; set; }
     internal long InterceptorStarted { get; set; }
 
-    /// <summary>Gets the packed generated method facts resolved once for this call.</summary>
-    public RpcMethodShape Shape => _shape;
-
-    /// <summary>
-    /// Gets immutable generated method metadata projected only when an observer context is needed.
-    /// The context retains scalar facts, not the generated stub or its collectible module.
-    /// </summary>
+    /// <summary>Gets generated method metadata.</summary>
     public RpcMethodDescriptor Method { get; }
     /// <summary>Gets the request identifier.</summary>
     public long RequestId { get; }

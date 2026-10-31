@@ -75,13 +75,13 @@ public class StreamManagerLazyRoutingTests
         options.InitialMapCapacityPerStripe = -1;
 
         var dispatcher = new RecordingDispatcher();
-        manager.Register(2, dispatcher);
+        manager.Register(2, 0, dispatcher);
 
         Ensure(manager.HasMaterializedRoutingState,
             "first successful registration should materialize routing state");
         Ensure(manager.ActiveStreamCount == 1,
             "later mutations of the caller-owned options must not affect lazy initialization");
-        manager.Unregister(2);
+        manager.Unregister(2, 0);
     }
 
     [Test]
@@ -109,7 +109,7 @@ public class StreamManagerLazyRoutingTests
                 {
                     ready.Signal();
                     start.Wait();
-                    manager.Register(requestId, dispatcher);
+                    manager.Register(requestId, 0, dispatcher);
                 }
                 catch (Exception failure)
                 {
@@ -149,6 +149,7 @@ public class StreamManagerLazyRoutingTests
         {
             await manager.DispatchChunkAsync(
                 requestId,
+                0,
                 new ReadOnlySequence<byte>(new byte[] { 1 }));
             Ensure(dispatchers[requestId].DispatchCount == 1,
                 "every registration must route through the published map");
@@ -177,7 +178,7 @@ public class StreamManagerLazyRoutingTests
             };
             try
             {
-                manager.Register(requestId, dispatcher);
+                manager.Register(requestId, 0, dispatcher);
             }
             catch (Exception failure)
             {
@@ -200,7 +201,7 @@ public class StreamManagerLazyRoutingTests
             Ensure(!manager.HasMaterializedRoutingState,
                 "first routing state must still be unpublished at the deterministic race point");
 
-            manager.Unregister(requestId);
+            manager.Unregister(requestId, 0);
 
             Ensure(!manager.HasMaterializedRoutingState,
                 "an unregister that linearizes before first publication must remain a null-map no-op");
@@ -226,11 +227,12 @@ public class StreamManagerLazyRoutingTests
 
         await manager.DispatchChunkAsync(
             requestId,
+            0,
             new ReadOnlySequence<byte>(new byte[] { 1 }));
         Ensure(dispatcher.DispatchCount == 1,
             "the registration must remain addressable after the earlier null-map unregister");
 
-        manager.Unregister(requestId);
+        manager.Unregister(requestId, 0);
         Ensure(manager.ActiveStreamCount == 0,
             "a later unregister should remove the now-published registration normally");
     }
@@ -287,7 +289,7 @@ public class StreamManagerLazyRoutingTests
             };
             try
             {
-                manager.Register(10_000, dispatcher);
+                manager.Register(10_000, 0, dispatcher);
             }
             catch (Exception failure)
             {

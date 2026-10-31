@@ -230,7 +230,7 @@ public sealed class Api3BinaryFixtureIntegrationTests
         {
             var cancellation = new CancellationTokenSource();
             var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback.ToString());
+                .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
             var serverTask = server.RunUntilStoppedAsync(cancellation.Token).AsTask();

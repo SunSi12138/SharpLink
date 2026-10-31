@@ -70,7 +70,7 @@ finally
 
 static ISharpLinkServer CreateServer(int port, string node)
     => SharpLinkServerBuilder.Create()
-        .UseTcp(port, IPAddress.Loopback.ToString())
+        .UseTcp(port, IPAddress.Loopback)
         .ReplaceService<IResilienceService>(new ResilienceService(node))
         .Build();
 

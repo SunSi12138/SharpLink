@@ -13,34 +13,8 @@ namespace SharpLink.Generator.Tests;
 public partial class RpcAnalyzerTests
 {
 
-    private const int KindOneWay = 1;
-    private const int KindClientStreaming = 2;
-
-    private static IReadOnlyList<(int Kind, int ClientStreamCount, bool SupportsCancellation)> DecodeGeneratedShapes(
-        string generated)
-    {
-        var shapes = new List<(int, int, bool)>();
-        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
-                     generated,
-                     @"new RpcMethodShape\(RpcMethodKind\.(\w+), (\d+), (true|false),"))
-        {
-            var kind = match.Groups[1].Value switch
-            {
-                "Unary" => 0,
-                "OneWay" => 1,
-                "ClientStreaming" => 2,
-                "ServerStreaming" => 3,
-                "DuplexStreaming" => 4,
-                _ => throw new Exception("Unexpected generated method kind.")
-            };
-            shapes.Add((kind, int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture),
-                bool.Parse(match.Groups[3].Value)));
-        }
-        return shapes;
-    }
-
     [Test]
-    public Task GeneratedApi5ShouldUseLiteralManifestStampAndAbstractionsOnlyServerBridge()
+    public Task GeneratedApi4ShouldUseLiteralManifestStampAndAbstractionsOnlyServerBridge()
     {
         var source = BuildSource("""
 [SharpLink.Sdk.RpcSerializable]
@@ -83,12 +57,12 @@ public interface IAbi4Service : SharpLink.Sdk.IService
             "the Generator must own literal API 5 / Protocol 2 stamps");
         Ensure(manifest.Contains("SharpLinkGeneratedAssemblyManifestAttribute(", StringComparison.Ordinal) &&
                manifest.Contains(", 5, 2,", StringComparison.Ordinal) &&
-               manifest.Contains("sharplink-3.0-api5-v1", StringComparison.Ordinal),
+               manifest.Contains("sharplink-3.0-api5-complete-method-facts-v1", StringComparison.Ordinal),
             "the manifest locator must describe the API, Protocol, and exact ABI identity before materialization");
         Ensure(!manifest.Contains("SharpLinkGeneratedManifestVersions", StringComparison.Ordinal),
             "producer stamps must not read consumer-owned Runtime constants");
         Ensure(stub.Contains("IRpcGeneratedServerBridge bridge", StringComparison.Ordinal),
-            "API 5 stubs must depend on the whole-stream server bridge");
+            "API 4 stubs must depend on the whole-stream server bridge");
         Ensure(stub.Contains("IBufferWriter<byte> output", StringComparison.Ordinal),
             "response payload output must be narrowed to IBufferWriter<byte>");
         Ensure(stub.Contains("internal __Stub_", StringComparison.Ordinal) &&
@@ -104,12 +78,12 @@ public interface IAbi4Service : SharpLink.Sdk.IService
                  })
         {
             Ensure(!stub.Contains(forbidden, StringComparison.Ordinal),
-                $"API 5 Stub leaked forbidden Runtime ABI token '{forbidden}'");
+                $"API 4 Stub leaked forbidden Runtime ABI token '{forbidden}'");
         }
         Ensure(!proxy.Contains("using SharpLink.Runtime;", StringComparison.Ordinal),
-            "API 5 Proxy must not acquire a Runtime AssemblyRef through an unused import");
+            "API 4 Proxy must not acquire a Runtime AssemblyRef through an unused import");
         Ensure(!allGenerated.Contains("SharpLink.Runtime", StringComparison.Ordinal),
-            "no generated API 5 source may reference SharpLink.Runtime");
+            "no generated API 4 source may reference SharpLink.Runtime");
         return Task.CompletedTask;
     }
 
@@ -225,26 +199,21 @@ public sealed class HelloService : IHelloService
         Ensure(!allGenerated.Contains("byte[] tmp_"), "Segmented fixed-width arguments must not allocate arrays");
         Ensure(!proxy.Contains("Action<IBufferWriter<byte>>"), "Captured payload delegate must not be generated");
         Ensure(!proxy.Contains("InvokeCancellableWithTimeoutAsync"), "Legacy combinatorial API must not be generated");
-        Ensure(allGenerated.Contains("public RpcMethodShape ResolveMethodShape(long methodHash)"),
-            "stubs must publish one typed method-fact table");
-        Ensure(allGenerated.Contains("private static readonly RpcMethodShape __shape_"),
-            "hot shape resolution must read prevalidated typed values");
-        Ensure(!allGenerated.Contains("new RpcMethodShape(0x"),
-            "generated consumers must not depend on a private packed layout");
-        Ensure(!allGenerated.Contains("TryGetMethodDescriptor"),
-            "the legacy per-method descriptor table must not be generated");
-        Ensure(!allGenerated.Contains("public bool SupportsCancellation(long methodHash)"),
-            "the duplicate cancellation table must not be generated");
-        var generatedShapes = DecodeGeneratedShapes(allGenerated);
-        Ensure(generatedShapes.Count >= 6, "every declared method must publish a typed shape");
-        Ensure(generatedShapes.Count(static shape => shape.SupportsCancellation) >= 3,
-            "client, server, and duplex streaming methods must all support framework cancellation");
-        Ensure(generatedShapes.Count(static shape => shape.ClientStreamCount == 1) >= 2,
+        Ensure(allGenerated.Contains("public RpcMethodFacts ResolveMethodFacts(long methodHash)"),
+            "stubs must resolve complete cancellation and timeout facts in one lookup");
+        Ensure(!allGenerated.Contains("SupportsCancellation(long") && !allGenerated.Contains("TryGetMethodDescriptor(long"),
+            "separate metadata switches must not be generated");
+        Ensure(allGenerated.Contains(
+                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 1, false)",
+                StringComparison.Ordinal),
             "single client-stream count must be generated deterministically");
-        Ensure(generatedShapes.Count(static shape => shape.ClientStreamCount == 2) >= 1,
+        Ensure(allGenerated.Contains(
+                "RpcMethodKind.ClientStreaming, true, true, false, null, false, 2, false)",
+                StringComparison.Ordinal),
             "multiple client-stream count must be generated deterministically");
-        Ensure(generatedShapes.Count(static shape => shape.Kind == KindOneWay) >= 1,
-            "OneWay must be generated as its own typed kind");
+        Ensure(allGenerated.Split("private static readonly RpcMethodFacts __facts_", StringSplitOptions.None).Length - 1 == 6,
+            "the six real methods each own one cold immutable facts object");
+        Ensure(!allGenerated.Contains("DescribeMethod("), "observer projection cannot perform a second timeout lookup");
         return Task.CompletedTask;
     }
 

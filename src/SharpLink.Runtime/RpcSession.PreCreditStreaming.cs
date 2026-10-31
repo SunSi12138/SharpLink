@@ -5,40 +5,6 @@ internal sealed partial class RpcSession
     private readonly Lock _preCreditSerializedBudgetGate = new();
     private PreCreditSerializedBudget? _preCreditSerializedBudget;
 
-    /// <summary>
-    /// Instance member owns stream-item dispatch so the exact-size path remains the first branch
-    /// while the universal unsized fallback can use session-scoped pre-credit admission.
-    /// </summary>
-    internal async ValueTask SendStreamChunkAsync<T>(
-        long requestId,
-        ushort streamId,
-        T item,
-        CancellationToken cancellationToken = default)
-    {
-        var codec = RuntimeContext.Codecs.GetCodec<T>();
-        if (codec is IRpcSizedCodec<T> sizedCodec &&
-            sizedCodec.CanExactSize &&
-            sizedCodec.TryGetEncodedSize(item, out var knownEncodedBytes, out var sizedSnapshot))
-        {
-            await SendStreamChunkKnownSizeAsync(
-                requestId,
-                streamId,
-                item,
-                sizedCodec,
-                knownEncodedBytes,
-                sizedSnapshot,
-                cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        await SendUnsizedStreamChunkAsync(
-            requestId,
-            streamId,
-            item,
-            codec,
-            cancellationToken).ConfigureAwait(false);
-    }
-
     internal ValueTask SendUnsizedStreamChunkAsync<T>(
         long requestId,
         ushort streamId,
@@ -67,12 +33,6 @@ internal sealed partial class RpcSession
 
     internal int PreCreditSerializedWaiterCount
         => Volatile.Read(ref _preCreditSerializedBudget)?.WaiterCount ?? 0;
-
-    // Kept as diagnostics for the benchmark harness while the previous two-layer prototype is
-    // compared with the final flow-credit-probe design. The final design has no serializer gate.
-    internal int PreCreditSerializationPermitLimit => 0;
-
-    internal int PreCreditActiveSerializerCount => 0;
 
     internal void CompletePreCreditSendStream(
         long requestId,

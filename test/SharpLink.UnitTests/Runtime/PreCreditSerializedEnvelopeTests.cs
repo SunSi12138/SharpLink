@@ -47,10 +47,10 @@ public class PreCreditSerializedEnvelopeTests
                 CancellationToken.None);
         }
 
-        var firstOwner = session.SendStreamChunkAsync(1, 1, new Payload(ownerBytes)).AsTask();
-        var secondOwner = session.SendStreamChunkAsync(2, 1, new Payload(ownerBytes)).AsTask();
-        var waiter = session.SendStreamChunkAsync(3, 1, new Payload(waiterBytes)).AsTask();
-        var rejected = session.SendStreamChunkAsync(4, 1, new Payload(1)).AsTask();
+        var firstOwner = session.SendTestStreamChunkAsync(1, 1, new Payload(ownerBytes)).AsTask();
+        var secondOwner = session.SendTestStreamChunkAsync(2, 1, new Payload(ownerBytes)).AsTask();
+        var waiter = session.SendTestStreamChunkAsync(3, 1, new Payload(waiterBytes)).AsTask();
+        var rejected = session.SendTestStreamChunkAsync(4, 1, new Payload(1)).AsTask();
 
         Ensure(!firstOwner.IsCompleted && !secondOwner.IsCompleted && !waiter.IsCompleted,
             "two byte owners plus one already-serialized waiter should remain pending under starvation");

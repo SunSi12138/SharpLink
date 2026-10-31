@@ -5,8 +5,7 @@ internal static class SharpLinkTimer
     internal static readonly TimeSpan MaximumDelay = TimeSpan.FromMilliseconds(int.MaxValue);
     private static readonly Task Never = Task.Delay(Timeout.InfiniteTimeSpan);
 
-    internal static ValueTask DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
-        => DelayAsync(delay, TimeProvider.System, cancellationToken);
+
 
     internal static async ValueTask DelayAsync(
         TimeSpan delay,
@@ -193,6 +192,12 @@ internal static class SharpLinkTimer
 
             var dueTime = remaining > MaximumDelay ? MaximumDelay : remaining;
             _timer.Change(dueTime, Timeout.InfiniteTimeSpan);
+
+            // The clock can cross the absolute deadline after GetRemaining but before Change
+            // installs the relative delay. Complete the signal now instead of waiting for that
+            // stale delay; TrySetResult also tolerates a timer callback winning the same race.
+            if (_deadline.IsExpired(_timeProvider))
+                _completion.TrySetResult();
         }
 
         public void Dispose() => _timer.Dispose();
@@ -212,11 +217,7 @@ internal static class SharpLinkTimer
         return true;
     }
 
-    internal static async ValueTask<bool> WaitAsync(
-        Task task,
-        TimeSpan timeout,
-        CancellationToken cancellationToken = default)
-        => await WaitAsync(task, timeout, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+
 
     internal static async ValueTask<bool> WaitAsync(
         Task task,
@@ -352,15 +353,7 @@ internal static class SharpLinkTimer
         }
     }
 
-    internal static async ValueTask<bool> WaitAsync(
-        SemaphoreSlim semaphore,
-        TimeSpan timeout,
-        CancellationToken cancellationToken)
-        => await WaitAsync(
-            semaphore,
-            timeout,
-            TimeProvider.System,
-            cancellationToken).ConfigureAwait(false);
+
 
     internal static async ValueTask<bool> WaitAsync(
         SemaphoreSlim semaphore,

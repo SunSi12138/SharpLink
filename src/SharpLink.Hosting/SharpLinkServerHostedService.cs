@@ -7,7 +7,8 @@ internal sealed class SharpLinkServerHostedService(
     ILoggerFactory loggerFactory,
     IServiceProvider serviceProvider,
     SharpLinkServerReadiness readiness,
-    IHostApplicationLifetime applicationLifetime) : IHostedService
+    IHostApplicationLifetime applicationLifetime,
+    AnonymousPipeAllocatorAccessor allocatorAccessor) : IHostedService
 {
     private readonly Lock _stopGate = new();
     private ISharpLinkServer? _server;
@@ -27,8 +28,8 @@ internal sealed class SharpLinkServerHostedService(
                 throw new InvalidOperationException("The SharpLink server host has already started.");
 
             builder.UseLoggerFactoryIfUnset(loggerFactory);
-            builder.UseServiceProvider(serviceProvider);
-            server = builder.Build();
+            builder.UseServiceProviderIfUnset(serviceProvider);
+            server = builder.BuildWithTransportCapture(allocatorAccessor.CaptureTransport);
             _server = server;
         }
 

@@ -12,7 +12,7 @@ SharpLink 是一个面向 .NET 10 的高性能 RPC 框架。契约、代理、St
 
 ## 安装与 package map
 
-当前 `dev` 的发布版本线为 `2.0.0`。第一次使用时按项目职责安装包：
+当前 `dev` 的版本线为 `3.0.0`，Generated API 5 要求同版本包及精确 ABI identity；3.0 尚未发布时，请使用源码项目引用或本地打包的 NuGet feed。3.0 包可用后按项目职责安装：
 
 | Project role | Install | Why |
 | --- | --- | --- |
@@ -20,6 +20,7 @@ SharpLink 是一个面向 .NET 10 的高性能 RPC 框架。契约、代理、St
 | Server | `SharpLink.Server` + `SharpLink.Sdk` | Server runtime，以及当前 Server 编译中的 service/bootstrap 生成 |
 | Client | `SharpLink.Client` + `SharpLink.Sdk` | Client runtime，以及当前 Client 编译中的静态 manifest/bootstrap 生成 |
 | Host/DI（可选） | `SharpLink.Hosting` | `Microsoft.Extensions.Hosting` / DI 集成 |
+| Generation sync（可选） | `SharpLink.GenerationControl` | generation snapshot/query + duplex sync；peer 只能声明状态，本地 provider 决定并执行本端更新 |
 
 `SharpLink.Sdk` 的 NuGet 包会把 `SharpLink.Generator.dll` 放在 `analyzers/dotnet/cs`，所以通常**不要**再单独安装 `SharpLink.Generator`。SDK 传递依赖 `SharpLink.Abstractions`，**不依赖 `SharpLink.Runtime`**；纯 Contracts 项目不需要为了定义 RPC contract 引入完整 Runtime。
 
@@ -37,15 +38,15 @@ dotnet new classlib -n QuickStart.Contracts -f net10.0
 dotnet new console -n QuickStart.Server -f net10.0
 dotnet new console -n QuickStart.Client -f net10.0
 
-dotnet add QuickStart.Contracts package SharpLink.Sdk --version 2.0.0
+dotnet add QuickStart.Contracts package SharpLink.Sdk --version 3.0.0
 
 dotnet add QuickStart.Server reference QuickStart.Contracts/QuickStart.Contracts.csproj
-dotnet add QuickStart.Server package SharpLink.Sdk --version 2.0.0
-dotnet add QuickStart.Server package SharpLink.Server --version 2.0.0
+dotnet add QuickStart.Server package SharpLink.Sdk --version 3.0.0
+dotnet add QuickStart.Server package SharpLink.Server --version 3.0.0
 
 dotnet add QuickStart.Client reference QuickStart.Contracts/QuickStart.Contracts.csproj
-dotnet add QuickStart.Client package SharpLink.Sdk --version 2.0.0
-dotnet add QuickStart.Client package SharpLink.Client --version 2.0.0
+dotnet add QuickStart.Client package SharpLink.Sdk --version 3.0.0
+dotnet add QuickStart.Client package SharpLink.Client --version 3.0.0
 ```
 
 ### 1. Contracts

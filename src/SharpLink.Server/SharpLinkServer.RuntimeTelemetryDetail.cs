@@ -52,16 +52,12 @@ internal sealed partial class SharpLinkServer : ISharpLinkTelemetryDetailRuntime
     /// forces a descriptor projection onto the dispatch path.
     /// </summary>
     private SharpLinkTelemetry.CallScope StartServerTelemetryCall(
-        long contractId,
-        long methodId,
-        RpcMethodShape shape,
+        RpcMethodFacts method,
         long requestId)
     {
         var detail = CaptureTelemetryDetailGeneration().Mode;
         return SharpLinkTelemetry.StartServerCall(
-            contractId,
-            methodId,
-            shape,
+            method,
             detail == SharpLinkTelemetryDetailMode.Detailed ? requestId : 0);
     }
 }

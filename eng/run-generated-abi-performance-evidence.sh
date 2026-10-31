@@ -21,6 +21,14 @@ if ! [[ "$RUNS" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
+# Each invocation must own a fresh output batch. Overwriting only run-1..run-N
+# in an older directory makes the streaming summarizer silently consume stale
+# run-(N+1).. JSON on a subsequent shorter invocation.
+mkdir -p "$(dirname "$OUTPUT")"
+if ! mkdir "$OUTPUT"; then
+  echo "Generated ABI evidence directory already exists; choose a fresh SHARPLINK_GENERATED_ABI_OUTPUT: $OUTPUT" >&2
+  exit 2
+fi
 mkdir -p "$OUTPUT/raw/streaming" "$OUTPUT/raw/unary" "$OUTPUT/logs"
 
 dotnet build "$PROJECT" -c Release --no-restore -m:1 /nodeReuse:false -v minimal
@@ -68,6 +76,31 @@ for ((run = 1; run <= RUNS; run++)); do
     "$OUTPUT/raw/unary/run-$run-ServerStaticDefault.json" \
     >"$OUTPUT/logs/run-$run-ServerStaticDefault.log"
 done
+
+# Check exact expected fixture coverage before the summarizer sees any data.
+# An empty directory or a leftover file is never a valid current-invocation run.
+for ((run = 1; run <= RUNS; run++)); do
+  for scenario in "${forward[@]}"; do
+    report="$OUTPUT/raw/streaming/run-$run-$scenario.json"
+    if [[ ! -s "$report" ]]; then
+      echo "Missing Generated ABI streaming report: $report" >&2
+      exit 1
+    fi
+  done
+  report="$OUTPUT/raw/unary/run-$run-ServerStaticDefault.json"
+  if [[ ! -s "$report" ]]; then
+    echo "Missing Generated ABI unary report: $report" >&2
+    exit 1
+  fi
+done
+shopt -s nullglob
+streaming_reports=("$OUTPUT"/raw/streaming/*.json)
+unary_reports=("$OUTPUT"/raw/unary/*.json)
+shopt -u nullglob
+if (( ${#streaming_reports[@]} != RUNS * ${#forward[@]} || ${#unary_reports[@]} != RUNS )); then
+  echo "Generated ABI evidence contains unexpected JSON reports for this batch." >&2
+  exit 1
+fi
 
 dotnet run -c Release --no-build --no-restore --project "$PROJECT" -- \
   --summarize-generated-abi-streaming-evidence \

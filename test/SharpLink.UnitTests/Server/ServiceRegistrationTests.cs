@@ -12,7 +12,7 @@ using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
-public class ServiceRegistrationTests
+public partial class ServiceRegistrationTests
 {
     [Test]
     public async Task ScopedRegistrationsShouldNotAllocateSingletonGates()
@@ -97,7 +97,50 @@ public class ServiceRegistrationTests
     }
 
     [Test]
-    public async Task DynamicServiceDispatchShouldResolveMethodShapeOnlyOnce()
+    [Arguments(SharpLinkServiceLifetime.Singleton)]
+    [Arguments(SharpLinkServiceLifetime.Connection)]
+    [Arguments(SharpLinkServiceLifetime.Call)]
+    public async Task RetiredSelectedRegistrationShouldRejectBeforeDisposedAccess(SharpLinkServiceLifetime lifetime)
+    {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
+        using var codecRegistration = context.PrepareGeneratedManifest(manifest);
+        var module = new SharpLinkDynamicModule(
+            typeof(ServiceRegistrationTests).Assembly, manifest, codecRegistration);
+        using var provider = new ServiceCollection().BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var stub = new StubMarker();
+        var registration = lifetime switch
+        {
+            SharpLinkServiceLifetime.Singleton => ServiceRegistration.CreateSingleton(
+                typeof(object), stub, new object(), ownsService: false, module),
+            SharpLinkServiceLifetime.Connection => ServiceRegistration.CreateConnection(
+                typeof(object), stub, scopeFactory, static _ => new object(), disposeService: false, module),
+            _ => ServiceRegistration.CreatePerCall(
+                typeof(object), stub, scopeFactory, static _ => new object(), disposeService: false, module)
+        };
+        Ensure(registration.AcceptsCalls, "capture a running registration before the retirement race");
+        module.TryBeginDraining();
+        await registration.DisposeAsync();
+        module.MarkReleased();
+        try
+        {
+            if (lifetime == SharpLinkServiceLifetime.Singleton)
+                _ = registration.TryAcquireDynamicSingleton(isStream: false, out _, out _);
+            else
+                _ = await registration.AcquireAsync(null!, isStream: false);
+            throw new Exception("assert failed: retired registration must reject acquisition");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable,
+                "normal retirement must not surface disposed-object Internal");
+        }
+        Ensure(module.RemainingCalls == 0, "retirement rejection must not leak a module lease");
+    }
+
+    [Test]
+    public async Task DynamicServiceDispatchShouldLookupMethodDescriptorOnlyOnce()
     {
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new EmptyManifest(typeof(ServiceRegistrationTests).Assembly);
@@ -127,12 +170,12 @@ public class ServiceRegistrationTests
             var singleton = ServiceRegistration.CreateSingleton(
                 typeof(object), successfulStub, new object(), ownsService: false, module);
             await InvokeRegisteredServiceAsync(server, singleton, connection, requestId: 101);
-            Ensure(successfulStub.ShapeLookups == 1,
-                "successful dynamic singleton invocation must resolve its method shape exactly once");
+            Ensure(successfulStub.DescriptorLookups == 1,
+                "successful dynamic singleton invocation must probe its descriptor exactly once");
             Ensure(module.RemainingCalls == 0, "successful invocation releases its module lease");
             await singleton.DisposeAsync();
 
-            var failingStub = new StubMarker();
+            var failingStub = new StubMarker(RpcMethodKind.Unary);
             var call = ServiceRegistration.CreatePerCall(
                 typeof(object), failingStub, new ThrowingScopeFactory("scope cleanup failed"),
                 static _ => throw new InvalidOperationException("activation failed"),
@@ -143,8 +186,8 @@ public class ServiceRegistrationTests
                 "failed dynamic call must preserve its activation error");
             Ensure(ContainsMessage(failure, "scope cleanup failed"),
                 "failed dynamic call must preserve its cleanup error");
-            Ensure(failingStub.ShapeLookups == 1,
-                "failed asynchronous acquisition must reuse its resolved shape for telemetry");
+            Ensure(failingStub.DescriptorLookups == 1,
+                "failed asynchronous acquisition must reuse its descriptor for telemetry");
             Ensure(module.RemainingCalls == 0, "failed acquisition releases its module lease");
             await call.DisposeAsync();
         }
@@ -165,7 +208,7 @@ public class ServiceRegistrationTests
             ?? throw new MissingMethodException(nameof(SharpLinkServer), "InvokeServiceAsync");
         return (ValueTask)(method.Invoke(server,
         [
-            new ResolvedMethodCall(registration, 17L, registration.Stub.ResolveMethodShape(17L)),
+            new ResolvedMethodCall(registration, registration.Stub.ResolveMethodFacts(17)),
             connection,
             connection.Session,
             requestId,
@@ -645,32 +688,46 @@ public class ServiceRegistrationTests
 
     private sealed class StubMarker(RpcMethodKind? descriptorKind = null) : IRpcStub
     {
-        private int _shapeLookups;
-        internal int ShapeLookups => Volatile.Read(ref _shapeLookups);
+        public RpcMethodFacts ResolveMethodFacts(long methodHash)
+            => TryGetMethodDescriptor(methodHash, out var descriptor)
+                ? MethodFactsTestHelper.FromDescriptor(descriptor)
+                : RpcMethodFacts.UnknownMethod;
 
-        public RpcMethodShape ResolveMethodShape(long methodHash)
+        private int _descriptorLookups;
+        internal int DescriptorLookups => Volatile.Read(ref _descriptorLookups);
+
+        public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
         {
-            Interlocked.Increment(ref _shapeLookups);
-            return methodHash == 17
-                ? new RpcMethodShape(descriptorKind ?? RpcMethodKind.Unary, 0,
-                    supportsCancellation: true, hasResponsePayload: false)
-                : RpcMethodShape.UnknownMethod;
+            Interlocked.Increment(ref _descriptorLookups);
+            if (descriptorKind is not { } kind)
+            {
+                descriptor = default;
+                return false;
+            }
+
+            descriptor = new RpcMethodDescriptor(
+                InterfaceHash, methodHash, kind,
+                HasResponsePayload: false,
+                HasClientStreams: false,
+                HasMethodTimeout: false,
+                MethodTimeout: null);
+            return true;
         }
 
         public long InterfaceHash => 1;
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
 
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }

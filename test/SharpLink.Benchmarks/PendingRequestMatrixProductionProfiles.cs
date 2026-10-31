@@ -52,12 +52,12 @@ internal static partial class PendingRequestMatrixEvidenceRunner
             serverBuilder.UseTcp(
                 0,
                 new SslServerAuthenticationOptions { ServerCertificate = certificate },
-                IPAddress.Loopback.ToString(),
+                IPAddress.Loopback,
                 tlsHandshakeTimeout: TimeSpan.FromSeconds(3));
         }
         else
         {
-            serverBuilder.UseTcp(0, IPAddress.Loopback.ToString());
+            serverBuilder.UseTcp(0, IPAddress.Loopback);
         }
         serverBuilder
             .UseHeartbeat(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10))

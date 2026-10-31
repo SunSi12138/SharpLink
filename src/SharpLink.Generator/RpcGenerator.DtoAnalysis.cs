@@ -17,30 +17,7 @@ public partial class RpcGenerator
         }
     }
 
-    private static bool HasSameCodecDefinition(GeneratedCodecModel left, GeneratedCodecModel right)
-    {
-        if (!string.Equals(left.TypeName, right.TypeName, StringComparison.Ordinal) ||
-            left.Kind != right.Kind || left.IsReferenceType != right.IsReferenceType ||
-            !string.Equals(left.ElementType, right.ElementType, StringComparison.Ordinal) ||
-            !string.Equals(left.KeyType, right.KeyType, StringComparison.Ordinal) ||
-            !string.Equals(left.ValueType, right.ValueType, StringComparison.Ordinal) ||
-            !string.Equals(left.CustomCodecType, right.CustomCodecType, StringComparison.Ordinal) ||
-            !string.Equals(left.AdapterType, right.AdapterType, StringComparison.Ordinal) ||
-            !string.Equals(left.AdapterId, right.AdapterId, StringComparison.Ordinal) ||
-            !left.ConstructorMembers.SequenceEqual(right.ConstructorMembers, StringComparer.Ordinal) ||
-            !left.AssemblyDependencies.SequenceEqual(right.AssemblyDependencies, StringComparer.Ordinal) ||
-            left.Members.Length != right.Members.Length)
-        {
-            return false;
-        }
 
-        for (var index = 0; index < left.Members.Length; index++)
-        {
-            if (left.Members[index] with { Location = null } != right.Members[index] with { Location = null })
-                return false;
-        }
-        return true;
-    }
 
     private sealed record DtoAnalysisPassResult(
         ImmutableArray<GeneratedCodecModel> Codecs,
@@ -122,11 +99,7 @@ public partial class RpcGenerator
         private static bool HasAttribute(ISymbol symbol, string ns, string name)
             => symbol.GetAttributes().Any(attribute => IsAttribute(attribute, ns, name));
 
-        private static string EscapeIdentifier(string identifier)
-            => Microsoft.CodeAnalysis.CSharp.SyntaxFacts.GetKeywordKind(identifier) !=
-               Microsoft.CodeAnalysis.CSharp.SyntaxKind.None
-                ? "@" + identifier
-                : identifier;
+
 
         private static string GetCodecName(string typeName, bool contractMode)
             => "__SharpLinkGeneratedCodec_" + ComputeHash((contractMode ? "contract|" : "standalone|") + typeName).ToString("X16", InvariantCulture);

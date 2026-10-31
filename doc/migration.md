@@ -1,4 +1,18 @@
-# 迁移到 2.0
+# 迁移到 3.0
+
+## 当前 3.0 边界
+
+SharpLink 3.0 是破坏性 major 升级，不承诺与 2.0.3 的源代码、进程内二进制或跨版本 Client/Server 互操作兼容。同一进程内的 SharpLink 包须统一为匹配的 3.0 版本；删除旧 `bin/obj` 和缓存生成源码，重新生成、构建并部署全部契约、服务和插件程序集。
+
+当前 Generated ABI 是 **API 5**，要求精确 identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`。API 3、API 4，以及使用其他开发期 API 5 identity 的程序集必须在 Manifest 构造/发布前被拒绝；不能只比较整数 API 号。手写 locator 应使用当前 `SharpLinkGeneratedManifestVersions` 常量。owner-bound UnsafeBlit 和 standalone generated Codec 的迁移见 [3.0 Codec 迁移](unsafe-blit-3.0-migration.md)。
+
+Generated ABI 与网络协议是独立版本轴：3.0 仍使用 **Protocol v2 / minor 4**，兼容下限为 4。API 5 不表示 wire minor 5；major 升级也不要求拒绝所有版本号不同的 peer。实际握手按 wire grammar、required capabilities、compression profile 与 frame/window 限制校验；契约绑定按精确 `RpcAssemblyHash` 校验。不支持的 wire generation 或不匹配的契约不得被当作可执行业务的输入。
+
+发布要求验证当前 3.0 包的 Client/Server 互操作及拒绝路径的正确性。历史命名的 `eng/verify-protocol-v2-cross-version.sh` 实际从同一批当前包构建 Client/Server，覆盖双进程 Unary、Client/Server/Duplex Streaming 和 OneWay；它不是 2.0.3 ↔ 3.0 矩阵，不提供跨 major 成功互操作证据。该说明定义验证范围，不宣称任一候选已经通过。
+
+## 历史参考：1.1.1 → 2.0
+
+以下 2.0/API 4 说明保留历史迁移背景，不是 3.0 的当前 Generated ABI 或跨 major 兼容承诺；直接升级到 3.0 时以本页开头和 [3.0 Codec 迁移](unsafe-blit-3.0-migration.md) 为准。
 
 SharpLink 2.0 将进程内 Generated ABI 从已发布的 1.1.1/API 3 原子升级一次到 API 4，同时把 Protocol v2 minor 升到 4，并以剩余 `TimeBudget` 取代跨机器绝对 deadline。2.0 的版本计算只以已发布的 1.1.1 为基线；开发期间出现过的中间 ABI 编号不构成兼容边界，也不会继续累加版本号。由于 `IRpcChannel` 调用 ABI 在 #287 中发生破坏性变化，所有 1.1.1/API 3 生成程序集都必须使用 2.0 SDK 重新生成。升级前让同一进程中的全部 SharpLink 包使用 2.0，并在独立环境完成 Client/Server 互操作、AOT、负载和故障测试。
 
@@ -220,10 +234,10 @@ Catalog 保留弱引用不代表应用引用已经释放。详见 [边界 ADR](a
 - 每个运行时 NuGet 包包含与主程序集同名的 XML IntelliSense 文件。
 - 旧 `audit-*`、`migration-0.x.*`、`performance-0.x.*` 是开发过程证据，不是 2.0 用户契约，已由当前主题文档、CHANGELOG、测试和最终性能基线替代。
 
-## 升级清单
+## 当前 3.0 升级清单
 
-1. 统一 SDK、Generator、Abstractions、Runtime、Client、Server、Hosting 和 serializer adapter 为 2.0；同一进程不混装 1.1.x。
-2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 4，并把 Generator diagnostics 当错误处理。
+1. 统一 SDK、Generator、Abstractions、Runtime、Client、Server、Hosting 和 serializer adapter 为匹配的 3.0；同一进程不混装旧 major。
+2. 清理所有契约、服务和插件项目的旧 `bin/obj`，重新生成 API 5，并核对当前 owner-bound ABI identity；把 Generator diagnostics 当错误处理。
 3. 为每个 Client 和 MultiCluster builder 显式选择 `UseRequestTimeout()`、`UseRequestTimeout(timeout)` 或 `DisableRequestTimeout()`；不要依赖旧的隐式 30 秒 fallback。
 4. 为所有没有 token 的 RPC 显式确认 `[NonCancellable]` 是否合理。
 5. 验证 DTO field id、required/nullability 和 custom Codec wire identity。
@@ -233,4 +247,4 @@ Catalog 保留弱引用不代表应用引用已经释放。详见 [边界 ADR](a
 9. 若使用动态模块，验证替换期间旧调用排空与 ALC 最终回收。
 10. 对实际发布入口执行包含五种调用形态的 NativeAOT smoke（若适用）、PackageSmoke 和固定负载基线。
 
-Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。Generated ABI（API 4）与 Protocol v2 minor 是独立版本轴；2.0 的 wire lifetime baseline 是 minor-4 `TimeBudget`。pre-2.0 跨版本互操作不在本版本发布门禁范围内。
+Protocol v2 的当前 wire 定义见 [protocol-v2.md](protocol-v2.md)。当前 Generated ABI（API 5）与 Protocol v2 minor 4 是独立版本轴；3.0 发布门禁验证当前包互操作与正确拒绝，不增加 2.0.3 跨 major 兼容承诺。
