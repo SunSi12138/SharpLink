@@ -168,10 +168,19 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             System.IO.IOException or SocketException or
             SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed };
 
+    private static ResolvedMethodCall ResolveMethodCall(ServiceRegistration registration, long methodId)
+    {
+        var method = registration.Stub.ResolveMethodFacts(methodId);
+        if (method is null ||
+            (!method.IsKnown && !ReferenceEquals(method, RpcMethodFacts.UnknownMethod)) ||
+            (method.IsKnown && (method.ContractId != registration.Stub.InterfaceHash || method.MethodId != methodId)))
+            method = RpcMethodFacts.Invalid;
+        return new ResolvedMethodCall(registration, method);
+    }
+
     private SharpLinkCallContextSnapshot CreateCallContext(
         ServerConnectionState connection,
-        IRpcStub stub,
-        long methodId,
+        in ResolvedMethodCall resolved,
         long requestId,
         RpcDeadline deadline,
         SharpLinkMetadata? metadata,
@@ -182,7 +191,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
         if (interceptors.Count == 0)
             return connection.GetCallContextSnapshot(deadline, metadata);
 
-        var method = GetMethodDescriptor(stub, methodId);
+        var method = resolved.Method;
         if (method.Kind != RpcMethodKind.OneWay)
         {
             ReservePreInvocationRequestStreams(
@@ -206,7 +215,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     private static SharpLinkServerInvocationContext CreateServerInvocationContext(
         RpcSession session,
-        RpcMethodDescriptor method,
+        RpcMethodFacts method,
         long requestId,
         SharpLinkAuthenticationContext? authenticationContext,
         RpcDeadline deadline,
@@ -227,22 +236,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             metadata,
             cancellationToken,
             interceptors);
-    }
-
-    private static RpcMethodDescriptor GetMethodDescriptor(IRpcStub stub, long methodId)
-    {
-        if (!stub.TryGetMethodDescriptor(methodId, out var method))
-        {
-            method = new RpcMethodDescriptor(
-                stub.InterfaceHash,
-                methodId,
-                RpcMethodKind.Unary,
-                HasResponsePayload: false,
-                HasClientStreams: false,
-                HasMethodTimeout: false,
-                MethodTimeout: null);
-        }
-        return method;
     }
 
     internal ServerCallAdmissionResult TryAcquireCall(ServerConnectionState connection)

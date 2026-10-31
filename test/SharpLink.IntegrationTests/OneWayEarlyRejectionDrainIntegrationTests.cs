@@ -266,6 +266,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         private sealed class UnknownMethodShapeStub(long interfaceHash) : IRpcStub
         {
             public long InterfaceHash { get; } = interfaceHash;
+            public RpcMethodFacts ResolveMethodFacts(long methodHash) => RpcMethodFacts.UnknownMethod;
 
             public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
             {
@@ -283,7 +284,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeNoReturnAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                RpcMethodFacts methodHash,
                 long requestId,
                 ReadOnlySequence<byte> args)
                 => throw UnexpectedInvocation();
@@ -291,7 +292,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeNoReturnCancellableAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                RpcMethodFacts methodHash,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 CancellationToken cancellationToken)
@@ -300,7 +301,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                RpcMethodFacts methodHash,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 IBufferWriter<byte> output)
@@ -309,7 +310,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             public ValueTask InvokeCancellableAsync(
                 object service,
                 IRpcGeneratedServerBridge bridge,
-                long methodHash,
+                RpcMethodFacts methodHash,
                 long requestId,
                 ReadOnlySequence<byte> args,
                 IBufferWriter<byte> output,

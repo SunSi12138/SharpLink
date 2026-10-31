@@ -109,53 +109,8 @@ public class CompressionPersistentDecodeReviewTests
         await socket.ConnectAsync(IPAddress.Loopback, harness.Port);
         await using var stream = new NetworkStream(socket, ownsSocket: false);
         const ulong requestId = 41;
-        const int declaredDecodedArgumentsBytes = 64 * 1024;
-        const int compressedBodyBytes = 2 * 1024 * 1024;
-
-        using var frames = new PooledByteBufferWriter();
-        var limits = new SharpLinkProtocolOptions();
-        var handshake = ProtocolV2FrameWriter.BeginFrame(
-            frames,
-            ProtocolV2FrameType.HandshakeRequest,
-            ProtocolV2FrameFlags.None,
-            0);
-        ProtocolV2PayloadCodec.WriteHandshakeRequest(
-            frames,
-            new ProtocolV2HandshakeRequest(
-                ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.Compression,
-                ProtocolV2Capabilities.Compression,
-                SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
-                1024 * 1024,
-                16 * 1024 * 1024,
-                ReadOnlyMemory<byte>.Empty,
-                new[] { provider.WireProfile }),
-            limits);
-        ProtocolV2FrameWriter.EndFrame(frames, handshake);
-
-        var request = ProtocolV2FrameWriter.BeginFrame(
-            frames,
-            ProtocolV2FrameType.Request,
-            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable,
-            requestId);
-        Span<byte> requestPrefix = stackalloc byte[ProtocolV2Constants.RequestPrefixBytes];
-        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
-            requestPrefix,
-            harness.InterfaceHash);
-        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
-            requestPrefix[sizeof(long)..],
-            1L);
-        frames.Write(requestPrefix);
-        Span<byte> originalLength = stackalloc byte[sizeof(uint)];
-        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
-            originalLength,
-            declaredDecodedArgumentsBytes);
-        frames.Write(originalLength);
-        frames.Write(new byte[compressedBodyBytes]);
-        ProtocolV2FrameWriter.EndFrame(frames, request);
-
-        await stream.WriteAsync(frames.WrittenMemory);
-        await stream.FlushAsync();
+        await WriteRawInputProbeAsync(
+            stream, provider.WireProfile, harness.InterfaceHash, harness.MethodHash, requestId);
         await provider.WaitForStartedCountAsync(1);
         Ensure(harness.DecodeStartedWorkCount == 1,
             "large compressed input must route to D even when declared output is below 1 MiB");
@@ -180,6 +135,127 @@ public class CompressionPersistentDecodeReviewTests
         {
             provider.ReleaseAll();
         }
+    }
+
+    [Test]
+    [NotInParallel]
+    public async Task UnknownMethodWithLargeCompressedInputShouldRejectBeforeProviderActivation()
+    {
+        PersistentDecodeReviewService.Reset();
+        var provider = new BlockingRawInputCompressionProvider();
+        await using var harness = await RawInputHarness.CreateAsync(provider);
+        await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "unknown-method decode worker started");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        await socket.ConnectAsync(IPAddress.Loopback, harness.Port, timeout.Token);
+        await using var stream = new NetworkStream(socket, ownsSocket: false);
+        const ulong requestId = 42;
+        try
+        {
+            await WriteRawInputProbeAsync(
+                stream, provider.WireProfile, harness.InterfaceHash, RawInputHarness.UnknownMethodHash, requestId,
+                timeout.Token);
+            var handshake = await ReadRawProbeFrameAsync(stream, timeout.Token);
+            Ensure(handshake.Header.Type == ProtocolV2FrameType.HandshakeResponse &&
+                   handshake.Header.RequestId == 0 && handshake.Header.Flags == ProtocolV2FrameFlags.None,
+                "unknown-method probe must negotiate compression successfully");
+            var selected = ProtocolV2PayloadCodec.ReadHandshakeResponse(
+                new ReadOnlySequence<byte>(handshake.Payload), new SharpLinkProtocolOptions());
+            Ensure(selected.NegotiatedCapabilities == ProtocolV2Capabilities.Compression &&
+                   selected.CompressionProfile == provider.WireProfile,
+                "unknown-method probe must select the exact compression provider profile");
+            var response = await ReadRawProbeFrameAsync(stream, timeout.Token);
+            Ensure(response.Header.Type == ProtocolV2FrameType.Response &&
+                   response.Header.RequestId == requestId &&
+                   response.Header.Flags == ProtocolV2FrameFlags.Error,
+                "unknown method must produce its exact error response before decoding");
+            var error = ProtocolV2PayloadCodec.ReadError(new ReadOnlySequence<byte>(response.Payload),
+                response.Header.Flags, new SharpLinkProtocolOptions().MaxErrorMessageBytes);
+            Ensure(error.Code == SharpLinkErrorCode.Unimplemented &&
+                   error.Message == $"Method {RawInputHarness.UnknownMethodHash} is not implemented.",
+                "unknown method rejection must be the method-facts boundary, not handshake or compression failure");
+            Ensure(provider.StartedCount == 0 && harness.DecodeStartedWorkCount == 0,
+                "unknown method must not activate the compression provider or schedule decode work");
+            Ensure(PersistentDecodeReviewService.CancellableInvocations == 0 &&
+                   PersistentDecodeReviewService.NonCancellableInvocations == 0,
+                "unknown method must not activate business code");
+            await AssertResourcesReleasedAsync(harness, "unknown compressed method rejection");
+        }
+        finally
+        {
+            provider.ReleaseAll();
+        }
+    }
+
+    private static async Task WriteRawInputProbeAsync(
+        NetworkStream stream, string wireProfile, long interfaceHash, long methodHash, ulong requestId,
+        CancellationToken cancellationToken = default)
+    {
+        const int declaredDecodedArgumentsBytes = 64 * 1024;
+        const int compressedBodyBytes = 2 * 1024 * 1024;
+
+        using var frames = new PooledByteBufferWriter();
+        var limits = new SharpLinkProtocolOptions();
+        var handshake = ProtocolV2FrameWriter.BeginFrame(
+            frames,
+            ProtocolV2FrameType.HandshakeRequest,
+            ProtocolV2FrameFlags.None,
+            0);
+        ProtocolV2PayloadCodec.WriteHandshakeRequest(
+            frames,
+            new ProtocolV2HandshakeRequest(
+                ProtocolV2Constants.MinorVersion,
+                ProtocolV2Capabilities.Compression,
+                ProtocolV2Capabilities.Compression,
+                SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
+                1024 * 1024,
+                16 * 1024 * 1024,
+                ReadOnlyMemory<byte>.Empty,
+                new[] { wireProfile }),
+            limits);
+        ProtocolV2FrameWriter.EndFrame(frames, handshake);
+
+        var request = ProtocolV2FrameWriter.BeginFrame(
+            frames,
+            ProtocolV2FrameType.Request,
+            ProtocolV2FrameFlags.Compressed | ProtocolV2FrameFlags.Cancellable,
+            requestId);
+        Span<byte> requestPrefix = stackalloc byte[ProtocolV2Constants.RequestPrefixBytes];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
+            requestPrefix,
+            interfaceHash);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(
+            requestPrefix[sizeof(long)..],
+            methodHash);
+        frames.Write(requestPrefix);
+        Span<byte> originalLength = stackalloc byte[sizeof(uint)];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(
+            originalLength,
+            declaredDecodedArgumentsBytes);
+        frames.Write(originalLength);
+        frames.Write(new byte[compressedBodyBytes]);
+        ProtocolV2FrameWriter.EndFrame(frames, request);
+
+        await stream.WriteAsync(frames.WrittenMemory, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+    }
+
+    private static async Task<(ProtocolV2FrameHeader Header, byte[] Payload)> ReadRawProbeFrameAsync(
+        NetworkStream stream, CancellationToken cancellationToken)
+    {
+        var limits = new SharpLinkProtocolOptions();
+        var headerBytes = new byte[ProtocolV2Constants.HeaderBytes];
+        await stream.ReadExactlyAsync(headerBytes, cancellationToken);
+        var length = BinaryPrimitives.ReadInt32LittleEndian(headerBytes.AsSpan(1));
+        Ensure(length >= 0 && length <= limits.MaxFramePayloadBytes,
+            "raw-input response length must be bounded");
+        var bytes = new byte[ProtocolV2Constants.HeaderBytes + length];
+        headerBytes.CopyTo(bytes, 0);
+        await stream.ReadExactlyAsync(bytes.AsMemory(ProtocolV2Constants.HeaderBytes), cancellationToken);
+        var sequence = new ReadOnlySequence<byte>(bytes);
+        Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, limits, out var header, out var payload) &&
+               sequence.IsEmpty, "raw-input probe must read one complete valid response frame");
+        return (header, payload.ToArray());
     }
 
     private static async Task EnsureResourceExhaustedAsync(Task task, string scenario)
@@ -368,17 +444,21 @@ public class CompressionPersistentDecodeReviewTests
             Task serverTask,
             ISharpLinkServer server,
             int port,
-            long interfaceHash)
+            long interfaceHash,
+            long methodHash)
             : base(server)
         {
             _serverCts = serverCts;
             _serverTask = serverTask;
             Port = port;
             InterfaceHash = interfaceHash;
+            MethodHash = methodHash;
         }
 
+        internal const long UnknownMethodHash = 1;
         internal int Port { get; }
         internal long InterfaceHash { get; }
+        internal long MethodHash { get; }
 
         internal static Task<RawInputHarness> CreateAsync(ISharpLinkCompressionProvider provider)
         {
@@ -396,14 +476,15 @@ public class CompressionPersistentDecodeReviewTests
                 .UseTcp(0, IPAddress.Loopback);
             var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
             var server = serverBuilder.Build();
-            var interfaceHash = ReadAnyInterfaceHash(server);
+            var method = ReadKnownCancellableMethod(server);
             var serverTask = RunServerAsync(server, serverCts.Token);
             return Task.FromResult(new RawInputHarness(
                 serverCts,
                 serverTask,
                 server,
                 port,
-                interfaceHash));
+                method.ContractId,
+                method.MethodId));
         }
 
         public async ValueTask DisposeAsync()
@@ -417,11 +498,28 @@ public class CompressionPersistentDecodeReviewTests
             _serverCts.Dispose();
         }
 
-        private static long ReadAnyInterfaceHash(ISharpLinkServer server)
+        private static RpcMethodFacts ReadKnownCancellableMethod(ISharpLinkServer server)
         {
-            foreach (var key in ServerRegistryTestAccessor.Services((SharpLinkServer)server).Keys)
-                return key;
-            throw new Exception("server has no registered service hash");
+            var loaded = SharpLinkAssemblyManifestLoader.TryLoad(
+                typeof(IPersistentDecodeReviewService).Assembly, out var manifest);
+            Ensure(loaded.Succeeded && manifest is not null, "raw-input generated manifest loads");
+            var contract = manifest!.Contracts.Single(
+                item => item.ContractType == typeof(IPersistentDecodeReviewService));
+            var descriptor = contract.Methods.Single(
+                item => item.Name == nameof(IPersistentDecodeReviewService.MeasureAsync));
+            var registration = ServerRegistryTestAccessor.Services((SharpLinkServer)server)[contract.ContractId];
+            Ensure(registration.ContractType == typeof(IPersistentDecodeReviewService) &&
+                   registration.Stub.InterfaceHash == contract.ContractId,
+                "raw-input method must belong to the exact registered generated contract");
+            var facts = registration.Stub.ResolveMethodFacts(descriptor.MethodId);
+            Ensure(facts.IsKnown && facts.ContractId == contract.ContractId &&
+                   facts.MethodId == descriptor.MethodId && facts.Kind == RpcMethodKind.Unary &&
+                   facts.SupportsCancellation && facts.HasResponsePayload && facts.ClientStreamCount == 0,
+                "raw-input probe requires known cancellable Unary facts with a response");
+            Ensure(ReferenceEquals(registration.Stub.ResolveMethodFacts(UnknownMethodHash),
+                    RpcMethodFacts.UnknownMethod),
+                "the separate fabricated method1 probe must be unknown to this exact generated stub");
+            return facts;
         }
     }
 

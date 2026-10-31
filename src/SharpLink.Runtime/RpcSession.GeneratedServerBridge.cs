@@ -390,8 +390,7 @@ internal sealed class RpcSessionGeneratedServerBridge(RpcSession session) : IRpc
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
         bool payloadNullable,
-        long contractId,
-        long methodId,
+        RpcMethodFacts method,
         CancellationToken cancellationToken)
         => session.PumpGeneratedOutboundStreamAsync(
             requestId,

@@ -45,13 +45,13 @@ internal sealed partial class SharpLinkServer
                 if (output is null)
                 {
                     await stub.InvokeNoReturnCancellableAsync(
-                        service, generatedBridge, context.InterceptorMethodId, context.RequestId,
+                        service, generatedBridge, context.MethodFacts, context.RequestId,
                         context.InterceptorArguments, context.CancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
                     await stub.InvokeCancellableAsync(
-                        service, generatedBridge, context.InterceptorMethodId, context.RequestId,
+                        service, generatedBridge, context.MethodFacts, context.RequestId,
                         context.InterceptorArguments, output, context.CancellationToken).ConfigureAwait(false);
                 }
                 if (context.Status == SharpLinkInvocationStatus.Pending)

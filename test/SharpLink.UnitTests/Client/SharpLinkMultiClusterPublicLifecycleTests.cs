@@ -46,6 +46,8 @@ public sealed class SharpLinkMultiClusterPublicLifecycleTests : SharpLinkMultiCl
     [Test]
     public async Task RuntimeAddAndReplaceAfterStartShouldEnterChildRuntimeLifecycle()
     {
+        await using var addedTransport = new ControlledMutationTransportFactory(blockConnect: true);
+        await using var replacementTransport = new ControlledMutationTransportFactory(blockConnect: true);
         await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .Build();
@@ -53,32 +55,79 @@ public sealed class SharpLinkMultiClusterPublicLifecycleTests : SharpLinkMultiCl
         await client.StartAsync();
         await client.WaitForReadyAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
 
-        await AddClusterWithFixedDiscoveryAsync(
-            client,
-            "payments",
-            child => child.UseTransport(new TestClientTransportFactory()),
-            slot => slot.AllowDynamicContracts = true,
-            manifests: [],
-            routes: []);
-        await client.WaitForReadyAsync("payments").AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        await client.WaitForReadyAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+        Task<SharpLinkClusterAddResult>? addOperation = null;
+        Task<SharpLinkClusterReplacementResult>? replacement = null;
+        try
+        {
+            addOperation = AddClusterWithFixedDiscoveryAsync(
+                client,
+                "payments",
+                child => child.UseTransport(addedTransport),
+                slot => slot.AllowDynamicContracts = true,
+                manifests: [],
+                routes: []).AsTask();
+            var add = await addOperation.WaitAsync(RaceCoordinationTimeout);
+            Ensure(add.Succeeded,
+                "runtime Add should publish its locally started child without waiting for remote readiness");
+            var addedChild = (ISharpLinkClient)GetChildChannel(client, "payments");
+            Ensure(addedChild.LifecycleState == SharpLinkClientLifecycleState.Running,
+                "runtime-added child should be locally Running before its slot is published");
+            await addedTransport.ConnectStarted.Task.WaitAsync(RaceCoordinationTimeout);
+            Ensure(ReferenceEquals(addedChild, GetChildChannel(client, "payments")) &&
+                   addedChild.LifecycleState == SharpLinkClientLifecycleState.Running,
+                "the published Running child should own the held connection attempt");
+            Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
+                "adding a cluster must not change the coordinator lifecycle");
+            Ensure(client.GetClusterReadiness("payments") == SharpLinkReadinessState.NotReady,
+                "the published child must remain NotReady while its remote dial is held");
 
-        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
-            "adding a cluster must not change the coordinator lifecycle");
-        Ensure(client.GetClusterRuntimeState("payments") == SharpLinkClusterState.Ready,
-            "runtime-added child should be started before it is published ready");
+            addedTransport.ReleaseConnect();
+            await client.WaitForReadyAsync("payments").AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await client.WaitForReadyAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
 
-        await client.ReplaceClusterAsync(
-            "payments",
-            child => child.UseTransport(new TestClientTransportFactory()),
-            TimeSpan.Zero);
-        await client.WaitForReadyAsync("payments").AsTask().WaitAsync(TimeSpan.FromSeconds(2));
-        await client.WaitForReadyAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            // Local startup and remote readiness are separate domains. A readiness observation
+            // need not wait for the legacy connection-state projection to finish publishing.
+            Ensure(client.GetClusterReadiness("payments") == SharpLinkReadinessState.Ready,
+                "runtime-added child should become remotely ready after its dial is released");
 
-        Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
-            "replacing a cluster must not change the coordinator lifecycle");
-        Ensure(client.GetClusterReadiness("payments") == SharpLinkReadinessState.Ready,
-            "replacement child should enter the running/readiness lifecycle before publication");
+            replacement = client.ReplaceClusterAsync(
+                "payments",
+                child => child.UseTransport(replacementTransport),
+                TimeSpan.Zero).AsTask();
+            await replacementTransport.ConnectStarted.Task.WaitAsync(RaceCoordinationTimeout);
+            Ensure(!replacement.IsCompleted,
+                "replacement must wait for candidate readiness before swapping the published slot");
+            Ensure(ReferenceEquals(addedChild, GetChildChannel(client, "payments")),
+                "the old child must remain published while the replacement dial is held");
+            Ensure(client.GetClusterReadiness("payments") == SharpLinkReadinessState.Ready,
+                "the old child must remain ready while the replacement candidate is connecting");
+
+            replacementTransport.ReleaseConnect();
+            var replace = await replacement.WaitAsync(RaceCoordinationTimeout);
+            Ensure(replace.Succeeded && replace.Published,
+                "a ready replacement candidate should commit its slot publication");
+            var replacementChild = (ISharpLinkClient)GetChildChannel(client, "payments");
+            Ensure(!ReferenceEquals(addedChild, replacementChild),
+                "replacement should publish a distinct child runtime");
+            Ensure(replacementChild.LifecycleState == SharpLinkClientLifecycleState.Running,
+                "replacement child should be locally Running when its slot is published");
+            await client.WaitForReadyAsync("payments").AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            await client.WaitForReadyAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+
+            Ensure(client.LifecycleState == SharpLinkClientLifecycleState.Running,
+                "replacing a cluster must not change the coordinator lifecycle");
+            Ensure(client.GetClusterReadiness("payments") == SharpLinkReadinessState.Ready,
+                "replacement child should enter the running/readiness lifecycle before publication");
+        }
+        finally
+        {
+            addedTransport.ReleaseConnect();
+            replacementTransport.ReleaseConnect();
+            if (addOperation is not null)
+                await LongRunningTestWorker.JoinAsync(addOperation, RaceCoordinationTimeout);
+            if (replacement is not null)
+                await LongRunningTestWorker.JoinAsync(replacement, RaceCoordinationTimeout);
+        }
     }
 
     private sealed class FailingTransportFactory : IClientTransportFactory

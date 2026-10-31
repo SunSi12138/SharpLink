@@ -299,8 +299,7 @@ public class SendStreamChunkKnownSizeTests
             SingleValue(value),
             codec,
             payloadNullable: false,
-            contractId: 101,
-            methodId: 202,
+            method: new RpcMethodFacts(101, 202, RpcMethodKind.ServerStreaming, 0, true, true),
             CancellationToken.None);
         var frames = await ReadFramePayloadsAsync(session, output, expectedRequestId: 73);
         Ensure(frames.Count == 2, "one stream data frame and one terminal frame must be emitted");

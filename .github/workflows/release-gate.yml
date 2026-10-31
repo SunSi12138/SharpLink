@@ -11,6 +11,7 @@ on:
     branches:
       - 'validation/dependency-forward-dev-20261030'
       - 'validation/933-absolute-stop-budget-20261031'
+      - 'optimize/732-resolve-method-facts-once'
     tags:
       - 'v*'
   workflow_dispatch:
