@@ -1,0 +1,11 @@
+# Generated method facts in SharpLink 3.0
+
+Rebuild every contract, service, and plugin assembly with the same 3.0 SDK. Generated API stays **5**, the one release boundary from published 2.0.3/API4. The required exact identity is `sharplink-3.0-api5-complete-method-facts-v1`. Earlier development API5 identities, including `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`, are incompatible and rejected before manifest publication. Protocol v2 minor 4, method identifiers, and wire encodings are unchanged.
+
+Hand-written `IRpcStub` implementations must implement `ResolveMethodFacts(long)` and cache one immutable `RpcMethodFacts` per known method. Return `RpcMethodFacts.UnknownMethod` for an unknown identifier. There is no default resolver or fabricated unary fallback. All four `Invoke*` methods accept the resolved facts in place of the method identifier; dispatch to business code using `method.MethodId`. Forward those same facts to `IRpcGeneratedServerBridge.PumpOutboundStreamAsync` in place of its former contract/method identifier pair.
+
+Facts contain the contract/method identifiers, invocation kind, full client-stream count (0–127), cancellation support, response payload/nullability, declared-timeout presence and nullable value, and idempotency. `ToDescriptor()` projects these scalars without consulting a stub, registry, or generated timeout table. The existing `RpcMethodDescriptor` constructor and init properties remain available to observers.
+
+The host Abstractions assembly owns the sealed facts type. Its four readonly instance fields are scalars; no type, assembly, delegate, codec provider, service registration, or stub is retained. Generated stubs share a cold instance per method. Queued admission retains facts plus the existing weak generation selection; it still acquires the originally selected generation lease before decoding or invoking user code. Retaining observer facts does not keep a retired collectible generation alive.
+
+This change does not add call state solely to carry facts for untimed static streams. Pool behavior and stream terminal/credit ownership remain governed by their existing paths. Cold object size, generated code size, and per-call performance require measured evidence; eliminating repeated metadata lookups alone does not establish a performance improvement.

@@ -18,6 +18,7 @@
     <None Update="Fixtures/**/*.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../doc/calls-and-streaming.md" Link="doc-calls-and-streaming.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../src/SharpLink.Abstractions/Sdk/SharpLinkMetadata.cs" Link="SharpLinkMetadata.source.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../src/SharpLink.Abstractions/IRpcStub.cs" Link="IRpcStub.source.cs" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

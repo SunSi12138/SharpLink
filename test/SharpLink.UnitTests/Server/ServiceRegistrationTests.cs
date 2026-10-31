@@ -175,7 +175,7 @@ public partial class ServiceRegistrationTests
             Ensure(module.RemainingCalls == 0, "successful invocation releases its module lease");
             await singleton.DisposeAsync();
 
-            var failingStub = new StubMarker();
+            var failingStub = new StubMarker(RpcMethodKind.Unary);
             var call = ServiceRegistration.CreatePerCall(
                 typeof(object), failingStub, new ThrowingScopeFactory("scope cleanup failed"),
                 static _ => throw new InvalidOperationException("activation failed"),
@@ -208,10 +208,9 @@ public partial class ServiceRegistrationTests
             ?? throw new MissingMethodException(nameof(SharpLinkServer), "InvokeServiceAsync");
         return (ValueTask)(method.Invoke(server,
         [
-            registration,
+            new ResolvedMethodCall(registration, registration.Stub.ResolveMethodFacts(17)),
             connection,
             connection.Session,
-            17L,
             requestId,
             ReadOnlySequence<byte>.Empty,
             null,
@@ -689,6 +688,11 @@ public partial class ServiceRegistrationTests
 
     private sealed class StubMarker(RpcMethodKind? descriptorKind = null) : IRpcStub
     {
+        public RpcMethodFacts ResolveMethodFacts(long methodHash)
+            => TryGetMethodDescriptor(methodHash, out var descriptor)
+                ? MethodFactsTestHelper.FromDescriptor(descriptor)
+                : RpcMethodFacts.UnknownMethod;
+
         private int _descriptorLookups;
         internal int DescriptorLookups => Volatile.Read(ref _descriptorLookups);
 
@@ -712,18 +716,18 @@ public partial class ServiceRegistrationTests
 
         public long InterfaceHash => 1;
 
-        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args) => ValueTask.CompletedTask;
 
-        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
             => ValueTask.CompletedTask;
 
-        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash,
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts methodHash,
             long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output,
             CancellationToken cancellationToken) => ValueTask.CompletedTask;
     }

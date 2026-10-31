@@ -88,7 +88,7 @@ public interface ISharpLinkClientInterceptor
 public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnapshot
 {
     internal SharpLinkServerInvocationContext(
-        RpcMethodDescriptor method,
+        RpcMethodFacts method,
         long requestId,
         string connectionId,
         EndPoint? localEndPoint,
@@ -102,7 +102,8 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
         : base(connectionId, authentication, deadline, deadlineTimeProvider, metadata)
     {
         InterceptorGeneration = interceptorGeneration;
-        Method = method;
+        Method = method.ToDescriptor();
+        MethodFacts = method;
         RequestId = requestId;
         LocalEndPoint = localEndPoint;
         RemoteEndPoint = remoteEndPoint;
@@ -114,7 +115,7 @@ public sealed class SharpLinkServerInvocationContext : SharpLinkCallContextSnaps
     internal object? InterceptorStub { get; set; }
     internal object? InterceptorService { get; set; }
     internal object? InterceptorGeneratedBridge { get; set; }
-    internal long InterceptorMethodId { get; set; }
+    internal RpcMethodFacts MethodFacts { get; }
     internal ReadOnlySequence<byte> InterceptorArguments { get; set; }
     internal object? InterceptorOutput { get; set; }
     internal TimeProvider? InterceptorTimeProvider { get; set; }

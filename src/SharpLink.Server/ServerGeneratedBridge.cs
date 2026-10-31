@@ -70,10 +70,12 @@ internal sealed class ServerGeneratedBridge(
         IAsyncEnumerable<T> stream,
         IRpcCodec<T> codec,
         bool payloadNullable,
-        long contractId,
-        long methodId,
+        RpcMethodFacts method,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(method);
+        if (!method.IsKnown || method.Kind is not (RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming))
+            throw new InvalidOperationException("Outbound streaming requires the original resolved stream method facts.");
         try
         {
             await _protocolBridge.PumpOutboundStreamAsync(
@@ -82,8 +84,7 @@ internal sealed class ServerGeneratedBridge(
                 new UserCodeEntryAsyncEnumerable<T>(this, requestId, stream),
                 codec,
                 payloadNullable,
-                contractId,
-                methodId,
+                method,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception) when (
@@ -104,8 +105,7 @@ internal sealed class ServerGeneratedBridge(
                 callCancellations,
                 session,
                 requestId,
-                contractId,
-                methodId,
+                method,
                 exception);
             session.SendStreamErrorAsync(requestId, streamId, protocolError);
         }

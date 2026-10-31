@@ -37,20 +37,22 @@ public partial class SharpLinkServerInvocationTests
         Exception failure;
         try
         {
+            var stub = new ThrowingStub();
+            var resolved = new ResolvedMethodCall(
+                ServiceRegistration.CreateSingleton(typeof(object), stub, lease.Service, ownsService: false),
+                stub.ResolveMethodFacts(1));
             var invocation = (ValueTask)method.Invoke(server,
             [
-                new ThrowingStub(),
+                resolved,
                 lease,
                 session,
                 new RpcSessionGeneratedServerBridge(session),
-                1L,
                 1L,
                 ReadOnlySequence<byte>.Empty,
                 null,
                 CancellationToken.None,
                 new SharpLinkCallContextSnapshot(session.Id, authentication: null),
-                false,
-                null
+                false
             ])!;
             await invocation;
             throw new Exception("expected leased invocation failure");

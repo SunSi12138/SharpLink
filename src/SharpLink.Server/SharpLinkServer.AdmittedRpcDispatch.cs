@@ -83,6 +83,25 @@ internal sealed partial class SharpLinkServer
                 return responseSend;
             }
 
+            var resolved = new ResolvedMethodCall(serviceInfo, retainedAdmissionPayload!.SelectedMethod);
+            if (!resolved.Method.IsKnown)
+            {
+                try
+                {
+                    return session.SendRpcErrorWithBackpressureAsync(requestId,
+                        new SharpLinkException(ReferenceEquals(resolved.Method, RpcMethodFacts.UnknownMethod)
+                                ? SharpLinkErrorCode.Unimplemented : SharpLinkErrorCode.Internal,
+                            ReferenceEquals(resolved.Method, RpcMethodFacts.UnknownMethod)
+                                ? $"Method {request.MethodHash} is not implemented." : "The RPC stub returned invalid method facts."),
+                        connection.ConnectionToken);
+                }
+                finally
+                {
+                    if (admittedCallState is not null)
+                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
+                }
+            }
+
             var admission = TryReserveCall(connection, mayDecode: isCompressed, out var requestPermit);
             if (admission != ServerCallAdmissionResult.Acquired || requestPermit is null)
             {
@@ -117,7 +136,7 @@ internal sealed partial class SharpLinkServer
                     flags,
                     payload,
                     request,
-                    serviceInfo,
+                    in resolved,
                     requestCancellationMap,
                     serverLoopToken,
                     admittedCallState,
@@ -248,7 +267,7 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 flags,
                 request,
-                serviceInfo,
+                in resolved,
                 requestCancellationMap,
                 serverLoopToken,
                 admittedCallState,

@@ -24,7 +24,7 @@ TEST = "test/SharpLink.UnitTests/Runtime/GeneratedStreamSnapshotOwnershipTests.c
 BIN = "test/SharpLink.UnitTests/bin/Release/net10.0"
 FOCUSED_FILTER = "/*/*/GeneratedStreamSnapshotOwnershipTests/*"
 FOCUSED_COUNT = 2
-FULL_COUNT = 2194  # 2188 dev cases plus 6 static-stream request-flags cases.
+FULL_COUNT = 2234  # 2194 base cases + 40 complete-method-facts cases; focused controls unchanged.
 
 
 def digest(path):

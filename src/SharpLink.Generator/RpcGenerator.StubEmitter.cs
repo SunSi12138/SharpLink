@@ -45,8 +45,7 @@ public partial class RpcGenerator
         sb.AppendLine($"    public long InterfaceHash => {model.Hash}L;");
         AppendStubCodecFieldsAndConstructor(sb, model, concreteCodecTypes);
         AppendSizeFieldsByType(sb, model.Methods);
-        AppendCancellationSupport(sb, model.Methods);
-        AppendMethodDescriptors(sb, model);
+        AppendMethodFacts(sb, model);
         AppendStubResponseAwaitHelpers(sb, responseMethods);
         sb.AppendLine($$"""
                             private static void __ValidateResponse<T>(T result, bool responseNullable)
@@ -65,14 +64,15 @@ public partial class RpcGenerator
                                 _ = await task.ConfigureAwait(false);
                             }
 
-                            public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args)
-                                => InvokeNoReturnCoreAsync(service, bridge, methodHash, requestId, args, CancellationToken.None);
+                            public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args)
+                                => InvokeNoReturnCoreAsync(service, bridge, method, requestId, args, CancellationToken.None);
 
-                            public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
-                                => InvokeNoReturnCoreAsync(service, bridge, methodHash, requestId, args, cancellationToken);
+                            public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+                                => InvokeNoReturnCoreAsync(service, bridge, method, requestId, args, cancellationToken);
 
-                            private ValueTask InvokeNoReturnCoreAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
+                            private ValueTask InvokeNoReturnCoreAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken)
                             {
+                                var methodHash = method.MethodId;
                                 var impl = ({{model.FullName}})service;
                                 var reader = new SequenceReader<byte>(args);
                         """);
@@ -100,14 +100,15 @@ public partial class RpcGenerator
         }
 
         sb.AppendLine($$"""
-                            public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
-                                => InvokeCoreAsync(service, bridge, methodHash, requestId, args, output, CancellationToken.None);
+                            public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output)
+                                => InvokeCoreAsync(service, bridge, method, requestId, args, output, CancellationToken.None);
 
-                            public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
-                                => InvokeCoreAsync(service, bridge, methodHash, requestId, args, output, cancellationToken);
+                            public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                                => InvokeCoreAsync(service, bridge, method, requestId, args, output, cancellationToken);
 
-                            private ValueTask InvokeCoreAsync(object service, IRpcGeneratedServerBridge bridge, long methodHash, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+                            private ValueTask InvokeCoreAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method, long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
                             {
+                                var methodHash = method.MethodId;
                                 var impl = ({{model.FullName}})service;
                                 var reader = new SequenceReader<byte>(args);
                         """);
@@ -234,53 +235,24 @@ public partial class RpcGenerator
     private static string GetStubResponseCodecField(RpcMethodModel method)
         => $"__responseCodec_{GetMethodSuffix(method)}";
 
-    private static void AppendCancellationSupport(StringBuilder sb, EquatableArray<RpcMethodModel> methods)
+    private static void AppendMethodFacts(StringBuilder sb, RpcInterfaceModel model)
     {
-        var cancellableMethods = methods
-            .Where(static method => method.HasCancellationToken ||
-                                    method.IsStreamReturn ||
-                                    method.Parameters.Any(static parameter => parameter.IsStream))
-            .ToArray();
-
-        if (cancellableMethods.Length == 0)
-        {
-            sb.AppendLine("    public bool SupportsCancellation(long methodHash) => false;");
-            return;
-        }
-
-        sb.AppendLine("    public bool SupportsCancellation(long methodHash)");
-        sb.AppendLine("        => methodHash switch");
-        sb.AppendLine("        {");
-        foreach (var method in cancellableMethods)
-            sb.AppendLine($"            {method.Hash}L => true,");
-        sb.AppendLine("            _ => false");
-        sb.AppendLine("        };");
-    }
-
-    private static void AppendMethodDescriptors(StringBuilder sb, RpcInterfaceModel model)
-    {
-        sb.AppendLine("    public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        switch (methodHash)");
-        sb.AppendLine("        {");
         foreach (var method in model.Methods)
         {
             var kind = GetMethodKind(method);
-            var hasPayloadResponse = !method.IsOneWay && !method.IsVoid;
-            var clientStreamCount = method.Parameters.Count(static parameter => parameter.IsStream);
-            var hasClientStreams = clientStreamCount != 0;
-            var methodTimeout = method.TimeoutTicks is { } ticks
-                ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)"
-                : "null";
-            sb.AppendLine($"            case {method.Hash}L:");
-            sb.AppendLine($"                descriptor = new RpcMethodDescriptor({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {(hasPayloadResponse ? "true" : "false")}, {(hasClientStreams ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {methodTimeout}, {(method.IsIdempotent ? "true" : "false")}, {clientStreamCount}, {(method.ResponseNullable ? "true" : "false")});");
-            sb.AppendLine("                return true;");
+            var streamCount = method.Parameters.Count(static parameter => parameter.IsStream);
+            var cancellable = method.HasCancellationToken || method.IsStreamReturn || streamCount != 0;
+            var timeout = method.TimeoutTicks is { } ticks
+                ? $"TimeSpan.FromTicks({ticks.ToString(InvariantCulture)}L)" : "null";
+            sb.AppendLine($"    private static readonly RpcMethodFacts __facts_{GetMethodSuffix(method)} = new({model.Hash}L, {method.Hash}L, RpcMethodKind.{kind}, {streamCount}, {(cancellable ? "true" : "false")}, {(!method.IsOneWay && !method.IsVoid ? "true" : "false")}, {(method.ResponseNullable ? "true" : "false")}, {(method.HasTimeoutAttribute ? "true" : "false")}, {timeout}, {(method.IsIdempotent ? "true" : "false")});");
         }
-        sb.AppendLine("            default:");
-        sb.AppendLine("                descriptor = default;");
-        sb.AppendLine("                return false;");
-        sb.AppendLine("        }");
-        sb.AppendLine("    }");
+        sb.AppendLine("    public RpcMethodFacts ResolveMethodFacts(long methodHash)");
+        sb.AppendLine("        => methodHash switch");
+        sb.AppendLine("        {");
+        foreach (var method in model.Methods)
+            sb.AppendLine($"            {method.Hash}L => __facts_{GetMethodSuffix(method)},");
+        sb.AppendLine("            _ => RpcMethodFacts.UnknownMethod");
+        sb.AppendLine("        };");
     }
 
     private static void AppendStubDispatchCases(
@@ -381,7 +353,7 @@ public partial class RpcGenerator
             if (method.IsStreamReturn)
             {
                 sb.AppendLine($"                var resultStream = {callLine};");
-                sb.AppendLine($"                return bridge.PumpOutboundStreamAsync(requestId, 0, resultStream, {GetStubResponseCodecField(method)}, {(method.ResponseNullable ? "true" : "false")}, {interfaceHash}L, {method.Hash}L, cancellationToken);");
+                sb.AppendLine($"                return bridge.PumpOutboundStreamAsync(requestId, 0, resultStream, {GetStubResponseCodecField(method)}, {(method.ResponseNullable ? "true" : "false")}, method, cancellationToken);");
             }
             else if (method.IsVoid)
             {
