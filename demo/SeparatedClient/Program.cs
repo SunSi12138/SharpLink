@@ -14,7 +14,9 @@ var client = DemoTcp.CreateClient(port);
 try
 {
     await DemoTcp.EnsureConnectedAsync(client, cts.Token, "Failed to connect to separated server.");
-    var service = client.Get<IGreetingService>();
+    var serviceRpc = client.CreateProxy<IGreetingService>();
+    await serviceRpc.PrepareAsync(TimeSpan.FromSeconds(10), cts.Token);
+    var service = serviceRpc.Service;
 
     var greet = await service.Greet(new GreetRequest
     {

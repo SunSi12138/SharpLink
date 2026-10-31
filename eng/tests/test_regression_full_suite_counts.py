@@ -8,9 +8,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNNERS = (
-    ("send-credit-lease-race", 2242, 8),
-    ("generated-stream-snapshot-regression", 2234, 2),
-    ("send-credit-terminal-regression", 2234, 1),
+    ("send-credit-lease-race", 2260, 8),
+    ("generated-stream-snapshot-regression", 2252, 2),
+    ("send-credit-terminal-regression", 2252, 1),
 )
 
 
@@ -38,13 +38,13 @@ class ExactRegressionSuiteCensusTests(unittest.TestCase):
 
     def test_hosting_current_full_census_is_declared_and_exact(self):
         runner = load_runner("hosting-registration-regression")
-        self.assertEqual(runner.FULL_COUNT, 2234)
-        self.assertEqual(runner.inspect(summary(2234), 2234, 0, ())["total"], 2234)
-        for text in (summary(2233), summary(2235), summary(2234, failed=1),
-                     summary(2234, skipped=1), summary(2234, succeeded=2233)):
+        self.assertEqual(runner.FULL_COUNT, 2252)
+        self.assertEqual(runner.inspect(summary(2252), 2252, 0, ())["total"], 2252)
+        for text in (summary(2251), summary(2253), summary(2252, failed=1),
+                     summary(2252, skipped=1), summary(2252, succeeded=2251)):
             with self.subTest(text=text):
                 with self.assertRaises(ValueError):
-                    runner.inspect(text, 2234, 0, ())
+                    runner.inspect(text, 2252, 0, ())
 
     def test_missing_or_undeclared_extra_case_is_rejected(self):
         for name, count, _ in RUNNERS:

@@ -9,6 +9,7 @@ internal sealed class ServerBindingTable
     private readonly ulong[] _incarnations;
     private readonly ServerBindingSlotQuota _quota;
     private ulong _highestBindId;
+    private ulong _completedBindId;
     private bool _currentBindAttempted;
     private int _nextSlot;
     private int _closed;
@@ -61,7 +62,7 @@ internal sealed class ServerBindingTable
         entry = null;
         lock (_gate)
         {
-            if (creatorOperationId != _highestBindId || _currentBindAttempted)
+            if (creatorOperationId != _highestBindId || creatorOperationId <= _completedBindId || _currentBindAttempted)
                 throw new SharpLinkProtocolViolationException(ProtocolViolationReason.ProtocolState,
                     "Binding installation must consume the current observed Bind exactly once.");
             _currentBindAttempted = true;
@@ -153,6 +154,43 @@ internal sealed class ServerBindingTable
         return true;
     }
 
+    // The serialized receive controller calls this only after its one final result has
+    // completed publication. A later Cancel for that operation is not a token Release.
+    internal void CompleteBindId(ulong creatorOperationId)
+    {
+        Protocol3BindingValidation.ValidateOperationId(creatorOperationId);
+        lock (_gate)
+        {
+            if (creatorOperationId != _highestBindId || creatorOperationId <= _completedBindId)
+                throw new InvalidOperationException("Binding completion must consume the current observed operation once.");
+            _completedBindId = creatorOperationId;
+        }
+    }
+
+    // Bounded maintenance scan; only scalar full tokens escape the table. Retirement is
+    // authoritative even if every best-effort notification is dropped by the caller.
+    internal int TakeRetiredTokens(Span<ulong> tokens, ref int cursor, int scanLimit = 256)
+    {
+        if (cursor < 0 || cursor > _entries.Length || scanLimit <= 0 || tokens.IsEmpty)
+            throw new ArgumentOutOfRangeException(nameof(cursor));
+        var count = 0;
+        lock (_gate)
+        {
+            var end = (int)Math.Min(_entries.Length, (long)cursor + scanLimit);
+            while (cursor < end && count < tokens.Length)
+            {
+                var slot = cursor++;
+                if (_entries[slot] is not { } entry || !entry.Registration.IsRetired)
+                    continue;
+                tokens[count++] = entry.Token;
+                Volatile.Write(ref _entries[slot], null);
+            }
+        }
+        if (count != 0)
+            _quota.Release(count);
+        return count;
+    }
+
     // The operation controller owns pending/precommit cancellation. This removes only
     // a committed slot created by this exact ID, never another demand for the same key.
     internal bool Cancel(ulong creatorOperationId)
@@ -164,6 +202,8 @@ internal sealed class ServerBindingTable
             if (creatorOperationId > _highestBindId)
                 throw new SharpLinkProtocolViolationException(ProtocolViolationReason.ProtocolState,
                     "CancelBind cannot precede its Bind publication.");
+            if (creatorOperationId <= _completedBindId)
+                return false;
             for (var slot = 0; slot < _entries.Length; slot++)
             {
                 if (_entries[slot] is not { } entry || entry.CreatorOperationId != creatorOperationId)

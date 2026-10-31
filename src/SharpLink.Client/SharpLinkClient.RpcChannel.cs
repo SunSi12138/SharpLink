@@ -152,7 +152,7 @@ internal sealed partial class SharpLinkClient
             }
 
             while (!_shutdownCts.IsCancellationRequested &&
-                   ReadyConnectionCount < _connectionPoolOptions.MinConnections)
+                   ReadyConnectionCount < _connectionPoolOptions.MinConnections && HasConnectionCapacity())
             {
                 var generation = CaptureReconnectPolicy();
                 var baseDelay = ResolveReconnectDelay(Volatile.Read(ref _reconnectDelayTicks), generation.Policy);
@@ -306,11 +306,20 @@ internal sealed partial class SharpLinkClient
             }
         }), operation);
 
-    private void MarkConnectionDraining(ClientConnection connection)
+    internal void MarkProtocolIdentityExhaustionDraining(ClientConnection connection)
+        => MarkConnectionDraining(connection, reportInfrastructureFailure: false, preserveAdmittedPublication: true);
+
+    private void MarkConnectionDraining(
+        ClientConnection connection,
+        bool reportInfrastructureFailure = true,
+        bool preserveAdmittedPublication = false)
     {
-        if (!connection.MarkDraining())
+        if (!(preserveAdmittedPublication
+                ? connection.MarkDrainingForIdentityExhaustion()
+                : connection.MarkDraining()))
             return;
-        ReportGoAwayToCircuitBreaker(connection);
+        if (reportInfrastructureFailure)
+            ReportGoAwayToCircuitBreaker(connection);
         if (_cluster is not null)
         {
             _cluster.MarkConnectionDraining(connection);
@@ -360,16 +369,19 @@ internal sealed partial class SharpLinkClient
             return;
         }
         if (connection.State != ClientConnectionState.Draining ||
-            connection.ActiveCallCount != 0 ||
+            connection.ActiveCallCount != 0 || connection.CallAdmissionReservationCount != 0 ||
+                connection.Binding.ActiveOperationCount != 0 ||
             !TryStartConnectionCleanup(connection, "DrainingConnectionCleanup"))
         {
             return;
         }
+        if (connection.HasExhaustedProtocolIdentity)
+            EnsureReconnectLoop();
     }
 
     private void EnsureExpansion()
     {
-        if (ReadyConnectionCount >= _connectionPoolOptions.MaxConnections)
+        if (ReadyConnectionCount >= _connectionPoolOptions.MaxConnections || !HasConnectionCapacity())
             return;
 
         lock (_stateGate)

@@ -216,12 +216,16 @@ public static class Program
                 expectedActiveEndpoints: 1,
                 expectedTargetReadyEndpoints: 1);
 
-            var proxy = client.Get<IPackageSmokeService>();
+            var proxyHandle = client.CreateProxy<IPackageSmokeService>();
+            await proxyHandle.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            var proxy = proxyHandle.Service;
             var result = await proxy.AddAsync(20, 22);
             if (result != 42)
                 throw new InvalidOperationException($"Package smoke returned {result} instead of 42.");
 
-            var generationControl = client.Get<ISharpLinkGenerationControl>();
+            var generationControlHandle = client.CreateProxy<ISharpLinkGenerationControl>();
+            await generationControlHandle.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            var generationControl = generationControlHandle.Service;
             var peerInventory = await generationControl.GetInventoryAsync(cancellationToken);
             if (peerInventory.EndpointEpoch != "package-smoke-server-epoch" ||
                 peerInventory.Revision != 1 ||
@@ -362,7 +366,9 @@ public static class Program
         if (!add.Succeeded || add.FailureCode != SharpLinkClusterMutationFailureCode.None)
             throw new InvalidOperationException("Runtime multi-cluster Add structured result package smoke failed.");
         await client.WaitForReadyAsync("runtime", cancellationToken);
-        if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+        var preparedContract1 = client.CreateProxy<IPackageSmokeService>();
+        await preparedContract1.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+        if (await preparedContract1.Service.AddAsync(20, 22) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Add package smoke failed.");
 
         var replacement = await client.ReplaceClusterAsync(
@@ -378,7 +384,9 @@ public static class Program
         {
             throw new InvalidOperationException("Runtime multi-cluster Replace structured result package smoke failed.");
         }
-        if (await client.Get<IPackageSmokeService>().AddAsync(19, 23) != 42)
+        var preparedContract2 = client.CreateProxy<IPackageSmokeService>();
+        await preparedContract2.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+        if (await preparedContract2.Service.AddAsync(19, 23) != 42)
             throw new InvalidOperationException("Runtime multi-cluster Replace package smoke failed.");
 
         var removal = await client.RemoveClusterAsync(
@@ -448,7 +456,9 @@ public static class Program
                 client.GetReadinessSnapshot(),
                 expectedActiveEndpoints: 2,
                 expectedTargetReadyEndpoints: 2);
-            if (await client.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+            var preparedContract3 = client.CreateProxy<IPackageSmokeService>();
+            await preparedContract3.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            if (await preparedContract3.Service.AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Static endpoint package smoke returned an unexpected result.");
 
             await using var dynamicClient = SharpClientBuilder.Create().DisableRequestTimeout()
@@ -468,7 +478,9 @@ public static class Program
                 dynamicClient.GetReadinessSnapshot(),
                 expectedActiveEndpoints: 2,
                 expectedTargetReadyEndpoints: 2);
-            if (await dynamicClient.Get<IPackageSmokeService>().AddAsync(20, 22) != 42)
+            var preparedContract4 = dynamicClient.CreateProxy<IPackageSmokeService>();
+            await preparedContract4.PrepareAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+            if (await preparedContract4.Service.AddAsync(20, 22) != 42)
                 throw new InvalidOperationException("Dynamic endpoint package smoke returned an unexpected result.");
         }
         finally

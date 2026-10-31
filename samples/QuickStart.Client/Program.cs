@@ -14,7 +14,9 @@ await using var client = SharpClientBuilder.Create()
 await client.ConnectAsync(timeout.Token);
 await client.WaitForReadinessAsync(1, timeout.Token);
 
-var greeting = client.Get<IGreetingService>();
+var greetingRpc = client.CreateProxy<IGreetingService>();
+await greetingRpc.PrepareAsync(TimeSpan.FromSeconds(10), timeout.Token);
+var greeting = greetingRpc.Service;
 var reply = await greeting.GreetAsync(
     new GreetingRequest { Name = "SharpLink" },
     timeout.Token);

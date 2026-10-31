@@ -13,7 +13,7 @@
       "published": 4,
       "current": 5,
       "policy": "increment",
-      "reason": "One 3.0 boundary since released 2.0.3/API4: generated UnsafeBlit factories carry owner-local ABI requirements, and stubs/stream bridges carry complete immutable method facts. Exact AbiIdentity rejects incompatible API5 development artifacts."
+      "reason": "One 3.0 boundary from published 2.0.3/API4: the combined identity-bearing contract channel and complete method-facts ABI ships as API5. Unreleased API5/API6 development stages are not extra release increments; exact AbiIdentity rejects other development artifacts."
     },
     {
       "name": "Generator emitted ABI",
@@ -22,43 +22,43 @@
       "published": 4,
       "current": 5,
       "policy": "increment",
-      "reason": "One 3.0 boundary since released 2.0.3/API4: generated UnsafeBlit factories carry owner-local ABI requirements, and stubs/stream bridges carry complete immutable method facts. Exact AbiIdentity rejects incompatible API5 development artifacts."
+      "reason": "One 3.0 boundary from published 2.0.3/API4: the combined identity-bearing contract channel and complete method-facts ABI ships as API5. Unreleased API5/API6 development stages are not extra release increments; exact AbiIdentity rejects other development artifacts."
     },
     {
       "name": "Protocol major",
       "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
       "pattern": "const int Protocol = (\\d+);",
       "published": 2,
-      "current": 2,
-      "policy": "unchanged",
-      "reason": "Unchanged from the published 2.0.3 release."
+      "current": 3,
+      "policy": "increment",
+      "reason": "One incompatible wire-major boundary from published Protocol2 to the sole Protocol3 grammar; no legacy parser or downgrade fallback."
     },
     {
       "name": "Generator emitted protocol",
       "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
       "pattern": "public int ProtocolVersion => (\\d+);",
       "published": 2,
-      "current": 2,
-      "policy": "unchanged",
-      "reason": "Unchanged from the published 2.0.3 release."
+      "current": 3,
+      "policy": "increment",
+      "reason": "One incompatible wire-major boundary from published Protocol2 to the sole Protocol3 grammar; no legacy parser or downgrade fallback."
     },
     {
       "name": "Protocol minor",
       "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
       "pattern": "const ushort MinorVersion = (\\d+);",
-      "published": 4,
-      "current": 4,
-      "policy": "unchanged",
-      "reason": "Unchanged from the published 2.0.3 release."
+      "published": null,
+      "current": 1,
+      "policy": "initial",
+      "reason": "Initial revision1 in the new Protocol3 domain. Published Protocol2 minor4 remains historical baseline data, not a same-domain decrement. Only exact Protocol3 revision1 is accepted."
     },
     {
       "name": "Minimum compatible minor",
       "path": "src/SharpLink.Abstractions/ProtocolV2.cs",
       "pattern": "const ushort MinimumCompatibleMinorVersion = (\\d+);",
-      "published": 4,
-      "current": 4,
-      "policy": "unchanged",
-      "reason": "Unchanged from the published 2.0.3 release."
+      "published": null,
+      "current": 1,
+      "policy": "floor",
+      "reason": "The new Protocol3 domain supports only its current initial revision1; no revision downgrade. Published Protocol2 minimum minor4 belongs to the old grammar."
     },
     {
       "name": "Contract Manifest JSON",
@@ -72,20 +72,20 @@
     {
       "name": "Runtime ABI identity",
       "path": "src/SharpLink.Abstractions/SharpLinkGeneratedAssemblyManifest.cs",
-      "pattern": "AbiIdentity = \"sharplink-3.0-api5-complete-method-facts-v(\\d+)\"",
-      "published": 1,
+      "pattern": "AbiIdentity = \"sharplink-3.0-api5-contract-channel-complete-method-facts-v(\\d+)\"",
+      "published": null,
       "current": 1,
-      "policy": "unchanged",
-      "reason": "The suffix remains v1 in the distinct 3.0/API5 complete-method-facts ABI family; this does not imply compatibility with any other API5 identity."
+      "policy": "initial",
+      "reason": "Initial suffix1 for the distinct combined API5 contract-channel/complete-method-facts identity. Published API4 and other unshipped API5 identities are not compatible."
     },
     {
       "name": "Generator ABI identity",
       "path": "src/SharpLink.Generator/RpcGenerator.ManifestEmitter.cs",
-      "pattern": "GeneratedAbiIdentity = \"sharplink-3.0-api5-complete-method-facts-v(\\d+)\"",
-      "published": 1,
+      "pattern": "GeneratedAbiIdentity = \"sharplink-3.0-api5-contract-channel-complete-method-facts-v(\\d+)\"",
+      "published": null,
       "current": 1,
-      "policy": "unchanged",
-      "reason": "The suffix remains v1 in the distinct 3.0/API5 complete-method-facts ABI family; this does not imply compatibility with any other API5 identity."
+      "policy": "initial",
+      "reason": "Initial suffix1 for the distinct combined API5 contract-channel/complete-method-facts identity. Published API4 and other unshipped API5 identities are not compatible."
     },
     {
       "name": "Diagnostic snapshot",

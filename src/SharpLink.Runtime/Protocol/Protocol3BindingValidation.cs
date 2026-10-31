@@ -64,6 +64,6 @@ internal static class Protocol3BindingValidation
     internal static SharpLinkProtocolViolationException Malformed(string message)
         => new(ProtocolViolationReason.MalformedFrame, message);
 
-    private static SharpLinkProtocolViolationException State(string message)
+    internal static SharpLinkProtocolViolationException State(string message)
         => new(ProtocolViolationReason.ProtocolState, message);
 }

@@ -13,6 +13,7 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         ServiceRegistration service,
         RpcMethodFacts method,
+        in ServerRequestEnvelope request,
         out ServerRetainedAdmissionPayload? retainedPayload)
     {
         retainedPayload = null;
@@ -34,7 +35,7 @@ internal sealed partial class SharpLinkServer
                 _runtimeContext.Buffers,
                 owner,
                 retainedPermit);
-            retainedPayload.CaptureSelectedService(service, method);
+            retainedPayload.CaptureSelectedService(service, method, request);
             owner = null;
             retainedPermit = null;
             return true;
@@ -236,18 +237,18 @@ internal sealed partial class SharpLinkServer
             session.StreamManager.AbandonExistingRequestStreams(requestId, clientStreamCount);
     }
 
-    private int ResolveRawRequestClientStreamCount(ReadOnlySequence<byte> payload)
+    private static int ResolveRawRequestClientStreamCount(ProtocolV2FrameType frameType, ReadOnlySequence<byte> payload)
     {
-        var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out long contractId) ||
-            !reader.TryReadLittleEndian(out long methodId) ||
-            !Volatile.Read(ref _services).TryGetValue(contractId, out var registration))
-        {
+        // A binding ID is never a current-registry ContractId. Rejection cleanup is driven only
+        // by the explicit wire shape; it must not resolve a new registration or invoke a stub.
+        if (frameType == ProtocolV2FrameType.Request)
+            return 0;
+        if (frameType != ProtocolV2FrameType.OneWayStreamRequest ||
+            payload.Length < ProtocolV2Constants.OneWayStreamRequestPrefixBytes)
             return UnresolvedClientStreamCount;
-        }
-
-        var method = ResolveMethodCall(registration, methodId).Method;
-        return method.IsKnown ? method.ClientStreamCount : UnresolvedClientStreamCount;
+        var reader = new SequenceReader<byte>(payload.Slice(ProtocolV2Constants.RequestPrefixBytes));
+        return reader.TryReadLittleEndian(out short count) && count is >= 1 and <= 127
+            ? count : UnresolvedClientStreamCount;
     }
 
     private static void CompleteFailedRequestStreams(
@@ -274,10 +275,15 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
 {
     internal SharpLinkServer.QueuedServiceSelection SelectedService { get; private set; }
     internal RpcMethodFacts SelectedMethod { get; private set; } = RpcMethodFacts.UnknownMethod;
+    internal ServerRequestEnvelope SelectedRequest { get; private set; }
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    internal void CaptureSelectedService(ServiceRegistration service, RpcMethodFacts method)
+    internal void CaptureSelectedService(ServiceRegistration service, RpcMethodFacts method, in ServerRequestEnvelope request)
     {
+        var payload = Payload;
+        if (request.PrefixBytes < request.FixedPrefixBytes || request.PrefixBytes > payload.Length)
+            throw new InvalidOperationException("Selected request prefix does not fit its retained owner.");
+        SelectedRequest = request with { Arguments = payload.Slice(request.PrefixBytes) };
         SelectedService = new SharpLinkServer.QueuedServiceSelection(service);
         SelectedMethod = method;
     }
@@ -374,6 +380,8 @@ internal sealed class ServerRetainedAdmissionPayload : IDisposable
     private void ReleaseCore()
     {
         SelectedService = default;
+        SelectedMethod = RpcMethodFacts.UnknownMethod;
+        SelectedRequest = default;
         try
         {
             _pool.Return(_owner);

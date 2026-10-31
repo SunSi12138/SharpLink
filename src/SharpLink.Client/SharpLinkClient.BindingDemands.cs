@@ -5,6 +5,7 @@ internal sealed partial class SharpLinkClient
     private readonly Lock _contractDemandGate = new();
     private readonly List<WeakReference<ContractCallSite>> _contractDemands = [];
     private int _bindingWaiters;
+    internal ClientBindingBudget BindingBudget { get; } = new();
     internal Action<ClientBindingSession>? BindingSessionCreatedForTesting { get; set; }
 
     private void RegisterContractDemand(ContractCallSite site)
@@ -75,18 +76,18 @@ internal sealed partial class SharpLinkClient
                 .Where(static site => site is not null).ToArray()!;
         }
         foreach (var site in sites)
-            ScheduleContractBinding(site);
+            ScheduleContractBinding(site, retryCompletedFailures: true);
     }
 
-    private void ScheduleContractBinding(ContractCallSite site)
+    private void ScheduleContractBinding(ContractCallSite site, bool retryCompletedFailures = false)
     {
         if (site.LocalControl.IsRetired || _shutdownCts.IsCancellationRequested)
             return;
-        foreach (var connection in Volatile.Read(ref _readyConnections))
+        foreach (var connection in _cluster?.CaptureReadyConnections() ?? Volatile.Read(ref _readyConnections))
         {
             if (!connection.CanAcceptCalls || !IsContractBindingCandidate(site, connection.Session))
                 continue;
-            if (site.TryBeginBinding(connection))
+            if (site.TryBeginBinding(connection, retryCompletedFailures))
                 TrackFrameworkTask(BindContractDemandAsync(site, connection), "ContractBinding");
         }
     }
@@ -112,23 +113,39 @@ internal sealed partial class SharpLinkClient
                     (ulong)original.Generation, (ulong)original.RegistrationId) : null;
             var request = new Protocol3BindRequest((Protocol3BindingRequirement)site.Options.Requirement,
                 site.Local.ContractId, site.Local.RpcAssemblyHash, receipt);
-            var result = await connection.Binding.BindAsync(request).ConfigureAwait(false);
+            using var resultOwner = await connection.Binding.BindAsync(request, site.DemandRetirement).ConfigureAwait(false);
+            var result = resultOwner.Result;
             if (result.Status != Protocol3BindStatus.Success)
             {
                 site.BindingFailed(connection, MapBindingFailure(result.Status));
                 return;
             }
-            if (site.LocalControl.IsRetired || !connection.CanAcceptCalls ||
-                !connection.Binding.Publication.TryCommit(result.Token,
-                    () => site.PublishBinding(connection, result.Token)))
+            var published = false;
+            try
             {
-                await connection.Binding.ReleaseAsync(result.Token).ConfigureAwait(false);
-                site.BindingFailed(connection, NoBoundRoute());
+                if (!site.LocalControl.IsRetired && connection.CanAcceptCalls)
+                    published = connection.Binding.Publication.TryCommit(result.Token,
+                        () => site.PublishBinding(connection, result.Token));
+                if (!published)
+                    site.BindingFailed(connection, NoBoundRoute());
+            }
+            finally
+            {
+                // A callback can lose the local retirement race and throw. The successful token
+                // still owns a server slot even when no local route ever escaped.
+                if (!published)
+                    await connection.Binding.ReleaseAsync(result.Token).ConfigureAwait(false);
             }
         }
         catch (Exception exception)
         {
             site.BindingFailed(connection, exception);
+        }
+        finally
+        {
+            // Control owners count during local identity-exhaustion drain, independently of
+            // business pending/reservation counts. This callback runs outside every binding gate.
+            RetireDrainingConnectionIfIdle(connection);
         }
     }
 
@@ -149,6 +166,10 @@ internal sealed partial class SharpLinkClient
         Protocol3BindStatus.ControlCapacity => new(SharpLinkErrorCode.ResourceExhausted,
             SharpLinkErrorDetails.ResourceExhausted.BindingOperations, "Binding operation capacity is full."),
         Protocol3BindStatus.ControlDeadline => new(SharpLinkErrorCode.DeadlineExceeded, "Binding control deadline expired."),
+        Protocol3BindStatus.ScopeDenied => new(SharpLinkErrorCode.PermissionDenied, "Binding scope is denied."),
+        Protocol3BindStatus.CancelledBeforeCommit => new(SharpLinkErrorCode.Cancelled, "Binding demand retired before commit."),
+        Protocol3BindStatus.SessionDraining => new(SharpLinkErrorCode.Unavailable,
+            SharpLinkErrorDetails.Unavailable.SessionBindingDraining, "Session is draining."),
         _ => new(SharpLinkErrorCode.Unavailable, SharpLinkErrorDetails.Unavailable.BindingRetired,
             "Registration is not currently admitting bindings.")
     };
@@ -184,6 +205,10 @@ internal sealed partial class SharpLinkClient
         {
             site.EnterBindingWaiter();
             entered = true;
+            // Stop cannot leave a waiter sleeping until its finite timeout, even before Connect.
+            // Registration callbacks only pulse the original site's bounded waiter signal.
+            using var stopped = _shutdownCts.Token.UnsafeRegister(
+                static state => ((ContractCallSite)state!).PulseBindingWaiters(), site);
             ScheduleContractBinding(site);
             while (true)
             {

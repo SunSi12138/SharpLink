@@ -6,7 +6,8 @@ internal sealed partial class SharpLinkServer
         RpcSession session,
         ReadOnlySequence<byte> payload,
         ProtocolV2FrameFlags flags,
-        RpcDeadline resolvedDeadline = default)
+        RpcDeadline resolvedDeadline = default,
+        ProtocolV2FrameType frameType = ProtocolV2FrameType.Request)
     {
         return ServerRequestEnvelopeReader.Read(
             session,
@@ -14,7 +15,8 @@ internal sealed partial class SharpLinkServer
             flags,
             _protocolOptions.MaxMetadataBytes,
             _runtimeContext.TimeProvider,
-            resolvedDeadline);
+            resolvedDeadline,
+            frameType);
     }
 
     private bool IsDeadlineExceeded(RpcDeadline deadline)

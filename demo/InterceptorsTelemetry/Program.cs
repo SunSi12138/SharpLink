@@ -24,7 +24,9 @@ var client = DemoTcp.CreateClient(port, builder => builder.AddInterceptor(client
 try
 {
     await DemoTcp.EnsureConnectedAsync(client, app.Token);
-    var value = await client.Get<IObservedService>().AddAsync(20, 22, app.Token);
+    var observedRpc = client.CreateProxy<IObservedService>();
+    await observedRpc.PrepareAsync(TimeSpan.FromSeconds(10), app.Token);
+    var value = await observedRpc.Service.AddAsync(20, 22, app.Token);
     Console.WriteLine($"result={value}, client={clientInterceptor.LastStatus}, server={serverInterceptor.LastStatus}");
     Console.WriteLine(string.Join(Environment.NewLine, activityNames));
     if (value != 42 || activityNames.Count < 2)

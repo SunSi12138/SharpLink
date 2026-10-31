@@ -221,7 +221,7 @@ public interface IAliasOnlyAdapterContract : IService
 using System;
 
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute(typeof(Referenced.Payload), 0x5555555555555555UL, {{low}}UL)]
-[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 5, 2, "3.0.0-test", "sharplink-3.0-api5-complete-method-facts-v1")]
+[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 5, 3, "3.0.0-test", "sharplink-3.0-api5-contract-channel-complete-method-facts-v1")]
 
 namespace SharpLink.Abstractions
 {
@@ -318,7 +318,7 @@ public interface IReferencedNestedBaselineContract : IService
 using System;
 
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedCodecIdentityAttribute(typeof(Referenced.Payload), 0x5555555555555555UL, 0x6666666666666666UL)]
-[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 5, 2, "3.0.0-test", "{{abiIdentity}}")]
+[assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(typeof(Referenced.Manifest), 5, 3, "3.0.0-test", "{{abiIdentity}}")]
 
 namespace SharpLink.Abstractions
 {
@@ -371,7 +371,7 @@ public interface IReferencedCodecContract : IService
 
         var current = GeneratedPayloadReference(
             "CurrentGeneratedPayload",
-            "sharplink-3.0-api5-complete-method-facts-v1");
+            "sharplink-3.0-api5-contract-channel-complete-method-facts-v1");
         var currentDiagnostics = RunGenerator(consumer, sdk, current);
         Ensure(
             !currentDiagnostics.Any(static diagnostic =>

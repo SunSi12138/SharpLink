@@ -7,17 +7,19 @@ namespace SharpLink.Client;
 internal sealed class ClientBindingPublication
 {
     private readonly Lock _gate = new();
-    private readonly long[] _retiredIncarnations;
+    private long[] _retiredIncarnations;
+    private readonly int _slotCount;
     private bool _closed;
 
     internal ClientBindingPublication(uint slots)
     {
         if (slots is < 1 or > 65536)
             throw new ArgumentOutOfRangeException(nameof(slots));
-        _retiredIncarnations = new long[checked((int)slots)];
+        _slotCount = checked((int)slots);
+        _retiredIncarnations = new long[_slotCount];
     }
 
-    internal int SlotCount => _retiredIncarnations.Length;
+    internal int SlotCount => _slotCount;
 
     // Call only AFTER full structural, operation-correlation, receipt and physical-authority checks.
     // Cleanup-only successes still advance the floor: a newer occupant disproves all older occupants.
@@ -57,6 +59,7 @@ internal sealed class ClientBindingPublication
         ValidateToken(token);
         lock (_gate)
         {
+            if (_closed) return;
             var slot = Protocol3BindingToken.Slot(token);
             var incarnation = checked((long)Protocol3BindingToken.Incarnation(token));
             if (incarnation > _retiredIncarnations[slot])
@@ -65,8 +68,13 @@ internal sealed class ClientBindingPublication
     }
 
     internal bool IsEligible(ulong token)
-        => !Volatile.Read(ref _closed) &&
-           Protocol3BindingToken.IsValid(token, (uint)_retiredIncarnations.Length) && IsEligibleCore(token);
+    {
+        var floors = Volatile.Read(ref _retiredIncarnations);
+        return !Volatile.Read(ref _closed) &&
+               Protocol3BindingToken.IsValid(token, (uint)_slotCount) && floors.Length != 0 &&
+               Protocol3BindingToken.Incarnation(token) >
+               (ulong)Volatile.Read(ref floors[Protocol3BindingToken.Slot(token)]);
+    }
 
     private bool IsEligibleCore(ulong token)
         => Protocol3BindingToken.Incarnation(token) >
@@ -75,12 +83,15 @@ internal sealed class ClientBindingPublication
     internal void Close()
     {
         lock (_gate)
+        {
             Volatile.Write(ref _closed, true);
+            Volatile.Write(ref _retiredIncarnations, []);
+        }
     }
 
     private void ValidateToken(ulong token)
     {
-        if (!Protocol3BindingToken.IsValid(token, (uint)_retiredIncarnations.Length))
+        if (!Protocol3BindingToken.IsValid(token, (uint)_slotCount))
             throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame,
                 "Binding token is outside this physical session's negotiated slot domain.");
     }

@@ -44,6 +44,34 @@ internal sealed partial class SharpLinkServer
             registration.Binding?.Retire();
     }
 
+    private ServerBindingAdmissionGroup[] CaptureModuleBindingGroupsLocked(SharpLinkDynamicModule module)
+    {
+        var registrations = _detachedModuleServices.TryGetValue(module, out var detached)
+            ? detached
+            : _services.Values.Where(service => ReferenceEquals(service.Module, module)).ToArray();
+        return registrations.Where(static service => service.Binding is not null)
+            .Select(static service => service.Binding!.Group).Distinct().ToArray();
+    }
+
+    private static Task BindingGroupsDrained(ServerBindingAdmissionGroup[] groups)
+    {
+        if (groups.Any(static group => !group.IsRetired))
+            throw new InvalidOperationException("Binding groups must be retired before their payloads can be released.");
+        return Task.WhenAll(groups.Select(static group => group.WaitForDrainAsync()));
+    }
+
+    private static int RemainingBindingCalls(ServerBindingAdmissionGroup[] groups)
+    {
+        long remaining = 0;
+        foreach (var group in groups)
+        {
+            remaining += Math.Min(int.MaxValue, group.PhysicalOwnerCount);
+            if (remaining >= int.MaxValue)
+                return int.MaxValue;
+        }
+        return (int)remaining;
+    }
+
     private long NextBindingPublicationGeneration()
     {
         if (_registryGeneration == long.MaxValue)

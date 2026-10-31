@@ -218,7 +218,8 @@ internal sealed partial class SharpLinkClient
 
         public void RetireDrainingConnectionIfIdle(ClientConnection connection)
         {
-            if (connection.State != ClientConnectionState.Draining || connection.ActiveCallCount != 0)
+            if (connection.State != ClientConnectionState.Draining || (connection.ActiveCallCount != 0 || connection.CallAdmissionReservationCount != 0 ||
+                connection.Binding.ActiveOperationCount != 0))
                 return;
             DynamicEndpointState? endpoint;
             lock (_gate)

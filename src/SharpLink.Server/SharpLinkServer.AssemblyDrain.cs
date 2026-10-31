@@ -12,11 +12,13 @@ internal sealed partial class SharpLinkServer
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
         Task<SharpLinkAssemblyUnregisterResult> operation;
+        TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion;
+        SharpLinkDynamicModule module;
         lock (_registryGate)
         {
             if (_unregisterOperations.TryGetValue(assembly, out operation!))
                 return WaitForUnregisterAsync(operation, cancellationToken);
-            if (!_dynamicModules.TryGetValue(assembly, out var module))
+            if (!_dynamicModules.TryGetValue(assembly, out module!))
             {
                 return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult
                 {
@@ -24,18 +26,42 @@ internal sealed partial class SharpLinkServer
                 });
             }
             EnsureNoDynamicDependants(module);
-            var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
+            completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             operation = completion.Task;
-            var retiringBindings = _services.Values.Where(service => ReferenceEquals(service.Module, module)).ToArray();
-            _unregisterOperations.Add(assembly, operation);
-            RetireBindingGroup(retiringBindings);
-            _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
-            TrackFrameworkTask(
-                operation,
-                "DynamicAssemblyUnregister",
-                TaskObservationMode.ExternallyObserved);
+            if (_detachedModuleServices.TryGetValue(module, out _))
+            {
+                // A previous finite wait may have timed out while physical cleanup is
+                // still owned. Reattach to that retirement, not a second publication.
+                _unregisterOperations.Add(assembly, operation);
+            }
+            else
+            {
+                // Exhaustion/fallible snapshot construction precedes every retirement cut.
+                var generation = NextBindingPublicationGeneration();
+                var retiringBindings = _services.Values.Where(service => ReferenceEquals(service.Module, module)).ToArray();
+                var nextServices = _services.Where(pair => !ReferenceEquals(pair.Value.Module, module))
+                    .ToDictionary(static pair => pair.Key, static pair => pair.Value).ToFrozenDictionary();
+                _unregisterOperations.Add(assembly, operation);
+                try
+                {
+                    _detachedModuleServices.Add(module, retiringBindings);
+                }
+                catch
+                {
+                    _unregisterOperations.Remove(assembly);
+                    throw;
+                }
+                RetireBindingGroup(retiringBindings);
+                Volatile.Write(ref _services, nextServices);
+                _registryGeneration = generation;
+            }
+            module.TryBeginDraining();
         }
+        ScheduleBindingInvalidations();
+        ScheduleContractManifestPublish();
+        _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
+        TrackFrameworkTask(operation, "DynamicAssemblyUnregister", TaskObservationMode.ExternallyObserved);
         return WaitForUnregisterAsync(operation, cancellationToken);
     }
 
@@ -51,7 +77,10 @@ internal sealed partial class SharpLinkServer
         TimeSpan gracefulTimeout)
     {
         module.TryBeginDraining();
-        var drainTask = module.WaitForDrainAsync();
+        ServerBindingAdmissionGroup[] bindingGroups;
+        lock (_registryGate)
+            bindingGroups = CaptureModuleBindingGroupsLocked(module);
+        var drainTask = Task.WhenAll(module.WaitForDrainAsync(), BindingGroupsDrained(bindingGroups));
         if (!drainTask.IsCompleted)
         {
             if (!await SharpLinkDynamicModule.WaitForDrainAsync(
@@ -70,7 +99,7 @@ internal sealed partial class SharpLinkServer
                     return new SharpLinkAssemblyUnregisterResult
                     {
                         ReferencesReleased = false,
-                        RemainingCalls = module.RemainingCalls,
+                        RemainingCalls = Math.Max(module.RemainingCalls, RemainingBindingCalls(bindingGroups)),
                         RemainingStreams = module.RemainingStreams
                     };
                 }
@@ -114,6 +143,12 @@ internal sealed partial class SharpLinkServer
 
     private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
     {
+        ServerBindingAdmissionGroup[] bindingGroups;
+        lock (_registryGate)
+            bindingGroups = CaptureModuleBindingGroupsLocked(module);
+        // This is an additional mandatory owner fence, not a substitute for the still
+        // required persistent-decode/physical-tail lease transfer described in the S1 collision note.
+        await BindingGroupsDrained(bindingGroups).ConfigureAwait(false);
         ServiceRegistration[] removedServices;
         RpcGeneratedManifestRegistration codecRegistration;
         lock (_registryGate)
@@ -121,7 +156,7 @@ internal sealed partial class SharpLinkServer
             if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
                 return;
             var services = Volatile.Read(ref _services);
-            if (!_detachedModuleServices.Remove(module, out removedServices!))
+            if (!_detachedModuleServices.TryGetValue(module, out removedServices!))
             {
                 removedServices = services.Values
                     .Where(service => ReferenceEquals(service.Module, module))
@@ -147,8 +182,9 @@ internal sealed partial class SharpLinkServer
             _runtimeContext.PublishGeneratedCodecs(nextFactories);
             Volatile.Write(ref _services, nextServices);
             _dynamicModules.Remove(assembly);
-            _registryGeneration++;
-            ScheduleContractManifestPublish();
+            _detachedModuleServices.Remove(module, out _);
+            // Admission publication happened at the unregister/replacement cut. Physical
+            // codec/service cleanup is not a new registration generation transaction.
         }
 
         List<Exception>? failures = null;
@@ -220,7 +256,15 @@ internal sealed partial class SharpLinkServer
     {
         SharpLinkDynamicModule[] modules;
         lock (_registryGate)
+        {
             modules = [.. _dynamicModules.Values];
+            var currentServices = _services.Values.ToArray();
+            var detachedServices = _detachedModuleServices.Values.ToArray();
+            RetireBindingGroup(currentServices);
+            foreach (var registrations in detachedServices)
+                RetireBindingGroup(registrations);
+        }
+        ScheduleBindingInvalidations();
         for (var index = 0; index < modules.Length; index++)
             modules[index].TryBeginDraining();
     }

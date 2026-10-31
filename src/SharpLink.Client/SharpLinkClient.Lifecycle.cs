@@ -74,6 +74,12 @@ internal sealed partial class SharpLinkClient
 
     private async Task<ClientConnection> ConnectOneAsync(CancellationToken cancellationToken)
     {
+        lock (_poolGate)
+        {
+            if (CountCapacityConnectionsLocked() >= _connectionPoolOptions.MaxConnections)
+                throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
+                    "Connection capacity is retained by ready or gracefully draining sessions.");
+        }
         using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken,
             _shutdownCts.Token);
@@ -118,7 +124,7 @@ internal sealed partial class SharpLinkClient
                 {
                     poolException = CreateConnectionClosedException("Client stopped while connecting.");
                 }
-                else if (CountReadyConnectionsLocked() >= _connectionPoolOptions.MaxConnections)
+                else if (CountCapacityConnectionsLocked() >= _connectionPoolOptions.MaxConnections)
                 {
                     poolException = new InvalidOperationException("The connection pool is already at capacity.");
                 }
@@ -263,6 +269,21 @@ internal sealed partial class SharpLinkClient
             ReadyEndpoints: snapshot.Length == 0 ? 0 : 1,
             ReadyConnections: snapshot.Length,
             TargetReadyEndpoints: 1));
+    }
+
+    private int CountCapacityConnectionsLocked()
+    {
+        var count = 0;
+        foreach (var candidate in _connections)
+            if (candidate.OccupiesConnectionCapacity)
+                count++;
+        return count;
+    }
+
+    private bool HasConnectionCapacity()
+    {
+        lock (_poolGate)
+            return CountCapacityConnectionsLocked() < _connectionPoolOptions.MaxConnections;
     }
 
     private int CountReadyConnectionsLocked()

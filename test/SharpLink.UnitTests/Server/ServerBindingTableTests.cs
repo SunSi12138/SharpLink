@@ -5,6 +5,94 @@ namespace SharpLink.UnitTests.Server;
 public class ServerBindingTableTests
 {
     [Test]
+    public void CompletedCancelIsNoOpAndNeverReleasesTheNextCreator()
+    {
+        var quota = new ServerBindingSlotQuota(1);
+        var table = new ServerBindingTable(1, quota);
+        var registration = Registration(1);
+        var first = Bind(table, 1, registration);
+        table.CompleteBindId(1);
+        Ensure(!table.Cancel(1) && ReferenceEquals(table.Capture(first.Token), first) && quota.Used == 1);
+        Ensure(table.Release(first.Token));
+        var second = Bind(table, 2, registration);
+        Ensure(!table.Cancel(1) && ReferenceEquals(table.Capture(second.Token), second));
+        Ensure(table.Cancel(2)); // Exact nonterminal creator, not the completed predecessor.
+        table.CompleteBindId(2);
+        Ensure(!table.Cancel(2) && quota.Used == 0);
+        table.ObserveBindId(3); // Failed resolution still has a final result and terminal ID.
+        table.CompleteBindId(3);
+        Ensure(!table.Cancel(3));
+        ExpectViolation(() => table.TryBind(3, registration, out _));
+        ExpectViolation(() => table.Cancel(4));
+        table.Close();
+    }
+
+    [Test]
+    public void RetiredTokenScanIsBoundedAndCannotDetachAReusedSlot()
+    {
+        var quota = new ServerBindingSlotQuota(2);
+        var table = new ServerBindingTable(2, quota);
+        var retired = Registration(1);
+        var live = Registration(2);
+        var old = Bind(table, 1, retired);
+        var second = Bind(table, 2, live);
+        retired.Retire();
+        var tokens = new ulong[1];
+        var cursor = 0;
+        Ensure(table.TakeRetiredTokens(tokens, ref cursor, scanLimit: 1) == 1);
+        Ensure(tokens[0] == old.Token && cursor == 1 && quota.Used == 1);
+        var reused = Bind(table, 3, live);
+        Ensure(Protocol3BindingToken.Slot(reused.Token) == Protocol3BindingToken.Slot(old.Token));
+        Ensure(table.TakeRetiredTokens(tokens, ref cursor, scanLimit: 1) == 0 && cursor == 2);
+        Ensure(!table.Release(old.Token));
+        Ensure(ReferenceEquals(table.Capture(reused.Token), reused));
+        Ensure(ReferenceEquals(table.Capture(second.Token), second) && quota.Used == 2);
+        cursor = 0;
+        Ensure(table.TakeRetiredTokens(tokens, ref cursor) == 0 && cursor == 2);
+        table.Close();
+        Ensure(quota.Used == 0);
+    }
+
+    [Test]
+    public async Task GroupDrainRequiresAllExactLeasesAfterTheSharedRetirementCut()
+    {
+        var group = new ServerBindingAdmissionGroup();
+        var first = Registration(1, group);
+        var second = Registration(2, group);
+        group.Seal([first, second]);
+        Ensure(first.TryAcquire(out var firstLease));
+        Ensure(second.TryAcquire(out var secondLease));
+        var exactFirstPayload = firstLease.Registration;
+        var exactSecondPayload = secondLease.Registration;
+        group.Retire();
+        Ensure(first.IsRetired && second.IsRetired);
+        Ensure(!first.TryAcquire(out _) && !second.TryAcquire(out _));
+        Ensure(!group.WaitForDrainAsync().IsCompleted && group.PhysicalOwnerCount == 2);
+        Ensure(ReferenceEquals(firstLease.Registration, exactFirstPayload));
+        Ensure(ReferenceEquals(secondLease.Registration, exactSecondPayload));
+        firstLease.Release();
+        Ensure(!group.WaitForDrainAsync().IsCompleted && group.PhysicalOwnerCount == 1);
+        secondLease.Release();
+        await group.WaitForDrainAsync();
+        group.Retire();
+        Ensure(group.PhysicalOwnerCount == 0);
+    }
+
+    [Test]
+    public async Task StaticServiceCleanupWaitsForItsAcquiredBindingOwner()
+    {
+        var registration = Registration(1);
+        Ensure(registration.TryAcquire(out var lease));
+        var cleanup = new ServerServiceCleanup([lease.Registration], ownedServiceProvider: null);
+        var completion = cleanup.DisposeAsync().AsTask();
+        Ensure(registration.IsRetired && !completion.IsCompleted);
+        Ensure(!registration.TryAcquire(out _));
+        lease.Release();
+        await completion;
+        Ensure(registration.PhysicalOwnerCount == 0);
+    }
+
+    [Test]
     public void CapturedEntryNeverRetargetsAfterReleaseAndSlotReuse()
     {
         var quota = new ServerBindingSlotQuota(1);
@@ -206,13 +294,17 @@ public class ServerBindingTableTests
         return entry ?? throw new InvalidOperationException("Successful Bind did not install its entry.");
     }
 
-    private static ServerBindingRegistration Registration(long id)
+    private static ServerBindingRegistration Registration(long id, ServerBindingAdmissionGroup? group = null)
     {
         // Factory, provider, facts and invocation are poison pills. Table acquisition only
         // captures the actual registration payload and must never activate/dispatch it.
         var payload = ServiceRegistration.CreateSingletonFactory(typeof(object), new NoBusinessStub(),
             new NoServices(), static _ => throw new InvalidOperationException("Business factory called."), ownsService: false);
-        return new ServerBindingRegistration(payload, 7, new RpcHash128(1, 2), id, id);
+        var registration = group is null
+            ? new ServerBindingRegistration(payload, 7, new RpcHash128(1, 2), id, id)
+            : new ServerBindingRegistration(payload, 7, new RpcHash128(1, 2), id, id, group);
+        payload.Binding = registration;
+        return registration;
     }
 
     private static void Ensure(bool condition)

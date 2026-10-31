@@ -108,10 +108,14 @@ public class SharpLinkRemoteHealthCheckTests
             return ValueTask.FromResult(result);
         }
 
-        public T Get<T>() where T : IService
+        public RpcProxy<T> CreateProxy<T>(RpcProxyOptions? options = null) where T : IService
             => throw new NotSupportedException();
-
-        public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : IService
+        public IRpcRuntimeContext RuntimeContext => throw new NotSupportedException();
+        public RpcLocalContract GetLocalContract<TContract>() where TContract : IService
+            => throw new NotSupportedException();
+        public RpcLocalContract GetLocalContract(System.Reflection.Assembly registeredAssembly, long contractId)
+            => throw new NotSupportedException();
+        public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
             => throw new NotSupportedException();
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)

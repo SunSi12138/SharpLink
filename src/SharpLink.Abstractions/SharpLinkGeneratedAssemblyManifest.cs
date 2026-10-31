@@ -158,10 +158,10 @@ public static class SharpLinkGeneratedManifestVersions
     /// generated assembly with the matching SDK and exact ABI identity; the API number alone
     /// does not identify compatible development branches.
     /// </summary>
-    public const int Api = 6;
+    public const int Api = 5;
 
-    /// <summary>Exact discriminator for the 3.0/API6 contract-channel and complete-method-facts ABI.</summary>
-    public const string AbiIdentity = "sharplink-3.0-api6-contract-channel-complete-method-facts-v1";
+    /// <summary>Exact discriminator for the 3.0/API5 contract-channel and complete-method-facts ABI.</summary>
+    public const string AbiIdentity = "sharplink-3.0-api5-contract-channel-complete-method-facts-v1";
 
     /// <summary>The exact binding-aware SharpLink wire protocol major version.</summary>
     public const int Protocol = 3;

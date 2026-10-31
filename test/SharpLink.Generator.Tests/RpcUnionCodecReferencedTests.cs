@@ -53,9 +53,9 @@ using SharpLink.Sdk;
 [assembly: SharpLinkGeneratedAssemblyManifestAttribute(
     typeof(ReferencedUnion.Manifest),
     5,
-    2,
+    3,
     "2.0.0",
-    "sharplink-3.0-api5-complete-method-facts-v1")]
+    "sharplink-3.0-api5-contract-channel-complete-method-facts-v1")]
 
 namespace ReferencedUnion
 {

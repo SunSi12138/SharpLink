@@ -42,7 +42,6 @@ internal sealed partial class SharpLinkServer
         ReadOnlySequence<byte> payload)
     {
         _ = serviceInfo;
-        _ = request;
         if ((flags & ProtocolV2FrameFlags.Compressed) == 0 ||
             (flags & ProtocolV2FrameFlags.Cancellable) == 0 ||
             Volatile.Read(ref _decodeExecutor) is null)
@@ -51,7 +50,7 @@ internal sealed partial class SharpLinkServer
         }
 
         var decodedPayloadBytes = RpcSession.ReadCompressedDecodedPayloadLength(
-            ProtocolV2FrameType.Request,
+            request.FrameType,
             flags,
             payload);
 

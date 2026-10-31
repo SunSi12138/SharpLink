@@ -8,7 +8,8 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
         out ServerDecodePermit? decodePermit,
-        out SharpLinkException? rejection)
+        out SharpLinkException? rejection,
+        ProtocolV2FrameType frameType)
     {
         ArgumentNullException.ThrowIfNull(requestPermit);
 
@@ -24,7 +25,7 @@ internal sealed partial class SharpLinkServer
         }
 
         var decodedPayloadBytes = RpcSession.ReadCompressedDecodedPayloadLength(
-            ProtocolV2FrameType.Request,
+            frameType,
             flags,
             payload);
         if (!decodePermit.TryReserveDecodedBytes(decodedPayloadBytes))

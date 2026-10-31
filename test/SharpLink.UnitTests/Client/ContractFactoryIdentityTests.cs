@@ -112,7 +112,7 @@ public sealed class ContractFactoryIdentityTests
     public async Task CapturedMultiClusterFactoryMustFailAndRollbackWhenItsSlotIsReplacedBeforeReturn()
     {
         var manifest = new FactoryManifest();
-        await using var coordinator = SharpLinkMultiClusterClientBuilder.Create()
+        await using var coordinator = SharpLinkMultiClusterClientBuilder.Create().DisableRequestTimeout()
             .UseGeneratedDiscoverySources(new FixedGeneratedManifestSource([manifest]),
                 new FixedGeneratedClusterRouteSource([new FactoryRouteManifest()]))
             .AddCluster("factory", child => child.UseTransport(new TestClientTransportFactory()))
@@ -157,7 +157,7 @@ public sealed class ContractFactoryIdentityTests
     }
 
     private static SharpLinkClient BuildClient(FactoryManifest manifest, TestClientTransportFactory transport)
-        => (SharpLinkClient)SharpClientBuilder.Create()
+        => (SharpLinkClient)SharpClientBuilder.Create().DisableRequestTimeout()
             .UseGeneratedManifestSource(new FixedGeneratedManifestSource([manifest]))
             .UseTransport(transport).Build();
 

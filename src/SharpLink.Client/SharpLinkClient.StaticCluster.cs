@@ -162,11 +162,18 @@ internal sealed partial class SharpLinkClient
                 if (endpoint is null)
                     return;
                 connection.MarkDraining();
-                if (connection.ActiveCallCount == 0)
+                if (connection.ActiveCallCount == 0 && connection.CallAdmissionReservationCount == 0 &&
+                    connection.Binding.ActiveOperationCount == 0)
                 {
                     endpoint.Connections.Remove(connection);
                     PublishReadySnapshotLocked();
                     retireImmediately = true;
+                }
+                else if (connection.HasExhaustedProtocolIdentity)
+                {
+                    // Exhaustion must never force-close old calls to make retiring space.
+                    // The connection remains charged to normal endpoint/pool capacity instead.
+                    PublishReadySnapshotLocked();
                 }
                 else if (_retiringConnections.Add(connection) &&
                          _retiringConnections.Count > _options.MaxRetiringConnections)
@@ -233,7 +240,9 @@ internal sealed partial class SharpLinkClient
 
         public void RetireDrainingConnectionIfIdle(ClientConnection connection)
         {
-            if (connection.State != ClientConnectionState.Draining || connection.ActiveCallCount != 0)
+            if (connection.State != ClientConnectionState.Draining ||
+                connection.ActiveCallCount != 0 || connection.CallAdmissionReservationCount != 0 ||
+                connection.Binding.ActiveOperationCount != 0)
                 return;
             EndpointState? endpoint;
             lock (_gate)
@@ -760,7 +769,8 @@ internal sealed partial class SharpLinkClient
             => Volatile.Read(ref _stopping) == 0 && !_client._shutdownCts.IsCancellationRequested &&
                _topology.ReadyEndpointCount < TargetReadyEndpointCount &&
                TotalConnectionsLocked() < _options.MaxConnections &&
-               endpoint.NonRetiringConnectionCount + endpoint.ConnectingCount == 0;
+               endpoint.ReadyConnections.Length == 0 && endpoint.ConnectingCount == 0 &&
+               endpoint.NonRetiringConnectionCount < _options.MaxConnectionsPerEndpoint;
 
         private int CountConnections(Func<ClientConnection, int> count)
         {

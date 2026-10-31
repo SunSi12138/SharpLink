@@ -83,6 +83,64 @@ public sealed class ContractBindingTcpVerticalSliceTests
         Ensure(await proxy.Service.EchoAsync(15) == 16, "shared original demand survives waiter cancellation");
     }
 
+    [Test]
+    public async Task PrepareBeforeConnectMustWakeOnClientStop()
+    {
+        await using var harness = new Harness();
+        var proxy = harness.Client.CreateProxy<IBindingVerticalService>();
+        var preparation = proxy.PrepareAsync(TimeSpan.FromSeconds(30)).AsTask();
+        await harness.Client.StopAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            await preparation.WaitAsync(TimeSpan.FromSeconds(5));
+            throw new InvalidOperationException("Stopped preparation unexpectedly succeeded");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.ConnectionClosed, "stop wins without waiting for Prepare timeout");
+        }
+        Ensure(harness.Service.Calls == 0, "local preparation/stop cannot dispatch business");
+    }
+
+    [Test]
+    public async Task LaterBindCannotOvertakeAnUnconfirmedEarlierPublication()
+    {
+        await using var harness = new Harness();
+        var early = NewGate();
+        var secondWaiting = NewGate();
+        var firstConfirmation = NewGate();
+        var resultCount = 0;
+        var confirmations = 0;
+        harness.Server.BeforeBindingResultForTesting = (_, _) =>
+        {
+            Interlocked.Increment(ref resultCount);
+            return Task.CompletedTask;
+        };
+        harness.Client.BindingSessionCreatedForTesting = binding =>
+        {
+            binding.BeforePublicationConfirmationForTesting = () =>
+                Interlocked.Increment(ref confirmations) == 1 ? firstConfirmation.Task : Task.CompletedTask;
+            binding.EarlyResultObservedForTesting = () => early.TrySetResult();
+            binding.PublicationWaitStartedForTesting = id => { if (id == 2) secondWaiting.TrySetResult(); };
+        };
+        var first = harness.Client.CreateProxy<IBindingVerticalService>();
+        var second = harness.Client.CreateProxy<IBindingSecondVerticalService>();
+        await harness.ConnectAsync();
+        var firstReady = first.PrepareAsync(TimeSpan.FromSeconds(10)).AsTask();
+        var secondReady = second.PrepareAsync(TimeSpan.FromSeconds(10)).AsTask();
+        try
+        {
+            await Task.WhenAll(early.Task, secondWaiting.Task).WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(Volatile.Read(ref resultCount) == 1, "ID2 has reached its publication wait but cannot overtake ID1");
+            Ensure(!firstReady.IsCompleted && !secondReady.IsCompleted, "neither route is confirmed");
+        }
+        finally { firstConfirmation.TrySetResult(); }
+        await Task.WhenAll(firstReady, secondReady);
+        Ensure(Volatile.Read(ref resultCount) == 2, "each distinct contract demand gets exactly one Bind result");
+        Ensure(await first.Service.EchoAsync(21) == 22 && await second.Service.EchoAsync(21) == 23,
+            "both exact generated receivers become callable after ordered publication");
+    }
+
     private static async Task AssertNoBoundRoute(Func<ValueTask<int>> action)
     {
         try { await action(); throw new InvalidOperationException("Unbound call unexpectedly succeeded"); }
@@ -100,11 +158,12 @@ public sealed class ContractBindingTcpVerticalSliceTests
         private readonly CancellationTokenSource _stop = new();
         private Task? _serverTask;
         internal BindingVerticalService Service { get; } = new();
+        internal BindingSecondVerticalService SecondService { get; } = new();
         internal SharpLinkServer Server { get; }
         internal SharpLinkClient Client { get; }
         internal Harness()
         {
-            var server = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback).ReplaceService(Service);
+            var server = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback).ReplaceService(Service).ReplaceService(SecondService);
             var port = ((IPEndPoint)server.Transport!.LocalEndPoint!).Port;
             Server = (SharpLinkServer)server.Build();
             Client = (SharpLinkClient)SharpClientBuilder.Create().DisableRequestTimeout()
@@ -145,4 +204,16 @@ public sealed class BindingVerticalService : IBindingVerticalService
     public TaskCompletionSource<int> Notification { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public ValueTask<int> EchoAsync(int value) { Interlocked.Increment(ref _calls); return ValueTask.FromResult(value + 1); }
     public ValueTask NotifyAsync(int value) { Interlocked.Increment(ref _calls); Notification.TrySetResult(value); return ValueTask.CompletedTask; }
+}
+
+[RpcContract]
+public interface IBindingSecondVerticalService : IService
+{
+    [NonCancellable] ValueTask<int> EchoAsync(int value);
+}
+
+[RpcService]
+public sealed class BindingSecondVerticalService : IBindingSecondVerticalService
+{
+    public ValueTask<int> EchoAsync(int value) => ValueTask.FromResult(value + 2);
 }

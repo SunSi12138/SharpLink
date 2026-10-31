@@ -123,6 +123,11 @@ internal sealed class ServerServiceModuleRegistry
 
         internal int Count => _owner._detachedModuleServices.Count;
 
+        internal IEnumerable<ServiceRegistration[]> Values => _owner._detachedModuleServices.Values;
+
+        internal bool TryGetValue(SharpLinkDynamicModule module, out ServiceRegistration[] services)
+            => _owner._detachedModuleServices.TryGetValue(module, out services!);
+
         internal void Add(SharpLinkDynamicModule module, ServiceRegistration[] services)
             => _owner._detachedModuleServices.Add(module, services);
 

@@ -51,8 +51,8 @@ public sealed class Consumer
         var instanceProducer = CreateMetadataReference("InstanceOwner", """
 using SharpLink.Abstractions;
 [assembly: SharpLinkGeneratedAssemblyManifestAttribute(
-    typeof(SharpLink.Generated.InstanceManifest), 5, 2,
-    "3.0.0-test", "sharplink-3.0-api5-complete-method-facts-v1")]
+    typeof(SharpLink.Generated.InstanceManifest), 5, 3,
+    "3.0.0-test", "sharplink-3.0-api5-contract-channel-complete-method-facts-v1")]
 namespace SharpLink.Generated
 {
     public sealed class InstanceManifest : ISharpLinkGeneratedAssemblyManifest

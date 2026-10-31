@@ -38,6 +38,11 @@ internal interface IPendingCallOwner
     void OnPendingCallCompleted(in PendingCallCompletion completion);
     void OnProducerCancellationCallbackFailed(Exception exception);
 
+    // Called at most once after the permanent admission seal. Must not tear down admitted tails.
+    void OnRequestIdsExhausted()
+    {
+    }
+
     void OnPendingCallCapacityIdle()
     {
     }
@@ -74,6 +79,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     private readonly SemaphoreSlim _slotAvailable;
     private readonly PendingDeadlineScheduler _deadlineScheduler;
     private long _nextId;
+    private int _requestIdsExhausted;
     private int _activeSlots;
     private int _waiterCount;
     private int _slotAvailableDisposed;
@@ -113,6 +119,22 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     public int Capacity => _capacity;
 
     internal int ActiveCount => Volatile.Read(ref _activeSlots);
+
+    internal bool RequestIdsExhausted => Volatile.Read(ref _requestIdsExhausted) != 0;
+
+    // _nextId is the allocated high-water, including IDs skipped because a ring slot was busy.
+    // In-flight Increment racers may enter the negative sentinel after the last positive ID;
+    // they can never publish it. Once sealed, the public high-water remains permanently MaxValue.
+    internal long HighestAllocatedRequestId
+    {
+        get
+        {
+            if (RequestIdsExhausted)
+                return long.MaxValue;
+            var value = Volatile.Read(ref _nextId);
+            return value >= 0 ? value : long.MaxValue;
+        }
+    }
 
     internal bool SlotsMaterialized => Volatile.Read(ref _slots) is not null;
 
@@ -241,6 +263,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             finally
             {
                 var remainingWaiters = Interlocked.Decrement(ref _waiterCount);
+                if (RequestIdsExhausted && remainingWaiters != 0)
+                    SignalSlotAvailable();
                 if (Volatile.Read(ref _disposed) != 0)
                 {
                     if (remainingWaiters == 0)
@@ -291,23 +315,17 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         IPendingCallCompletionObserver? completionObserver = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        var operation = RpcOperationPool<RpcEmptyRequest>.Rent();
-        if (TryRegister(
+        if (TryRent(
+                RpcEmptyRequestCodec.Instance,
                 PendingCallKind.OneWayClientStreaming,
-                operation,
-                dispatcher: null,
                 deadline,
                 cancellationToken,
-                out var id,
-                RpcEmptyRequestCodec.Instance,
-                completionObserver,
                 hasResponsePayload: false,
-                responseNullable: false))
-        {
+                responseNullable: false,
+                completionObserver,
+                out var id,
+                out var operation))
             return new PendingRequestLease<RpcEmptyRequest>(id, operation);
-        }
-
-        operation.ReturnError();
         throw CreateResourceExhaustedException();
     }
 
@@ -569,20 +587,35 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         out long id,
         out RpcRequestOperation<T> operation)
     {
+        ThrowIfRequestIdsExhausted();
         operation = RpcOperationPool<T>.Rent();
-        if (TryRegister(
-                kind,
-                operation,
-                dispatcher: null,
-                deadline,
-                cancellationToken,
-                out id,
-                responseCodec,
-                completionObserver,
-                hasResponsePayload,
-                responseNullable))
+        var registrationPublished = false;
+        try
         {
-            return true;
+            if (TryRegister(
+                    kind,
+                    operation,
+                    dispatcher: null,
+                    deadline,
+                    cancellationToken,
+                    out id,
+                    responseCodec,
+                    completionObserver,
+                    hasResponsePayload,
+                    responseNullable,
+                    out registrationPublished))
+                return true;
+        }
+        catch
+        {
+            // Counter exhaustion and callback failures before publication cannot strand the
+            // operation borrowed above. A published entry retains its existing terminal owner.
+            if (!registrationPublished)
+            {
+                operation.ReturnError();
+                operation = null!;
+            }
+            throw;
         }
 
         operation.ReturnError();
@@ -600,15 +633,16 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         IRpcCodec<T> responseCodec,
         IPendingCallCompletionObserver? completionObserver,
         bool hasResponsePayload,
-        bool responseNullable)
+        bool responseNullable,
+        out bool published)
     {
+        published = false;
         if (!TryAcquireCapacity())
         {
             id = 0;
             return false;
         }
 
-        var published = false;
         try
         {
             var slots = GetOrCreateSlots();
@@ -740,6 +774,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     private bool TryAcquireCapacity()
     {
+        ThrowIfRequestIdsExhausted();
         var active = Interlocked.Increment(ref _activeSlots);
         if (active <= _capacity)
             return true;
@@ -985,8 +1020,47 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     private long NextRequestId()
     {
+        ThrowIfRequestIdsExhausted();
+        // Preserve one ordinary increment on the steady path. The permanent latch, not the
+        // counter's signed value after a racing increment, forbids any later allocation/reuse.
         var id = Interlocked.Increment(ref _nextId);
-        return id != 0 ? id : Interlocked.Increment(ref _nextId);
+        if (id == long.MaxValue || id <= 0)
+            SealRequestIdAllocation();
+        if (id <= 0)
+            throw new RequestIdsExhaustedException();
+        return id;
+    }
+
+    private void ThrowIfRequestIdsExhausted()
+    {
+        if (RequestIdsExhausted)
+            throw new RequestIdsExhaustedException();
+    }
+
+    private void SealRequestIdAllocation()
+    {
+        if (Interlocked.Exchange(ref _requestIdsExhausted, 1) != 0)
+            return;
+        try
+        {
+            _owner.OnRequestIdsExhausted();
+        }
+        finally
+        {
+            // Waiters fail locally instead of waiting for an unrelated long-lived stream.
+            // Each awakened waiter relays the signal in its existing finally path.
+            if (Volatile.Read(ref _waiterCount) != 0)
+                SignalSlotAvailable();
+        }
+    }
+
+    private sealed class RequestIdsExhaustedException : SharpLinkException
+    {
+        internal RequestIdsExhaustedException()
+            : base(SharpLinkErrorCode.Unavailable, SharpLinkErrorDetails.Unavailable.SessionBindingDraining,
+                "The physical session has exhausted its request ID domain and is draining.")
+        {
+        }
     }
 
     private bool TryTakeExpiredCallAtIndex(

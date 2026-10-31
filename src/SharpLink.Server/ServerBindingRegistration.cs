@@ -6,6 +6,8 @@ internal sealed class ServerBindingAdmissionGroup
     private long _state; // sign bit: retired; remaining bits: physical owners
     private ServerBindingRegistration[] _members = [];
     private bool _sealed;
+    private int _payloadsDetached;
+    private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal void Seal(ServerBindingRegistration[] members)
     {
@@ -17,6 +19,7 @@ internal sealed class ServerBindingAdmissionGroup
 
     internal bool IsRetired => Volatile.Read(ref _state) < 0;
     internal long PhysicalOwnerCount => Volatile.Read(ref _state) & long.MaxValue;
+    internal Task WaitForDrainAsync() => _drained.Task;
 
     internal bool TryAcquire()
     {
@@ -39,9 +42,16 @@ internal sealed class ServerBindingAdmissionGroup
             member.DetachPayload();
         // The control group must not indefinitely retain a collectible payload through a sibling.
         _members = [];
+        Volatile.Write(ref _payloadsDetached, 1);
+        if (Volatile.Read(ref _state) == long.MinValue)
+            _drained.TrySetResult();
     }
 
-    internal void Release() => Interlocked.Decrement(ref _state);
+    internal void Release()
+    {
+        if (Interlocked.Decrement(ref _state) == long.MinValue && Volatile.Read(ref _payloadsDetached) != 0)
+            _drained.TrySetResult();
+    }
 }
 
 /// <summary>Scalar contract identity plus the explicitly detachable selected payload.</summary>

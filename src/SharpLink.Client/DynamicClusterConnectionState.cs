@@ -90,7 +90,7 @@ internal sealed partial class SharpLinkClient
                 return 0;
             var count = 0;
             foreach (var connection in connections)
-                if (connection.State == ClientConnectionState.Ready)
+                if (connection.OccupiesConnectionCapacity)
                     count++;
             return count;
         }
@@ -120,14 +120,16 @@ internal sealed partial class SharpLinkClient
             }
 
             connection.MarkDraining();
-            if (connection.ActiveCallCount == 0)
+            if (connection.ActiveCallCount == 0 && connection.CallAdmissionReservationCount == 0 &&
+                    connection.Binding.ActiveOperationCount == 0)
             {
                 Remove(endpoint, connection);
                 disposeNow = true;
             }
             else
             {
-                _retiringConnections.Add(connection);
+                if (!connection.HasExhaustedProtocolIdentity)
+                    _retiringConnections.Add(connection);
                 disposeNow = false;
             }
             return true;
@@ -138,7 +140,8 @@ internal sealed partial class SharpLinkClient
             out DynamicEndpointState? endpoint)
         {
             endpoint = null;
-            if (connection.State != ClientConnectionState.Draining || connection.ActiveCallCount != 0)
+            if (connection.State != ClientConnectionState.Draining || (connection.ActiveCallCount != 0 || connection.CallAdmissionReservationCount != 0 ||
+                connection.Binding.ActiveOperationCount != 0))
                 return false;
             endpoint = FindEndpoint(connection);
             return endpoint is not null && Remove(endpoint, connection);

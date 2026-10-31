@@ -25,8 +25,12 @@ var client = SharpLinkMultiClusterClientBuilder.Create()
 try
 {
     await client.ConnectAsync(app.Token);
-    var orders = await client.Get<IOrdersService>().GetClusterAsync(app.Token);
-    var payments = await client.Get<IPaymentsService>().GetClusterAsync(app.Token);
+    var ordersRpc = client.CreateProxy<IOrdersService>();
+    await ordersRpc.PrepareAsync(TimeSpan.FromSeconds(10), app.Token);
+    var orders = await ordersRpc.Service.GetClusterAsync(app.Token);
+    var paymentsRpc = client.CreateProxy<IPaymentsService>();
+    await paymentsRpc.PrepareAsync(TimeSpan.FromSeconds(10), app.Token);
+    var payments = await paymentsRpc.Service.GetClusterAsync(app.Token);
     Console.WriteLine($"orders route -> {orders}");
     Console.WriteLine($"payments route -> {payments}");
     if (orders != "orders" || payments != "payments")

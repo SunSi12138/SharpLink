@@ -28,7 +28,7 @@ RESTORE_ERROR = re.compile(
 # Compiler rejects are only accepted from generated code mentioning current or
 # legacy generated ABI surface. Unrelated CS0246 in fixture source must fail.
 ABI_MEMBER = re.compile(
-    r"\b(?:IRpcStub|IRpcGeneratedServerBridge|IRpcChannel|IRpcCodecProvider|"
+    r"\b(?:IRpcStub|IRpcGeneratedServerBridge|IRpcChannel|IRpcContractChannel|IRpcCodecProvider|"
     r"SharpLinkGeneratedContractDescriptor|SharpLinkGeneratedManifestVersions|"
     r"IRpcGeneratedCodecFactory|ISharpLinkGeneratedAssemblyManifest|"
     r"InvokeUnaryAsync|InvokeOneWayAsync|InvokeClientStreamingAsync|"

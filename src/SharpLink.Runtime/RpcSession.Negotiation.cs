@@ -65,7 +65,7 @@ internal sealed partial class RpcSession
         NegotiatedSessionOptions options)
     {
         if (options.ProtocolMinorVersion != ProtocolV2Constants.MinorVersion)
-            throw NegotiationViolation("Protocol3 requires revision 0 without downgrade.");
+            throw NegotiationViolation("Protocol3 requires revision 1 without downgrade.");
         if ((options.Capabilities & ProtocolV2Negotiator.MandatoryCapabilities) != ProtocolV2Negotiator.MandatoryCapabilities)
             throw NegotiationViolation("Negotiated session omits Protocol3 mandatory capabilities.");
         if (options.Authority.ServerInstanceId == Guid.Empty || options.Authority.RegistryEpoch == Guid.Empty ||

@@ -16,7 +16,7 @@ public partial class RpcAnalyzerTests
         var codeBlock = markdown.Split("```csharp", StringSplitOptions.None)
             .Skip(1)
             .Select(part => part.Split("```", StringSplitOptions.None)[0])
-            .Single(block => block.Contains("GetWithMetadata<IMyService>", StringComparison.Ordinal));
+            .Single(block => block.Contains("CreateProxy<IMyService>", StringComparison.Ordinal));
         var metadataSource = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "SharpLinkMetadata.source.cs"));
         var wrapper = $$"""
 using System;
@@ -27,7 +27,17 @@ using SharpLink.Sdk;
 public interface IMyService { Task<int> GetAsync(int id, CancellationToken token); }
 public sealed class Client
 {
-    public T GetWithMetadata<T>(SharpLinkMetadata metadata) where T : class
+    public RpcProxy<T> CreateProxy<T>(RpcProxyOptions options) where T : class
+        => throw new NotSupportedException();
+}
+public sealed class RpcProxyOptions
+{
+    public SharpLinkMetadata Metadata { get; init; } = null!;
+}
+public sealed class RpcProxy<T> where T : class
+{
+    public T Service => throw new NotSupportedException();
+    public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
         => throw new NotSupportedException();
 }
 public static class DocumentedMetadataExample

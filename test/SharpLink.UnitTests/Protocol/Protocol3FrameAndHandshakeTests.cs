@@ -80,7 +80,7 @@ public class Protocol3FrameAndHandshakeTests
         ProtocolV2PayloadCodec.WriteHandshakeRequest(writer, request, Limits);
         var bytes = writer.WrittenSpan.ToArray();
         Ensure(bytes.Length == 57);
-        Ensure(BinaryPrimitives.ReadUInt16LittleEndian(bytes) == 0);
+        Ensure(BinaryPrimitives.ReadUInt16LittleEndian(bytes) == 1);
         Ensure(BinaryPrimitives.ReadUInt64LittleEndian(bytes.AsSpan(10)) == (ulong)Mandatory);
         Ensure(BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(39)) == 4096);
         Ensure(bytes[55] == 0 && bytes[56] == 0);
@@ -89,7 +89,7 @@ public class Protocol3FrameAndHandshakeTests
         Parse(Frame(ProtocolV2FrameType.HandshakeRequest, ProtocolV2FrameFlags.None, 0, bytes));
         foreach (var offset in new[] { 0, 53, 54 })
         {
-            var invalid = (byte[])bytes.Clone(); invalid[offset] = 1;
+            var invalid = (byte[])bytes.Clone(); invalid[offset] = offset == 0 ? (byte)0 : (byte)1;
             ExpectViolation(() => Parse(Frame(ProtocolV2FrameType.HandshakeRequest, ProtocolV2FrameFlags.None, 0, invalid)));
         }
         var unknownRequired = (byte[])bytes.Clone();
@@ -107,7 +107,7 @@ public class Protocol3FrameAndHandshakeTests
         var authority = new Protocol3BindingAuthority(
             new Guid("00112233-4455-6677-8899-aabbccddeeff"),
             new Guid("10213243-5465-7687-98a9-bacbdcedfe0f"), Protocol3BindingLimits.Default);
-        var response = new ProtocolV2HandshakeResponse(0, Mandatory, Limits.MaxFramePayloadBytes, 1024, 4096, Authority: authority);
+        var response = new ProtocolV2HandshakeResponse(1, Mandatory, Limits.MaxFramePayloadBytes, 1024, 4096, Authority: authority);
         var writer = new ArrayBufferWriter<byte>();
         ProtocolV2PayloadCodec.WriteHandshakeResponse(writer, response);
         var bytes = writer.WrittenSpan.ToArray();
@@ -117,7 +117,7 @@ public class Protocol3FrameAndHandshakeTests
         Parse(Frame(ProtocolV2FrameType.HandshakeResponse, ProtocolV2FrameFlags.None, 0, bytes));
         foreach (var offset in new[] { 0, 68, 69, 70 })
         {
-            var invalid = (byte[])bytes.Clone(); invalid[offset] = 1;
+            var invalid = (byte[])bytes.Clone(); invalid[offset] = offset == 0 ? (byte)0 : (byte)1;
             ExpectViolation(() => Parse(Frame(ProtocolV2FrameType.HandshakeResponse, ProtocolV2FrameFlags.None, 0, invalid)));
         }
         var emptyAuthority = (byte[])bytes.Clone(); emptyAuthority.AsSpan(22, 16).Clear();
@@ -218,7 +218,7 @@ public class Protocol3FrameAndHandshakeTests
         Parse(Frame(ProtocolV2FrameType.ContractManifest, ProtocolV2FrameFlags.None, 0, manifest));
     }
 
-    private static ProtocolV2HandshakeRequest Offer() => new(0, Mandatory, Mandatory,
+    private static ProtocolV2HandshakeRequest Offer() => new(1, Mandatory, Mandatory,
         Limits.MaxFramePayloadBytes, 1024, 4096, ReadOnlyMemory<byte>.Empty,
         BindingLimits: Protocol3BindingLimits.Default);
 

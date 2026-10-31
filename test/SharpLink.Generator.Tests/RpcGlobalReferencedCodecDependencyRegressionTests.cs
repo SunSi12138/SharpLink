@@ -23,9 +23,9 @@ using System;
 [assembly: SharpLink.Abstractions.SharpLinkGeneratedAssemblyManifestAttribute(
     typeof(Referenced.Manifest),
     5,
-    2,
+    3,
     "2.0.0-test",
-    "sharplink-3.0-api5-complete-method-facts-v1")]
+    "sharplink-3.0-api5-contract-channel-complete-method-facts-v1")]
 
 namespace SharpLink.Abstractions
 {

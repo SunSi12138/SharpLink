@@ -98,7 +98,8 @@ internal sealed partial class SharpLinkServer
                             flags,
                             stablePayload,
                             out var decodePermit,
-                            out var resourceRejection))
+                            out var resourceRejection,
+                            request.FrameType))
                     {
                         result.DecodePermit = decodePermit;
                         result.ResourceRejection = resourceRejection ?? throw new InvalidOperationException(
@@ -108,12 +109,15 @@ internal sealed partial class SharpLinkServer
 
                     result.DecodePermit = decodePermit;
                     result.Payload = session.DecodeInboundPayload(
-                        ProtocolV2FrameType.Request,
+                        request.FrameType,
                         flags,
                         stablePayload,
                         cancellationToken,
                         out var decodedOwner);
                     result.Owner = decodedOwner;
+                    result.Request = ServerRequestEnvelopeReader.ReadDecoded(
+                        session, result.Payload, stablePayload, in request, flags,
+                        _protocolOptions.MaxMetadataBytes, _runtimeContext.TimeProvider);
                     return ValueTask.CompletedTask;
                 }
                 finally
@@ -212,8 +216,7 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            request = ReadRequestEnvelope(
-                session, result.Payload, flags, request.RpcDeadline);
+            request = result.Request;
         }
         catch (ServerDecodeExecutorClosedException)
         {
@@ -341,6 +344,8 @@ internal sealed partial class SharpLinkServer
     private sealed class PersistentDecodeResult
     {
         internal ReadOnlySequence<byte> Payload { get; set; }
+
+        internal ServerRequestEnvelope Request { get; set; }
 
         internal IRpcByteBufferWriter? Owner { get; set; }
 

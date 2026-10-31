@@ -23,7 +23,7 @@ public static partial class ProtocolV2PayloadCodec
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(limits);
         if (request.MinorVersion != ProtocolV2Constants.MinorVersion)
-            throw new ArgumentOutOfRangeException(nameof(request), "Protocol3 requires revision 0.");
+            throw new ArgumentOutOfRangeException(nameof(request), "Protocol3 requires revision 1.");
         if (request.ResponseCompressionPreferenceGeneration > long.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(request), "Preference generation exceeds the 63-bit domain.");
         ValidateRecognizedCapabilities(request.RequiredCapabilities, nameof(request));
@@ -94,7 +94,7 @@ public static partial class ProtocolV2PayloadCodec
         if (allowResponseCompressionRaw > 1)
             throw ProtocolV2FrameParser.Violation("Handshake response-compression preference is invalid.");
         if (unchecked((ushort)minorBits) != ProtocolV2Constants.MinorVersion)
-            throw ProtocolV2FrameParser.Violation("Protocol3 requires handshake revision 0.");
+            throw ProtocolV2FrameParser.Violation("Protocol3 requires handshake revision 1.");
         Span<byte> bindingBytes = stackalloc byte[16];
         if (!reader.TryCopyTo(bindingBytes))
             throw ProtocolV2FrameParser.Violation("Handshake binding limits are truncated.");
@@ -144,7 +144,7 @@ public static partial class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(writer);
         if (response.MinorVersion != ProtocolV2Constants.MinorVersion)
-            throw new ArgumentOutOfRangeException(nameof(response), "Protocol3 requires revision 0.");
+            throw new ArgumentOutOfRangeException(nameof(response), "Protocol3 requires revision 1.");
         ValidateRecognizedCapabilities(response.NegotiatedCapabilities, nameof(response));
         if ((response.NegotiatedCapabilities & ProtocolV2Negotiator.MandatoryCapabilities) != ProtocolV2Negotiator.MandatoryCapabilities)
             throw new ArgumentException("Handshake response omits Protocol3 mandatory capabilities.", nameof(response));
@@ -193,7 +193,7 @@ public static partial class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation("HandshakeResponse payload is truncated.");
         }
         if (unchecked((ushort)minorBits) != ProtocolV2Constants.MinorVersion)
-            throw ProtocolV2FrameParser.Violation("Protocol3 requires handshake revision 0.");
+            throw ProtocolV2FrameParser.Violation("Protocol3 requires handshake revision 1.");
         Span<byte> authorityBytes = stackalloc byte[48];
         if (!reader.TryCopyTo(authorityBytes))
             throw ProtocolV2FrameParser.Violation("Handshake authority is truncated.");

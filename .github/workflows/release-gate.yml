@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - 'validation/dependency-forward-dev-20261030'
+      - 'validation/933-absolute-stop-budget-20261031'
     tags:
       - 'v*'
   workflow_dispatch:

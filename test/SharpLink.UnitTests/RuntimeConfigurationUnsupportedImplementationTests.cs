@@ -84,10 +84,14 @@ public sealed class RuntimeConfigurationUnsupportedImplementationTests
             CancellationToken cancellationToken = default)
             => ValueTask.FromException<SharpLinkHealthCheckResult>(new NotSupportedException());
 
-        public TContract Get<TContract>() where TContract : IService
+        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
             => throw new NotSupportedException();
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+        public IRpcRuntimeContext RuntimeContext => throw new NotSupportedException();
+        public RpcLocalContract GetLocalContract<TContract>() where TContract : IService
+            => throw new NotSupportedException();
+        public RpcLocalContract GetLocalContract(System.Reflection.Assembly registeredAssembly, long contractId)
+            => throw new NotSupportedException();
+        public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
             => throw new NotSupportedException();
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)

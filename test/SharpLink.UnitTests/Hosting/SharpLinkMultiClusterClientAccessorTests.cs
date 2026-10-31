@@ -105,10 +105,12 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
 
         public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
-        public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
-
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService => throw new NotSupportedException();
+        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+            => throw new NotSupportedException();
+        public RpcLocalContract GetLocalContract(SharpLinkClusterKey cluster, System.Reflection.Assembly registeredAssembly, long contractId)
+            => throw new NotSupportedException();
+        public IRpcContractChannel CreateContractChannel(SharpLinkClusterKey cluster, RpcLocalContract local, RpcProxyOptions? options = null)
+            => throw new NotSupportedException();
 
         public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster) => SharpLinkConnectionState.Ready;
 
@@ -170,10 +172,12 @@ public sealed class SharpLinkMultiClusterClientAccessorTests
             return new ValueTask(_release.Task);
         }
 
-        public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
-
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService => throw new NotSupportedException();
+        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+            => throw new NotSupportedException();
+        public RpcLocalContract GetLocalContract(SharpLinkClusterKey cluster, System.Reflection.Assembly registeredAssembly, long contractId)
+            => throw new NotSupportedException();
+        public IRpcContractChannel CreateContractChannel(SharpLinkClusterKey cluster, RpcLocalContract local, RpcProxyOptions? options = null)
+            => throw new NotSupportedException();
         public SharpLinkConnectionState GetClusterState(SharpLinkClusterKey cluster) => SharpLinkConnectionState.Stopped;
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
             SharpLinkClusterKey cluster,

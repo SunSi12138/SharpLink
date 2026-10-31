@@ -16,10 +16,10 @@ public static class ProtocolV2Constants
     public const int OneWayStreamRequestPrefixBytes = 18;
 
     /// <summary>The only accepted Protocol3 revision; no revision downgrade is supported.</summary>
-    public const ushort MinorVersion = 0;
+    public const ushort MinorVersion = 1;
 
     /// <summary>The sole supported revision, retained under the existing source symbol name.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 0;
+    public const ushort MinimumCompatibleMinorVersion = 1;
 }
 
 /// <summary>Protocol3 frame types.</summary>
@@ -145,7 +145,7 @@ public readonly record struct ProtocolV2FrameHeader(
     ulong RequestId);
 
 /// <summary>Protocol3 handshake request values.</summary>
-/// <param name="MinorVersion">The exact Protocol3 revision, which must be zero.</param>
+/// <param name="MinorVersion">The exact Protocol3 revision, which must be one.</param>
 /// <param name="SupportedCapabilities">Optional capabilities supported by the client.</param>
 /// <param name="RequiredCapabilities">Capabilities that the server must negotiate for the connection to succeed.</param>
 /// <param name="MaxFramePayloadBytes">The largest frame payload accepted by the client.</param>
@@ -170,7 +170,7 @@ public readonly record struct ProtocolV2HandshakeRequest(
     Protocol3BindingLimits BindingLimits = default);
 
 /// <summary>Protocol3 negotiated handshake response values.</summary>
-/// <param name="MinorVersion">The exact Protocol3 revision, which must be zero.</param>
+/// <param name="MinorVersion">The exact Protocol3 revision, which must be one.</param>
 /// <param name="NegotiatedCapabilities">Optional capabilities enabled for the connection.</param>
 /// <param name="MaxFramePayloadBytes">The largest frame payload accepted on the connection.</param>
 /// <param name="StreamReceiveWindowBytes">The negotiated initial receive window for each stream.</param>

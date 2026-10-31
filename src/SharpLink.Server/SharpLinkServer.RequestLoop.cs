@@ -152,9 +152,7 @@ internal sealed partial class SharpLinkServer
                                     continue;
                                 }
                             }
-                            if (header.Type == ProtocolV2FrameType.Request &&
-                                (_admissionController is not null ||
-                                 (header.Flags & ProtocolV2FrameFlags.Compressed) != 0))
+                            if (header.Type is ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayStreamRequest)
                             {
                                 // Request compression preserves the routing/metadata/TimeBudget
                                 // prefix. Never perform potentially blocking decompression here:
@@ -162,6 +160,8 @@ internal sealed partial class SharpLinkServer
                                 // RpcDeadline and then carry the same boundary through decode.
                                 session.ValidateInboundPayloadEnvelope(
                                     header.Type, header.Flags, payload);
+                                if (header.Type == ProtocolV2FrameType.OneWayStreamRequest)
+                                    _ = ReadRequestEnvelope(session, payload, header.Flags, frameType: header.Type);
                             }
                             else
                             {
@@ -183,7 +183,7 @@ internal sealed partial class SharpLinkServer
                                         DrainRejectedOneWayStreams(
                                             session,
                                             failedRequestId,
-                                            ResolveRawRequestClientStreamCount(payload));
+                                            ResolveRawRequestClientStreamCount(header.Type, payload));
                                     }
                                     else
                                     {
@@ -288,7 +288,8 @@ internal sealed partial class SharpLinkServer
                                             header.Flags,
                                             payload,
                                             requestCancellationMap,
-                                            ct);
+                                            ct,
+                                            header.Type);
                                         break;
                                     }
                                 case ProtocolV2FrameType.Cancel:
@@ -342,6 +343,10 @@ internal sealed partial class SharpLinkServer
                                         HealthStatus,
                                         ct).ConfigureAwait(false);
                                     break;
+                                // Type23 has been structurally validated without decompression above.
+                                // Its producer/discard lifecycle is not part of this source slice; do not
+                                // dispatch business code or pretend that parsing supplies that ownership.
+                                case ProtocolV2FrameType.OneWayStreamRequest:
                                 case ProtocolV2FrameType.HandshakeRequest:
                                 case ProtocolV2FrameType.HandshakeResponse:
                                 case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
@@ -395,14 +400,15 @@ internal sealed partial class SharpLinkServer
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload,
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
-        CancellationToken serverLoopToken)
+        CancellationToken serverLoopToken,
+        ProtocolV2FrameType frameType)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
         ServerBindingLease bindingLease = default;
         var ownsBindingLease = false;
         try
         {
-            var routing = ReadRequestEnvelope(connection.Session, payload, flags);
+            var routing = ReadRequestEnvelope(connection.Session, payload, flags, frameType: frameType);
             var table = connection.Bindings;
             if (table is null || !table.TryAcquire(unchecked((ulong)routing.InterfaceHash), out bindingLease))
             {
@@ -427,6 +433,14 @@ internal sealed partial class SharpLinkServer
             if ((boundMethod.Method.Kind == RpcMethodKind.OneWay) != ((flags & ProtocolV2FrameFlags.OneWay) != 0))
                 throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame,
                     "Request flags do not match the bound method shape.");
+            if (frameType == ProtocolV2FrameType.Request &&
+                (flags & ProtocolV2FrameFlags.OneWay) != 0 && boundMethod.ClientStreamCount != 0)
+                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame,
+                    "A one-way method with client streams requires the explicit stream-count frame.");
+            if (frameType == ProtocolV2FrameType.OneWayStreamRequest &&
+                routing.ClientStreamCount != boundMethod.ClientStreamCount)
+                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame,
+                    "The explicit client stream count does not match the bound method facts.");
             if (!TryAcceptRequest(connection, requestId))
             {
                 if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
@@ -436,7 +450,7 @@ internal sealed partial class SharpLinkServer
                     DrainRejectedOneWayStreams(
                         connection.Session,
                         requestId,
-                        ResolveRawRequestClientStreamCount(payload));
+                        ResolveRawRequestClientStreamCount(frameType, payload));
                     return;
                 }
 

@@ -50,7 +50,7 @@ public sealed class SharpLinkMultiClusterDiscoveryTests : SharpLinkMultiClusterC
             "coordinator Compile must query each discovery source exactly once");
         var orders = client.Get<IOrdersContract>() as OrdersProxy ??
             throw new Exception("orders child must materialize its routed proxy");
-        var payments = GetChildChannel(client, "payments");
+        var payments = GetChildRuntimeContext(client, "payments");
         Ensure(orders.Channel.RuntimeContext.Codecs.GetCodec<OrdersValue>() is TestCodec<OrdersValue>,
             "the routed child Runtime must consume the codec from its own frozen manifest closure");
         EnsureCodecIsMissing<OrdersValue>(payments);

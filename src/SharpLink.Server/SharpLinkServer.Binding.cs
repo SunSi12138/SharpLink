@@ -48,6 +48,7 @@ internal sealed partial class SharpLinkServer
         {
             // Arm the original absolute budget before taking any registry/table lock.
             deadlineOwner = new ServerBindingDeadline(connection, deadline, _runtimeContext.TimeProvider);
+            deadlineOwner.Arm();
             cancellationToken.ThrowIfCancellationRequested();
             deadlineOwner.ThrowIfExpired();
             var table = connection.InitializeBindings(_bindingSlotQuota);
@@ -61,6 +62,7 @@ internal sealed partial class SharpLinkServer
             // until transport flush, not merely enqueue. No throughput acceptance is claimed.
             await session.FlushSendQueueAsync(cancellationToken).ConfigureAwait(false);
             deadlineOwner.Complete();
+            table.CompleteBindId(operationId);
         }
         catch (Exception exception)
         {
@@ -179,20 +181,17 @@ internal sealed partial class SharpLinkServer
             _timeProvider = timeProvider;
             _timer = timeProvider.CreateTimer(static state => ((ServerBindingDeadline)state!).OnTimer(), this,
                 Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            try
-            {
-                var remaining = deadline.GetRemaining(timeProvider);
-                if (remaining == TimeSpan.Zero)
-                    Expire();
-                else
-                    _timer.Change(remaining, Timeout.InfiniteTimeSpan);
-            }
-            catch
-            {
-                Interlocked.CompareExchange(ref _completed, 1, 0);
-                _timer.Dispose();
-                throw;
-            }
+        }
+
+        // Owner is installed in the caller's finally BEFORE fallible arming. In
+        // particular, a throwing Change never bypasses async timer cleanup/quota return.
+        internal void Arm()
+        {
+            var remaining = _deadline.GetRemaining(_timeProvider);
+            if (remaining == TimeSpan.Zero)
+                Expire();
+            else if (!_timer.Change(remaining, Timeout.InfiniteTimeSpan))
+                throw new InvalidOperationException("Binding deadline timer could not be armed.");
         }
 
         internal void ThrowIfExpired()
@@ -220,7 +219,8 @@ internal sealed partial class SharpLinkServer
                 if (remaining > TimeSpan.Zero)
                 {
                     // An early provider callback retains the SAME absolute deadline.
-                    _timer.Change(remaining, Timeout.InfiniteTimeSpan);
+                    if (!_timer.Change(remaining, Timeout.InfiniteTimeSpan) && Volatile.Read(ref _completed) == 0)
+                        throw new InvalidOperationException("Binding deadline timer could not retain its original deadline.");
                     return;
                 }
                 Expire();

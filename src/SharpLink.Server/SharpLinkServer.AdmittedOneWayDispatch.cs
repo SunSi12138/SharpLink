@@ -24,8 +24,8 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCancellable = (flags & ProtocolV2FrameFlags.Cancellable) != 0;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
+            var request = (retainedAdmissionPayload ?? throw new InvalidOperationException(
+                "Queued dispatch requires its exact retained request envelope.")).SelectedRequest;
             if (!serviceSelection.TryGetService(out var serviceInfo))
             {
                 if (admittedCallState is not null)
@@ -117,7 +117,8 @@ internal sealed partial class SharpLinkServer
                             flags,
                             payload,
                             out var decodePermit,
-                            out var resourceRejection))
+                            out var resourceRejection,
+                            request.FrameType))
                     {
                         retainedAdmissionPayload?.Dispose();
                         requestOwner.ReleaseDecodeResources();
@@ -138,29 +139,30 @@ internal sealed partial class SharpLinkServer
 
                     if ((flags & ProtocolV2FrameFlags.HasMetadata) == 0)
                     {
-                        // Preserve the original no-metadata decode/release/parse path.
-                        // Do not snapshot the encoded sequence or compare its prefix.
+                        // Keep both owners alive until the exact admitted prefix is verified.
+                        var encodedPayload = payload;
                         payload = session.DecodeInboundPayload(
-                            ProtocolV2FrameType.Request,
+                            request.FrameType,
                             flags,
                             payload,
                             admittedCallState.InvocationToken,
                             out decodedRequestOwner);
+                        request = ServerRequestEnvelopeReader.ReadDecoded(
+                            session, payload, encodedPayload, in request, flags,
+                            _protocolOptions.MaxMetadataBytes, _runtimeContext.TimeProvider);
                         retainedAdmissionPayload?.Dispose();
                         decodePermit!.CompleteDecode();
-                        request = ReadRequestEnvelope(
-                            session, payload, flags, request.RpcDeadline);
                     }
                     else
                     {
                         var encodedPayload = payload;
                         payload = session.DecodeInboundPayload(
-                            ProtocolV2FrameType.Request,
+                            request.FrameType,
                             flags,
                             payload,
                             admittedCallState.InvocationToken,
                             out decodedRequestOwner);
-                        // Only metadata reuse needs both owners alive while comparing.
+                        // Rebind arguments without changing captured admission identity or deadline.
                         request = ServerRequestEnvelopeReader.ReadDecoded(
                             session, payload, encodedPayload, in request, flags,
                             _protocolOptions.MaxMetadataBytes, _runtimeContext.TimeProvider);

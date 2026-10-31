@@ -180,7 +180,8 @@ internal sealed partial class SharpLinkClient
                !_connections.IsRetiringBudgetExceeded(_options.MaxRetiringConnections) &&
                _current.ReadyEndpointCount < Math.Min(_options.MinReadyEndpoints, _current.Current.Length) &&
                TotalActiveConnectionsLocked() < _options.MaxConnections &&
-               _connections.NonRetiringConnectionCount(endpoint) + endpoint.ConnectingCount == 0;
+               endpoint.ReadyConnections.Length == 0 && endpoint.ConnectingCount == 0 &&
+               _connections.NonRetiringConnectionCount(endpoint) < _options.MaxConnectionsPerEndpoint;
 
         private int TotalActiveConnectionsLocked()
             => _connections.TotalActiveConnections(_current.States);

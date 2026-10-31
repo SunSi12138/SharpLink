@@ -13,10 +13,37 @@ public class SharpLinkContractCallSiteOwnershipTests
     ["InvokeUnaryAsync", "InvokeOneWayAsync", "InvokeClientStreamingAsync", "InvokeServerStreamingAsync", "InvokeDuplexStreamingAsync"];
 
     [Test]
-    public void PublicRawCastAndBothAdapterAndFacadeLayersRemainSynchronous()
+    public void IdentityNeutralFacadeIsAbsentAndAllFiveSiteAdaptersRemainSynchronous()
     {
-        CheckSlots(typeof(SharpLinkClient));
+        Require(!typeof(IRpcContractChannel).IsAssignableFrom(typeof(SharpLinkClient)),
+            "The root client must not expose an identity-neutral invocation channel.");
+        Require(typeof(IRpcContractChannel).Assembly.GetType("SharpLink.Abstractions.IRpcChannel") is null,
+            "The removed identity-neutral interface must not remain as a compatibility alias.");
+        Require(!typeof(SharpLinkClient).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+            .Any(method => Families.Contains(method.Name, StringComparer.Ordinal)),
+            "Raw public invocation forwarding methods must not survive on the root client.");
         CheckSlots(typeof(SharpLinkClient.ContractCallSite));
+    }
+
+    [Test]
+    public void FinitePreparationAndCombinedAbiMustHaveOneExactPublicShape()
+    {
+        Require(SharpLinkGeneratedManifestVersions.Api == 5 && SharpLinkGeneratedManifestVersions.Protocol == 3 &&
+            SharpLinkGeneratedManifestVersions.AbiIdentity == "sharplink-3.0-api5-contract-channel-complete-method-facts-v1",
+            "Current generation must require the single combined channel/complete-facts ABI.");
+        foreach (var owner in new[] { typeof(IRpcContractChannel), typeof(RpcProxy<IContractA>) })
+        {
+            var prepare = owner.GetMethods().Where(method => method.Name == "PrepareAsync").ToArray();
+            Require(prepare.Length == 1 && prepare[0].ReturnType == typeof(ValueTask),
+                "Preparation must have one finite ValueTask API, with no timeoutless fallback.");
+            var parameters = prepare[0].GetParameters();
+            Require(parameters.Length == 2 && parameters[0].ParameterType == typeof(TimeSpan) &&
+                !parameters[0].HasDefaultValue && parameters[1].ParameterType == typeof(CancellationToken) &&
+                parameters[1].HasDefaultValue, "Prepare must require timeout and retain optional caller cancellation.");
+        }
+        foreach (var owner in new[] { typeof(ISharpLinkClient), typeof(ISharpLinkMultiClusterClient) })
+            Require(!owner.GetMethods().Any(method => method.Name is "Get" or "GetWithMetadata"),
+                "Old generated factory aliases must not remain beside the new channel API.");
     }
 
     [Test]
@@ -24,9 +51,11 @@ public class SharpLinkContractCallSiteOwnershipTests
     {
         var site = typeof(SharpLinkClient.ContractCallSite);
         var fields = site.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-        Require(fields.Length == 2 && fields.Count(f => f.FieldType == typeof(SharpLinkClient) && f.IsInitOnly) == 1 &&
-            fields.Count(f => f.FieldType == typeof(long) && f.IsInitOnly) == 1,
-            "Site must retain one explicit client owner and only scalar contract identity.");
+        Require(fields.Count(f => f.FieldType == typeof(SharpLinkClient) && f.IsInitOnly) == 1 &&
+            !fields.Any(f => f.FieldType == typeof(Type) || f.FieldType == typeof(Assembly) ||
+                typeof(IRpcCodec).IsAssignableFrom(f.FieldType) || typeof(IRpcCodecProvider).IsAssignableFrom(f.FieldType) ||
+                f.FieldType == typeof(SharpLinkDynamicModule)),
+            "Site must retain one explicit client owner and no collectible contract/module/codec payload.");
         string[] required = ["AwaitLogicalInvocationAsync", "AwaitPlainOneWayEmissionOrDeadlineAsync", "InvokeOneWayPlainCoreAsync",
             "InvokeOneWayStreamingCoreAsync", "InvokeClientStreamingCoreAsync", "RunGeneratedClientStreamsAsync",
             "StartServerStreamingInvokerAsync", "StartDuplexStreamingInvokerAsync", "InvokeUnaryWithRetryAsync", "DelayForRetryOrAdmissionAsync"];
@@ -52,25 +81,24 @@ public class SharpLinkContractCallSiteOwnershipTests
         var builder = SharpClientBuilder.Create().DisableRequestTimeout().UseTransport(new TestClientTransportFactory());
         var plan = builder.CompileForMultiCluster([new Manifest()]);
         await using var client = (SharpLinkClient)builder.MaterializeCompiledPlan(plan);
-        var first = (ProxyA)client.Get<IContractA>();
-        var repeated = (ProxyA)client.Get<IContractA>();
-        var second = (ProxyB)client.Get<IContractB>();
-        Require(ReferenceEquals(first, repeated), "Existing cached proxy identity changed.");
+        var first = (ProxyA)client.CreateProxy<IContractA>().Service;
+        var repeated = (ProxyA)client.CreateProxy<IContractA>().Service;
+        var second = (ProxyB)client.CreateProxy<IContractB>().Service;
+        Require(ReferenceEquals(first.Channel, repeated.Channel), "Repeated cold factory handles must retain the same full-key site.");
         var firstSite = first.Channel as SharpLinkClient.ContractCallSite;
         var secondSite = second.Channel as SharpLinkClient.ContractCallSite;
         Require(firstSite is not null && firstSite.ContractId == 92001 && secondSite is not null && secondSite.ContractId == 92002,
             "Registration factories must receive their direct scalar-identity sites.");
         Require(!ReferenceEquals(firstSite, secondSite), "Different registrations must not share a client-global site.");
         var metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("e0-test", "value"));
-        var metadataProxy = (ProxyA)client.GetWithMetadata<IContractA>(metadata);
+        var metadataProxy = (ProxyA)client.CreateProxy<IContractA>(new RpcProxyOptions { Metadata = metadata }).Service;
         Require(metadataProxy.Channel is SharpLinkMetadataRpcChannel, "Metadata wrapper was removed.");
         Require(ReferenceEquals(InnerChannel(metadataProxy.Channel), firstSite), "Metadata route must wrap the same registration site.");
-        Require(ReferenceEquals(client.GetWithMetadata<IContractA>(new SharpLinkMetadata()), first), "Empty metadata must preserve Get cache semantics.");
-        var raw = (IRpcChannel)client;
-        Require(!ReferenceEquals(raw, firstSite) && ReferenceEquals(raw.RuntimeContext, firstSite!.RuntimeContext), "Public raw cast/runtime context capability changed.");
-        var rawSite = typeof(SharpLinkClient).GetField("_rawCallSite", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client);
-        Require(rawSite is SharpLinkClient.ContractCallSite { ContractId: 0 } && !ReferenceEquals(rawSite, firstSite),
-            "Raw facade must use one distinct identity-neutral site.");
+        var emptyMetadata = (ProxyA)client.CreateProxy<IContractA>(new RpcProxyOptions { Metadata = new SharpLinkMetadata() }).Service;
+        Require(ReferenceEquals(emptyMetadata.Channel, firstSite), "Empty metadata must not install a wrapper or a second site.");
+        Require(ReferenceEquals(client.RuntimeContext, firstSite!.RuntimeContext), "Direct public runtime context capability changed.");
+        Require(typeof(SharpLinkClient).GetField("_rawCallSite", BindingFlags.Instance | BindingFlags.NonPublic) is null,
+            "The identity-neutral fallback site must be absent.");
     }
 
     [Test]
@@ -82,12 +110,14 @@ public class SharpLinkContractCallSiteOwnershipTests
         var builder = SharpClientBuilder.Create().DisableRequestTimeout().UseTransport(new TestClientTransportFactory());
         var plan = builder.CompileForMultiCluster([manifest!]);
         await using var client = (SharpLinkClient)builder.MaterializeCompiledPlan(plan);
-        var proxy = client.Get<SharpLink.StaticCodecOwnerTest.Contracts.IGeneratedRawOwnerContract>();
+        var proxy = client.CreateProxy<SharpLink.StaticCodecOwnerTest.Contracts.IGeneratedRawOwnerContract>().Service;
         var site = InnerChannel(proxy) as SharpLinkClient.ContractCallSite;
         var descriptor = manifest!.Contracts.Single(d => d.ContractType == contract);
         Require(site is not null && site.ContractId == descriptor.ContractId, "Real generated proxy stores an outer client/wrong site.");
-        var metadataProxy = client.GetWithMetadata<SharpLink.StaticCodecOwnerTest.Contracts.IGeneratedRawOwnerContract>(
-            new SharpLinkMetadata(new KeyValuePair<string, string>("e0-test", "value")));
+        var metadataProxy = client.CreateProxy<SharpLink.StaticCodecOwnerTest.Contracts.IGeneratedRawOwnerContract>(new RpcProxyOptions
+        {
+            Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("e0-test", "value"))
+        }).Service;
         var metadataChannel = InnerChannel(metadataProxy);
         Require(metadataChannel is SharpLinkMetadataRpcChannel && ReferenceEquals(InnerChannel(metadataChannel), site),
             "Actual generated metadata proxy must wrap the existing registration site.");
@@ -96,30 +126,40 @@ public class SharpLinkContractCallSiteOwnershipTests
     [Test]
     public async Task ModuleAndMetadataWrappersRetainTheExplicitSiteAndRuntimeContext()
     {
-        await using var client = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
+        var builder = SharpClientBuilder.Create().DisableRequestTimeout().UseTransport(new TestClientTransportFactory());
+        await using var client = (SharpLinkClient)builder.MaterializeCompiledPlan(builder.CompileForMultiCluster([new Manifest()]));
         using var runtime = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new Manifest();
         using var registration = runtime.PrepareGeneratedManifest(manifest);
         var module = new SharpLinkDynamicModule(typeof(Manifest).Assembly, manifest, registration);
-        var site = new SharpLinkClient.ContractCallSite(client, 92001);
+        var site = (SharpLinkClient.ContractCallSite)client.CreateContractChannel(client.GetLocalContract<IContractA>());
         var moduleChannel = new SharpLinkModuleRpcChannel(site, module);
         var metadataChannel = new SharpLinkMetadataRpcChannel(moduleChannel,
             new SharpLinkMetadata(new KeyValuePair<string, string>("e0-test", "value")));
         Require(ReferenceEquals(InnerChannel(moduleChannel), site) && ReferenceEquals(InnerChannel(metadataChannel), moduleChannel),
             "Module/metadata wrapper order or inner owner changed.");
-        Require(ReferenceEquals(metadataChannel.RuntimeContext, ((IRpcChannel)client).RuntimeContext), "Wrapper runtime context changed.");
+        Require(ReferenceEquals(metadataChannel.RuntimeContext, client.RuntimeContext), "Wrapper runtime context changed.");
     }
 
     [Test]
-    public async Task RawArbitraryDescriptorsKeepNullCodecBeforeCancellationOrderingAcrossAllFiveFamilies()
+    public async Task ScopedArbitraryDescriptorsKeepNullCodecBeforeCancellationOrderingAcrossAllFiveFamilies()
     {
-        await using var client = ClientBuilderTestHelper.Build(new TestClientTransportFactory());
-        IRpcChannel[] channels = [(IRpcChannel)client, new SharpLinkClient.ContractCallSite(client, 123)];
+        var builder = SharpClientBuilder.Create().DisableRequestTimeout().UseTransport(new TestClientTransportFactory());
+        await using var client = (SharpLinkClient)builder.MaterializeCompiledPlan(builder.CompileForMultiCluster([new Manifest()]));
+        var local = client.GetLocalContract<IContractA>();
+        IRpcContractChannel[] channels =
+        [
+            client.CreateContractChannel(local),
+            client.CreateContractChannel(local, new RpcProxyOptions
+            {
+                Metadata = new SharpLinkMetadata(new KeyValuePair<string, string>("owner", "metadata"))
+            })
+        ];
         using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
         var request = default(RpcEmptyRequest); var streams = default(RpcNoClientStreams);
         foreach (var channel in channels)
         {
-            // No registration exists, and descriptor ID intentionally differs from the site's scalar ID.
+            // The descriptor deliberately differs from this exact registered channel; null codec still wins first.
             var method = new RpcMethodDescriptor(987654321, 1, RpcMethodKind.Unary, true, false, false, null);
             var response = channel.RuntimeContext.Codecs.GetCodec<int>();
             NullRequest(() => { _ = channel.InvokeUnaryAsync(method, request, null!, response, null, cancellation.Token); });
@@ -132,7 +172,7 @@ public class SharpLinkContractCallSiteOwnershipTests
 
     private static void CheckSlots(Type owner)
     {
-        var map = owner.GetInterfaceMap(typeof(IRpcChannel));
+        var map = owner.GetInterfaceMap(typeof(IRpcContractChannel));
         var slots = map.InterfaceMethods.Select((method, index) => (method, target: map.TargetMethods[index]))
             .Where(x => Families.Contains(x.method.Name, StringComparer.Ordinal)).ToArray();
         Require(slots.Length == 5 && slots.Select(x => x.method.Name).Distinct().Count() == 5, "Exact five public interface slots missing.");
@@ -151,9 +191,9 @@ public class SharpLinkContractCallSiteOwnershipTests
     private static string TypeKey(Type type) => type.IsGenericParameter ? "!" + type.GenericParameterPosition :
         type.IsByRef ? TypeKey(type.GetElementType()!) + "&" : type.IsArray ? TypeKey(type.GetElementType()!) + "[]" :
         type.IsGenericType ? type.GetGenericTypeDefinition().FullName + "<" + string.Join(",", type.GetGenericArguments().Select(TypeKey)) + ">" : type.FullName!;
-    private static IRpcChannel InnerChannel(object wrapper) => (IRpcChannel)wrapper.GetType()
+    private static IRpcContractChannel InnerChannel(object wrapper) => (IRpcContractChannel)wrapper.GetType()
         .GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-        .Single(f => typeof(IRpcChannel).IsAssignableFrom(f.FieldType)).GetValue(wrapper)!;
+        .Single(f => typeof(IRpcContractChannel).IsAssignableFrom(f.FieldType)).GetValue(wrapper)!;
     private static void NullRequest(Action action)
     {
         try { action(); } catch (ArgumentNullException exception) when (exception.ParamName == "requestCodec") { return; }
@@ -163,8 +203,8 @@ public class SharpLinkContractCallSiteOwnershipTests
 
     private interface IContractA : IService;
     private interface IContractB : IService;
-    private sealed class ProxyA(IRpcChannel channel) : IContractA { internal IRpcChannel Channel { get; } = channel; }
-    private sealed class ProxyB(IRpcChannel channel) : IContractB { internal IRpcChannel Channel { get; } = channel; }
+    private sealed class ProxyA(IRpcContractChannel channel) : IContractA { internal IRpcContractChannel Channel { get; } = channel; }
+    private sealed class ProxyB(IRpcContractChannel channel) : IContractB { internal IRpcContractChannel Channel { get; } = channel; }
     private sealed class Manifest : ISharpLinkGeneratedAssemblyManifest
     {
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;

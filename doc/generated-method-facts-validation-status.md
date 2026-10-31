@@ -44,7 +44,9 @@ to be one. Registry restoration and provider release are in cleanup paths.
 These static-registry continuation probes do not replace dynamic retirement,
 module-token, collectible ALC, receipt/admission or physical producer-lifetime
 proofs. Existing dynamic tests remain; #775 and held ownership changes are separate
-obligations. No #931/#933/#964 production prototype is imported by this port.
+obligations. No held #931/#933/#964 hot-path production prototype is imported by this port.
+The actual base separately includes the reviewed narrow ColdStop correction from
+#970; that does not adopt #933's reservation or producer-ownership proposal.
 
 ## Evidence retention gap and current gate
 
@@ -81,10 +83,14 @@ close #732 or #805, select a new broad optimization campaign, merge or release.
 
 ## Current integration base
 
-This source-only candidate is ported onto actual dev `314caf4348c80e9f47ff313f2ee59aaeec4dd91b`
-(tree `425c2f3da68892e5e10327ef859ab4150ab6beba`), after #969. Its dependency, template,
-workflow and regression-fixture changes are retained, including the reviewed
-10.0.14 dependency versions. No previous package or runtime result is relabeled
-as validation of this integration candidate. Fresh exact-head hosted validation
-and final source/API review remain required; no release or performance acceptance
-is implied.
+This source-only candidate is ported onto actual dev `d5665d057e18f9b39fe80bcc5911900eb4663ce2`
+(tree `1bde80ff2a2553b83076315ca89b0932f3797263`), after #969 and #970. Its dependency,
+template, workflow, regression-fixture and narrow ColdStop changes are retained,
+including the reviewed 10.0.14 dependency versions. The ColdStop base has fresh
+hosted ordinary 2,212 and injected 2,220 evidence; that evidence is not transferred
+to the additional method-facts changes. Combined source-attributed expectations
+are 2,252 ordinary and 2,260 injected, pending fresh native C0 attribution.
+
+No previous package or runtime result is relabeled as validation of this
+integration candidate. Fresh exact-head hosted validation and final source/API
+review remain required; no release or performance acceptance is implied.

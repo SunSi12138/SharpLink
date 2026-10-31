@@ -32,6 +32,7 @@ internal sealed class ClientConnection :
     private int _plannedSessionRefreshRetirement;
     private SessionRefreshRedirect? _sessionRefreshRedirect;
     private int _disposed;
+    private int _protocolIdentityExhausted;
 
     public ClientConnection(
         SharpLinkClient client,
@@ -49,12 +50,20 @@ internal sealed class ClientConnection :
         _timeProvider = runtimeContext.TimeProvider;
         _lateResponseLogLimiter = new LateResponseLogLimiter(_timeProvider.TimestampFrequency);
         _consumerAbandonedCallback = OnConsumerAbandonedAsync;
-        Binding = new ClientBindingSession(session);
-        PendingCalls = new PendingRequestTable(
-            maxPendingCalls,
-            runtimeContext.Codecs,
-            this,
-            runtimeContext.TimeProvider);
+        Binding = new ClientBindingSession(session, client.BindingBudget, OnProtocolIdentityExhausted);
+        try
+        {
+            PendingCalls = new PendingRequestTable(
+                maxPendingCalls,
+                runtimeContext.Codecs,
+                this,
+                runtimeContext.TimeProvider);
+        }
+        catch (Exception exception)
+        {
+            Binding.Close(exception);
+            throw;
+        }
         EndpointId = endpointId;
         EndpointGeneration = endpointGeneration;
     }
@@ -79,6 +88,23 @@ internal sealed class ClientConnection :
         => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
 
     internal int CallAdmissionReservationCount => Volatile.Read(ref _callAdmissionReservations);
+
+    // ID exhaustion is not spare retiring capacity: the old physical connection remains charged
+    // against the ordinary pool until its admitted owners leave and it is detached for cleanup.
+    internal bool HasExhaustedProtocolIdentity => Volatile.Read(ref _protocolIdentityExhausted) != 0 ||
+        PendingCalls.RequestIdsExhausted;
+
+    internal bool OccupiesConnectionCapacity => State == ClientConnectionState.Ready ||
+        State == ClientConnectionState.Draining && HasExhaustedProtocolIdentity;
+
+    internal void OnProtocolIdentityExhausted()
+    {
+        if (Interlocked.Exchange(ref _protocolIdentityExhausted, 1) == 0)
+        {
+            Binding.SealAdmission();
+            _client.MarkProtocolIdentityExhaustionDraining(this);
+        }
+    }
 
     internal bool HasObservedFatalFailureForAdmission
         => Volatile.Read(ref _fatalFailureObservedForAdmission) != 0;
@@ -195,7 +221,7 @@ internal sealed class ClientConnection :
     {
         get
         {
-            if (Volatile.Read(ref _fatalFailureObservedForAdmission) != 0)
+            if (Volatile.Read(ref _fatalFailureObservedForAdmission) != 0 || HasExhaustedProtocolIdentity)
                 return false;
 
             var redirect = Volatile.Read(ref _sessionRefreshRedirect);
@@ -244,7 +270,11 @@ internal sealed class ClientConnection :
                 continue;
             }
             if (observed == 1)
+            {
                 _client.TryAdvancePlannedSessionRefreshRetirement(this);
+                if (HasExhaustedProtocolIdentity)
+                    _client.RetireDrainingConnectionIfIdle(this);
+            }
             return;
         }
     }
@@ -275,7 +305,7 @@ internal sealed class ClientConnection :
             throw new InvalidOperationException(
                 "A Ready client connection must reference a Session that accepts new calls at a stable lifecycle boundary.");
         }
-        if (state == ClientConnectionState.Draining && sessionAcceptsCalls)
+        if (state == ClientConnectionState.Draining && sessionAcceptsCalls && !HasExhaustedProtocolIdentity)
         {
             throw new InvalidOperationException(
                 "A Draining client connection must not reference a Session that accepts new calls at a stable lifecycle boundary.");
@@ -293,14 +323,21 @@ internal sealed class ClientConnection :
     internal bool ShouldLogLateResponse(out int suppressedCount)
         => _lateResponseLogLimiter.ShouldLog(_timeProvider.GetTimestamp(), out suppressedCount);
 
-    public bool MarkDraining()
+    public bool MarkDraining() => MarkDrainingCore(drainPhysicalSession: true);
+
+    // Exhaustion withdraws owner admission, not the wire publication rights of reservations
+    // already issued before the cut. Their final Request/Bind must still enqueue in Ready.
+    internal bool MarkDrainingForIdentityExhaustion() => MarkDrainingCore(drainPhysicalSession: false);
+
+    private bool MarkDrainingCore(bool drainPhysicalSession)
     {
         if (Interlocked.CompareExchange(
                 ref _state,
                 (int)ClientConnectionState.Draining,
                 (int)ClientConnectionState.Ready) == (int)ClientConnectionState.Ready)
         {
-            Session.MarkDraining();
+            if (drainPhysicalSession)
+                Session.MarkDraining();
             SharpLinkTelemetry.AddClientRetiringConnections(1);
             return true;
         }
@@ -343,7 +380,9 @@ internal sealed class ClientConnection :
         // A pre-cut reservation may start on a planned source, but never after a fatal
         // observation even while physical teardown is waiting for the topology gate.
         if (!HasObservedFatalFailureForAdmission &&
-            State == ClientConnectionState.Ready && Session.IsConnected)
+            (State == ClientConnectionState.Ready ||
+             State == ClientConnectionState.Draining && HasExhaustedProtocolIdentity && Session.CanAcceptCalls) &&
+            Session.IsConnected)
             return true;
 
         ReleaseAuxiliaryActiveCall();
@@ -544,6 +583,9 @@ internal sealed class ClientConnection :
 
     void IPendingCallOwner.OnProducerCancellationCallbackFailed(Exception exception)
         => _client.ReportProducerCancellationCallbackFailure(exception);
+
+    void IPendingCallOwner.OnRequestIdsExhausted()
+        => OnProtocolIdentityExhausted();
 
     void IPendingCallOwner.OnPendingCallCapacityIdle()
     {

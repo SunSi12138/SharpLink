@@ -122,7 +122,7 @@ internal sealed class StaticClientRuntimeEndpointState
         {
             var count = 0;
             foreach (var connection in Connections)
-                if (connection.State == ClientConnectionState.Ready)
+                if (connection.OccupiesConnectionCapacity)
                     count++;
             return count;
         }

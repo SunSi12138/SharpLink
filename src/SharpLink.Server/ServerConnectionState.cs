@@ -71,6 +71,8 @@ internal sealed class ServerConnectionState
     internal ServerBindingTable Bindings => Volatile.Read(ref _bindings)
         ?? throw new InvalidOperationException("Session binding state has not been initialized.");
 
+    internal ServerBindingTable? BindingTableOrNull => Volatile.Read(ref _bindings);
+
     internal ServerBindingTable InitializeBindings(ServerBindingSlotQuota quota)
     {
         lock (_bindingsGate)
