@@ -66,6 +66,7 @@ public class CompressionFrameTests
 
 
     [Test]
+    [NotInParallel]
     public async Task ZeroByteRepresentationShouldRoundTripThroughWireEnvelope()
     {
         var provider = new ZeroBodyCompressionProvider();
