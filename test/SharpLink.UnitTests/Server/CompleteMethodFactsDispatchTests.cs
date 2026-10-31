@@ -297,7 +297,8 @@ public partial class SharpLinkServerInvocationTests
         internal CompleteFactsStub(RpcMethodKind kind) : this(new RpcMethodFacts(8, 1, kind,
             kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming ? 1 : 0,
             true, kind != RpcMethodKind.OneWay, hasMethodTimeout: true,
-            methodTimeout: TimeSpan.FromTicks(123456789), isIdempotent: true)) { }
+            methodTimeout: TimeSpan.FromTicks(123456789), isIdempotent: true))
+        { }
         internal CompleteFactsStub(RpcMethodFacts? facts) => Facts = facts;
         internal RpcMethodFacts? Facts { get; }
         internal int Resolutions;
