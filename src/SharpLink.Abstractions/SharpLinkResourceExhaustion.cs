@@ -18,6 +18,14 @@ internal static class SharpLinkResourceExhaustion
     internal const string ServerDecodeQueue = "server_decode_queue";
     internal const string ServerPreAdmissionStreamBytes = "server_pre_admission_stream_bytes";
 
+    internal const string BindingSlots = "binding_slots";
+    internal const string BindingOperations = "binding_operations";
+    internal const string BindingControlQueue = "binding_control_queue";
+    internal const string BindingDemandSites = "binding_demand_sites";
+    internal const string BindingWaiters = "binding_waiters";
+    internal const string BindingMaintenance = "binding_maintenance";
+    internal const string BindingSessionTracking = "binding_session_tracking";
+
     internal static SharpLinkException Create(string reason, string message)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reason);
@@ -63,6 +71,13 @@ internal static class SharpLinkResourceExhaustion
             ServerDecodedBytes => SharpLinkErrorDetails.ResourceExhausted.ServerDecodedBytes,
             ServerDecodeQueue => SharpLinkErrorDetails.ResourceExhausted.ServerDecodeQueue,
             ServerPreAdmissionStreamBytes => SharpLinkErrorDetails.ResourceExhausted.ServerPreAdmissionStreamBytes,
+            BindingSlots => SharpLinkErrorDetails.ResourceExhausted.BindingSlots,
+            BindingOperations => SharpLinkErrorDetails.ResourceExhausted.BindingOperations,
+            BindingControlQueue => SharpLinkErrorDetails.ResourceExhausted.BindingControlQueue,
+            BindingDemandSites => SharpLinkErrorDetails.ResourceExhausted.BindingDemandSites,
+            BindingWaiters => SharpLinkErrorDetails.ResourceExhausted.BindingWaiters,
+            BindingMaintenance => SharpLinkErrorDetails.ResourceExhausted.BindingMaintenance,
+            BindingSessionTracking => SharpLinkErrorDetails.ResourceExhausted.BindingSessionTracking,
             _ => SharpLinkErrorDetails.ResourceExhausted.Unspecified
         };
 
@@ -83,6 +98,13 @@ internal static class SharpLinkResourceExhaustion
             SharpLinkErrorDetails.ResourceExhausted.ServerDecodedBytes => ServerDecodedBytes,
             SharpLinkErrorDetails.ResourceExhausted.ServerDecodeQueue => ServerDecodeQueue,
             SharpLinkErrorDetails.ResourceExhausted.ServerPreAdmissionStreamBytes => ServerPreAdmissionStreamBytes,
+            SharpLinkErrorDetails.ResourceExhausted.BindingSlots => BindingSlots,
+            SharpLinkErrorDetails.ResourceExhausted.BindingOperations => BindingOperations,
+            SharpLinkErrorDetails.ResourceExhausted.BindingControlQueue => BindingControlQueue,
+            SharpLinkErrorDetails.ResourceExhausted.BindingDemandSites => BindingDemandSites,
+            SharpLinkErrorDetails.ResourceExhausted.BindingWaiters => BindingWaiters,
+            SharpLinkErrorDetails.ResourceExhausted.BindingMaintenance => BindingMaintenance,
+            SharpLinkErrorDetails.ResourceExhausted.BindingSessionTracking => BindingSessionTracking,
             _ => Unspecified
         };
 }

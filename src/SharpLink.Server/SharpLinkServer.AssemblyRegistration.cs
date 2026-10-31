@@ -100,11 +100,13 @@ internal sealed partial class SharpLinkServer
                             return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
                         }
 
+                        var bindingGeneration = NextBindingPublicationGeneration();
+                        PrepareBindingRegistrations(candidate.Services, bindingGeneration);
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         Volatile.Write(ref _services, candidate.Services);
                         _dynamicModules.Add(assembly, module);
-                        _registryGeneration++;
+                        _registryGeneration = bindingGeneration;
                         ScheduleContractManifestPublish();
                         published = true;
                         return SharpLinkAssemblyRegistrationResult.Success();
@@ -286,13 +288,16 @@ internal sealed partial class SharpLinkServer
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
+                        var bindingGeneration = NextBindingPublicationGeneration();
+                        PrepareBindingRegistrations(candidate.Services, bindingGeneration);
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _dynamicModules.Add(newAssembly, newModule);
                         _detachedModuleServices.Add(oldModule, detachedServices);
                         _unregisterOperations.Add(oldAssembly, drainOperation);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                        RetireBindingGroup(detachedServices);
                         Volatile.Write(ref _services, candidate.Services);
-                        _registryGeneration++;
+                        _registryGeneration = bindingGeneration;
                         ScheduleContractManifestPublish();
                         oldModule.TryBeginDraining();
                         published = true;

@@ -24,8 +24,8 @@ public partial class RpcGenerator
                 if (attribute.AttributeClass?.ToDisplayString() != GeneratedAssemblyManifestAttributeMetadataName ||
                     attribute.ConstructorArguments.Length != 5 ||
                     attribute.ConstructorArguments[0].Value is not INamedTypeSymbol manifestType ||
-                    attribute.ConstructorArguments[1].Value is not 5 ||
-                    attribute.ConstructorArguments[2].Value is not 2 ||
+                    attribute.ConstructorArguments[1].Value is not 6 ||
+                    attribute.ConstructorArguments[2].Value is not 3 ||
                     attribute.ConstructorArguments[3].Value is not string generatorVersion ||
                     string.IsNullOrWhiteSpace(generatorVersion) ||
                     attribute.ConstructorArguments[4].Value is not string abiIdentity ||

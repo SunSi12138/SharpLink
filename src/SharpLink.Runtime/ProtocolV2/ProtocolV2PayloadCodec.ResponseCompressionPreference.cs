@@ -8,6 +8,8 @@ public static partial class ProtocolV2PayloadCodec
         in ProtocolV2ResponseCompressionPreferenceUpdate update)
     {
         ArgumentNullException.ThrowIfNull(writer);
+        if (update.Generation > long.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(update));
         WriteUInt64(writer, update.Generation);
         WriteByte(writer, update.AllowResponseCompression ? (byte)1 : (byte)0);
     }
@@ -19,7 +21,7 @@ public static partial class ProtocolV2PayloadCodec
         if (payload.Length != sizeof(ulong) + sizeof(byte))
             throw ProtocolV2FrameParser.Violation("ResponseCompressionPreferenceUpdate payload must contain UInt64 generation and one preference byte.");
         var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out long generationBits) || !reader.TryRead(out var preference) || preference > 1)
+        if (!reader.TryReadLittleEndian(out long generationBits) || generationBits < 0 || !reader.TryRead(out var preference) || preference > 1)
             throw ProtocolV2FrameParser.Violation("ResponseCompressionPreferenceUpdate payload is invalid.");
         return new ProtocolV2ResponseCompressionPreferenceUpdate(
             unchecked((ulong)generationBits),
@@ -32,6 +34,8 @@ public static partial class ProtocolV2PayloadCodec
         in ProtocolV2ResponseCompressionPreferenceAck ack)
     {
         ArgumentNullException.ThrowIfNull(writer);
+        if (ack.AppliedGeneration > long.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(ack));
         WriteUInt64(writer, ack.AppliedGeneration);
     }
 
@@ -42,7 +46,7 @@ public static partial class ProtocolV2PayloadCodec
         if (payload.Length != sizeof(ulong))
             throw ProtocolV2FrameParser.Violation("ResponseCompressionPreferenceAck payload must contain one UInt64 generation.");
         var reader = new SequenceReader<byte>(payload);
-        if (!reader.TryReadLittleEndian(out long generationBits))
+        if (!reader.TryReadLittleEndian(out long generationBits) || generationBits < 0)
             throw ProtocolV2FrameParser.Violation("ResponseCompressionPreferenceAck payload is truncated.");
         return new ProtocolV2ResponseCompressionPreferenceAck(unchecked((ulong)generationBits));
     }

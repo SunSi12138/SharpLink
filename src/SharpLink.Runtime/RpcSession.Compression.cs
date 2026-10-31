@@ -27,6 +27,7 @@ internal sealed partial class RpcSession
 
         var payloadMemory = packet.WrittenMemory[ProtocolV2Constants.HeaderBytes..];
         var payload = new ReadOnlySequence<byte>(payloadMemory);
+        ValidateNegotiatedRequestPrefix(protocolState.Options!, type, flags, payload);
         var prefixLength = GetBusinessPrefixLength(type, flags, payload);
         if (prefixLength < 0)
             return packet;
@@ -118,10 +119,12 @@ internal sealed partial class RpcSession
         out IRpcByteBufferWriter? owner)
     {
         owner = null;
+        var protocolState = Volatile.Read(ref _protocolState);
+        if (protocolState.Options is { } options)
+            ValidateNegotiatedRequestPrefix(options, type, flags, payload);
         if ((flags & ProtocolV2FrameFlags.Compressed) == 0)
             return payload;
 
-        var protocolState = Volatile.Read(ref _protocolState);
         ValidateInboundPayloadEnvelope(protocolState, type, flags, payload);
 
         var compressionBinding = protocolState.Options?.CompressionBinding;
@@ -198,9 +201,12 @@ internal sealed partial class RpcSession
         ProtocolV2FrameFlags flags,
         ReadOnlySequence<byte> payload)
     {
+        var protocolState = Volatile.Read(ref _protocolState);
+        if (protocolState.Options is { } options)
+            ValidateNegotiatedRequestPrefix(options, type, flags, payload);
         if ((flags & ProtocolV2FrameFlags.Compressed) == 0)
             return;
-        ValidateInboundPayloadEnvelope(Volatile.Read(ref _protocolState), type, flags, payload);
+        ValidateInboundPayloadEnvelope(protocolState, type, flags, payload);
     }
 
     private static void ValidateInboundPayloadEnvelope(
@@ -226,12 +232,34 @@ internal sealed partial class RpcSession
         if (!reader.TryReadLittleEndian(out int originalLengthBits))
             throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated.");
         var originalLength = unchecked((uint)originalLengthBits);
-        if (originalLength == 0 || originalLength > int.MaxValue)
+        if (originalLength > int.MaxValue)
             throw ProtocolV2FrameParser.Violation("Compressed payload original length is outside the supported range.");
         if ((long)prefixLength + originalLength > options.MaxFramePayloadBytes)
         {
             throw ProtocolV2FrameParser.Violation(
                 "Compressed payload original length exceeds the negotiated frame limit.");
+        }
+    }
+
+    private static void ValidateNegotiatedRequestPrefix(
+        NegotiatedSessionOptions options,
+        ProtocolV2FrameType type,
+        ProtocolV2FrameFlags flags,
+        ReadOnlySequence<byte> payload)
+    {
+        if (type is not ProtocolV2FrameType.Request and not ProtocolV2FrameType.OneWayStreamRequest)
+            return;
+        if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0 &&
+            (options.Capabilities & ProtocolV2Capabilities.Metadata) == 0)
+            throw ProtocolV2FrameParser.Violation("Request metadata was not negotiated.");
+        if (type == ProtocolV2FrameType.OneWayStreamRequest)
+        {
+            if (payload.Length < ProtocolV2Constants.OneWayStreamRequestPrefixBytes)
+                throw ProtocolV2FrameParser.Violation("OneWayStreamRequest routing prefix is truncated.");
+            var reader = new SequenceReader<byte>(payload.Slice(ProtocolV2Constants.RequestPrefixBytes));
+            if (!reader.TryReadLittleEndian(out short count) || count <= 0 ||
+                count > options.Authority.Limits.MaxClientStreamsPerCall)
+                throw ProtocolV2FrameParser.Violation("OneWayStreamRequest exceeds the negotiated client stream count.");
         }
     }
 
@@ -255,10 +283,12 @@ internal sealed partial class RpcSession
         ReadOnlySequence<byte> payload)
     {
         var prefixLength = GetBusinessPrefixLength(type, flags, payload);
+        if (prefixLength < 0)
+            throw ProtocolV2FrameParser.Violation("Frame cannot carry compressed business data.");
         var reader = new SequenceReader<byte>(payload.Slice(prefixLength));
-        if (!reader.TryReadLittleEndian(out int originalLengthBits))
-            throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated.");
-        return checked((int)unchecked((uint)originalLengthBits));
+        if (!reader.TryReadLittleEndian(out int originalLengthBits) || originalLengthBits < 0)
+            throw ProtocolV2FrameParser.Violation("Compressed payload original length is truncated or out of range.");
+        return originalLengthBits;
     }
 
     internal static int ReadCompressedDecodedPayloadLength(
@@ -268,7 +298,9 @@ internal sealed partial class RpcSession
     {
         var prefixLength = GetBusinessPrefixLength(type, flags, payload);
         var originalLength = ReadCompressedOriginalLength(type, flags, payload);
-        return checked(prefixLength + originalLength);
+        if ((long)prefixLength + originalLength > SharpLinkProtocolOptions.MaxMaxFramePayloadBytes)
+            throw ProtocolV2FrameParser.Violation("Decoded payload exceeds the absolute frame limit.");
+        return prefixLength + originalLength;
     }
 
     private static int GetBusinessPrefixLength(
@@ -284,18 +316,23 @@ internal sealed partial class RpcSession
                 throw ProtocolV2FrameParser.Violation("StreamData stream ID is truncated.");
             return sizeof(ushort);
         }
-        if (type != ProtocolV2FrameType.Request)
+        if (type is not ProtocolV2FrameType.Request and not ProtocolV2FrameType.OneWayStreamRequest)
             return -1;
 
         var reader = new SequenceReader<byte>(payload);
         if (reader.Remaining < ProtocolV2Constants.RequestPrefixBytes)
             throw ProtocolV2FrameParser.Violation("Request routing prefix is truncated.");
         reader.Advance(ProtocolV2Constants.RequestPrefixBytes);
+        if (type == ProtocolV2FrameType.OneWayStreamRequest)
+        {
+            if ((flags & ProtocolV2FrameFlags.OneWay) == 0 || (flags & ProtocolV2FrameFlags.HasReturn) != 0 ||
+                !reader.TryReadLittleEndian(out short streamCount) || streamCount is < 1 or > 127)
+                throw ProtocolV2FrameParser.Violation("OneWayStreamRequest prefix or flags are invalid.");
+        }
         if ((flags & ProtocolV2FrameFlags.HasTimeBudget) != 0)
         {
-            if (reader.Remaining < sizeof(long))
-                throw ProtocolV2FrameParser.Violation("Request deadline is truncated.");
-            reader.Advance(sizeof(long));
+            if (!reader.TryReadLittleEndian(out long budget) || budget < 0)
+                throw ProtocolV2FrameParser.Violation("Request time budget is truncated or negative.");
         }
         if ((flags & ProtocolV2FrameFlags.HasMetadata) != 0)
         {

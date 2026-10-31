@@ -10,6 +10,8 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         CancellationToken serverLoopToken,
         AdmissionProgram? admissionProgram,
+        ResolvedMethodCall boundMethod,
+        ServerRequestEnvelope boundRequest,
         ServerCallCancellationState? admittedCallState = null,
         bool admissionGranted = false,
         ServerRetainedAdmissionPayload? retainedAdmissionPayload = null)
@@ -20,8 +22,7 @@ internal sealed partial class SharpLinkServer
             var session = connection.Session;
             var isCompressed = (flags & ProtocolV2FrameFlags.Compressed) != 0;
 
-            var request = ReadRequestEnvelope(
-                session, payload, flags, admittedCallState?.Deadline ?? default);
+            var request = boundRequest;
             if (IsDeadlineExceeded(request.RpcDeadline))
             {
                 ValueTask responseSend;
@@ -41,16 +42,18 @@ internal sealed partial class SharpLinkServer
                 }
                 return responseSend;
             }
-            if (!Volatile.Read(ref _services).TryGetValue(request.InterfaceHash, out var serviceInfo))
+            var resolved = boundMethod;
+            var serviceInfo = resolved.Registration;
+
+            if (!resolved.Method.IsKnown)
             {
-                ValueTask responseSend;
                 try
                 {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unimplemented,
-                            $"Service {request.InterfaceHash} is not implemented."),
+                    return session.SendRpcErrorWithBackpressureAsync(requestId,
+                        new SharpLinkException(ReferenceEquals(resolved.Method, RpcMethodFacts.UnknownMethod)
+                                ? SharpLinkErrorCode.Unimplemented : SharpLinkErrorCode.Internal,
+                            ReferenceEquals(resolved.Method, RpcMethodFacts.UnknownMethod)
+                                ? $"Method {request.MethodHash} is not implemented." : "The RPC stub returned invalid method facts."),
                         connection.ConnectionToken);
                 }
                 finally
@@ -58,26 +61,6 @@ internal sealed partial class SharpLinkServer
                     if (admittedCallState is not null)
                         ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
                 }
-                return responseSend;
-            }
-            if (!serviceInfo.AcceptsCalls)
-            {
-                ValueTask responseSend;
-                try
-                {
-                    responseSend = session.SendRpcErrorWithBackpressureAsync(
-                        requestId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.Unavailable,
-                            "RPC module is draining"),
-                        connection.ConnectionToken);
-                }
-                finally
-                {
-                    if (admittedCallState is not null)
-                        ReleasePendingAdmissionState(session, requestCancellationMap, requestId, admittedCallState);
-                }
-                return responseSend;
             }
 
             if (admissionProgram is not null && !admissionGranted)
@@ -91,12 +74,11 @@ internal sealed partial class SharpLinkServer
                     requestCancellationMap);
                 admittedCallState.AttachAdmissionProgramUse(admissionProgram);
                 ownsAdmissionProgramUse = false;
-                var descriptor = GetMethodDescriptor(serviceInfo.Stub, request.MethodHash);
                 ValueTask<AdmissionDecision> admissionTask;
                 try
                 {
                     admissionTask = admissionProgram.Controller.AcquireAsync(
-                        CreateAdmissionContext(connection, descriptor, request),
+                        CreateAdmissionContext(connection, resolved.Method, request),
                         checked((int)payload.Length),
                         allowQueue: true,
                         deadline: request.RpcDeadline,
@@ -128,7 +110,7 @@ internal sealed partial class SharpLinkServer
                 }
                 if (!admissionTask.IsCompletedSuccessfully)
                 {
-                    if (!TryCopySelectedAdmissionPayload(payload, flags, serviceInfo, out var queuedRetainedPayload))
+                    if (!TryCopySelectedAdmissionPayload(payload, flags, serviceInfo, resolved.Method, out var queuedRetainedPayload))
                     {
                         admittedCallState.TryCancel(ServerCallCancellationReason.AdmissionResourceExhausted);
                         return RejectQueuedAdmissionForRetainedBudgetAsync(
@@ -143,7 +125,7 @@ internal sealed partial class SharpLinkServer
                     ReservePreAdmissionRequestStreams(
                         session,
                         requestId,
-                        descriptor.ClientStreamCount,
+                        resolved.ClientStreamCount,
                         admittedCallState);
                     return AwaitRpcAdmissionAsync(
                         admissionTask,
@@ -214,7 +196,7 @@ internal sealed partial class SharpLinkServer
                     flags,
                     payload,
                     request,
-                    serviceInfo,
+                    in resolved,
                     requestCancellationMap,
                     serverLoopToken,
                     admittedCallState,
@@ -345,7 +327,7 @@ internal sealed partial class SharpLinkServer
                 requestId,
                 flags,
                 request,
-                serviceInfo,
+                in resolved,
                 requestCancellationMap,
                 serverLoopToken,
                 admittedCallState,
@@ -367,8 +349,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodFacts method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -421,8 +402,7 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
-                        stub,
-                        methodId,
+                        method,
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);
@@ -454,8 +434,7 @@ internal sealed partial class SharpLinkServer
         StripedLongMap<ServerCallCancellationState> requestCancellationMap,
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodFacts method,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
     {
@@ -527,8 +506,7 @@ internal sealed partial class SharpLinkServer
                         e,
                         callContext,
                         session,
-                        stub,
-                        methodId,
+                        method,
                         requestId,
                         cancellationToken),
                     connection.ConnectionToken).ConfigureAwait(false);

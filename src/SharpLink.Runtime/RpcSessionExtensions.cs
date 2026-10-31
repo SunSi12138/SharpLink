@@ -68,7 +68,7 @@ internal static class RpcSessionExtensions
                 0,
                 code,
                 message,
-                maxMessageBytes,
+                Math.Min(maxMessageBytes, GetMaxErrorMessageBytes(session)),
                 cancellationToken);
 
         /// <summary>Queues a payload-free protocol frame for sending.</summary>
@@ -136,10 +136,7 @@ internal static class RpcSessionExtensions
         {
             var runtimeSession = session;
             if ((runtimeSession.NegotiatedCapabilities & ProtocolV2Capabilities.CancellationReason) == 0)
-            {
-                session.SendPacketAsync(ProtocolV2FrameType.Cancel, ProtocolV2FrameFlags.None, requestId);
-                return;
-            }
+                throw ProtocolV2FrameParser.Violation("Protocol3 cancellation requires a negotiated ready session.");
 
             var writer = runtimeSession.RentFrameWriter();
             var ownsWriter = true;
@@ -164,24 +161,8 @@ internal static class RpcSessionExtensions
 
         internal ProtocolV2CancelReason ReadNegotiatedCancelReason(ReadOnlySequence<byte> payload)
         {
-            var hasReasonCapability =
-                (session.NegotiatedCapabilities &
-                 ProtocolV2Capabilities.CancellationReason) != 0;
-            if (!hasReasonCapability)
-            {
-                if (!payload.IsEmpty)
-                {
-                    throw ProtocolV2FrameParser.Violation(
-                        "Cancel reason payload was sent without negotiating CancellationReason.");
-                }
-                return ProtocolV2CancelReason.Unspecified;
-            }
-
-            if (payload.IsEmpty)
-            {
-                throw ProtocolV2FrameParser.Violation(
-                    "Cancel reason payload is required after negotiating CancellationReason.");
-            }
+            if ((session.NegotiatedCapabilities & ProtocolV2Capabilities.CancellationReason) == 0)
+                throw ProtocolV2FrameParser.Violation("Protocol3 cancellation requires a negotiated ready session.");
             return ProtocolV2PayloadCodec.ReadCancelReason(payload);
         }
 
@@ -245,6 +226,7 @@ internal static class RpcSessionExtensions
             string? message,
             CancellationToken cancellationToken = default)
         {
+            ArgumentOutOfRangeException.ThrowIfNegative(lastAcceptedRequestId);
             var writer = session.RentFrameWriter();
             var ownsWriter = true;
             try
@@ -402,6 +384,8 @@ internal static class RpcSessionExtensions
     }
 
     private static int GetMaxErrorMessageBytes(RpcSession session)
-        => session.RuntimeContext.Protocol.MaxErrorMessageBytes;
+        // Reserve the largest prefix (GoAway ID + code/detail + five-byte canonical length).
+        => Math.Min(session.RuntimeContext.Protocol.MaxErrorMessageBytes,
+            session.NegotiatedMaxFramePayloadBytes - sizeof(ulong) - 2 * sizeof(ushort) - 5);
 
 }

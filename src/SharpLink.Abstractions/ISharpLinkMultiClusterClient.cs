@@ -126,11 +126,29 @@ public interface ISharpLinkMultiClusterClient : IAsyncDisposable
     /// <summary>Stops every cluster slot and releases coordinator-owned state.</summary>
     ValueTask StopAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Creates a proxy by looking up the contract's cluster route exactly once.</summary>
-    TContract Get<TContract>() where TContract : IService;
+    /// <summary>Creates a proxy by capturing its exact cluster route and local registration once.</summary>
+    /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
+    /// <param name="options">Immutable scope, receipt requirement, and metadata captured at construction.</param>
+    /// <remarks>Preparation uses that original site and never resolves a replacement route.</remarks>
+    RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService;
 
-    /// <summary>Creates a routed proxy that attaches one immutable metadata snapshot to every invocation.</summary>
-    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
+    /// <summary>Selects a contract from an exact assembly in the currently captured cluster slot.</summary>
+    /// <param name="cluster">The explicit cluster whose current client owns the local registration.</param>
+    /// <param name="registeredAssembly">The exact registered assembly object.</param>
+    /// <param name="contractId">The nonzero generated contract identifier.</param>
+    RpcLocalContract GetLocalContract(
+        SharpLinkClusterKey cluster,
+        System.Reflection.Assembly registeredAssembly,
+        long contractId);
+
+    /// <summary>Creates a channel only if the captured cluster's client owns the exact local selector.</summary>
+    /// <param name="cluster">The explicit cluster slot to capture.</param>
+    /// <param name="local">The local selector issued by that slot's client.</param>
+    /// <param name="options">Immutable scope, receipt requirement, and metadata captured at construction.</param>
+    IRpcContractChannel CreateContractChannel(
+        SharpLinkClusterKey cluster,
+        RpcLocalContract local,
+        RpcProxyOptions? options = null);
 
     /// <summary>Attempts to capture the current status values for a configured cluster slot.</summary>
     /// <remarks>

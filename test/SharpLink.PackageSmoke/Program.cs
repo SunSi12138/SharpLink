@@ -143,6 +143,7 @@ public static class Program
 
     public static async Task Main()
     {
+        MethodFactsContractSmoke.Run();
         ExternalApiBoundaryProbe.Run();
         GenerationControlSerializationProbe.Run();
         AssertGenerationControlPackageSurface();

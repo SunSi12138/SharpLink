@@ -39,12 +39,7 @@ internal sealed partial class SharpLinkClient
         }
         PulseRemoteContractWaiters();
 
-        // Get<T>() historically supports pre-connection proxy acquisition. The first manifest
-        // for a session validates every proxy that already escaped to user code before that
-        // connection is published as callable. Later manifest refreshes intentionally do not
-        // rebind or invalidate held proxy references; later Get<T>() calls validate the refresh.
-        if (isInitial)
-            ValidateAcquiredContractAssemblies();
+        RefreshContractBindingDemands();
     }
 
     private void PruneDisconnectedRemoteContractManifestsLocked()
@@ -63,16 +58,6 @@ internal sealed partial class SharpLinkClient
             return;
         for (var index = 0; index < disconnected.Count; index++)
             _remoteContractManifests.Remove(disconnected[index]);
-    }
-
-    private void ValidateAcquiredContractAssemblies()
-    {
-        foreach (var registration in _assemblyRegistry.CaptureProxySnapshot().Values)
-        {
-            if (Volatile.Read(ref registration.Proxy) is null)
-                continue;
-            ValidateRemoteContractAssembly(registration);
-        }
     }
 
     private void ValidateRemoteContractAssembly(ClientProxyRegistration registration)

@@ -109,6 +109,7 @@ internal sealed class ServiceRegistration : IAsyncDisposable
     internal Type ContractType { get; }
     internal IRpcStub Stub { get; }
     internal SharpLinkServiceLifetime Lifetime { get; }
+    internal ServerBindingRegistration? Binding { get; set; }
     internal SharpLinkDynamicModule? Module { get; }
     // One immutable weak identity per dynamic registration. Queued attempts borrow it without
     // allocating a weak handle, and the identity never owns the registration's lifetime.

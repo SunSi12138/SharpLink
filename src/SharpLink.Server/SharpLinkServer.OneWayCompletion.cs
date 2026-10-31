@@ -10,8 +10,7 @@ internal sealed partial class SharpLinkServer
         ServerConnectionState connection,
         SharpLinkCallContextSnapshot callContext,
         RpcSession session,
-        IRpcStub stub,
-        long methodId,
+        RpcMethodFacts method,
         int clientStreamCount,
         CancellationToken cancellationToken,
         ServerRequestPermit requestPermit)
@@ -33,7 +32,7 @@ internal sealed partial class SharpLinkServer
             if (TryClaimCallCompletion(callState))
             {
                 LogOnewayRpcDispatchFailed(_logger, MapServiceException(
-                    ex, callContext, session, stub, methodId, requestId, cancellationToken));
+                    ex, callContext, session, method, requestId, cancellationToken));
             }
         }
         finally

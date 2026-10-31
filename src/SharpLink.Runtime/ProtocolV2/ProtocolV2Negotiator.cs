@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-/// <summary>Validated immutable local policy used by the pure Protocol v2 negotiation mechanism.</summary>
+/// <summary>Validated immutable local policy used by the pure Protocol3 negotiation mechanism.</summary>
 internal readonly struct ProtocolV2NegotiationPolicy
 {
     private ProtocolV2NegotiationPolicy(
@@ -9,7 +9,10 @@ internal readonly struct ProtocolV2NegotiationPolicy
         int maxFramePayloadBytes,
         int streamReceiveWindowBytes,
         int connectionReceiveWindowBytes,
-        IReadOnlyList<SharpLinkCompressionProviderBinding> compressionProviders)
+        IReadOnlyList<SharpLinkCompressionProviderBinding> compressionProviders,
+        Protocol3BindingLimits bindingLimits,
+        Guid serverInstanceId,
+        Guid registryEpoch)
     {
         MinorVersion = minorVersion;
         SupportedCapabilities = supportedCapabilities;
@@ -17,6 +20,9 @@ internal readonly struct ProtocolV2NegotiationPolicy
         StreamReceiveWindowBytes = streamReceiveWindowBytes;
         ConnectionReceiveWindowBytes = connectionReceiveWindowBytes;
         CompressionProviders = compressionProviders;
+        BindingLimits = bindingLimits;
+        ServerInstanceId = serverInstanceId;
+        RegistryEpoch = registryEpoch;
     }
 
     internal ushort MinorVersion { get; }
@@ -31,20 +37,35 @@ internal readonly struct ProtocolV2NegotiationPolicy
 
     internal IReadOnlyList<SharpLinkCompressionProviderBinding> CompressionProviders { get; }
 
+    internal Protocol3BindingLimits BindingLimits { get; }
+
+    internal Guid ServerInstanceId { get; }
+
+    internal Guid RegistryEpoch { get; }
+
     internal static ProtocolV2NegotiationPolicy Create(
         ushort minorVersion,
         ProtocolV2Capabilities supportedCapabilities,
         int maxFramePayloadBytes,
         int streamReceiveWindowBytes,
         int connectionReceiveWindowBytes,
-        IReadOnlyList<SharpLinkCompressionProviderBinding> compressionProviders)
+        IReadOnlyList<SharpLinkCompressionProviderBinding> compressionProviders,
+        Protocol3BindingLimits? bindingLimits = null,
+        Guid serverInstanceId = default,
+        Guid registryEpoch = default)
     {
         ArgumentNullException.ThrowIfNull(compressionProviders);
-        if (minorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion ||
-            minorVersion > ProtocolV2Constants.MinorVersion)
+        if (minorVersion != ProtocolV2Constants.MinorVersion)
         {
             throw new ArgumentOutOfRangeException(nameof(minorVersion));
         }
+        var selectedBindingLimits = bindingLimits ?? Protocol3BindingLimits.Default;
+        if (!Protocol3BindingLimitsCodec.IsValid(selectedBindingLimits))
+            throw new ArgumentOutOfRangeException(nameof(bindingLimits));
+        if ((serverInstanceId == Guid.Empty) != (registryEpoch == Guid.Empty))
+            throw new ArgumentException("Server authority requires both instance and registry epoch GUIDs.");
+        if ((supportedCapabilities & ProtocolV2Negotiator.MandatoryCapabilities) != ProtocolV2Negotiator.MandatoryCapabilities)
+            throw new ArgumentException("Protocol3 mandatory capabilities must be implemented.", nameof(supportedCapabilities));
         if ((supportedCapabilities & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0)
             throw new ArgumentOutOfRangeException(nameof(supportedCapabilities));
         if (maxFramePayloadBytes < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
@@ -102,7 +123,10 @@ internal readonly struct ProtocolV2NegotiationPolicy
             maxFramePayloadBytes,
             streamReceiveWindowBytes,
             connectionReceiveWindowBytes,
-            compressionProviders);
+            compressionProviders,
+            selectedBindingLimits,
+            serverInstanceId,
+            registryEpoch);
     }
 }
 
@@ -122,14 +146,20 @@ internal sealed class ProtocolV2ServerNegotiation
     internal NegotiatedSessionOptions Options { get; }
 }
 
-/// <summary>Pure Protocol v2 offer, intersection, and response-validation rules.</summary>
+/// <summary>Pure Protocol3 offer, intersection, and response-validation rules.</summary>
 internal static class ProtocolV2Negotiator
 {
+    internal const ProtocolV2Capabilities MandatoryCapabilities =
+        ProtocolV2Capabilities.FlowControl |
+        ProtocolV2Capabilities.CancellationReason |
+        ProtocolV2Capabilities.ContractManifest;
+
     internal const ProtocolV2Capabilities AlwaysImplementedCapabilities =
         ProtocolV2Capabilities.Metadata |
         ProtocolV2Capabilities.FlowControl |
         ProtocolV2Capabilities.HealthCheck |
-        ProtocolV2Capabilities.CancellationReason;
+        ProtocolV2Capabilities.CancellationReason |
+        ProtocolV2Capabilities.ContractManifest;
 
     internal static ProtocolV2HandshakeRequest CreateClientOffer(
         in ProtocolV2NegotiationPolicy policy,
@@ -138,6 +168,9 @@ internal static class ProtocolV2Negotiator
         ulong responseCompressionPreferenceGeneration = 0,
         bool allowResponseCompression = true)
     {
+        if (responseCompressionPreferenceGeneration > long.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(responseCompressionPreferenceGeneration));
+        requiredCapabilities |= MandatoryCapabilities;
         if ((requiredCapabilities & ~policy.SupportedCapabilities) != 0)
         {
             throw new ArgumentException(
@@ -164,7 +197,8 @@ internal static class ProtocolV2Negotiator
             authenticationPayload,
             compressionProfiles,
             responseCompressionPreferenceGeneration,
-            allowResponseCompression);
+            allowResponseCompression,
+            policy.BindingLimits);
     }
 
     internal static ProtocolV2ServerNegotiation NegotiateServer(
@@ -172,6 +206,10 @@ internal static class ProtocolV2Negotiator
         in ProtocolV2NegotiationPolicy serverPolicy)
     {
         ValidatePeerOffer(offer);
+        if (serverPolicy.ServerInstanceId == Guid.Empty || serverPolicy.RegistryEpoch == Guid.Empty)
+            throw new InvalidOperationException("Server negotiation requires its stable registry authority.");
+        var bindingLimits = Protocol3BindingLimitsCodec.Negotiate(offer.BindingLimits, serverPolicy.BindingLimits);
+        var authority = new Protocol3BindingAuthority(serverPolicy.ServerInstanceId, serverPolicy.RegistryEpoch, bindingLimits);
 
         var unsupportedRequired = offer.RequiredCapabilities & ~serverPolicy.SupportedCapabilities;
         if (unsupportedRequired != ProtocolV2Capabilities.None)
@@ -201,7 +239,7 @@ internal static class ProtocolV2Negotiator
             throw Failure(SharpLinkErrorCode.Unimplemented, message);
         }
 
-        var minorVersion = Math.Min(offer.MinorVersion, serverPolicy.MinorVersion);
+        var minorVersion = ProtocolV2Constants.MinorVersion;
         var maxFramePayloadBytes = Math.Min(
             offer.MaxFramePayloadBytes,
             serverPolicy.MaxFramePayloadBytes);
@@ -217,14 +255,16 @@ internal static class ProtocolV2Negotiator
             maxFramePayloadBytes,
             streamReceiveWindowBytes,
             connectionReceiveWindowBytes,
-            compressionBinding?.WireProfile);
+            compressionBinding?.WireProfile,
+            authority);
         var options = new NegotiatedSessionOptions(
             minorVersion,
             negotiatedCapabilities,
             maxFramePayloadBytes,
             streamReceiveWindowBytes,
             connectionReceiveWindowBytes,
-            compressionBinding);
+            compressionBinding,
+            authority);
         return new ProtocolV2ServerNegotiation(response, options);
     }
 
@@ -240,19 +280,13 @@ internal static class ProtocolV2Negotiator
             response.ConnectionReceiveWindowBytes,
             "HandshakeResponse");
 
-        if (response.MinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion)
-        {
-            throw Failure(
-                SharpLinkErrorCode.Unimplemented,
-                $"Server selected incompatible protocol minor version {response.MinorVersion}; " +
-                $"minimum supported is {ProtocolV2Constants.MinimumCompatibleMinorVersion}.");
-        }
-        if (response.MinorVersion > offer.MinorVersion)
-        {
-            throw Failure(
-                SharpLinkErrorCode.Unimplemented,
-                $"Server requires unsupported protocol minor version {response.MinorVersion}.");
-        }
+        if (response.MinorVersion != ProtocolV2Constants.MinorVersion)
+            throw Failure(SharpLinkErrorCode.Unimplemented, "Server selected an unsupported Protocol3 revision.");
+        if (response.Authority.ServerInstanceId == Guid.Empty || response.Authority.RegistryEpoch == Guid.Empty)
+            throw Failure(SharpLinkErrorCode.ProtocolViolation, "Server handshake authority is empty.");
+        Protocol3BindingLimitsCodec.ValidateNegotiated(response.Authority.Limits, offer.BindingLimits, clientPolicy.BindingLimits);
+        if ((response.NegotiatedCapabilities & MandatoryCapabilities) != MandatoryCapabilities)
+            throw Failure(SharpLinkErrorCode.ProtocolViolation, "Server omitted Protocol3 mandatory capabilities.");
         if ((response.NegotiatedCapabilities & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0)
             throw Failure(SharpLinkErrorCode.ProtocolViolation, "Server negotiated unknown capabilities.");
         if ((response.NegotiatedCapabilities & ~offer.SupportedCapabilities) != 0)
@@ -261,7 +295,10 @@ internal static class ProtocolV2Negotiator
             throw Failure(SharpLinkErrorCode.ProtocolViolation, "Server omitted a required client capability.");
         if (response.MaxFramePayloadBytes > offer.MaxFramePayloadBytes ||
             response.StreamReceiveWindowBytes > offer.StreamReceiveWindowBytes ||
-            response.ConnectionReceiveWindowBytes > offer.ConnectionReceiveWindowBytes)
+            response.ConnectionReceiveWindowBytes > offer.ConnectionReceiveWindowBytes ||
+            response.MaxFramePayloadBytes > clientPolicy.MaxFramePayloadBytes ||
+            response.StreamReceiveWindowBytes > clientPolicy.StreamReceiveWindowBytes ||
+            response.ConnectionReceiveWindowBytes > clientPolicy.ConnectionReceiveWindowBytes)
         {
             throw Failure(
                 SharpLinkErrorCode.ProtocolViolation,
@@ -284,14 +321,14 @@ internal static class ProtocolV2Negotiator
             {
                 throw Failure(
                     SharpLinkErrorCode.ProtocolViolation,
-                    $"Server selected compression profile '{selectedProfile}' that the client did not offer.");
+                    "Server selected a compression profile that the client did not offer.");
             }
             compressionBinding = FindBinding(clientPolicy.CompressionProviders, selectedProfile);
             if (compressionBinding is null)
             {
                 throw Failure(
                     SharpLinkErrorCode.ProtocolViolation,
-                    $"Server selected compression profile '{selectedProfile}' that the client cannot bind.");
+                    "Server selected a compression profile that the client cannot bind.");
             }
         }
 
@@ -301,18 +338,21 @@ internal static class ProtocolV2Negotiator
             response.MaxFramePayloadBytes,
             response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes,
-            compressionBinding);
+            compressionBinding,
+            response.Authority);
     }
 
     private static void ValidatePeerOffer(in ProtocolV2HandshakeRequest offer)
     {
-        if (offer.MinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion)
-        {
-            throw Failure(
-                SharpLinkErrorCode.Unimplemented,
-                $"Peer protocol minor version {offer.MinorVersion} is incompatible; " +
-                $"minimum supported is {ProtocolV2Constants.MinimumCompatibleMinorVersion}.");
-        }
+        if (offer.MinorVersion != ProtocolV2Constants.MinorVersion)
+            throw Failure(SharpLinkErrorCode.Unimplemented, "Peer offered an unsupported Protocol3 revision.");
+        if (offer.ResponseCompressionPreferenceGeneration > long.MaxValue)
+            throw Failure(SharpLinkErrorCode.ProtocolViolation, "Peer preference generation exceeds the 63-bit domain.");
+        if (!Protocol3BindingLimitsCodec.IsValid(offer.BindingLimits))
+            throw Failure(SharpLinkErrorCode.ProtocolViolation, "Peer binding limits are invalid.");
+        if ((offer.RequiredCapabilities & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0 ||
+            (offer.RequiredCapabilities & MandatoryCapabilities) != MandatoryCapabilities)
+            throw Failure(SharpLinkErrorCode.ProtocolViolation, "Peer required capabilities are unknown or omit Protocol3 mandatory capabilities.");
         ValidatePeerLimits(
             offer.MaxFramePayloadBytes,
             offer.StreamReceiveWindowBytes,
@@ -360,7 +400,7 @@ internal static class ProtocolV2Negotiator
                 {
                     throw Failure(
                         SharpLinkErrorCode.ProtocolViolation,
-                        $"Compression wire profile '{profile}' was offered more than once.");
+                        "A compression wire profile was offered more than once.");
                 }
             }
         }
@@ -412,7 +452,7 @@ internal static class ProtocolV2Negotiator
         {
             throw Failure(
                 SharpLinkErrorCode.ProtocolViolation,
-                $"{messageType} frame limit is outside the Protocol v2 range.");
+                $"{messageType} frame limit is outside the Protocol3 range.");
         }
         if (streamReceiveWindowBytes <= 0 ||
             connectionReceiveWindowBytes <= 0 ||

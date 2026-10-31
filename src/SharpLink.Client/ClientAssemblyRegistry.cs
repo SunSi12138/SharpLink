@@ -54,6 +54,9 @@ internal sealed partial class ClientAssemblyRegistry
         _proxyLookup = proxyLookup ?? throw new ArgumentNullException(nameof(proxyLookup));
         _stateProvider = stateProvider ?? throw new ArgumentNullException(nameof(stateProvider));
         _trackFrameworkTask = trackFrameworkTask ?? throw new ArgumentNullException(nameof(trackFrameworkTask));
+        foreach (var registration in _proxyLookup.Capture().Values)
+            registration.LocalControl = CreateLocalControl(
+                registration.Descriptor.ContractId, FindOwningManifest(registration).RpcAssemblyHash);
     }
 
     internal IReadOnlyDictionary<Assembly, SharpLinkDynamicModule> DynamicModules => _dynamicModules;
@@ -87,8 +90,14 @@ internal sealed partial class ClientAssemblyRegistry
     /// </summary>
     internal void BeginShutdown()
     {
+        ClientLocalContractControl[] retired;
         lock (_gate)
+        {
+            retired = CaptureLocalControlsLocked();
             _shutdownStarted = true;
+            RetireLocalControls(retired);
+        }
+        NotifyLocalRetirement(retired);
     }
 
     internal SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
@@ -227,6 +236,7 @@ internal sealed partial class ClientAssemblyRegistry
         if (!loaded.Succeeded)
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
 
+        ClientLocalContractControl[] retiredControls = [];
         Task<SharpLinkAssemblyUnregisterResult>? drainOperation = null;
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
@@ -342,13 +352,15 @@ internal sealed partial class ClientAssemblyRegistry
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
+                        retiredControls = CaptureLocalControlsLocked(oldModule);
                         _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
                         _dynamicModules.Add(newAssembly, newModule);
                         _unregisterOperations.Add(oldAssembly, drainOperation);
                         _runtimeContext.AdoptGeneratedManifest(codecRegistration);
+                        RetireLocalControls(retiredControls);
+                        oldModule.TryBeginDraining();
                         _proxyLookup.Publish(candidate.Proxies);
                         _generation++;
-                        oldModule.TryBeginDraining();
                         published = true;
                         break;
                     }
@@ -390,6 +402,7 @@ internal sealed partial class ClientAssemblyRegistry
             drainOperation!,
             "DynamicAssemblyReplacementDrain",
             TaskObservationMode.ExternallyObserved);
+        NotifyLocalRetirement(retiredControls);
         _ = CompleteUnregisterOperationAsync(oldAssembly, oldModule!, gracefulTimeout, drainCompletion!);
         return WaitForReplacementAsync(drainOperation!, cancellationToken);
     }
@@ -402,6 +415,7 @@ internal sealed partial class ClientAssemblyRegistry
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
         Task<SharpLinkAssemblyUnregisterResult> operation;
+        ClientLocalContractControl[] retiredControls;
         lock (_gate)
         {
             if (_unregisterOperations.TryGetValue(assembly, out operation!))
@@ -412,7 +426,10 @@ internal sealed partial class ClientAssemblyRegistry
             var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             operation = completion.Task;
+            retiredControls = CaptureLocalControlsLocked(module);
             _unregisterOperations.Add(assembly, operation);
+            RetireLocalControls(retiredControls);
+            module.TryBeginDraining();
             _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
             if (_stateProvider() != SharpLinkConnectionState.Draining)
             {
@@ -422,6 +439,7 @@ internal sealed partial class ClientAssemblyRegistry
                     TaskObservationMode.ExternallyObserved);
             }
         }
+        NotifyLocalRetirement(retiredControls);
         return WaitForUnregisterAsync(operation, cancellationToken);
     }
 

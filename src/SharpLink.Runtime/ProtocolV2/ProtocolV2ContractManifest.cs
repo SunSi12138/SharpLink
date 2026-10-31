@@ -17,6 +17,8 @@ internal sealed class ProtocolV2ContractManifest
         ArgumentNullException.ThrowIfNull(contracts);
 
         var ordered = contracts.OrderBy(static pair => pair.Key).ToArray();
+        if (generation == 0 && ordered.Length != 0)
+            throw new ArgumentException("A nonempty contract manifest requires a positive publication generation.", nameof(generation));
         var dictionary = new Dictionary<long, RpcHash128>(ordered.Length);
         for (var index = 0; index < ordered.Length; index++)
         {

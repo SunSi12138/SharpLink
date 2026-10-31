@@ -1,8 +1,11 @@
 namespace SharpLink.Client;
 
-internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient inner, SharpLinkDynamicModule module) : IRpcChannel
+internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite inner, SharpLinkDynamicModule module) : IRpcContractChannel
 {
     public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;
+
+    public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
+        => inner.PrepareAsync(timeout, cancellationToken);
 
     public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method, in TRequest request,
         IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec, SharpLinkMetadata? metadata,

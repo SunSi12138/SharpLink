@@ -21,6 +21,11 @@ internal sealed class ServerConnectionState
     private readonly TaskCompletionSource _sessionLoopCompleted =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<ServiceRegistration, ConnectionServiceEntry> _services = [];
+    private readonly Lock _bindingsGate = new();
+    private ServerBindingTable? _bindings;
+    private bool _bindingsClosed;
+    private int _bindingOperations;
+    private int _bindingControlFrames;
     private SharpLinkAuthenticationContext? _authenticationContext;
     private SharpLinkCallContextSnapshot? _defaultCallContext;
     private long _lastAcceptedRequestId;
@@ -55,12 +60,77 @@ internal sealed class ServerConnectionState
             _timeProvider);
         _connectionCancellation = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
         _connectionToken = _connectionCancellation.Token;
+        Session.OnDisconnected += OnBindingSessionDisconnected;
 #if DEBUG
         _afterLocalCallAdmission = afterLocalCallAdmission;
 #endif
     }
 
     internal RpcSession Session { get; }
+
+    internal ServerBindingTable Bindings => Volatile.Read(ref _bindings)
+        ?? throw new InvalidOperationException("Session binding state has not been initialized.");
+
+    internal ServerBindingTable InitializeBindings(ServerBindingSlotQuota quota)
+    {
+        lock (_bindingsGate)
+        {
+            if (_bindings is { } existing)
+                return existing;
+            var options = Session.NegotiatedOptions
+                ?? throw new InvalidOperationException("Binding state requires a completed handshake.");
+            if (!Protocol3BindingLimitsCodec.IsValid(options.Authority.Limits) ||
+                LifecycleState is ServerConnectionLifecycleState.Handshaking or ServerConnectionLifecycleState.Closed)
+                throw new InvalidOperationException("Binding state requires an authenticated negotiated Session.");
+            var table = new ServerBindingTable(options.Authority.Limits.Slots, quota);
+            if (_bindingsClosed || Volatile.Read(ref _closeStarted) != 0 || !Session.IsConnected)
+                table.Close();
+            Volatile.Write(ref _bindings, table);
+            return table;
+        }
+    }
+
+    internal bool TryReserveBindingOperation(ushort limit) => TryReserveBindingCount(ref _bindingOperations, limit);
+    internal bool TryReserveBindingControlFrame(ushort limit) => TryReserveBindingCount(ref _bindingControlFrames, limit);
+    internal void ReleaseBindingOperation() => ReleaseBindingCount(ref _bindingOperations);
+    internal void ReleaseBindingControlFrame() => ReleaseBindingCount(ref _bindingControlFrames);
+
+    internal void CloseBindings()
+    {
+        lock (_bindingsGate)
+        {
+            _bindingsClosed = true;
+            _bindings?.Close();
+        }
+    }
+
+    internal void FailBindingOperation(Exception exception)
+    {
+        CloseBindings();
+        Session.NotifyDisconnected(exception);
+    }
+
+    private void OnBindingSessionDisconnected(Exception? exception) => CloseBindings();
+
+    private static bool TryReserveBindingCount(ref int count, ushort limit)
+    {
+        if (limit == 0)
+            return false;
+        while (true)
+        {
+            var observed = Volatile.Read(ref count);
+            if (observed >= limit)
+                return false;
+            if (Interlocked.CompareExchange(ref count, observed + 1, observed) == observed)
+                return true;
+        }
+    }
+
+    private static void ReleaseBindingCount(ref int count)
+    {
+        if (Interlocked.Decrement(ref count) < 0)
+            throw new InvalidOperationException("Binding control ownership was released more than once.");
+    }
 
     internal IRpcGeneratedServerBridge GeneratedBridge { get; }
 
@@ -327,6 +397,7 @@ internal sealed class ServerConnectionState
 
     internal ValueTask CloseAsync()
     {
+        CloseBindings();
         if (Interlocked.Exchange(ref _closeStarted, 1) != 0)
             return new ValueTask(_sessionCompleted.Task);
 

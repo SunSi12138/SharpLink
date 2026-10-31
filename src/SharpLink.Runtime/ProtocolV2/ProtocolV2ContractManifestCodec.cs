@@ -74,7 +74,7 @@ internal static class ProtocolV2ContractManifestCodec
             throw ProtocolV2FrameParser.Violation("ContractManifest payload has an invalid bounded length.");
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out long generation) || generation < 0 ||
-            !reader.TryReadLittleEndian(out int count) || count < 0)
+            !reader.TryReadLittleEndian(out int count) || count < 0 || generation == 0 && count != 0)
         {
             throw ProtocolV2FrameParser.Violation("ContractManifest header is invalid.");
         }
@@ -89,5 +89,16 @@ internal static class ProtocolV2ContractManifestCodec
         }
         if (payload.Length != expected)
             throw ProtocolV2FrameParser.Violation("ContractManifest entry count does not match the frame payload.");
+        long previousContractId = 0;
+        for (var index = 0; index < count; index++)
+        {
+            if (!reader.TryReadLittleEndian(out long contractId) ||
+                !reader.TryReadLittleEndian(out long highBits) ||
+                !reader.TryReadLittleEndian(out long lowBits) ||
+                contractId == 0 || index != 0 && contractId <= previousContractId ||
+                highBits == 0 && lowBits == 0)
+                throw ProtocolV2FrameParser.Violation("ContractManifest entry identity or order is invalid.");
+            previousContractId = contractId;
+        }
     }
 }

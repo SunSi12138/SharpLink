@@ -1,10 +1,10 @@
 namespace SharpLink.Abstractions;
 
-/// <summary>Defines the fixed SharpLink Protocol v2 wire constants.</summary>
+/// <summary>Defines the fixed SharpLink Protocol3 wire constants.</summary>
 public static class ProtocolV2Constants
 {
-    /// <summary>Protocol v2 frame magic.</summary>
-    public const byte Magic = 0x89;
+    /// <summary>Protocol3 frame magic.</summary>
+    public const byte Magic = 0x8A;
 
     /// <summary>Fixed frame header size in bytes.</summary>
     public const int HeaderBytes = 15;
@@ -12,14 +12,17 @@ public static class ProtocolV2Constants
     /// <summary>Fixed request routing prefix size in bytes.</summary>
     public const int RequestPrefixBytes = 16;
 
-    /// <summary>Current protocol minor version.</summary>
-    public const ushort MinorVersion = 4;
+    /// <summary>Fixed routing prefix including the explicit client stream count.</summary>
+    public const int OneWayStreamRequestPrefixBytes = 18;
 
-    /// <summary>Protocol minors below this floor predate the current wire generation and are not wire-compatible.</summary>
-    public const ushort MinimumCompatibleMinorVersion = 4;
+    /// <summary>The only accepted Protocol3 revision; no revision downgrade is supported.</summary>
+    public const ushort MinorVersion = 0;
+
+    /// <summary>The sole supported revision, retained under the existing source symbol name.</summary>
+    public const ushort MinimumCompatibleMinorVersion = 0;
 }
 
-/// <summary>Protocol v2 frame types.</summary>
+/// <summary>Protocol3 frame types.</summary>
 public enum ProtocolV2FrameType : byte
 {
     /// <summary>Begins capability negotiation and client authentication.</summary>
@@ -55,10 +58,24 @@ public enum ProtocolV2FrameType : byte
     /// <summary>Acknowledges the cumulative response compression preference generation applied by the server.</summary>
     ResponseCompressionPreferenceAck = 15,
     /// <summary>Requests blue-green replacement of this healthy physical session.</summary>
-    SessionRefreshRequested = 16
+    SessionRefreshRequested = 16,
+    /// <summary>Requests one session-local contract binding.</summary>
+    BindContract = 17,
+    /// <summary>Returns the final result of one binding operation.</summary>
+    BindResult = 18,
+    /// <summary>Retires one exact binding token.</summary>
+    BindingInvalidated = 19,
+    /// <summary>Releases one exact binding token.</summary>
+    ReleaseBinding = 20,
+    /// <summary>Cancels one published binding operation.</summary>
+    CancelBind = 21,
+    /// <summary>Accepts a response-bearing call's client stream routes.</summary>
+    RequestAccepted = 22,
+    /// <summary>Starts a one-way call with explicitly counted client streams.</summary>
+    OneWayStreamRequest = 23
 }
 
-/// <summary>Protocol v2 frame flags.</summary>
+/// <summary>Protocol3 frame flags.</summary>
 [Flags]
 public enum ProtocolV2FrameFlags : byte
 {
@@ -82,7 +99,7 @@ public enum ProtocolV2FrameFlags : byte
     HasReturn = 1 << 7
 }
 
-/// <summary>Protocol v2 negotiated capabilities.</summary>
+/// <summary>Protocol3 negotiated capabilities.</summary>
 [Flags]
 public enum ProtocolV2Capabilities : ulong
 {
@@ -107,7 +124,7 @@ public enum ProtocolV2Capabilities : ulong
 /// <summary>Identifies why a client abandoned an active RPC call.</summary>
 public enum ProtocolV2CancelReason : byte
 {
-    /// <summary>The peer uses the legacy Cancel form or did not provide a more specific reason.</summary>
+    /// <summary>The peer did not provide a more specific cancellation reason.</summary>
     Unspecified = 0,
     /// <summary>The caller's cancellation token was canceled.</summary>
     UserCancellation = 1,
@@ -117,7 +134,7 @@ public enum ProtocolV2CancelReason : byte
     ConsumerAbandoned = 3
 }
 
-/// <summary>Parsed Protocol v2 frame header.</summary>
+/// <summary>Parsed Protocol3 frame header.</summary>
 /// <param name="Type">The operation represented by the frame.</param>
 /// <param name="Flags">Optional semantics applied to the frame.</param>
 /// <param name="RequestId">The connection-scoped request identifier, or zero for connection frames.</param>
@@ -127,8 +144,8 @@ public readonly record struct ProtocolV2FrameHeader(
     ProtocolV2FrameFlags Flags,
     ulong RequestId);
 
-/// <summary>Protocol v2 handshake request values.</summary>
-/// <param name="MinorVersion">The highest protocol minor version supported by the client.</param>
+/// <summary>Protocol3 handshake request values.</summary>
+/// <param name="MinorVersion">The exact Protocol3 revision, which must be zero.</param>
 /// <param name="SupportedCapabilities">Optional capabilities supported by the client.</param>
 /// <param name="RequiredCapabilities">Capabilities that the server must negotiate for the connection to succeed.</param>
 /// <param name="MaxFramePayloadBytes">The largest frame payload accepted by the client.</param>
@@ -138,6 +155,7 @@ public readonly record struct ProtocolV2FrameHeader(
 /// <param name="CompressionProfiles">Compression profiles supported by the client, in preference order.</param>
 /// <param name="ResponseCompressionPreferenceGeneration">The client-instance desired response-compression state generation.</param>
 /// <param name="AllowResponseCompression">Whether the client currently allows the server to compress response-direction business payloads.</param>
+/// <param name="BindingLimits">The valid binding-resource offer; default is not a valid wire value.</param>
 public readonly record struct ProtocolV2HandshakeRequest(
     ushort MinorVersion,
     ProtocolV2Capabilities SupportedCapabilities,
@@ -148,22 +166,25 @@ public readonly record struct ProtocolV2HandshakeRequest(
     ReadOnlyMemory<byte> AuthenticationPayload,
     ReadOnlyMemory<string> CompressionProfiles = default,
     ulong ResponseCompressionPreferenceGeneration = 0,
-    bool AllowResponseCompression = true);
+    bool AllowResponseCompression = true,
+    Protocol3BindingLimits BindingLimits = default);
 
-/// <summary>Protocol v2 negotiated handshake response values.</summary>
-/// <param name="MinorVersion">The protocol minor version selected by the server.</param>
+/// <summary>Protocol3 negotiated handshake response values.</summary>
+/// <param name="MinorVersion">The exact Protocol3 revision, which must be zero.</param>
 /// <param name="NegotiatedCapabilities">Optional capabilities enabled for the connection.</param>
 /// <param name="MaxFramePayloadBytes">The largest frame payload accepted on the connection.</param>
 /// <param name="StreamReceiveWindowBytes">The negotiated initial receive window for each stream.</param>
 /// <param name="ConnectionReceiveWindowBytes">The negotiated aggregate receive window for the connection.</param>
 /// <param name="CompressionProfile">The selected compression profile, or <see langword="null"/> when compression is disabled.</param>
+/// <param name="Authority">The nonempty server/registry authority and negotiated binding limits.</param>
 public readonly record struct ProtocolV2HandshakeResponse(
     ushort MinorVersion,
     ProtocolV2Capabilities NegotiatedCapabilities,
     int MaxFramePayloadBytes,
     int StreamReceiveWindowBytes,
     int ConnectionReceiveWindowBytes,
-    string? CompressionProfile = null);
+    string? CompressionProfile = null,
+    Protocol3BindingAuthority Authority = default);
 
 /// <summary>Updates the client preference governing future server response-compression decisions.</summary>
 /// <param name="Generation">The monotonic desired-state generation.</param>
@@ -201,3 +222,32 @@ public readonly record struct ProtocolV2Error(
     ushort DetailCode,
     string Message,
     bool IsTruncated);
+
+/// <summary>Bounded session-local binding resources exchanged in the Protocol3 handshake.</summary>
+/// <param name="Slots">Number of token slots, from 1 through 65536.</param>
+/// <param name="Operations">Concurrent binding operations, from 1 through 64.</param>
+/// <param name="MaxClientStreamsPerCall">Client streams per call, from 1 through 127.</param>
+/// <param name="OperationDeadlineMs">Finite binding-operation deadline, from 1 through 60000 milliseconds.</param>
+/// <param name="QueuedControlFrames">Queued binding-control frames, from 1 through 256.</param>
+public readonly record struct Protocol3BindingLimits(
+    uint Slots,
+    ushort Operations,
+    ushort MaxClientStreamsPerCall,
+    uint OperationDeadlineMs,
+    ushort QueuedControlFrames)
+{
+    /// <summary>The standard local binding policy.</summary>
+    public static Protocol3BindingLimits Default => new(4096, 64, 127, 30000, 256);
+
+    /// <summary>The absolute structural ceilings, not an allocation request.</summary>
+    public static Protocol3BindingLimits Maximum => new(65536, 64, 127, 60000, 256);
+}
+
+/// <summary>Identifies the server and registry epoch of one physical Protocol3 session.</summary>
+/// <param name="ServerInstanceId">Nonempty server-lifetime authority.</param>
+/// <param name="RegistryEpoch">Nonempty registry-lifetime authority.</param>
+/// <param name="Limits">Validated negotiated binding resource limits.</param>
+public readonly record struct Protocol3BindingAuthority(
+    Guid ServerInstanceId,
+    Guid RegistryEpoch,
+    Protocol3BindingLimits Limits);

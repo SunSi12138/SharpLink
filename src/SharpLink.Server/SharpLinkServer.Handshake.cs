@@ -14,7 +14,9 @@ internal sealed partial class SharpLinkServer
             _runtimeContext.FlowControl.StreamReceiveWindowBytes,
             _runtimeContext.FlowControl.ConnectionReceiveWindowBytes,
             compressionProviders,
-            enableSessionRefresh: session.SupportsSessionRefreshReplacement);
+            enableSessionRefresh: session.SupportsSessionRefreshReplacement,
+            serverInstanceId: _desiredSessionServerInstanceId,
+            registryEpoch: _bindingRegistryEpoch);
         var reader = session.Input;
         SharpLinkAuthenticationResult? handshakeResult = null;
 

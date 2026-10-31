@@ -7,7 +7,10 @@ internal static class ProtocolV2ContractManifestNegotiation
         int streamReceiveWindowBytes,
         int connectionReceiveWindowBytes,
         IReadOnlyList<SharpLinkCompressionProviderBinding> compressionProviders,
-        bool enableSessionRefresh = true)
+        bool enableSessionRefresh = true,
+        Protocol3BindingLimits? bindingLimits = null,
+        Guid serverInstanceId = default,
+        Guid registryEpoch = default)
     {
         ArgumentNullException.ThrowIfNull(compressionProviders);
         var capabilities = ProtocolV2Negotiator.AlwaysImplementedCapabilities |
@@ -22,6 +25,9 @@ internal static class ProtocolV2ContractManifestNegotiation
             maxFramePayloadBytes,
             streamReceiveWindowBytes,
             connectionReceiveWindowBytes,
-            compressionProviders);
+            compressionProviders,
+            bindingLimits,
+            serverInstanceId,
+            registryEpoch);
     }
 }

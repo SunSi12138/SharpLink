@@ -171,7 +171,9 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            // The handshake (TLS + Protocol v2 + authentication) is complete: release the
+            connection.InitializeBindings(_bindingSlotQuota);
+
+            // The handshake (TLS + Protocol3 + authentication) is complete: release the
             // handshake slot while the connection slot follows the full connection lifetime.
             connectionLease.ReleaseHandshake();
 

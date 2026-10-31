@@ -415,6 +415,11 @@ public class SharpLinkServerRequestScopeReviewTests
         ILogger serviceLogger,
         RpcMethodKind kind = RpcMethodKind.Unary) : IRpcStub
     {
+        public RpcMethodFacts ResolveMethodFacts(long methodHash)
+            => TryGetMethodDescriptor(methodHash, out var descriptor)
+                ? MethodFactsTestHelper.FromDescriptor(descriptor)
+                : RpcMethodFacts.UnknownMethod;
+
         internal const long MethodHash = 1;
         private readonly TaskCompletionSource _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _invocationCount;
@@ -440,7 +445,7 @@ public class SharpLinkServerRequestScopeReviewTests
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args)
             => InvokeCore(CancellationToken.None);
@@ -448,7 +453,7 @@ public class SharpLinkServerRequestScopeReviewTests
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken)
@@ -457,7 +462,7 @@ public class SharpLinkServerRequestScopeReviewTests
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output)
@@ -466,7 +471,7 @@ public class SharpLinkServerRequestScopeReviewTests
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,

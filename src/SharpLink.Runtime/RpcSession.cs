@@ -103,6 +103,9 @@ internal sealed partial class RpcSession
         _telemetrySide = creationOptions.TelemetrySide;
     }
 
+    internal Protocol3BindingAuthority BindingAuthority
+        => Volatile.Read(ref _protocolState).Options?.Authority ?? default;
+
     internal IRpcByteBufferWriter RentFrameWriter()
         => RuntimeContext.Buffers.Rent(checked(ProtocolV2Constants.HeaderBytes + NegotiatedMaxFramePayloadBytes));
 

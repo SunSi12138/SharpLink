@@ -49,6 +49,7 @@ internal sealed class ClientConnection :
         _timeProvider = runtimeContext.TimeProvider;
         _lateResponseLogLimiter = new LateResponseLogLimiter(_timeProvider.TimestampFrequency);
         _consumerAbandonedCallback = OnConsumerAbandonedAsync;
+        Binding = new ClientBindingSession(session);
         PendingCalls = new PendingRequestTable(
             maxPendingCalls,
             runtimeContext.Codecs,
@@ -57,6 +58,9 @@ internal sealed class ClientConnection :
         EndpointId = endpointId;
         EndpointGeneration = endpointGeneration;
     }
+
+    internal ClientBindingSession Binding { get; }
+    internal bool TryReserveExactCallAdmission() => TryReserveOwnCallAdmission(notifyTestHook: true);
 
     public RpcSession Session { get; }
     public PendingRequestTable PendingCalls { get; }
@@ -603,6 +607,7 @@ internal sealed class ClientConnection :
         Fail(new SharpLinkException(
             SharpLinkErrorCode.ConnectionClosed,
             "Client connection is disposed."));
+        Binding.Close(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Client connection is disposed."));
         _cancellation.Dispose();
         PendingCalls.Dispose();
         return Session.DisposeAsync();

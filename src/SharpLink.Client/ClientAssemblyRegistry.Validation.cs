@@ -18,7 +18,7 @@ internal sealed partial class ClientAssemblyRegistry
 
         var nextProxies = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>();
         foreach (var pair in currentProxies)
-            nextProxies[pair.Key] = new SharpLinkClient.ClientProxyRegistration(pair.Value.Descriptor, pair.Value.Module, pair.Value.Codecs);
+            nextProxies[pair.Key] = pair.Value;
         var byId = nextProxies.Values.ToDictionary(
             static registration => registration.Descriptor.ContractId,
             static registration => registration);
@@ -33,7 +33,10 @@ internal sealed partial class ClientAssemblyRegistry
             var registration = new SharpLinkClient.ClientProxyRegistration(
                 contract,
                 module,
-                RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration, contract.ContractType));
+                RpcGeneratedCodecResolver.GetProvider(module.CodecRegistration, contract.ContractType))
+            {
+                LocalControl = CreateLocalControl(contract.ContractId, incoming.RpcAssemblyHash)
+            };
             nextProxies.Add(contract.ContractType, registration);
             byId.Add(contract.ContractId, registration);
         }

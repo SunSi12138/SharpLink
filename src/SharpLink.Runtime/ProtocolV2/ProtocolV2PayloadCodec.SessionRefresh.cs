@@ -12,8 +12,8 @@ public static partial class ProtocolV2PayloadCodec
         ArgumentNullException.ThrowIfNull(writer);
         if (request.ServerInstanceId == Guid.Empty)
             throw new ArgumentException("A non-empty server instance ID is required.", nameof(request));
-        if (request.DesiredGeneration == 0)
-            throw new ArgumentOutOfRangeException(nameof(request), "Desired generation must be non-zero.");
+        if (request.DesiredGeneration == 0 || request.DesiredGeneration > long.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(request), "Desired generation must be positive and within the 63-bit domain.");
 
         var span = writer.GetSpan(SessionRefreshRequestedBytes);
         if (!request.ServerInstanceId.TryWriteBytes(span[..16]))
@@ -33,7 +33,7 @@ public static partial class ProtocolV2PayloadCodec
         payload.CopyTo(bytes);
         var serverInstanceId = new Guid(bytes[..16]);
         var desiredGeneration = BinaryPrimitives.ReadUInt64LittleEndian(bytes[16..]);
-        if (serverInstanceId == Guid.Empty || desiredGeneration == 0)
+        if (serverInstanceId == Guid.Empty || desiredGeneration == 0 || desiredGeneration > long.MaxValue)
             throw ProtocolV2FrameParser.Violation("SessionRefreshRequested contains an invalid authority or generation.");
         return new ProtocolV2SessionRefreshRequested(serverInstanceId, desiredGeneration);
     }

@@ -87,7 +87,7 @@ public sealed record SharpLinkGeneratedContractDescriptor(
     long ContractId,
     string Fingerprint,
     IReadOnlyList<SharpLinkGeneratedMethodDescriptor> Methods,
-    Func<IRpcChannel, IRpcCodecProvider, object> ProxyFactory,
+    Func<IRpcContractChannel, IRpcCodecProvider, object> ProxyFactory,
     Func<IRpcCodecProvider, IRpcStub> StubFactory);
 
 /// <summary>Describes one service-owned generated activator.</summary>
@@ -153,17 +153,18 @@ public interface ISharpLinkGeneratedAssemblyManifest
 public static class SharpLinkGeneratedManifestVersions
 {
     /// <summary>
-    /// The 3.0 generated API requires owner-local UnsafeBlit factories. Regenerate every
+    /// The 3.0 generated API requires identity-bearing contract channels, complete method facts,
+    /// and owner-local UnsafeBlit factories. Regenerate every
     /// generated assembly with the matching SDK and exact ABI identity; the API number alone
     /// does not identify compatible development branches.
     /// </summary>
-    public const int Api = 5;
+    public const int Api = 6;
 
-    /// <summary>Exact discriminator for the 3.0/API5 generated UnsafeBlit factory ABI.</summary>
-    public const string AbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
+    /// <summary>Exact discriminator for the 3.0/API6 contract-channel and complete-method-facts ABI.</summary>
+    public const string AbiIdentity = "sharplink-3.0-api6-contract-channel-complete-method-facts-v1";
 
-    /// <summary>The unchanged SharpLink wire protocol version.</summary>
-    public const int Protocol = 2;
+    /// <summary>The exact binding-aware SharpLink wire protocol major version.</summary>
+    public const int Protocol = 3;
 }
 
 /// <summary>

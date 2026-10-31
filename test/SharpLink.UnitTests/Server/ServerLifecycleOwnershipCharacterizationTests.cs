@@ -450,12 +450,14 @@ public class ServerLifecycleOwnershipCharacterizationTests
 
     private sealed class StubMarker : IRpcStub
     {
+        public RpcMethodFacts ResolveMethodFacts(long methodHash) => RpcMethodFacts.UnknownMethod;
+
         public long InterfaceHash => 1;
 
         public ValueTask InvokeNoReturnAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args)
             => ValueTask.CompletedTask;
@@ -463,7 +465,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeNoReturnCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             CancellationToken cancellationToken)
@@ -472,7 +474,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output)
@@ -481,7 +483,7 @@ public class ServerLifecycleOwnershipCharacterizationTests
         public ValueTask InvokeCancellableAsync(
             object service,
             IRpcGeneratedServerBridge bridge,
-            long methodHash,
+            RpcMethodFacts methodHash,
             long requestId,
             ReadOnlySequence<byte> args,
             IBufferWriter<byte> output,

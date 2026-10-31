@@ -251,6 +251,17 @@ internal sealed partial class SharpLinkServer
                         {
                             switch (header.Type)
                             {
+                                case ProtocolV2FrameType.BindContract:
+                                    await ProcessBindContractAsync(connection, header.RequestId, payload, ct).ConfigureAwait(false);
+                                    break;
+                                case ProtocolV2FrameType.ReleaseBinding:
+                                    connection.Bindings.Release(Protocol3BindingControlCodec.ReadReleaseBinding(
+                                        payload, session.BindingAuthority.Limits.Slots));
+                                    break;
+                                case ProtocolV2FrameType.CancelBind:
+                                    Protocol3BindingControlCodec.ReadCancelBind(payload, header.RequestId);
+                                    connection.Bindings.Cancel(header.RequestId);
+                                    break;
                                 case ProtocolV2FrameType.Ping:
                                     DebugLogClientHeartbeatReceived(_logger);
                                     await session.SendPongWithBackpressureAsync(
@@ -387,8 +398,35 @@ internal sealed partial class SharpLinkServer
         CancellationToken serverLoopToken)
     {
         using var requestScope = BeginRequestLogScope(_logger, requestId);
+        ServerBindingLease bindingLease = default;
+        var ownsBindingLease = false;
         try
         {
+            var routing = ReadRequestEnvelope(connection.Session, payload, flags);
+            var table = connection.Bindings;
+            if (table is null || !table.TryAcquire(unchecked((ulong)routing.InterfaceHash), out bindingLease))
+            {
+                if ((flags & ProtocolV2FrameFlags.OneWay) == 0)
+                    await connection.Session.SendRpcErrorWithBackpressureAsync(requestId,
+                        new SharpLinkException(SharpLinkErrorCode.Unavailable,
+                            SharpLinkErrorDetails.Unavailable.BindingUnknown, "Binding is unknown or retired."),
+                        connection.ConnectionToken).ConfigureAwait(false);
+                return;
+            }
+            ownsBindingLease = true;
+            var boundMethod = ResolveMethodCall(bindingLease.Registration, routing.MethodHash);
+            if (!boundMethod.Method.IsKnown)
+            {
+                if ((flags & ProtocolV2FrameFlags.OneWay) == 0)
+                    await connection.Session.SendRpcErrorWithBackpressureAsync(requestId,
+                        new SharpLinkException(SharpLinkErrorCode.NotFound,
+                            SharpLinkErrorDetails.NotFound.UnknownBoundMethod, "Method is not in the bound registration."),
+                        connection.ConnectionToken).ConfigureAwait(false);
+                return;
+            }
+            if ((boundMethod.Method.Kind == RpcMethodKind.OneWay) != ((flags & ProtocolV2FrameFlags.OneWay) != 0))
+                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.MalformedFrame,
+                    "Request flags do not match the bound method shape.");
             if (!TryAcceptRequest(connection, requestId))
             {
                 if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
@@ -426,7 +464,9 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram)
+                        admissionProgram,
+                        boundMethod,
+                        routing)
                     : DispatchRpcAsync(
                         connection,
                         requestId,
@@ -434,7 +474,9 @@ internal sealed partial class SharpLinkServer
                         payload,
                         requestCancellationMap,
                         serverLoopToken,
-                        admissionProgram);
+                        admissionProgram,
+                        boundMethod,
+                        routing);
             }
             catch (SharpLinkException exception) when (
                 exception.Code == SharpLinkErrorCode.ProtocolViolation)
@@ -474,6 +516,11 @@ internal sealed partial class SharpLinkServer
         catch (Exception ex)
         {
             LogRpcDispatchUnhandledException(_logger, ex);
+        }
+        finally
+        {
+            if (ownsBindingLease)
+                bindingLease.Release();
         }
     }
 

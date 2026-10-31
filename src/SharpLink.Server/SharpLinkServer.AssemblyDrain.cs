@@ -27,7 +27,9 @@ internal sealed partial class SharpLinkServer
             var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             operation = completion.Task;
+            var retiringBindings = _services.Values.Where(service => ReferenceEquals(service.Module, module)).ToArray();
             _unregisterOperations.Add(assembly, operation);
+            RetireBindingGroup(retiringBindings);
             _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
             TrackFrameworkTask(
                 operation,

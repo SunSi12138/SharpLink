@@ -145,34 +145,6 @@ internal sealed partial class SharpLinkClient
             timeProvider);
     }
 
-    private async ValueTask DelayForRetryOrAdmissionAsync(
-        TimeSpan delay,
-        RpcDeadline deadline,
-        CancellationToken cancellationToken)
-    {
-        if (_shutdownCts.IsCancellationRequested)
-            throw CreateConnectionClosedException("Client has stopped.");
-
-        using var linkedCancellation =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownCts.Token);
-        try
-        {
-            if (!await SharpLinkTimer.DelayAsync(
-                    delay,
-                    deadline,
-                    _runtimeContext.TimeProvider,
-                    linkedCancellation.Token).ConfigureAwait(false))
-            {
-                throw CreateDeadlineExceededException();
-            }
-        }
-        catch (OperationCanceledException) when (
-            _shutdownCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-        {
-            throw CreateConnectionClosedException("Client has stopped.");
-        }
-    }
-
     private static SharpLinkException CreateDeadlineExceededException()
         => new(SharpLinkErrorCode.DeadlineExceeded, "Request deadline exceeded.");
 
@@ -211,4 +183,36 @@ internal sealed partial class SharpLinkClient
         SharpLinkTelemetryDetailMode TelemetryDetailMode = SharpLinkTelemetryDetailMode.Detailed,
         TimeProvider? TimeProvider = null,
         ClientRetryGeneration? RetryGeneration = null);
+
+    internal sealed partial class ContractCallSite
+    {
+        private async ValueTask DelayForRetryOrAdmissionAsync(
+            TimeSpan delay,
+            RpcDeadline deadline,
+            CancellationToken cancellationToken)
+        {
+            if (_owner._shutdownCts.IsCancellationRequested)
+                throw CreateConnectionClosedException("Client has stopped.");
+
+            using var linkedCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _owner._shutdownCts.Token);
+            try
+            {
+                if (!await SharpLinkTimer.DelayAsync(
+                        delay,
+                        deadline,
+                        _owner._runtimeContext.TimeProvider,
+                        linkedCancellation.Token).ConfigureAwait(false))
+                {
+                    throw CreateDeadlineExceededException();
+                }
+            }
+            catch (OperationCanceledException) when (
+                _owner._shutdownCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                throw CreateConnectionClosedException("Client has stopped.");
+            }
+        }
+
+    }
 }

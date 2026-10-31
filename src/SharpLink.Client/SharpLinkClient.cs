@@ -1,7 +1,6 @@
 namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient :
-    IRpcChannel,
     ISharpLinkClient,
     IDynamicAssemblyRegistrationInspector,
     ISharpLinkClientDrainInspector,
@@ -13,7 +12,7 @@ internal sealed partial class SharpLinkClient :
     private readonly SharpLinkEndpoint? _fixedEndpoint;
     private readonly SharpLinkRuntimeContext _runtimeContext;
     private readonly ClientAssemblyRegistry _assemblyRegistry;
-    // Stable lookup facade retained on the outer Client so Get<T>() keeps its direct acquisition path.
+    // Stable lookup facade retained on the outer Client for cold local contract selection.
     // The registry owns and atomically publishes the immutable snapshots behind this object.
     private ClientProxyLookup _proxies;
     private readonly CancellationTokenSource _shutdownCts = new();

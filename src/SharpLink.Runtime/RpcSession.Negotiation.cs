@@ -48,13 +48,13 @@ internal sealed partial class RpcSession
         if (Volatile.Read(ref _terminal) is { } terminal)
             throw terminal.Exception;
 
-        if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType) ||
-            (allowRequestWhileDraining &&
-             phase == RpcSessionProtocolPhase.Draining &&
-             frameType == ProtocolV2FrameType.Request))
-        {
+        if (!RpcSessionProtocolRules.IsInboundDirectionAllowed(Role, frameType))
+            throw new SharpLinkProtocolViolationException(ProtocolViolationReason.ProtocolState,
+                $"Frame {frameType} is not allowed in the inbound direction for {Role}.");
+        // The optional argument remains only for existing source call sites. Protocol3 always
+        // permits bounded parse/refusal of previously published requests during drain.
+        if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType))
             return;
-        }
 
         throw new SharpLinkProtocolViolationException(
             ProtocolViolationReason.ProtocolState,
@@ -64,18 +64,13 @@ internal sealed partial class RpcSession
     private StreamFlowController? ValidateAndCreateNegotiatedFlowController(
         NegotiatedSessionOptions options)
     {
-        if (options.ProtocolMinorVersion < ProtocolV2Constants.MinimumCompatibleMinorVersion)
-        {
-            throw NegotiationViolation(
-                $"Negotiated protocol minor version {options.ProtocolMinorVersion} is below the local " +
-                $"compatibility floor {ProtocolV2Constants.MinimumCompatibleMinorVersion}.");
-        }
-        if (options.ProtocolMinorVersion > ProtocolV2Constants.MinorVersion)
-        {
-            throw NegotiationViolation(
-                $"Negotiated protocol minor version {options.ProtocolMinorVersion} exceeds the local " +
-                $"version {ProtocolV2Constants.MinorVersion}.");
-        }
+        if (options.ProtocolMinorVersion != ProtocolV2Constants.MinorVersion)
+            throw NegotiationViolation("Protocol3 requires revision 0 without downgrade.");
+        if ((options.Capabilities & ProtocolV2Negotiator.MandatoryCapabilities) != ProtocolV2Negotiator.MandatoryCapabilities)
+            throw NegotiationViolation("Negotiated session omits Protocol3 mandatory capabilities.");
+        if (options.Authority.ServerInstanceId == Guid.Empty || options.Authority.RegistryEpoch == Guid.Empty ||
+            !Protocol3BindingLimitsCodec.IsValid(options.Authority.Limits))
+            throw NegotiationViolation("Negotiated session requires valid authority and binding limits.");
         if ((options.Capabilities & ~RpcSessionProtocolRules.RecognizedCapabilities) != 0)
             throw NegotiationViolation("Negotiated capabilities contain unknown bits.");
         if (options.MaxFramePayloadBytes < SharpLinkProtocolOptions.MinMaxFramePayloadBytes ||
@@ -104,8 +99,6 @@ internal sealed partial class RpcSession
         if (options.CompressionBinding is { } binding)
             ValidateCompressionBinding(binding);
 
-        if ((options.Capabilities & ProtocolV2Capabilities.FlowControl) == 0)
-            return null;
         return new StreamFlowController(
             options.StreamReceiveWindowBytes,
             options.ConnectionReceiveWindowBytes,
@@ -154,18 +147,21 @@ internal sealed partial class RpcSession
             message,
             innerException);
 
-    private static void EnsureOutboundFrameAllowed(
+    private void EnsureOutboundFrameAllowed(
         RpcSessionProtocolPhase phase,
         ProtocolV2FrameType frameType)
     {
-        if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType))
-            return;
-        if (phase == RpcSessionProtocolPhase.Draining && frameType == ProtocolV2FrameType.Request)
+        if (phase == RpcSessionProtocolPhase.Draining && frameType is
+            ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayStreamRequest or ProtocolV2FrameType.BindContract)
         {
             throw new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,
-                "The connection is draining and cannot start a new request.");
+                "The connection is draining and cannot publish a new request or binding operation.");
         }
+        var peerRole = Role == RpcSessionRole.Client ? RpcSessionRole.Server : RpcSessionRole.Client;
+        if (RpcSessionProtocolRules.IsFrameAllowed(phase, frameType) &&
+            RpcSessionProtocolRules.IsInboundDirectionAllowed(peerRole, frameType))
+            return;
         throw new SharpLinkException(
             SharpLinkErrorCode.ProtocolViolation,
             $"Frame {frameType} is not allowed while the session is {phase}.");

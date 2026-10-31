@@ -78,7 +78,7 @@ namespace SharpLink.Abstractions
     {
         System.Collections.Generic.IAsyncEnumerable<T> CreateInboundStream<T>(long requestId, ushort streamId, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, System.Threading.CancellationToken cancellationToken);
         void EnsureUserCodeEntry(long requestId);
-        System.Threading.Tasks.ValueTask PumpOutboundStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, long contractId, long methodId, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask PumpOutboundStreamAsync<T>(long requestId, ushort streamId, System.Collections.Generic.IAsyncEnumerable<T> stream, SharpLink.Abstractions.IRpcCodec<T> codec, bool payloadNullable, SharpLink.Abstractions.RpcMethodFacts method, System.Threading.CancellationToken cancellationToken);
     }
     public interface IRpcGeneratedUnsafeBlitCodecFactory : SharpLink.Abstractions.IRpcGeneratedCodecFactory
     {
@@ -105,12 +105,11 @@ namespace SharpLink.Abstractions
     public interface IRpcStub
     {
         long InterfaceHash { get; }
-        System.Threading.Tasks.ValueTask InvokeAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output);
-        System.Threading.Tasks.ValueTask InvokeCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output, System.Threading.CancellationToken cancellationToken);
-        System.Threading.Tasks.ValueTask InvokeNoReturnAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args);
-        System.Threading.Tasks.ValueTask InvokeNoReturnCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, long methodHash, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Threading.CancellationToken cancellationToken);
-        bool SupportsCancellation(long methodHash);
-        bool TryGetMethodDescriptor(long methodHash, out SharpLink.Abstractions.RpcMethodDescriptor descriptor);
+        System.Threading.Tasks.ValueTask InvokeAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, SharpLink.Abstractions.RpcMethodFacts method, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output);
+        System.Threading.Tasks.ValueTask InvokeCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, SharpLink.Abstractions.RpcMethodFacts method, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Buffers.IBufferWriter<byte> output, System.Threading.CancellationToken cancellationToken);
+        System.Threading.Tasks.ValueTask InvokeNoReturnAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, SharpLink.Abstractions.RpcMethodFacts method, long requestId, System.Buffers.ReadOnlySequence<byte> args);
+        System.Threading.Tasks.ValueTask InvokeNoReturnCancellableAsync(object service, SharpLink.Abstractions.IRpcGeneratedServerBridge bridge, SharpLink.Abstractions.RpcMethodFacts method, long requestId, System.Buffers.ReadOnlySequence<byte> args, System.Threading.CancellationToken cancellationToken);
+        SharpLink.Abstractions.RpcMethodFacts ResolveMethodFacts(long methodHash);
     }
     public interface IServerTransportListener : System.IAsyncDisposable
     {
@@ -561,6 +560,25 @@ namespace SharpLink.Abstractions
         public void Deconstruct(out long ContractId, out long MethodId, out SharpLink.Abstractions.RpcMethodKind Kind, out bool HasResponsePayload, out bool HasClientStreams, out bool HasMethodTimeout, out System.TimeSpan? MethodTimeout, out bool IsIdempotent, out int ClientStreamCount) { }
         public void Deconstruct(out long ContractId, out long MethodId, out SharpLink.Abstractions.RpcMethodKind Kind, out bool HasResponsePayload, out bool HasClientStreams, out bool HasMethodTimeout, out System.TimeSpan? MethodTimeout, out bool IsIdempotent, out int ClientStreamCount, out bool ResponseNullable) { }
     }
+    public sealed class RpcMethodFacts
+    {
+        public const int MaxClientStreamCount = 127;
+        public RpcMethodFacts(long contractId, long methodId, SharpLink.Abstractions.RpcMethodKind kind, int clientStreamCount, bool supportsCancellation, bool hasResponsePayload, bool responseNullable = false, bool hasMethodTimeout = false, System.TimeSpan? methodTimeout = default, bool isIdempotent = false) { }
+        public int ClientStreamCount { get; }
+        public long ContractId { get; }
+        public bool HasClientStreams { get; }
+        public bool HasMethodTimeout { get; }
+        public bool HasResponsePayload { get; }
+        public bool IsIdempotent { get; }
+        public bool IsKnown { get; }
+        public SharpLink.Abstractions.RpcMethodKind Kind { get; }
+        public long MethodId { get; }
+        public System.TimeSpan? MethodTimeout { get; }
+        public bool ResponseNullable { get; }
+        public bool SupportsCancellation { get; }
+        public static SharpLink.Abstractions.RpcMethodFacts UnknownMethod { get; }
+        public SharpLink.Abstractions.RpcMethodDescriptor ToDescriptor() { }
+    }
     public enum RpcMethodKind : byte
     {
         Unary = 0,
@@ -952,7 +970,7 @@ namespace SharpLink.Abstractions
     }
     public static class SharpLinkGeneratedManifestVersions
     {
-        public const string AbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
+        public const string AbiIdentity = "sharplink-3.0-api5-complete-method-facts-v1";
         public const int Api = 5;
         public const int Protocol = 2;
     }

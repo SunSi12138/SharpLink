@@ -1,6 +1,6 @@
 namespace SharpLink.Runtime;
 
-/// <summary>Immutable result of one successful Protocol v2 handshake.</summary>
+/// <summary>Immutable result of one successful Protocol3 handshake.</summary>
 internal sealed class NegotiatedSessionOptions
 {
     internal NegotiatedSessionOptions(
@@ -9,7 +9,8 @@ internal sealed class NegotiatedSessionOptions
         int maxFramePayloadBytes,
         int streamReceiveWindowBytes,
         int connectionReceiveWindowBytes,
-        SharpLinkCompressionProviderBinding? compressionBinding = null)
+        SharpLinkCompressionProviderBinding? compressionBinding = null,
+        Protocol3BindingAuthority authority = default)
     {
         ProtocolMinorVersion = protocolMinorVersion;
         Capabilities = capabilities;
@@ -17,7 +18,10 @@ internal sealed class NegotiatedSessionOptions
         StreamReceiveWindowBytes = streamReceiveWindowBytes;
         ConnectionReceiveWindowBytes = connectionReceiveWindowBytes;
         CompressionBinding = compressionBinding;
+        Authority = authority;
     }
+
+    internal Protocol3BindingAuthority Authority { get; }
 
     internal ushort ProtocolMinorVersion { get; }
 
@@ -75,9 +79,18 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.ContractManifest or
                     ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-                    ProtocolV2FrameType.SessionRefreshRequested,
+                    ProtocolV2FrameType.SessionRefreshRequested or
+                    ProtocolV2FrameType.BindContract or
+                    ProtocolV2FrameType.BindResult or
+                    ProtocolV2FrameType.BindingInvalidated or
+                    ProtocolV2FrameType.ReleaseBinding or
+                    ProtocolV2FrameType.CancelBind or
+                    ProtocolV2FrameType.RequestAccepted or
+                    ProtocolV2FrameType.OneWayStreamRequest,
+            // Receiving these request frames permits bounded refusal, never new call admission.
+            // A progress-class GoAway may overtake requests already published to the normal queue.
             RpcSessionProtocolPhase.Draining =>
-                frameType is ProtocolV2FrameType.Ping or
+                frameType is ProtocolV2FrameType.Request or ProtocolV2FrameType.Ping or
                     ProtocolV2FrameType.Pong or
                     ProtocolV2FrameType.Response or
                     ProtocolV2FrameType.Cancel or
@@ -88,8 +101,35 @@ internal static class RpcSessionProtocolRules
                     ProtocolV2FrameType.HealthResponse or
                     ProtocolV2FrameType.ResponseCompressionPreferenceUpdate or
                     ProtocolV2FrameType.ResponseCompressionPreferenceAck or
-                    ProtocolV2FrameType.SessionRefreshRequested,
+                    ProtocolV2FrameType.SessionRefreshRequested or
+                    ProtocolV2FrameType.BindContract or
+                    ProtocolV2FrameType.BindResult or
+                    ProtocolV2FrameType.BindingInvalidated or
+                    ProtocolV2FrameType.ReleaseBinding or
+                    ProtocolV2FrameType.CancelBind or
+                    ProtocolV2FrameType.RequestAccepted or
+                    ProtocolV2FrameType.OneWayStreamRequest,
             RpcSessionProtocolPhase.Stopping or RpcSessionProtocolPhase.Terminal => false,
+            _ => false
+        };
+
+    internal static bool IsInboundDirectionAllowed(RpcSessionRole role, ProtocolV2FrameType type)
+        => type switch
+        {
+            ProtocolV2FrameType.HandshakeRequest or ProtocolV2FrameType.Request or
+            ProtocolV2FrameType.OneWayStreamRequest or ProtocolV2FrameType.BindContract or
+            ProtocolV2FrameType.ReleaseBinding or ProtocolV2FrameType.CancelBind or
+            ProtocolV2FrameType.HealthCheck or ProtocolV2FrameType.ResponseCompressionPreferenceUpdate
+                => role == RpcSessionRole.Server,
+            ProtocolV2FrameType.HandshakeResponse or ProtocolV2FrameType.Response or
+            ProtocolV2FrameType.BindResult or ProtocolV2FrameType.BindingInvalidated or
+            ProtocolV2FrameType.RequestAccepted or ProtocolV2FrameType.HealthResponse or
+            ProtocolV2FrameType.ContractManifest or ProtocolV2FrameType.ResponseCompressionPreferenceAck or
+            ProtocolV2FrameType.SessionRefreshRequested
+                => role == RpcSessionRole.Client,
+            ProtocolV2FrameType.Ping or ProtocolV2FrameType.Pong or ProtocolV2FrameType.Cancel or
+            ProtocolV2FrameType.StreamData or ProtocolV2FrameType.StreamComplete or
+            ProtocolV2FrameType.WindowUpdate or ProtocolV2FrameType.GoAway => true,
             _ => false
         };
 }

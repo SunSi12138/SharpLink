@@ -264,11 +264,27 @@ public readonly struct RpcNoClientStreams : IRpcClientStreamWriter
         => ValueTask.CompletedTask;
 }
 
-/// <summary>Client channel consumed by generated proxies.</summary>
-public interface IRpcChannel
+/// <summary>A client channel frozen to one local contract registration and binding requirement.</summary>
+/// <remarks>
+/// Generated and handwritten callers use the same identity-bearing receiver. Construction registers
+/// local demand without waiting for connectivity. Calls fail fast until the exact site is bound;
+/// preparation never replaces the selected registration with a newer one.
+/// </remarks>
+public interface IRpcContractChannel
 {
     /// <summary>Gets the runtime context owned by this channel.</summary>
     IRpcRuntimeContext RuntimeContext { get; }
+
+    /// <summary>Waits within one finite budget for this channel's exact binding requirement.</summary>
+    /// <param name="timeout">A positive finite timeout no greater than 2,147,483,647 milliseconds.</param>
+    /// <param name="cancellationToken">Cancels only this caller's wait, not shared binding demand.</param>
+    /// <remarks>
+    /// Validate timeout before cancellation, client state, and exact local registration lifetime.
+    /// Readiness is a point-in-time observation, not a lease or reservation of call capacity.
+    /// Reconnect and rebinding do not restart the original budget.
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The timeout is outside the supported finite range.</exception>
+    ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default);
 
     /// <summary>Invokes a unary RPC.</summary>
     ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(

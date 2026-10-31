@@ -3,6 +3,9 @@ namespace SharpLink.Abstractions;
 /// <summary>Owns the SharpLink client runtime, remote connections, and generated contract proxies.</summary>
 public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
 {
+    /// <summary>Gets the runtime context owned by this client.</summary>
+    IRpcRuntimeContext RuntimeContext { get; }
+
     /// <summary>
     /// Gets the legacy connection-oriented state projection.
     /// Use <see cref="LifecycleState"/>, <see cref="Readiness"/>, and <see cref="ClusterState"/>
@@ -94,7 +97,7 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <remarks>
     /// A missing contract waits for manifest propagation; an advertised different hash fails closed
     /// immediately. This is a point-in-time observation, not a lease: reconnect, replacement or
-    /// unregister can change availability before a subsequent synchronous Get. Manifest generations
+    /// unregister can change availability before a subsequent channel invocation. Manifest generations
     /// are ordered within each connection, never across connections. The wait does not acquire a
     /// proxy or retain a contract Type/Assembly and does not retry RPC payloads. Cancellation affects
     /// only this wait. Custom implementations must override this member to support the barrier.
@@ -438,12 +441,25 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(
         CancellationToken cancellationToken = default);
 
-    /// <summary>Creates the generated proxy for a registered RPC contract.</summary>
+    /// <summary>Creates a locally registered proxy and its exact-site preparation handle.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
-    TContract Get<TContract>() where TContract : IService;
+    /// <param name="options">Immutable scope, receipt requirement, and metadata captured at construction.</param>
+    /// <remarks>Does not wait for connectivity or remote binding. Keep the handle to prepare the same site.</remarks>
+    RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService;
 
-    /// <summary>Creates a generated proxy that attaches one immutable metadata snapshot to every invocation.</summary>
+    /// <summary>Selects the current exact local registration of a generated contract.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
-    /// <param name="metadata">Envelope metadata attached without adding a business-contract parameter.</param>
-    TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService;
+    /// <remarks>The returned scalar selector never upgrades to a newer registration.</remarks>
+    RpcLocalContract GetLocalContract<TContract>() where TContract : IService;
+
+    /// <summary>Selects a contract from the exact assembly already registered with this client.</summary>
+    /// <param name="registeredAssembly">The exact registered assembly object, used only during this lookup.</param>
+    /// <param name="contractId">The nonzero generated contract identifier.</param>
+    RpcLocalContract GetLocalContract(System.Reflection.Assembly registeredAssembly, long contractId);
+
+    /// <summary>Creates an identity-bearing channel for one exact client-issued local selector.</summary>
+    /// <param name="local">The local selector issued by this client.</param>
+    /// <param name="options">Immutable scope, receipt requirement, and metadata captured at construction.</param>
+    /// <remarks>Registers bounded local demand without waiting for connectivity or remote binding.</remarks>
+    IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null);
 }

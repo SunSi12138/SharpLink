@@ -249,7 +249,7 @@ public class SharpLinkClientTimeBudgetTests
             typeof(SharpLinkClientTimeBudgetTests).Assembly,
             manifest,
             registration);
-        var channel = new SharpLinkModuleRpcChannel(client, module);
+        var channel = new SharpLinkModuleRpcChannel(new SharpLinkClient.ContractCallSite(client, 0), module);
         var method = new RpcMethodDescriptor(
             ContractId: 1,
             MethodId: 289,

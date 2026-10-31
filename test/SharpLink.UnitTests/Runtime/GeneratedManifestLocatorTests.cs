@@ -53,6 +53,8 @@ public sealed class GeneratedManifestLocatorTests
     [Test]
     [Arguments("sharplink-3.0-api5-generated-unsafe-blit-v1")]
     [Arguments("other-api5-development-identity")]
+    [Arguments("sharplink-3.0-api5-owner-bound-unsafe-blit-v1")]
+    [Arguments("sharplink-3.0-api5-v1")]
     public void UnboundOrDifferentApi5LocatorShouldRejectBeforeConstruction(string identity)
     {
         using var fixture = CreateFixture(locatorAbiIdentity: identity);

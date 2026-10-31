@@ -2,7 +2,7 @@ namespace SharpLink.Generator;
 
 public partial class RpcGenerator
 {
-    private const string GeneratedAbiIdentity = "sharplink-3.0-api5-owner-bound-unsafe-blit-v1";
+    private const string GeneratedAbiIdentity = "sharplink-3.0-api6-contract-channel-complete-method-facts-v1";
     private static string GenerateAssemblyManifest(
         ImmutableArray<RpcInterfaceModel?> interfaces,
         ImmutableArray<RpcServiceModel?> services,
@@ -55,7 +55,7 @@ public partial class RpcGenerator
         }
         if (!codecs.IsDefaultOrEmpty)
             sb.AppendLine();
-        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 5, 2, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
+        sb.AppendLine($"[assembly: SharpLinkGeneratedAssemblyManifestAttribute(typeof(SharpLink.Generated.{manifestTypeName}), 6, 3, \"{EscapeString(ExecutingGeneratorVersion)}\", \"{GeneratedAbiIdentity}\")]");
         sb.AppendLine();
         sb.AppendLine("namespace SharpLink.Generated;");
         sb.AppendLine();
@@ -74,9 +74,9 @@ public partial class RpcGenerator
         sb.AppendLine("    public static void Register()");
         sb.AppendLine("        => SharpLinkGeneratedAssemblyCatalog.Register(Instance);");
         sb.AppendLine("    /// <inheritdoc />");
-        sb.AppendLine("    public int ApiVersion => 5;");
+        sb.AppendLine("    public int ApiVersion => 6;");
         sb.AppendLine("    /// <inheritdoc />");
-        sb.AppendLine("    public int ProtocolVersion => 2;");
+        sb.AppendLine("    public int ProtocolVersion => 3;");
         sb.AppendLine("    /// <inheritdoc />");
         sb.AppendLine($"    public string GeneratorVersion => \"{EscapeString(ExecutingGeneratorVersion)}\";");
         sb.AppendLine("    /// <inheritdoc />");
@@ -147,7 +147,7 @@ public partial class RpcGenerator
         foreach (var contract in contracts)
         {
             var identity = GetContractArtifactIdentity(contract);
-            sb.AppendLine($"    private static object __CreateProxy_{identity}(IRpcChannel channel, IRpcCodecProvider codecs)");
+            sb.AppendLine($"    private static object __CreateProxy_{identity}(IRpcContractChannel channel, IRpcCodecProvider codecs)");
             sb.AppendLine($"        => new __Proxy_{identity}(channel, codecs);");
             sb.AppendLine();
             sb.AppendLine($"    private static IRpcStub __CreateStub_{identity}(IRpcCodecProvider codecs)");

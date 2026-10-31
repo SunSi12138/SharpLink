@@ -2,7 +2,7 @@ using System.Text;
 
 namespace SharpLink.Runtime;
 
-/// <summary>Encodes and decodes Protocol v2 control and error payloads.</summary>
+/// <summary>Encodes and decodes Protocol3 control and error payloads.</summary>
 public static partial class ProtocolV2PayloadCodec
 {
     private const ProtocolV2Capabilities RecognizedCapabilities =
@@ -10,9 +10,9 @@ public static partial class ProtocolV2PayloadCodec
     private static readonly Encoding SStrictUtf8 = new UTF8Encoding(false, true);
     private const int HandshakeRequestFixedBytes =
         sizeof(ushort) + sizeof(ulong) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) +
-        sizeof(ulong) + sizeof(byte);
+        sizeof(ulong) + sizeof(byte) + 16;
     private const int HandshakeResponseBytes =
-        sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int);
+        sizeof(ushort) + sizeof(ulong) + sizeof(int) + sizeof(int) + sizeof(int) + 48;
 
     /// <summary>Writes a bounded handshake request payload.</summary>
     public static void WriteHandshakeRequest(
@@ -22,6 +22,15 @@ public static partial class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(writer);
         ArgumentNullException.ThrowIfNull(limits);
+        if (request.MinorVersion != ProtocolV2Constants.MinorVersion)
+            throw new ArgumentOutOfRangeException(nameof(request), "Protocol3 requires revision 0.");
+        if (request.ResponseCompressionPreferenceGeneration > long.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(request), "Preference generation exceeds the 63-bit domain.");
+        ValidateRecognizedCapabilities(request.RequiredCapabilities, nameof(request));
+        if ((request.RequiredCapabilities & ProtocolV2Negotiator.MandatoryCapabilities) != ProtocolV2Negotiator.MandatoryCapabilities)
+            throw new ArgumentException("Protocol3 requires flow control, cancellation reasons, and contract manifests.", nameof(request));
+        if (!Protocol3BindingLimitsCodec.IsValid(request.BindingLimits))
+            throw new ArgumentOutOfRangeException(nameof(request), "Handshake binding limits are invalid.");
         if ((request.RequiredCapabilities & ~request.SupportedCapabilities) != 0)
         {
             throw new ArgumentException(
@@ -37,6 +46,12 @@ public static partial class ProtocolV2PayloadCodec
         }
 
         ValidateCompressionProfiles(request.CompressionProfiles.Span);
+        ValidateOfferedCompression(request.SupportedCapabilities, request.CompressionProfiles.Span);
+        long payloadBytes = (long)HandshakeRequestFixedBytes + 1 + GetVarUInt32Length((uint)request.AuthenticationPayload.Length) + request.AuthenticationPayload.Length;
+        foreach (var profile in request.CompressionProfiles.Span)
+            payloadBytes += 1 + profile.Length;
+        if (payloadBytes > limits.MaxFramePayloadBytes)
+            throw new ArgumentOutOfRangeException(nameof(request), "Handshake exceeds the local frame limit.");
 
         WriteUInt16(writer, request.MinorVersion);
         WriteUInt64(writer, (ulong)request.SupportedCapabilities);
@@ -46,6 +61,8 @@ public static partial class ProtocolV2PayloadCodec
         WriteInt32(writer, request.ConnectionReceiveWindowBytes);
         WriteUInt64(writer, request.ResponseCompressionPreferenceGeneration);
         WriteByte(writer, request.AllowResponseCompression ? (byte)1 : (byte)0);
+        Protocol3BindingLimitsCodec.Write(writer.GetSpan(16)[..16], request.BindingLimits);
+        writer.Advance(16);
         WriteCompressionProfiles(writer, request.CompressionProfiles.Span);
         WriteVarUInt32(writer, checked((uint)request.AuthenticationPayload.Length));
         writer.Write(request.AuthenticationPayload.Span);
@@ -57,7 +74,8 @@ public static partial class ProtocolV2PayloadCodec
         SharpLinkProtocolOptions limits)
     {
         ArgumentNullException.ThrowIfNull(limits);
-        if (payload.Length < HandshakeRequestFixedBytes + 2)
+        if (payload.Length < HandshakeRequestFixedBytes + 2 || payload.Length > limits.MaxFramePayloadBytes ||
+            payload.Length > 61L + SharpLinkCompressionOptions.MaxProviders * (1 + SharpLinkCompressionProfile.MaxAsciiBytes) + limits.MaxMetadataBytes)
             throw ProtocolV2FrameParser.Violation("HandshakeRequest payload is incomplete.");
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short minorBits) ||
@@ -71,8 +89,17 @@ public static partial class ProtocolV2PayloadCodec
         {
             throw ProtocolV2FrameParser.Violation("HandshakeRequest payload is truncated.");
         }
+        if (responsePreferenceGenerationBits < 0)
+            throw ProtocolV2FrameParser.Violation("Handshake preference generation exceeds the 63-bit domain.");
         if (allowResponseCompressionRaw > 1)
             throw ProtocolV2FrameParser.Violation("Handshake response-compression preference is invalid.");
+        if (unchecked((ushort)minorBits) != ProtocolV2Constants.MinorVersion)
+            throw ProtocolV2FrameParser.Violation("Protocol3 requires handshake revision 0.");
+        Span<byte> bindingBytes = stackalloc byte[16];
+        if (!reader.TryCopyTo(bindingBytes))
+            throw ProtocolV2FrameParser.Violation("Handshake binding limits are truncated.");
+        var bindingLimits = Protocol3BindingLimitsCodec.Read(bindingBytes);
+        reader.Advance(16);
         var compressionProfiles = ReadCompressionProfiles(ref reader);
         if (!TryReadVarUInt32(ref reader, out var authLength))
             throw ProtocolV2FrameParser.Violation("Handshake authentication payload length is truncated.");
@@ -82,9 +109,6 @@ public static partial class ProtocolV2PayloadCodec
         if (reader.Remaining != authLength)
             throw ProtocolV2FrameParser.Violation("Handshake authentication payload length does not match the frame.");
 
-        var auth = authLength == 0
-            ? ReadOnlyMemory<byte>.Empty
-            : reader.Sequence.Slice(reader.Position, authLength).ToArray();
         var supportedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)supportedBits);
         var requiredCapabilities = (ProtocolV2Capabilities)unchecked((ulong)requiredBits);
         if ((requiredCapabilities & ~supportedCapabilities) != 0)
@@ -92,6 +116,13 @@ public static partial class ProtocolV2PayloadCodec
             throw ProtocolV2FrameParser.Violation(
                 "Required handshake capabilities were not included in the supported capability set.");
         }
+        if ((requiredCapabilities & ~RecognizedCapabilities) != 0 ||
+            (requiredCapabilities & ProtocolV2Negotiator.MandatoryCapabilities) != ProtocolV2Negotiator.MandatoryCapabilities)
+            throw ProtocolV2FrameParser.Violation("Handshake required capabilities are unknown or omit Protocol3 mandatory capabilities.");
+        ValidateOfferedCompression(supportedCapabilities, compressionProfiles.Span);
+        var auth = authLength == 0
+            ? ReadOnlyMemory<byte>.Empty
+            : reader.Sequence.Slice(reader.Position, authLength).ToArray();
         return new ProtocolV2HandshakeRequest(
             unchecked((ushort)minorBits),
             supportedCapabilities,
@@ -102,7 +133,8 @@ public static partial class ProtocolV2PayloadCodec
             auth,
             compressionProfiles,
             unchecked((ulong)responsePreferenceGenerationBits),
-            allowResponseCompressionRaw != 0);
+            allowResponseCompressionRaw != 0,
+            bindingLimits);
     }
 
     /// <summary>Writes a negotiated handshake response payload.</summary>
@@ -111,7 +143,14 @@ public static partial class ProtocolV2PayloadCodec
         in ProtocolV2HandshakeResponse response)
     {
         ArgumentNullException.ThrowIfNull(writer);
+        if (response.MinorVersion != ProtocolV2Constants.MinorVersion)
+            throw new ArgumentOutOfRangeException(nameof(response), "Protocol3 requires revision 0.");
         ValidateRecognizedCapabilities(response.NegotiatedCapabilities, nameof(response));
+        if ((response.NegotiatedCapabilities & ProtocolV2Negotiator.MandatoryCapabilities) != ProtocolV2Negotiator.MandatoryCapabilities)
+            throw new ArgumentException("Handshake response omits Protocol3 mandatory capabilities.", nameof(response));
+        if (response.Authority.ServerInstanceId == Guid.Empty || response.Authority.RegistryEpoch == Guid.Empty ||
+            !Protocol3BindingLimitsCodec.IsValid(response.Authority.Limits))
+            throw new ArgumentException("Handshake response authority is invalid.", nameof(response));
         ValidateOutboundCompressionSelection(response);
         ValidateLocalLimits(response.MaxFramePayloadBytes, response.StreamReceiveWindowBytes,
             response.ConnectionReceiveWindowBytes);
@@ -120,6 +159,8 @@ public static partial class ProtocolV2PayloadCodec
         WriteInt32(writer, response.MaxFramePayloadBytes);
         WriteInt32(writer, response.StreamReceiveWindowBytes);
         WriteInt32(writer, response.ConnectionReceiveWindowBytes);
+        Protocol3BindingLimitsCodec.WriteAuthority(writer.GetSpan(48)[..48], response.Authority);
+        writer.Advance(48);
         if (response.CompressionProfile is null)
         {
             WriteByte(writer, 0);
@@ -139,18 +180,27 @@ public static partial class ProtocolV2PayloadCodec
     {
         ArgumentNullException.ThrowIfNull(limits);
         if (payload.Length < HandshakeResponseBytes + 1 ||
-            payload.Length > HandshakeResponseBytes + 1 + SharpLinkCompressionProfile.MaxAsciiBytes)
+            payload.Length > HandshakeResponseBytes + 1 + SharpLinkCompressionProfile.MaxAsciiBytes ||
+            payload.Length > limits.MaxFramePayloadBytes)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse payload has an invalid length.");
         var reader = new SequenceReader<byte>(payload);
         if (!reader.TryReadLittleEndian(out short minorBits) ||
             !reader.TryReadLittleEndian(out long capabilitiesBits) ||
             !reader.TryReadLittleEndian(out int maxFrame) ||
             !reader.TryReadLittleEndian(out int streamWindow) ||
-            !reader.TryReadLittleEndian(out int connectionWindow) ||
-            !reader.TryRead(out var profileLength))
+            !reader.TryReadLittleEndian(out int connectionWindow))
         {
             throw ProtocolV2FrameParser.Violation("HandshakeResponse payload is truncated.");
         }
+        if (unchecked((ushort)minorBits) != ProtocolV2Constants.MinorVersion)
+            throw ProtocolV2FrameParser.Violation("Protocol3 requires handshake revision 0.");
+        Span<byte> authorityBytes = stackalloc byte[48];
+        if (!reader.TryCopyTo(authorityBytes))
+            throw ProtocolV2FrameParser.Violation("Handshake authority is truncated.");
+        var authority = Protocol3BindingLimitsCodec.ReadAuthority(authorityBytes);
+        reader.Advance(48);
+        if (!reader.TryRead(out var profileLength) || profileLength > SharpLinkCompressionProfile.MaxAsciiBytes)
+            throw ProtocolV2FrameParser.Violation("HandshakeResponse compression token length is invalid.");
         if (reader.Remaining != profileLength)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse compression token length does not match the frame.");
         var profile = profileLength == 0 ? null : ReadCompressionProfile(ref reader, profileLength);
@@ -158,15 +208,24 @@ public static partial class ProtocolV2PayloadCodec
         var negotiatedCapabilities = (ProtocolV2Capabilities)unchecked((ulong)capabilitiesBits);
         if ((negotiatedCapabilities & ~RecognizedCapabilities) != 0)
             throw ProtocolV2FrameParser.Violation("HandshakeResponse negotiated unknown capabilities.");
+        if ((negotiatedCapabilities & ProtocolV2Negotiator.MandatoryCapabilities) != ProtocolV2Negotiator.MandatoryCapabilities)
+            throw ProtocolV2FrameParser.Violation("Handshake response omits Protocol3 mandatory capabilities.");
         var response = new ProtocolV2HandshakeResponse(
             unchecked((ushort)minorBits),
             negotiatedCapabilities,
             maxFrame,
             streamWindow,
             connectionWindow,
-            profile);
+            profile,
+            authority);
         ValidateInboundCompressionSelection(response);
         return response;
+    }
+
+    private static void ValidateOfferedCompression(ProtocolV2Capabilities capabilities, ReadOnlySpan<string> profiles)
+    {
+        if (((capabilities & ProtocolV2Capabilities.Compression) != 0) != !profiles.IsEmpty)
+            throw ProtocolV2FrameParser.Violation("Compression capability and profiles must both be present or both be absent.");
     }
 
     private static void ValidateRecognizedCapabilities(
@@ -241,7 +300,7 @@ public static partial class ProtocolV2PayloadCodec
             }
             var profile = ReadCompressionProfile(ref reader, length);
             if (!unique.Add(profile))
-                throw ProtocolV2FrameParser.Violation($"Compression wire profile '{profile}' is advertised more than once.");
+                throw ProtocolV2FrameParser.Violation("A compression wire profile is advertised more than once.");
             profiles[index] = profile;
         }
         return profiles;
@@ -493,6 +552,25 @@ public static partial class ProtocolV2PayloadCodec
             WriteUtf8(writer, entry.Key);
             WriteUtf8(writer, entry.Value);
         }
+    }
+
+    internal static void ValidateMetadataPayload(ReadOnlySequence<byte> payload)
+    {
+        var reader = new SequenceReader<byte>(payload);
+        if (!TryReadVarUInt32(ref reader, out var count) || count > reader.Remaining / 3)
+            throw ProtocolV2FrameParser.Violation("Request metadata entry count is invalid.");
+        for (uint index = 0; index < count; index++)
+        {
+            var key = ReadUtf8(ref reader, "key");
+            if (string.IsNullOrWhiteSpace(key))
+                throw ProtocolV2FrameParser.Violation("Request metadata key cannot be blank.");
+            if (!TryReadVarUInt32(ref reader, out var length) || reader.Remaining < length)
+                throw ProtocolV2FrameParser.Violation("Request metadata value is truncated or invalid.");
+            ValidateStrictUtf8(reader.Sequence.Slice(reader.Position, length), "Request metadata value");
+            reader.Advance(length);
+        }
+        if (reader.Remaining != 0)
+            throw ProtocolV2FrameParser.Violation("Request metadata has trailing bytes.");
     }
 
     internal static SharpLinkMetadata ReadMetadata(ReadOnlySequence<byte> payload)

@@ -80,12 +80,12 @@ public partial class RpcGenerator
         RpcInterfaceModel model,
         IReadOnlyDictionary<string, string> concreteCodecTypes)
     {
-        sb.AppendLine($"    private readonly IRpcChannel {GetProxyMemberFieldName(model, "_channel")};");
+        sb.AppendLine($"    private readonly IRpcContractChannel {GetProxyMemberFieldName(model, "_channel")};");
 
         foreach (var method in model.Methods)
             AppendProxyFields(sb, model, method, concreteCodecTypes);
 
-        sb.AppendLine($"    internal __Proxy_{GetContractArtifactIdentity(model)}(IRpcChannel channel, IRpcCodecProvider __codecs)");
+        sb.AppendLine($"    internal __Proxy_{GetContractArtifactIdentity(model)}(IRpcContractChannel channel, IRpcCodecProvider __codecs)");
         sb.AppendLine("    {");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(channel);");
         sb.AppendLine("        ArgumentNullException.ThrowIfNull(__codecs);");

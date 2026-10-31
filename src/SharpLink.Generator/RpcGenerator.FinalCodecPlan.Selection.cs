@@ -691,7 +691,9 @@ public partial class RpcGenerator
             foreach (var attribute in assembly.GetAttributes())
             {
                 if (IsAttribute(attribute, "SharpLink.Abstractions", "SharpLinkGeneratedAssemblyManifestAttribute") &&
-                    attribute.ConstructorArguments.Length >= 5 &&
+                    attribute.ConstructorArguments.Length == 5 &&
+                    attribute.ConstructorArguments[1].Value is 6 &&
+                    attribute.ConstructorArguments[2].Value is 3 &&
                     attribute.ConstructorArguments[4].Value is string abiIdentity &&
                     string.Equals(abiIdentity, GeneratedAbiIdentity, StringComparison.Ordinal))
                 {
