@@ -16,8 +16,10 @@ public class CompressionDecodeDeadlineAdmissionIndependenceTests
             serverProvider,
             useAdvancedAdmission,
             TimeSpan.FromMilliseconds(100));
+        var harnessClientDeadlineCompressionProbeServiceProxy = harness.Client.CreateProxy<IDeadlineCompressionProbeService>();
+        await harnessClientDeadlineCompressionProbeServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var payload = Enumerable.Repeat((byte)0x51, 32 * 1024).ToArray();
-        var call = harness.Client.Get<IDeadlineCompressionProbeService>()
+        var call = harnessClientDeadlineCompressionProbeServiceProxy.Service
             .EchoAsync(payload)
             .AsTask();
 

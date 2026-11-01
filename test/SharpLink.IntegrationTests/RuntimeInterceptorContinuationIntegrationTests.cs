@@ -253,6 +253,7 @@ public class RuntimeInterceptorContinuationIntegrationTests
 
         public ISharpLinkServer Server { get; }
         public ISharpLinkClient Client { get; }
+        private readonly RpcProxy<IInterceptorTestService> _serviceProxy;
         public IInterceptorTestService Service { get; }
 
         private RuntimeInterceptorHarness(
@@ -265,7 +266,8 @@ public class RuntimeInterceptorContinuationIntegrationTests
             _serverTask = serverTask;
             Server = server;
             Client = client;
-            Service = client.Get<IInterceptorTestService>();
+            _serviceProxy = client.CreateProxy<IInterceptorTestService>();
+            Service = _serviceProxy.Service;
         }
 
         public static async Task<RuntimeInterceptorHarness> CreateAsync(
@@ -290,8 +292,60 @@ public class RuntimeInterceptorContinuationIntegrationTests
                 clientBuilder.AddInterceptor(clientInterceptor);
 
             var client = clientBuilder.Build();
-            await client.ConnectAsync(cts.Token);
-            return new RuntimeInterceptorHarness(cts, serverTask, server, client);
+            try
+            {
+                await client.ConnectAsync(cts.Token);
+                var harness = new RuntimeInterceptorHarness(cts, serverTask, server, client);
+                await harness._serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+                return harness;
+            }
+            catch (Exception primaryFailure)
+            {
+                await CleanupOwnedAsync(primaryFailure, client, cts, server, serverTask);
+                throw;
+            }
+        }
+
+        private static async ValueTask CleanupOwnedAsync(
+            Exception? primaryFailure,
+            ISharpLinkClient client,
+            CancellationTokenSource cancellation,
+            ISharpLinkServer server,
+            Task serverTask)
+        {
+            var failures = new List<Exception>();
+            if (primaryFailure is not null)
+                failures.Add(primaryFailure);
+
+            async ValueTask AttemptAsync(Func<ValueTask> cleanup)
+            {
+                try { await cleanup().ConfigureAwait(false); }
+                catch (Exception failure) { failures.Add(failure); }
+            }
+
+            await AttemptAsync(() => client.DisposeAsync());
+            await AttemptAsync(async () => await cancellation.CancelAsync().ConfigureAwait(false));
+            await AttemptAsync(() => server.DisposeAsync());
+            await AttemptAsync(async () =>
+            {
+                try
+                {
+                    await serverTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException failure) when (
+                    serverTask.IsCanceled && cancellation.IsCancellationRequested &&
+                    failure.CancellationToken == cancellation.Token)
+                {
+                    // StartAsync may observe this owned stop token. Do not suppress
+                    // unrelated cancellation, task faults, or the bounded wait timeout.
+                }
+            });
+            await AttemptAsync(() => { cancellation.Dispose(); return ValueTask.CompletedTask; });
+
+            if (failures.Count == 1)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures.Count > 1)
+                throw new AggregateException(failures);
         }
 
         public async ValueTask DisposeAsync()

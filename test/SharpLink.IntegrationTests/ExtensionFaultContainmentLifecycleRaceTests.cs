@@ -245,7 +245,9 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
                 try
                 {
                     var client = Client ?? throw new InvalidOperationException("reentrant client not initialized");
-                    var nested = await client.Get<IExtensionFaultService>()
+                    // The outer harness already prepared this exact site; reentry must not wait remotely.
+                    var nestedProxy = client.CreateProxy<IExtensionFaultService>();
+                    var nested = await nestedProxy.Service
                         .EchoAsync(1)
                         .ConfigureAwait(false);
                     Volatile.Write(ref _nestedResult, nested);
@@ -339,13 +341,17 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
             _serverTask = serverTask;
             Server = server;
             Client = client;
-            Service = client.Get<IExtensionFaultService>();
-            DeadlineService = client.Get<IExtensionDeadlineFaultService>();
+            _serviceProxy = client.CreateProxy<IExtensionFaultService>();
+            _deadlineProxy = client.CreateProxy<IExtensionDeadlineFaultService>();
+            Service = _serviceProxy.Service;
+            DeadlineService = _deadlineProxy.Service;
             _initialSession = initialSession;
         }
 
         internal ISharpLinkServer Server { get; }
         internal ISharpLinkClient Client { get; }
+        private readonly RpcProxy<IExtensionFaultService> _serviceProxy;
+        private readonly RpcProxy<IExtensionDeadlineFaultService> _deadlineProxy;
         internal IExtensionFaultService Service { get; }
         internal IExtensionDeadlineFaultService DeadlineService { get; }
 
@@ -380,9 +386,14 @@ public sealed class ExtensionFaultContainmentLifecycleRaceTests
             try
             {
                 await client.ConnectAsync(cancellation.Token).ConfigureAwait(false);
-                var service = client.Get<IExtensionFaultService>();
+                var serviceProxy = client.CreateProxy<IExtensionFaultService>();
+                await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+                var service = serviceProxy.Service;
                 var session = await service.GetSessionIdAsync().ConfigureAwait(false);
-                return new LifecycleHarness(cancellation, serverTask, server, client, session);
+                var harness = new LifecycleHarness(cancellation, serverTask, server, client, session);
+                await harness._serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+                await harness._deadlineProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+                return harness;
             }
             catch
             {

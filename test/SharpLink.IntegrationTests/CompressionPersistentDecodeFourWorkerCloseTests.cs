@@ -15,8 +15,12 @@ public class CompressionPersistentDecodeWorkerSaturationTests
         await using var harness = await Harness.CreateAsync(coordinator);
         var workerCount = GetPortableWorkerCount(harness);
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceAProxy = harness.ClientA.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceAProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var serviceA = serviceAProxy.Service;
+        var serviceBProxy = harness.ClientB.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceBProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var serviceB = serviceBProxy.Service;
         var payloadA = Enumerable.Repeat((byte)0x61, PayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x62, PayloadBytes).ToArray();
 
@@ -66,8 +70,12 @@ public class CompressionPersistentDecodeWorkerSaturationTests
         await using var harness = await Harness.CreateAsync(coordinator);
         var workerCount = GetPortableWorkerCount(harness);
 
-        var serviceA = harness.ClientA.Get<IPersistentDecodeReviewService>();
-        var serviceB = harness.ClientB.Get<IPersistentDecodeReviewService>();
+        var serviceAProxy = harness.ClientA.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceAProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var serviceA = serviceAProxy.Service;
+        var serviceBProxy = harness.ClientB.CreateProxy<IPersistentDecodeReviewService>();
+        await serviceBProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var serviceB = serviceBProxy.Service;
         var payloadA = Enumerable.Repeat((byte)0x71, PayloadBytes).ToArray();
         var payloadB = Enumerable.Repeat((byte)0x72, PayloadBytes).ToArray();
 

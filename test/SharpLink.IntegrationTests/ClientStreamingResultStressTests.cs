@@ -74,13 +74,17 @@ public class ClientStreamingResultStressTests
             (requestId, streamId, compressed) =>
                 buffered.TrySetResult(new BufferedObservation(requestId, streamId, compressed));
 
-        var harness = await Harness.CreateAsync(enableCompression: true);
+        Harness? harness = null;
         var gate = new GatedNextServerInterceptor("compressed", new ConcurrentQueue<string>());
-        harness.Server.ReplaceInterceptors([gate]);
+        Exception? primaryFailure = null;
         try
         {
+            harness = await Harness.CreateAsync(enableCompression: true);
+            var harnessClientCompressionServiceProxy = harness.Client.CreateProxy<ICompressionService>();
+            await harnessClientCompressionServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            harness.Server.ReplaceInterceptors([gate]);
             var payload = Enumerable.Repeat((byte)0x41, 4096).ToArray();
-            var call = harness.Client.Get<ICompressionService>()
+            var call = harnessClientCompressionServiceProxy.Service
                 .UploadBytesAsync(SinglePayload(payload)).AsTask();
 
             await gate.Entered.WaitAsync(PhaseTimeout);
@@ -99,11 +103,17 @@ public class ClientStreamingResultStressTests
             if (result != payload.Length)
                 throw new Exception($"compressed client-stream result expected {payload.Length}, actual {result}");
         }
+        catch (Exception failure)
+        {
+            primaryFailure = failure;
+            throw;
+        }
         finally
         {
-            PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null;
-            gate.Release();
-            await harness.DisposeAsync().AsTask().WaitAsync(PhaseTimeout);
+            await CleanupTestAsync(primaryFailure,
+                () => { PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null; return ValueTask.CompletedTask; },
+                () => { gate.Release(); return ValueTask.CompletedTask; },
+                async () => { if (harness is not null) await harness.DisposeAsync().AsTask().WaitAsync(PhaseTimeout); });
         }
     }
 
@@ -128,24 +138,28 @@ public class ClientStreamingResultStressTests
         var releaseMore = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var gate = new ClientStreamingGateServerInterceptor();
-        var harness = await Harness.CreateAsync(serverConfigure: builder =>
-            builder.UseAdmissionControl(options =>
-            {
-                options.Global.UseConcurrency(1);
-                options.MaxQueuedCalls = 1;
-                options.MaxQueuedBytes = 2048;
-                options.MaxQueueDelay = TimeSpan.FromSeconds(5);
-            }));
-        harness.Server.ReplaceInterceptors([gate]);
+        Harness? harness = null;
+        Exception? primaryFailure = null;
         try
         {
+            harness = await Harness.CreateAsync(serverConfigure: builder =>
+                builder.UseAdmissionControl(options =>
+                {
+                    options.Global.UseConcurrency(1);
+                    options.MaxQueuedCalls = 1;
+                    options.MaxQueuedBytes = 2048;
+                    options.MaxQueueDelay = TimeSpan.FromSeconds(5);
+                }));
+            var harnessClientCompressionServiceProxy = harness.Client.CreateProxy<ICompressionService>();
+            await harnessClientCompressionServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            harness.Server.ReplaceInterceptors([gate]);
             var permitOwner = harness.Service.DelayedAsync().AsTask();
             await InterceptorTestService.DelayedCallStarted.WaitAsync(PhaseTimeout);
 
             const int activeItemCount = 16;
             const int activeItemSize = 512;
             const int queuedItemSize = 64;
-            var call = harness.Client.Get<ICompressionService>()
+            var call = harnessClientCompressionServiceProxy.Service
                 .UploadBytesAsync(GatedPayloads(
                     queuedItemSize,
                     activeItemCount,
@@ -175,14 +189,41 @@ public class ClientStreamingResultStressTests
             if (result != expected)
                 throw new Exception($"promoted client-stream result expected {expected}, actual {result}");
         }
+        catch (Exception failure)
+        {
+            primaryFailure = failure;
+            throw;
+        }
         finally
         {
-            PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null;
-            releaseMore.TrySetResult();
-            gate.Release();
-            InterceptorTestService.ReleaseDelayedCall();
-            await harness.DisposeAsync().AsTask().WaitAsync(PhaseTimeout);
+            await CleanupTestAsync(primaryFailure,
+                () => { PreAdmissionStreamDispatcher.BufferedItemObserverForTests = null; return ValueTask.CompletedTask; },
+                () => { releaseMore.TrySetResult(); return ValueTask.CompletedTask; },
+                () => { gate.Release(); return ValueTask.CompletedTask; },
+                () => { InterceptorTestService.ReleaseDelayedCall(); return ValueTask.CompletedTask; },
+                async () => { if (harness is not null) await harness.DisposeAsync().AsTask().WaitAsync(PhaseTimeout); });
         }
+    }
+
+    private static async ValueTask CleanupTestAsync(
+        Exception? primaryFailure, params Func<ValueTask>[] cleanups)
+    {
+        var failures = new List<Exception>();
+        foreach (var cleanup in cleanups)
+        {
+            try { await cleanup().ConfigureAwait(false); }
+            catch (Exception failure) { failures.Add(failure); }
+        }
+
+        // The catch rethrows the primary when cleanup succeeds. Only aggregate when
+        // a separate cleanup failure would otherwise replace that original failure.
+        if (failures.Count == 0)
+            return;
+        if (primaryFailure is not null)
+            failures.Insert(0, primaryFailure);
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException(failures);
     }
 
     private static TaskCompletionSource<BufferedObservation> CreateBufferedObservation()
@@ -336,6 +377,7 @@ public class ClientStreamingResultStressTests
 
         public ISharpLinkServer Server { get; }
         public ISharpLinkClient Client { get; }
+        private readonly RpcProxy<IInterceptorTestService> _serviceProxy;
         public IInterceptorTestService Service { get; }
 
         private Harness(
@@ -348,7 +390,8 @@ public class ClientStreamingResultStressTests
             _serverTask = serverTask;
             Server = server;
             Client = client;
-            Service = client.Get<IInterceptorTestService>();
+            _serviceProxy = client.CreateProxy<IInterceptorTestService>();
+            Service = _serviceProxy.Service;
         }
 
         public static async Task<Harness> CreateAsync(
@@ -376,8 +419,18 @@ public class ClientStreamingResultStressTests
                 clientBuilder.UseRuntime(ConfigureCompression).UseRequestCompressionPolicy(CreateCompressionPolicy());
 
             var client = clientBuilder.Build();
-            await client.ConnectAsync(cts.Token);
-            return new Harness(cts, serverTask, server, client);
+            try
+            {
+                await client.ConnectAsync(cts.Token);
+                var harness = new Harness(cts, serverTask, server, client);
+                await harness._serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+                return harness;
+            }
+            catch (Exception primaryFailure)
+            {
+                await CleanupOwnedAsync(primaryFailure, client, cts, server, serverTask);
+                throw;
+            }
         }
 
         private static SharpLinkCompressionSendPolicy CreateCompressionPolicy()
@@ -393,13 +446,49 @@ public class ClientStreamingResultStressTests
             options.Compression.Providers.Add(new TestCompressionProvider());
         }
 
-        public async ValueTask DisposeAsync()
+        private static async ValueTask CleanupOwnedAsync(
+            Exception? primaryFailure,
+            ISharpLinkClient client,
+            CancellationTokenSource cancellation,
+            ISharpLinkServer server,
+            Task serverTask)
         {
-            await Client.DisposeAsync();
-            await _serverCts.CancelAsync();
-            await Server.DisposeAsync();
-            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
-            _serverCts.Dispose();
+            var failures = new List<Exception>();
+            if (primaryFailure is not null)
+                failures.Add(primaryFailure);
+
+            async ValueTask AttemptAsync(Func<ValueTask> cleanup)
+            {
+                try { await cleanup().ConfigureAwait(false); }
+                catch (Exception failure) { failures.Add(failure); }
+            }
+
+            await AttemptAsync(() => client.DisposeAsync());
+            await AttemptAsync(async () => await cancellation.CancelAsync().ConfigureAwait(false));
+            await AttemptAsync(() => server.DisposeAsync());
+            await AttemptAsync(async () =>
+            {
+                try
+                {
+                    await serverTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException failure) when (
+                    serverTask.IsCanceled && cancellation.IsCancellationRequested &&
+                    failure.CancellationToken == cancellation.Token)
+                {
+                    // StartAsync may observe this owned stop token. Do not suppress
+                    // unrelated cancellation, task faults, or the bounded wait timeout.
+                }
+            });
+            await AttemptAsync(() => { cancellation.Dispose(); return ValueTask.CompletedTask; });
+
+            if (failures.Count == 1)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures.Count > 1)
+                throw new AggregateException(failures);
         }
+
+        public ValueTask DisposeAsync()
+            => CleanupOwnedAsync(null, Client, _serverCts, Server, _serverTask);
     }
 }

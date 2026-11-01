@@ -17,7 +17,8 @@ internal sealed class ExtensionFaultHarness : IAsyncDisposable
         CancellationTokenSource serverCancellation,
         ISharpLinkClient client,
         ServiceProvider? serviceProvider,
-        string initialSessionId)
+        string initialSessionId,
+        RpcProxy<IExtensionFaultService> serviceProxy)
     {
         _server = server;
         _serverTask = serverTask;
@@ -25,10 +26,12 @@ internal sealed class ExtensionFaultHarness : IAsyncDisposable
         Client = client;
         _serviceProvider = serviceProvider;
         InitialSessionId = initialSessionId;
+        _serviceProxy = serviceProxy;
     }
 
     internal ISharpLinkClient Client { get; }
-    internal IExtensionFaultService Service => Client.Get<IExtensionFaultService>();
+    private readonly RpcProxy<IExtensionFaultService> _serviceProxy;
+    internal IExtensionFaultService Service => _serviceProxy.Service;
     internal ISharpLinkServer Server => _server;
     internal string InitialSessionId { get; }
 
@@ -98,13 +101,15 @@ internal sealed class ExtensionFaultHarness : IAsyncDisposable
         try
         {
             await client.ConnectAsync(cancellation.Token).ConfigureAwait(false);
+            var serviceProxy = client.CreateProxy<IExtensionFaultService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             var initialSessionId = options.SkipInitialSessionProbe
                 ? string.Empty
-                : await client.Get<IExtensionFaultService>()
+                : await serviceProxy.Service
                     .GetSessionIdAsync()
                     .ConfigureAwait(false);
             return new ExtensionFaultHarness(
-                server, serverTask, cancellation, client, provider, initialSessionId);
+                server, serverTask, cancellation, client, provider, initialSessionId, serviceProxy);
         }
         catch
         {

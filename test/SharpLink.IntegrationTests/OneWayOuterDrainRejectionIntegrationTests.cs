@@ -16,7 +16,9 @@ public class OneWayOuterDrainRejectionIntegrationTests
         });
         var interceptor = new HoldUnaryServerInterceptor();
         harness.Server.ReplaceInterceptors([interceptor]);
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
 
         try
         {

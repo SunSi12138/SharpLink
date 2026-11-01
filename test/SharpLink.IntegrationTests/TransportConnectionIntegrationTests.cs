@@ -174,7 +174,9 @@ public partial class TransportConnectionIntegrationTests
     private static async Task VerifyReconnectWithNewClientInstanceAsync(TransportKind kind)
     {
         await using var harness1 = await TransportHarness.CreateAsync(kind);
-        var svc1 = harness1.Client.Get<IConnectionBehaviorService>();
+        var svc1Proxy = harness1.Client.CreateProxy<IConnectionBehaviorService>();
+        await svc1Proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var svc1 = svc1Proxy.Service;
         Ensure(await svc1.PingAsync(20) == 21, $"{kind} first connect");
         await harness1.DisposeClientOnlyAsync();
         await Task.Delay(120);
@@ -184,7 +186,9 @@ public partial class TransportConnectionIntegrationTests
         {
             await client2.ConnectAsync();
             Ensure(client2.State == SharpLinkConnectionState.Ready, $"{kind} reconnect connect");
-            var svc2 = client2.Get<IConnectionBehaviorService>();
+            var svc2Proxy = client2.CreateProxy<IConnectionBehaviorService>();
+            await svc2Proxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var svc2 = svc2Proxy.Service;
             Ensure(await svc2.PingAsync(30) == 31, $"{kind} reconnect ping");
         }
         finally
@@ -213,7 +217,9 @@ public partial class TransportConnectionIntegrationTests
         try
         {
             await client.ConnectAsync(cts.Token);
-            var service = client.Get<IConnectionBehaviorService>();
+            var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
             await EnsureThrowsSharpLink(
                 service.EchoAsync(new string('x', 2_048)).AsTask(),
                 "oversized request",

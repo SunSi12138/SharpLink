@@ -24,7 +24,9 @@ public class TelemetryIntegrationTests
         ActivitySource.AddActivityListener(activityListener);
 
         await using var harness = await TelemetryHarness.CreateAsync();
-        await using (var stream = harness.Client.Get<IInterceptorTestService>()
+        var harnessClientInterceptorTestServiceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
+        await harnessClientInterceptorTestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await using (var stream = harnessClientInterceptorTestServiceProxy.Service
                          .FailStreamAsync()
                          .GetAsyncEnumerator())
         {
@@ -80,7 +82,9 @@ public class TelemetryIntegrationTests
 
         await using (var harness = await TelemetryHarness.CreateAsync())
         {
-            var service = harness.Client.Get<IInterceptorTestService>();
+            var serviceProxy = harness.Client.CreateProxy<IInterceptorTestService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
             Ensure(await service.DescribeNumberAsync(4) == 5, "telemetry unary result");
 
             var stream = service.FailStreamAsync().GetAsyncEnumerator();

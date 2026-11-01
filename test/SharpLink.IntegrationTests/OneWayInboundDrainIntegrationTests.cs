@@ -18,7 +18,9 @@ public class OneWayInboundDrainIntegrationTests
         harness.Server.ReplaceInterceptors([interceptor]);
         try
         {
-            var service = harness.Client.Get<ICompressionService>();
+            var serviceProxy = harness.Client.CreateProxy<ICompressionService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
             var send = service.NotifyStreamBytesAsync(ManyPayloads(128, 32)).AsTask();
 
             await interceptor.Entered.WaitAsync(PhaseTimeout);
@@ -53,7 +55,9 @@ public class OneWayInboundDrainIntegrationTests
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        var service = harness.Client.Get<IOneWayInboundDrainService>();
+        var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
         try
         {
             var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();

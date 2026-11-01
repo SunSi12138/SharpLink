@@ -398,8 +398,12 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
             await Task.WhenAll(
                 firstClient.ConnectAsync(serverCts.Token).AsTask(),
                 secondClient.ConnectAsync(serverCts.Token).AsTask());
-            var firstService = firstClient.Get<IConnectionBehaviorService>();
-            var secondService = secondClient.Get<IConnectionBehaviorService>();
+            var firstServiceProxy = firstClient.CreateProxy<IConnectionBehaviorService>();
+            await firstServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var firstService = firstServiceProxy.Service;
+            var secondServiceProxy = secondClient.CreateProxy<IConnectionBehaviorService>();
+            await secondServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var secondService = secondServiceProxy.Service;
             var calls = new Task<string>[200];
             for (var index = 0; index < calls.Length; index += 2)
             {

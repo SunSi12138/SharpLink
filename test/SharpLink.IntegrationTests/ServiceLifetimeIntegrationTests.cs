@@ -16,7 +16,9 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        _ = await client.Get<IBlockingConnectionCleanupProbe>().ActivateAsync();
+        var clientProxy = client.CreateProxy<IBlockingConnectionCleanupProbe>();
+        await clientProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        _ = await clientProxy.Service.ActivateAsync();
 
         var stop = server.StopAsync(TimeSpan.FromSeconds(2)).AsTask();
         await BlockingConnectionCleanupProbe.DisposeStarted.WaitAsync(TimeSpan.FromSeconds(2));
@@ -54,8 +56,12 @@ public sealed class ServiceLifetimeIntegrationTests
         await firstClient.ConnectAsync();
         await secondClient.ConnectAsync();
 
-        var first = firstClient.Get<IConnectionLifetimeProbe>();
-        var second = secondClient.Get<IConnectionLifetimeProbe>();
+        var firstProxy = firstClient.CreateProxy<IConnectionLifetimeProbe>();
+        await firstProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var first = firstProxy.Service;
+        var secondProxy = secondClient.CreateProxy<IConnectionLifetimeProbe>();
+        await secondProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var second = secondProxy.Service;
         var firstId = await first.GetInstanceIdAsync();
         Ensure(await first.GetInstanceIdAsync() == firstId, "one instance is reused on a connection");
         var secondId = await second.GetInstanceIdAsync();
@@ -86,7 +92,9 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        var service = client.Get<ICallLifetimeProbe>();
+        var serviceProxy = client.CreateProxy<ICallLifetimeProbe>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
 
         var first = await service.GetInstanceIdAsync();
         var second = await service.GetInstanceIdAsync();
@@ -135,7 +143,9 @@ public sealed class ServiceLifetimeIntegrationTests
         var serverTask = server.RunUntilStoppedAsync(serverCancellation.Token).AsTask();
         await using var client = CreateClient(port);
         await client.ConnectAsync();
-        var service = client.Get<ICallLifetimeProbe>();
+        var serviceProxy = client.CreateProxy<ICallLifetimeProbe>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
 
         await using var stream = service.StreamInstanceIdAsync().GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync(), "admitted call-lifetime stream");
@@ -182,16 +192,32 @@ public sealed class ServiceLifetimeIntegrationTests
         var firstServerTask = firstServer.RunUntilStoppedAsync(firstCancellation.Token).AsTask();
         await using var firstClient = CreateClient(firstPort);
         await firstClient.ConnectAsync();
-        _ = await firstClient.Get<ICallLifetimeProbe>().GetInstanceIdAsync();
+        var firstClientProxy = firstClient.CreateProxy<ICallLifetimeProbe>();
+        await firstClientProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        _ = await firstClientProxy.Service.GetInstanceIdAsync();
+        // Local generated factory creation does not require a remote registration. The first
+        // server intentionally omits this contract, so finite preparation expires without a route.
+        var filteredProxy = firstClient.CreateProxy<IConnectionLifetimeProbe>();
         try
         {
-            _ = await firstClient.Get<IConnectionLifetimeProbe>().GetInstanceIdAsync();
+            await filteredProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            throw new Exception("assert failed: a filtered remote contract must not become prepared");
+        }
+        catch (SharpLinkException exception)
+        {
+            Ensure(exception.Code == SharpLinkErrorCode.DeadlineExceeded,
+                "absent remote contract expires the explicit preparation budget");
+        }
+        try
+        {
+            _ = await filteredProxy.Service.GetInstanceIdAsync();
             throw new Exception("assert failed: disabled automatic registration must hide non-enabled services");
         }
         catch (SharpLinkException exception)
         {
-            Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
-                "filtered service contract acquisition");
+            Ensure(exception.Code == SharpLinkErrorCode.Unavailable &&
+                   exception.DetailCode == SharpLinkErrorDetails.Unavailable.NoBoundRoute,
+                "the same unbound proxy fails before publishing any business request");
         }
         await firstClient.StopAsync();
         await firstServer.StopAsync(TimeSpan.FromSeconds(2));
@@ -206,7 +232,9 @@ public sealed class ServiceLifetimeIntegrationTests
         var secondServerTask = secondServer.RunUntilStoppedAsync(secondCancellation.Token).AsTask();
         await using var secondClient = CreateClient(secondPort);
         await secondClient.ConnectAsync();
-        _ = await secondClient.Get<IConnectionLifetimeProbe>().GetInstanceIdAsync();
+        var secondClientProxy = secondClient.CreateProxy<IConnectionLifetimeProbe>();
+        await secondClientProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        _ = await secondClientProxy.Service.GetInstanceIdAsync();
         await secondClient.StopAsync();
         await secondServer.StopAsync(TimeSpan.FromSeconds(2));
         await secondCancellation.CancelAsync();

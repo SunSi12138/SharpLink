@@ -13,19 +13,25 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         PreAdmissionStreamActivationRaceService.Reset();
         TestService.ResetBlockingAdd();
         await using var harness = await RaceHarness.CreateAsync();
+        var harnessClientATestServiceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await harnessClientATestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var harnessClientBPreAdmissionStreamActivationRaceServiceProxy = harness.ClientB.CreateProxy<IPreAdmissionStreamActivationRaceService>();
+        await harnessClientBPreAdmissionStreamActivationRaceServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var harnessClientBTestServiceProxy = harness.ClientB.CreateProxy<ITestService>();
+        await harnessClientBTestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var overflowRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var activationEntered = new TaskCompletionSource<ServerCallCancellationState>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var activationRelease = new ManualResetEventSlim();
         Task? target = null;
-        var active = harness.ClientA.Get<ITestService>()
+        var active = harnessClientATestServiceProxy.Service
             .BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            target = harness.ClientB.Get<IPreAdmissionStreamActivationRaceService>()
+            target = harnessClientBPreAdmissionStreamActivationRaceServiceProxy.Service
                 .NotifyAsync(OneThenOverflowAsync(overflowRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > 0,
@@ -58,7 +64,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
             await Task.Delay(50);
             Ensure(PreAdmissionStreamActivationRaceService.OneWayInvocations == 0,
                 "one-way user code must not run after stream-budget terminal wins");
-            Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await harnessClientBTestServiceProxy.Service.AddAsync(20, 22) == 42,
                 "one-way race leaves the connection usable");
         }
         finally
@@ -80,19 +86,25 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
         PreAdmissionStreamActivationRaceService.Reset();
         TestService.ResetBlockingAdd();
         await using var harness = await RaceHarness.CreateAsync();
+        var harnessClientATestServiceProxy = harness.ClientA.CreateProxy<ITestService>();
+        await harnessClientATestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var harnessClientBPreAdmissionStreamActivationRaceServiceProxy = harness.ClientB.CreateProxy<IPreAdmissionStreamActivationRaceService>();
+        await harnessClientBPreAdmissionStreamActivationRaceServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var harnessClientBTestServiceProxy = harness.ClientB.CreateProxy<ITestService>();
+        await harnessClientBTestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var overflowRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var activationEntered = new TaskCompletionSource<ServerCallCancellationState>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         using var activationRelease = new ManualResetEventSlim();
         Task<int>? target = null;
-        var active = harness.ClientA.Get<ITestService>()
+        var active = harnessClientATestServiceProxy.Service
             .BlockingAddAsync(3, 4, CancellationToken.None).AsTask();
 
         try
         {
             await TestService.WaitForBlockingAddStartedAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            target = harness.ClientB.Get<IPreAdmissionStreamActivationRaceService>()
+            target = harnessClientBPreAdmissionStreamActivationRaceServiceProxy.Service
                 .UploadAsync(OneThenOverflowAsync(overflowRelease.Task)).AsTask();
             await WaitUntilAsync(
                 () => harness.PreAdmissionStreamBytes > 0,
@@ -129,7 +141,7 @@ public class PreAdmissionStreamActivationRaceIntegrationTests
                 "two-way race releases stream-buffer ownership");
             Ensure(PreAdmissionStreamActivationRaceService.TwoWayInvocations == 0,
                 "two-way user code must not run after stream-budget terminal wins");
-            Ensure(await harness.ClientB.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await harnessClientBTestServiceProxy.Service.AddAsync(20, 22) == 42,
                 "two-way race leaves the connection usable");
         }
         finally

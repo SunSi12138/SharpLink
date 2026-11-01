@@ -463,11 +463,13 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
     public async Task SharedMemoryHeartbeatShouldKeepAnIdleConnectionReady()
     {
         await using var harness = await SharedMemoryHarness.CreateAsync();
+        var harnessClientConnectionBehaviorServiceProxy = harness.Client.CreateProxy<IConnectionBehaviorService>();
+        await harnessClientConnectionBehaviorServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         await Task.Delay(TimeSpan.FromSeconds(2));
 
         Ensure(harness.Client.State == SharpLinkConnectionState.Ready,
             "shared-memory idle heartbeat connection state");
-        Ensure(await harness.Client.Get<IConnectionBehaviorService>().PingAsync(50) == 51,
+        Ensure(await harnessClientConnectionBehaviorServiceProxy.Service.PingAsync(50) == 51,
             "shared-memory ping after idle heartbeat interval");
     }
 
@@ -475,7 +477,9 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
     public async Task SharedMemoryConnectAndBasicRpcShouldWork()
     {
         await using var harness = await SharedMemoryHarness.CreateAsync();
-        var service = harness.Client.Get<IConnectionBehaviorService>();
+        var serviceProxy = harness.Client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
 
         Ensure(await service.PingAsync(41) == 42, "shared-memory ping");
     }
@@ -505,7 +509,9 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         meterListener.Start();
 
         await using var harness = await SharedMemoryHarness.CreateAsync();
-        var service = harness.Client.Get<IConnectionBehaviorService>();
+        var serviceProxy = harness.Client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
         var payload = new string('x', 256 * 1024);
 
         var response = await service.EchoAsync(payload);
@@ -563,7 +569,9 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
     public async Task SharedMemoryServerUnexpectedDisconnectShouldFailFastPendingCall()
     {
         await using var harness = await SharedMemoryHarness.CreateAsync();
-        var service = harness.Client.Get<IConnectionBehaviorService>();
+        var serviceProxy = harness.Client.CreateProxy<IConnectionBehaviorService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
         Ensure(await service.PingAsync(1) == 2, "shared-memory warmup ping");
 
         var pending = service.SlowAsync(2000, CancellationToken.None).AsTask();
@@ -579,12 +587,16 @@ public partial class SharedMemoryTransportConnectionIntegrationTests
         var name = $"sharplink-shm-int-{Guid.NewGuid():N}";
         await using (var first = await SharedMemoryHarness.CreateAsync(name))
         {
-            var service = first.Client.Get<IConnectionBehaviorService>();
+            var serviceProxy = first.Client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
             Ensure(await service.PingAsync(2) == 3, "first shared-memory ping");
         }
 
         await using var second = await SharedMemoryHarness.CreateAsync(name);
-        var secondService = second.Client.Get<IConnectionBehaviorService>();
+        var secondServiceProxy = second.Client.CreateProxy<IConnectionBehaviorService>();
+        await secondServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var secondService = secondServiceProxy.Service;
         Ensure(await secondService.PingAsync(3) == 4, "second shared-memory ping");
     }
 

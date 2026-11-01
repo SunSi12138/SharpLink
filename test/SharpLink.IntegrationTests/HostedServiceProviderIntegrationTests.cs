@@ -57,7 +57,9 @@ public class HostedServiceProviderIntegrationTests
             await using var client = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port).UseRequestTimeout(TimeSpan.FromSeconds(10)).Build();
             await client.ConnectAsync();
-            var service = client.Get<IHostedProviderContract>();
+            var serviceProxy = client.CreateProxy<IHostedProviderContract>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
             var first = await service.ResolveAsync();
             var second = await service.ResolveAsync();
             Ensure(first.StartsWith(selected.Name + ":", StringComparison.Ordinal) &&
@@ -117,8 +119,10 @@ public class HostedServiceProviderIntegrationTests
             await using var client = SharpClientBuilder.Create()
                 .UseTcp(IPAddress.Loopback.ToString(), port).UseRequestTimeout(TimeSpan.FromSeconds(10)).Build();
             await client.ConnectAsync();
+            var proxy = client.CreateProxy<IHostedProviderContract>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(5));
             Exception? failure = null;
-            try { _ = await client.Get<IHostedProviderContract>().ResolveAsync(); }
+            try { _ = await proxy.Service.ResolveAsync(); }
             catch (Exception exception) { failure = exception; }
             Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.Internal },
                 "missing dependency in the explicit provider must fail the real RPC without Host fallback");

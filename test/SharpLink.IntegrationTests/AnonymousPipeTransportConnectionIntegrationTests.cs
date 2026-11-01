@@ -6,7 +6,9 @@ public class AnonymousPipeTransportConnectionIntegrationTests
     public async Task AnonymousPipeConnectAndBasicRpcShouldWork()
     {
         await using var harness = await AnonymousPipeHarness.CreateAsync();
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svcProxy = harness.Client.CreateProxy<IConnectionBehaviorService>();
+        await svcProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var svc = svcProxy.Service;
 
         var value = await svc.PingAsync(13);
         Ensure(value == 14, "anonymous pipe ping");
@@ -16,7 +18,9 @@ public class AnonymousPipeTransportConnectionIntegrationTests
     public async Task AnonymousPipeServerUnexpectedDisconnectShouldFailFastPendingCall()
     {
         await using var harness = await AnonymousPipeHarness.CreateAsync();
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svcProxy = harness.Client.CreateProxy<IConnectionBehaviorService>();
+        await svcProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var svc = svcProxy.Service;
         Ensure(await svc.PingAsync(1) == 2, "anonymous pipe warmup ping");
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
@@ -30,7 +34,9 @@ public class AnonymousPipeTransportConnectionIntegrationTests
     public async Task AnonymousPipeClientDisposeShouldFailFastPendingCall()
     {
         await using var harness = await AnonymousPipeHarness.CreateAsync();
-        var svc = harness.Client.Get<IConnectionBehaviorService>();
+        var svcProxy = harness.Client.CreateProxy<IConnectionBehaviorService>();
+        await svcProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var svc = svcProxy.Service;
         Ensure(await svc.PingAsync(2) == 3, "anonymous pipe warmup ping");
 
         var pending = svc.SlowAsync(2000, CancellationToken.None).AsTask();
