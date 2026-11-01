@@ -5,6 +5,8 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Channels;
+using System.Runtime.ExceptionServices;
+using SharpLink.UnitTests.Client;
 
 namespace SharpLink.UnitTests;
 
@@ -22,8 +24,11 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
     internal TestClientTransportFactory(
         ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
         IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null,
-        string? compressionProfile = null)
+        string? compressionProfile = null,
+        bool acceptManualContractBindings = false)
     {
+        if (acceptManualContractBindings)
+            Connection.EnableManualContractBindings();
         _negotiatedCapabilities = negotiatedCapabilities;
         _contractManifest = contractManifest?.ToArray() ?? DefaultContractManifest;
         _compressionProfile = compressionProfile;
@@ -55,6 +60,7 @@ internal sealed class TestTransportConnection : ITransportConnection
     private readonly CallbackPipeWriter _output;
     private readonly Channel<TestSentFrame> _sentPackets = Channel.CreateUnbounded<TestSentFrame>();
     private readonly CancellationTokenSource _disposeCts = new();
+    private readonly SemaphoreSlim _inboundWriteGate = new(1, 1);
     private readonly Task _observeOutputTask;
     private int _disposed;
 
@@ -63,6 +69,15 @@ internal sealed class TestTransportConnection : ITransportConnection
         _output = new CallbackPipeWriter(_outbound.Writer);
         _observeOutputTask = ObserveOutputAsync(_disposeCts.Token);
     }
+
+    internal Protocol3BindingAuthority Authority { get; } = new(
+        Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default);
+    private bool _acceptManualContractBindings;
+    private ulong _manualBindingIncarnation;
+
+    // Opt-in only. This controlled peer knows one explicitly registered fixture identity;
+    // it is not a general server registry and never acknowledges request stream heads.
+    internal void EnableManualContractBindings() => _acceptManualContractBindings = true;
 
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public PipeReader Input => _inbound.Reader;
@@ -79,15 +94,16 @@ internal sealed class TestTransportConnection : ITransportConnection
         string? compressionProfile = null,
         CancellationToken cancellationToken = default)
     {
-        negotiatedCapabilities |= ProtocolV2Capabilities.ContractManifest;
-        var responsePayload = new PooledByteBufferWriter();
+        negotiatedCapabilities |= ProtocolV2Negotiator.MandatoryCapabilities;
+        using var responsePayload = new PooledByteBufferWriter();
         ProtocolV2PayloadCodec.WriteHandshakeResponse(responsePayload, new ProtocolV2HandshakeResponse(
             ProtocolV2Constants.MinorVersion,
             negotiatedCapabilities,
             4 * 1024 * 1024,
             1024 * 1024,
             16 * 1024 * 1024,
-            compressionProfile));
+            compressionProfile,
+            Authority));
         await InjectFrameAsync(
             ProtocolV2FrameType.HandshakeResponse,
             ProtocolV2FrameFlags.None,
@@ -95,10 +111,10 @@ internal sealed class TestTransportConnection : ITransportConnection
             responsePayload.WrittenMemory,
             cancellationToken);
 
-        var manifestPayload = new PooledByteBufferWriter();
+        using var manifestPayload = new PooledByteBufferWriter();
         ProtocolV2ContractManifestCodec.Write(
             manifestPayload,
-            new ProtocolV2ContractManifest(0, contractManifest ?? []),
+            new ProtocolV2ContractManifest(1, contractManifest ?? []),
             ProtocolLimits);
         await InjectFrameAsync(
             ProtocolV2FrameType.ContractManifest,
@@ -137,12 +153,23 @@ internal sealed class TestTransportConnection : ITransportConnection
         ReadOnlyMemory<byte> payload,
         CancellationToken cancellationToken = default)
     {
-        var writer = new PooledByteBufferWriter();
-        var token = ProtocolV2FrameWriter.BeginFrame(writer, type, flags, requestId);
-        writer.Write(payload.Span);
-        ProtocolV2FrameWriter.EndFrame(writer, token);
-        await _inbound.Writer.WriteAsync(writer.WrittenMemory, cancellationToken);
-        await _inbound.Writer.FlushAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        await _inboundWriteGate.WaitAsync(linked.Token);
+        try
+        {
+            using var writer = new PooledByteBufferWriter();
+            var token = ProtocolV2FrameWriter.BeginFrame(writer, type, flags, requestId);
+            writer.Write(payload.Span);
+            ProtocolV2FrameWriter.EndFrame(writer, token);
+            await _inbound.Writer.WriteAsync(writer.WrittenMemory, linked.Token);
+            await _inbound.Writer.FlushAsync(linked.Token);
+        }
+        finally
+        {
+            _inboundWriteGate.Release();
+        }
     }
 
     public async Task<ProtocolV2FrameHeader> WaitForSentPacket(ProtocolV2FrameType type)
@@ -203,20 +230,34 @@ internal sealed class TestTransportConnection : ITransportConnection
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        _disposeCts.Cancel();
-        await CompleteAsync(_inbound.Writer);
-        await CompleteAsync(_output);
-        try
+        var failures = new List<Exception>();
+        Exception? observerFailure = null;
+        try { _disposeCts.Cancel(); } catch (Exception error) { failures.Add(error); }
+        await CleanupAsync(async () =>
         {
-            await _observeOutputTask;
-        }
-        catch (OperationCanceledException) when (_disposeCts.IsCancellationRequested)
+            // Join any current write before completing its writer. Cancelled external writers
+            // may still unwind; do not dispose their synchronization object underneath them.
+            await _inboundWriteGate.WaitAsync();
+            try { await CompleteAsync(_inbound.Writer); }
+            finally { _inboundWriteGate.Release(); }
+        });
+        await CleanupAsync(() => CompleteAsync(_output));
+        try { await _observeOutputTask; }
+        catch (OperationCanceledException) when (_disposeCts.IsCancellationRequested) { }
+        catch (Exception error) { observerFailure = error; failures.Add(error); }
+        await CleanupAsync(() => CompleteAsync(_inbound.Reader));
+        await CleanupAsync(() => CompleteAsync(_outbound.Reader));
+        _sentPackets.Writer.TryComplete(observerFailure);
+        try { _disposeCts.Dispose(); } catch (Exception error) { failures.Add(error); }
+        if (failures.Count == 1)
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count > 1)
+            throw new AggregateException(failures);
+
+        async ValueTask CleanupAsync(Func<ValueTask> cleanup)
         {
+            try { await cleanup(); } catch (Exception error) { failures.Add(error); }
         }
-        await CompleteAsync(_inbound.Reader);
-        await CompleteAsync(_outbound.Reader);
-        _sentPackets.Writer.TryComplete();
-        _disposeCts.Dispose();
     }
 
     private async Task ObserveOutputAsync(CancellationToken cancellationToken)
@@ -232,7 +273,11 @@ internal sealed class TestTransportConnection : ITransportConnection
                     new SharpLinkProtocolOptions(),
                     out var header,
                     out var payload))
+                {
                     _sentPackets.Writer.TryWrite(new TestSentFrame(header, payload.ToArray()));
+                    if (_acceptManualContractBindings && header.Type == ProtocolV2FrameType.BindContract)
+                        await ReplyToManualContractBindAsync(header, payload, cancellationToken);
+                }
                 if (result.IsCompleted)
                     return;
             }
@@ -241,6 +286,27 @@ internal sealed class TestTransportConnection : ITransportConnection
                 _outbound.Reader.AdvanceTo(buffer.Start, buffer.End);
             }
         }
+    }
+
+    private async Task ReplyToManualContractBindAsync(ProtocolV2FrameHeader header,
+        ReadOnlySequence<byte> payload, CancellationToken cancellationToken)
+    {
+        var request = Protocol3BindingControlCodec.ReadBindContract(payload);
+        Protocol3BindResult result;
+        if (request.ContractId != ManualClientContractFixture.ContractId)
+            result = Protocol3BindResult.Failure(Protocol3BindStatus.UnknownContract);
+        else if (request.Hash != ManualClientContractFixture.AssemblyHash)
+            result = Protocol3BindResult.Failure(Protocol3BindStatus.HashMismatch);
+        else if (request.Requirement != Protocol3BindingRequirement.Compatible || request.Receipt is not null)
+            result = Protocol3BindResult.Failure(Protocol3BindStatus.ScopeDenied);
+        else
+            result = new Protocol3BindResult(Protocol3BindStatus.Success,
+                Protocol3BindingToken.Create(0, ++_manualBindingIncarnation, Authority.Limits.Slots),
+                request.ContractId, request.Hash, 1, 1, Authority.ServerInstanceId, Authority.RegistryEpoch);
+        using var writer = new PooledByteBufferWriter();
+        Protocol3BindingControlCodec.WriteBindResult(writer, result, Authority.Limits.Slots);
+        await InjectFrameAsync(ProtocolV2FrameType.BindResult, ProtocolV2FrameFlags.None,
+            header.RequestId, writer.WrittenMemory, cancellationToken);
     }
 
     private static async ValueTask CompleteAsync(PipeWriter writer)
