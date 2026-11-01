@@ -83,15 +83,25 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         var builtClient = client.Build();
         configureBuiltClient?.Invoke(builtClient);
 
-        await builtClient.ConnectAsync(shutdown.Token);
-        await WaitForReadyConnectionsAsync(
-            builtClient,
-            expectedReadyConnections,
-            shutdown.Token).ConfigureAwait(false);
+        try
+        {
+            await builtClient.ConnectAsync(shutdown.Token);
+            await WaitForReadyConnectionsAsync(
+                builtClient,
+                expectedReadyConnections,
+                shutdown.Token).ConfigureAwait(false);
 
-        var rpc = builtClient.Get<IBenchmarkRpc>();
-        return new BenchmarkEnvironment(
-            rpc, localService, shutdown, serverTask, server, builtClient);
+            var proxy = builtClient.CreateProxy<IBenchmarkRpc>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10), shutdown.Token).ConfigureAwait(false);
+            var rpc = proxy.Service;
+            return new BenchmarkEnvironment(
+                rpc, localService, shutdown, serverTask, server, builtClient);
+        }
+        catch (Exception failure)
+        {
+            await CleanupFailedStartupAsync(failure, shutdown, serverTask, server, builtClient).ConfigureAwait(false);
+            throw;
+        }
     }
 
     public static async Task<BenchmarkEnvironment> CreateSharedMemoryAsync(
@@ -136,24 +146,42 @@ internal sealed class BenchmarkEnvironment : IAsyncDisposable
         try
         {
             await client.ConnectAsync(shutdown.Token).ConfigureAwait(false);
+            var proxy = client.CreateProxy<IBenchmarkRpc>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10), shutdown.Token).ConfigureAwait(false);
             return new BenchmarkEnvironment(
-                client.Get<IBenchmarkRpc>(), localService, shutdown, serverTask, server, client, serverReadProbe);
+                proxy.Service, localService, shutdown, serverTask, server, client, serverReadProbe);
         }
-        catch
+        catch (Exception failure)
         {
-            shutdown.Cancel();
-            await client.DisposeAsync().ConfigureAwait(false);
-            await server.DisposeAsync().ConfigureAwait(false);
-            shutdown.Dispose();
+            await CleanupFailedStartupAsync(failure, shutdown, serverTask, server, client).ConfigureAwait(false);
             throw;
         }
     }
+
+    internal Task CleanupFailedStartupAsync(Exception failure, Action cleanupAdditionalOwner)
+        => CleanupFailedStartupAsync(failure, _shutdown, _serverTask, _server, _client, cleanupAdditionalOwner);
+
+    internal static Task CleanupFailedStartupAsync(
+        Exception failure,
+        CancellationTokenSource shutdown,
+        Task serverTask,
+        ISharpLinkServer server,
+        ISharpLinkClient client,
+        Action? cleanupAdditionalOwner = null)
+        => BenchmarkStartupCleanup.RunAsync(failure,
+            () => new ValueTask(shutdown.CancelAsync()),
+            () => client.DisposeAsync(),
+            () => server.DisposeAsync(),
+            () => new ValueTask(serverTask),
+            () => { shutdown.Dispose(); return ValueTask.CompletedTask; },
+            () => { cleanupAdditionalOwner?.Invoke(); return ValueTask.CompletedTask; });
 
     internal ISharpLinkClient Client => _client;
     internal bool HasPendingServerRead => _serverReadProbe?.HasPendingRead ?? false;
     internal ISharpLinkServer Server => _server;
 
-    public TContract Get<TContract>() where TContract : class, IService => _client.Get<TContract>();
+    public RpcProxy<TContract> CreateProxy<TContract>() where TContract : class, IService
+        => _client.CreateProxy<TContract>();
 
     public async ValueTask DisposeAsync()
     {

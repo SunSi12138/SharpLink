@@ -277,8 +277,17 @@ public partial class SharpLinkServerInvocationTests
             => ValueTask.FromException(new InvalidOperationException("handler failed"));
     }
 
-    private sealed class SynchronouslyThrowingStub : IRpcStub
+    private sealed class SynchronouslyThrowingStub : IDeclaredServerFixtureStub
     {
+        public SharpLinkGeneratedMethodDescriptor DeclaredMethod
+        {
+            get
+            {
+                TryGetMethodDescriptor(1, out var method);
+                return ServerDispatchContractFixture.DeclareMethod(method.Kind, supportsCancellation: true);
+            }
+        }
+
         public RpcMethodFacts ResolveMethodFacts(long methodHash)
             => TryGetMethodDescriptor(methodHash, out var descriptor)
                 ? MethodFactsTestHelper.FromDescriptor(descriptor)
@@ -316,8 +325,17 @@ public partial class SharpLinkServerInvocationTests
             => throw new InvalidOperationException("handler failed synchronously");
     }
 
-    private sealed class SynchronouslyRespondingStub : IRpcStub
+    private sealed class SynchronouslyRespondingStub : IDeclaredServerFixtureStub
     {
+        public SharpLinkGeneratedMethodDescriptor DeclaredMethod
+        {
+            get
+            {
+                TryGetMethodDescriptor(1, out var method);
+                return ServerDispatchContractFixture.DeclareMethod(method.Kind, supportsCancellation: true);
+            }
+        }
+
         public RpcMethodFacts ResolveMethodFacts(long methodHash)
             => TryGetMethodDescriptor(methodHash, out var descriptor)
                 ? MethodFactsTestHelper.FromDescriptor(descriptor)
@@ -359,8 +377,17 @@ public partial class SharpLinkServerInvocationTests
             => InvokeAsync(service, bridge, methodHash, requestId, args, output);
     }
 
-    private sealed class CancelThenRecoverStub : IRpcStub
+    private sealed class CancelThenRecoverStub : IDeclaredServerFixtureStub
     {
+        public SharpLinkGeneratedMethodDescriptor DeclaredMethod
+        {
+            get
+            {
+                TryGetMethodDescriptor(1, out var method);
+                return ServerDispatchContractFixture.DeclareMethod(method.Kind, supportsCancellation: true);
+            }
+        }
+
         public RpcMethodFacts ResolveMethodFacts(long methodHash)
             => TryGetMethodDescriptor(methodHash, out var descriptor)
                 ? MethodFactsTestHelper.FromDescriptor(descriptor)
@@ -433,10 +460,6 @@ public partial class SharpLinkServerInvocationTests
 
     private sealed class ServerDispatchHarness : IAsyncDisposable
     {
-        private static readonly MethodInfo DispatchMethod = typeof(SharpLinkServer).GetMethod(
-            "DispatchRpcAsync",
-            BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find Server RPC dispatch path");
         private static readonly FieldInfo CallAdmissionField = typeof(SharpLinkServer).GetField(
             "_callAdmission",
             BindingFlags.Instance | BindingFlags.NonPublic)
@@ -455,51 +478,72 @@ public partial class SharpLinkServerInvocationTests
         private readonly Pipe _input = new();
         private readonly PipeWriter _output;
         private readonly IRpcStub _stub;
+        private readonly ServerDispatchContractFixture _contracts;
+        private readonly ulong _bindingToken;
+        private int _disposeStarted;
 
         internal ServerDispatchHarness(IRpcStub stub, PipeWriter output, int maxSendQueueBytes,
             Action<SharpLinkServerBuilder>? configure = null, bool useServerBridge = false)
         {
-            _stub = stub;
-            _output = output;
-            var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
-                .DisableAutomaticServiceRegistration()
-                .UseRuntime(options => options.FlowControl.MaxSendQueueBytes = maxSendQueueBytes)
-                .UseTransport(new IdleListener());
-            configure?.Invoke(builder);
-            Server = (SharpLinkServer)builder.Build();
-            var runtimeContext = (SharpLinkRuntimeContext)(
-                typeof(SharpLinkServer).GetField(
-                    "_runtimeContext",
-                    BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(Server)!);
-            Session = RpcSessionTestFixture.CreateSessionOverTestTransport(
-                "response-capacity",
-                _input.Reader,
-                output,
-                RpcSessionTestFixture.ServerOptions(runtimeContext));
-            var calls = CreateCallCancellations(runtimeContext);
-            Connection = new ServerConnectionState(
-                Session,
-                useServerBridge ? new ServerGeneratedBridge(Server, Session, calls) : new RpcSessionGeneratedServerBridge(Session),
-                calls,
-                CancellationToken.None,
-                runtimeContext.TimeProvider);
-            Ensure(Connection.MarkReady(null), "connection ready");
-            var registration = ServiceRegistration.CreateSingleton(
-                typeof(ThrowingService),
-                stub,
-                new ThrowingService(),
-                ownsService: false);
-            var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
-                    "_serviceModuleRegistry",
-                    BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(Server)!;
-            Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
+            SharpLinkServer? server = null;
+            RpcSession? session = null;
+            ServerConnectionState? connection = null;
+            ServerDispatchContractFixture? contracts = null;
+            try
             {
-                [stub.InterfaceHash] = registration
-            }.ToFrozenDictionary());
-            const int running = 2;
-            SetServerState(Server, running);
+                _stub = stub;
+                _output = output;
+                var builder = SharpLinkServerBuilder.Create().UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                    .DisableAutomaticServiceRegistration()
+                    .UseRuntime(options => options.FlowControl.MaxSendQueueBytes = maxSendQueueBytes)
+                    .UseTransport(new IdleListener());
+                configure?.Invoke(builder);
+                Server = server = (SharpLinkServer)builder.Build();
+                var runtimeContext = (SharpLinkRuntimeContext)(
+                    typeof(SharpLinkServer).GetField(
+                        "_runtimeContext",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(Server)!);
+                Session = session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+                    "response-capacity",
+                    _input.Reader,
+                    output,
+                    RpcSessionTestFixture.ServerOptions(runtimeContext));
+                var calls = CreateCallCancellations(runtimeContext);
+                Connection = connection = new ServerConnectionState(
+                    Session,
+                    useServerBridge ? new ServerGeneratedBridge(Server, Session, calls) : new RpcSessionGeneratedServerBridge(Session),
+                    calls,
+                    CancellationToken.None,
+                    runtimeContext.TimeProvider);
+                Ensure(Connection.MarkReady(null), "connection ready");
+                var registration = ServiceRegistration.CreateSingleton(
+                    typeof(ThrowingService),
+                    stub,
+                    new ThrowingService(),
+                    ownsService: false);
+                _contracts = contracts = new ServerDispatchContractFixture(Server);
+                _contracts.Publish(new Dictionary<long, ServiceRegistration>
+                {
+                    [stub.InterfaceHash] = registration
+                }.ToFrozenDictionary());
+                _bindingToken = _contracts.Bind(Connection, registration);
+                const int running = 2;
+                SetServerState(Server, running);
+            }
+            catch (Exception primary)
+            {
+                // No await-using owner exists if synchronous setup fails. Join every acquired
+                // owner independently, preserving the setup exception before cleanup failures.
+                ServerDispatchContractFixture.CleanupOwnedAsync(primary,
+                    () => { if (_output is BlockingFlushPipeWriter blocking) blocking.ReleaseFlush(); return ValueTask.CompletedTask; },
+                    () => connection?.CloseAsync() ?? ValueTask.CompletedTask,
+                    () => session?.DisposeAsync() ?? ValueTask.CompletedTask,
+                    () => contracts?.DisposeAsync() ?? ValueTask.CompletedTask,
+                    () => server?.DisposeAsync() ?? ValueTask.CompletedTask,
+                    () => _input.Writer.CompleteAsync()).AsTask().GetAwaiter().GetResult();
+                throw;
+            }
         }
 
         internal SharpLinkServer Server { get; }
@@ -508,44 +552,30 @@ public partial class SharpLinkServerInvocationTests
         internal int GlobalActiveCalls
             => (int)GlobalActiveCallsField.GetValue(CallAdmissionField.GetValue(Server))!;
 
-        internal ValueTask Dispatch(long requestId, ProtocolV2FrameFlags flags)
+        internal ServerServiceSnapshot.Lease AcquireServices() => _contracts.AcquireServices();
+        internal void PublishServices(FrozenDictionary<long, ServiceRegistration> services) => _contracts.Publish(services);
+
+        internal ValueTask Dispatch(long requestId, ProtocolV2FrameFlags flags, long methodId = 1)
         {
             var request = new byte[sizeof(long) * 2];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
-            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 1);
-            var admission = Server.CaptureAdmissionProgramForTests(requestId);
-            if ((flags & ProtocolV2FrameFlags.OneWay) != 0)
-            {
-                var oneWay = typeof(SharpLinkServer).GetMethod("DispatchOneWayRpc",
-                    BindingFlags.Instance | BindingFlags.NonPublic)!;
-                return (ValueTask)oneWay.Invoke(Server,
-                [Connection, requestId, flags, new ReadOnlySequence<byte>(request), Connection.CallCancellations,
-                    CancellationToken.None, admission, null, false, 0, null])!;
-            }
-            return (ValueTask)DispatchMethod.Invoke(Server,
-            [
-                Connection,
-                requestId,
-                flags,
-                new ReadOnlySequence<byte>(request),
-                Connection.CallCancellations,
-                CancellationToken.None,
-                admission,
-                null,
-                false,
-                null
-            ])!;
+            BinaryPrimitives.WriteUInt64LittleEndian(request, _bindingToken);
+            BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), methodId);
+            return _contracts.DispatchSelected(Connection, requestId, flags,
+                new ReadOnlySequence<byte>(request), captureAdmission: true);
         }
 
         public async ValueTask DisposeAsync()
         {
-            GlobalActiveCallsField.SetValue(CallAdmissionField.GetValue(Server), 0);
-            ConnectionActiveCallsField.SetValue(Connection, 0);
-            if (_output is BlockingFlushPipeWriter blocking)
-                blocking.ReleaseFlush();
-            await Connection.CloseAsync();
-            await Server.DisposeAsync();
-            await _input.Writer.CompleteAsync();
+            if (Interlocked.Exchange(ref _disposeStarted, 1) != 0) return;
+            await ServerDispatchContractFixture.CleanupOwnedAsync(null,
+                () => { GlobalActiveCallsField.SetValue(CallAdmissionField.GetValue(Server), 0); return ValueTask.CompletedTask; },
+                () => { ConnectionActiveCallsField.SetValue(Connection, 0); return ValueTask.CompletedTask; },
+                () => { if (_output is BlockingFlushPipeWriter blocking) blocking.ReleaseFlush(); return ValueTask.CompletedTask; },
+                () => Connection.CloseAsync(),
+                () => Session.DisposeAsync(),
+                () => _contracts.DisposeAsync(),
+                () => Server.DisposeAsync(),
+                () => _input.Writer.CompleteAsync()).ConfigureAwait(false);
         }
     }
 

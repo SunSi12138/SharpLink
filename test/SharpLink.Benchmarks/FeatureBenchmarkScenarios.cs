@@ -91,12 +91,13 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
     public static async Task<FeatureBenchmarkCase> CreateAsync(ServerFeatureScenario scenario)
     {
         var telemetry = FeatureTelemetryScope.ForServer(scenario);
+        BenchmarkEnvironment? environment = null;
         try
         {
             var dynamicRegistration = scenario is
                 ServerFeatureScenario.DynamicRegisteredStaticHit or
                 ServerFeatureScenario.DynamicServiceActual;
-            var environment = await BenchmarkEnvironment.CreateAsync(
+            environment = await BenchmarkEnvironment.CreateAsync(
                 configureServer: builder => ConfigureServer(builder, scenario),
                 createClientBuilder: static port => CreateFixedClient(port),
                 configureBuiltServer: server => ConfigureBuiltServer(server, scenario, dynamicRegistration))
@@ -104,11 +105,12 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
 
             if (scenario == ServerFeatureScenario.DynamicServiceActual)
             {
-                var proxy = environment.Get<IDynamicPluginService>();
+                var proxy = environment.CreateProxy<IDynamicPluginService>();
+                await proxy.PrepareAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
                 return new FeatureBenchmarkCase(
                     environment,
                     telemetry,
-                    () => proxy.UnaryAsync(10, CancellationToken.None),
+                    () => proxy.Service.UnaryAsync(10, CancellationToken.None),
                     expectedResult: 11);
             }
 
@@ -118,9 +120,13 @@ internal sealed class FeatureBenchmarkCase : IAsyncDisposable
                 () => environment.Rpc.AddAsync(10, 20),
                 expectedResult: 30);
         }
-        catch
+        catch (Exception failure)
         {
-            telemetry.Dispose();
+            if (environment is not null)
+                await environment.CleanupFailedStartupAsync(failure, telemetry.Dispose).ConfigureAwait(false);
+            else
+                await BenchmarkStartupCleanup.RunAsync(failure,
+                    () => { telemetry.Dispose(); return ValueTask.CompletedTask; }).ConfigureAwait(false);
             throw;
         }
     }

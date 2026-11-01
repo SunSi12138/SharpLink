@@ -43,10 +43,12 @@ public class ClientProxyRpcBridgeBenchmarks
     private ISharpLinkClient _client = null!;
     private IClientBridgeRpc _rpc = null!;
     private IAsyncEnumerable<int> _streamValues = null!;
+    private bool _startupFailed;
 
     [GlobalSetup]
     public async Task Setup()
     {
+        _startupFailed = false;
         var serverBuilder = SharpLinkServerBuilder.Create()
             .UseTcp(0, IPAddress.Loopback);
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
@@ -67,14 +69,29 @@ public class ClientProxyRpcBridgeBenchmarks
         _client = SharpClientBuilder.Create()
             .UseTcp(IPAddress.Loopback.ToString(), port)
             .Build();
-        await _client.ConnectAsync(_shutdown.Token);
-        _rpc = _client.Get<IClientBridgeRpc>();
-        _streamValues = Values(16);
+        try
+        {
+            await _client.ConnectAsync(_shutdown.Token);
+            var proxy = _client.CreateProxy<IClientBridgeRpc>();
+            await proxy.PrepareAsync(TimeSpan.FromSeconds(10), _shutdown.Token).ConfigureAwait(false);
+            _rpc = proxy.Service;
+            _streamValues = Values(16);
+        }
+        catch (Exception failure)
+        {
+            _startupFailed = true;
+            await BenchmarkEnvironment.CleanupFailedStartupAsync(
+                failure, _shutdown, _serverTask, _server, _client).ConfigureAwait(false);
+            throw;
+        }
     }
 
     [GlobalCleanup]
     public async Task Cleanup()
     {
+        if (_startupFailed)
+            return;
+
         _shutdown.Cancel();
         await _client.StopAsync();
         await _server.StopAsync(TimeSpan.Zero);

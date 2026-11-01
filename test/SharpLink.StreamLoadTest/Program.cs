@@ -217,7 +217,10 @@ public static class Program
     {
         await client.ConnectAsync();
 
-        var rpc = client.Get<IStreamLoadService>();
+        // Binding is startup work, outside warmup and measurement windows.
+        var proxy = client.CreateProxy<IStreamLoadService>();
+        await proxy.PrepareAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+        var rpc = proxy.Service;
         var results = new List<StageResult>();
         foreach (var operation in ResolveOperations(options.Operation))
         {

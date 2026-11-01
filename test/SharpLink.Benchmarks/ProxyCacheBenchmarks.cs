@@ -37,16 +37,18 @@ public class ProxyCacheBenchmarks
     }
 
     [Benchmark]
-    public IBenchmarkRpc RepeatedGet_Static() => _staticEnvironment.Get<IBenchmarkRpc>();
+    // Local handle construction only: preparation and RPC invocation are not measured here.
+    public RpcProxy<IBenchmarkRpc> RepeatedCreateProxy_Static()
+        => _staticEnvironment.CreateProxy<IBenchmarkRpc>();
 
     [Benchmark]
-    public object RepeatedGet_Dynamic() => _dynamicTarget.GetProxy();
+    public object RepeatedCreateProxy_Dynamic() => _dynamicTarget.CreateProxy();
 
     private sealed class DynamicProxyCacheTarget : IDisposable
     {
         private readonly AssemblyLoadContext _loadContext;
         private readonly ISharpLinkClient _client;
-        private readonly MethodInfo _getMethod;
+        private readonly MethodInfo _createProxyMethod;
 
         private DynamicProxyCacheTarget(
             AssemblyLoadContext loadContext,
@@ -55,8 +57,8 @@ public class ProxyCacheBenchmarks
         {
             _loadContext = loadContext;
             _client = client;
-            _getMethod = typeof(ISharpLinkClient)
-                .GetMethod(nameof(ISharpLinkClient.Get))!
+            _createProxyMethod = typeof(ISharpLinkClient)
+                .GetMethod(nameof(ISharpLinkClient.CreateProxy))!
                 .MakeGenericMethod(contractType);
         }
 
@@ -95,7 +97,7 @@ public class ProxyCacheBenchmarks
             }
         }
 
-        public object GetProxy() => _getMethod.Invoke(_client, null)
+        public object CreateProxy() => _createProxyMethod.Invoke(_client, [null])
             ?? throw new InvalidOperationException("Dynamic proxy factory returned null.");
 
         public void Dispose()

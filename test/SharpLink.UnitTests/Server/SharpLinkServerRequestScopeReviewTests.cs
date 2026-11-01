@@ -285,9 +285,6 @@ public class SharpLinkServerRequestScopeReviewTests
         private static readonly MethodInfo BeginSessionScopeMethod = typeof(SharpLinkServer).GetMethod(
             "BeginSessionLogScope", BindingFlags.Static | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find SessionId logging scope helper");
-        private static readonly MethodInfo DispatchRequestMethod = typeof(SharpLinkServer).GetMethod(
-            "DispatchRequestAsync", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new Exception("cannot find scoped Request dispatch path");
         private static readonly FieldInfo LoggerField = typeof(SharpLinkServer).GetField(
             "_logger", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new Exception("cannot find Server logger");
@@ -304,6 +301,9 @@ public class SharpLinkServerRequestScopeReviewTests
         private readonly Pipe _input = new();
         private readonly Pipe _output = new();
         private readonly ControlledStub _stub;
+        private readonly ServerDispatchContractFixture _contracts;
+        private readonly ulong _bindingToken;
+        private int _disposeStarted;
         private readonly ILogger _serverLogger;
 
         internal DispatchHarness(
@@ -311,47 +311,66 @@ public class SharpLinkServerRequestScopeReviewTests
             ControlledStub stub,
             bool useThrowingExceptionMapper = false)
         {
-            _stub = stub;
-            var builder = SharpLinkServerBuilder.Create()
-                .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
-                .DisableAutomaticServiceRegistration()
-                .UseLoggerFactory(loggerFactory)
-                .UseTransport(new IdleListener());
-            if (useThrowingExceptionMapper)
-                builder.UseExceptionMapper(new ThrowingExceptionMapper());
-            Server = (SharpLinkServer)builder.Build();
-            _serverLogger = (ILogger)LoggerField.GetValue(Server)!;
-
-            var runtimeContext = (SharpLinkRuntimeContext)(
-                typeof(SharpLinkServer).GetField(
-                    "_runtimeContext", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(Server)!);
-            Session = RpcSessionTestFixture.CreateSessionOverTestTransport(
-                "request-scope-review",
-                _input.Reader,
-                _output.Writer,
-                RpcSessionTestFixture.ServerOptions(runtimeContext));
-            Connection = new ServerConnectionState(
-                Session,
-                new RpcSessionGeneratedServerBridge(Session),
-                new StripedLongMap<ServerCallCancellationState>(runtimeContext.Concurrency),
-                CancellationToken.None,
-                runtimeContext.TimeProvider);
-            if (!Connection.MarkReady(null))
-                throw new Exception("connection must become ready");
-
-            var registration = ServiceRegistration.CreateSingleton(
-                typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
-            var serviceRegistry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
-                    "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(Server)!;
-            Volatile.Write(ref serviceRegistry.ServicesStorage, new Dictionary<long, ServiceRegistration>
+            SharpLinkServer? server = null;
+            RpcSession? session = null;
+            ServerConnectionState? connection = null;
+            ServerDispatchContractFixture? contracts = null;
+            try
             {
-                [stub.InterfaceHash] = registration
-            }.ToFrozenDictionary());
-            typeof(SharpLinkServer).GetField(
-                    "_state", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .SetValue(Server, 2);
+                _stub = stub;
+                var builder = SharpLinkServerBuilder.Create()
+                    .UseGeneratedManifestSource(FixedGeneratedManifestSource.Empty)
+                    .DisableAutomaticServiceRegistration()
+                    .UseLoggerFactory(loggerFactory)
+                    .UseTransport(new IdleListener());
+                if (useThrowingExceptionMapper)
+                    builder.UseExceptionMapper(new ThrowingExceptionMapper());
+                Server = server = (SharpLinkServer)builder.Build();
+                _serverLogger = (ILogger)LoggerField.GetValue(Server)!;
+
+                var runtimeContext = (SharpLinkRuntimeContext)(
+                    typeof(SharpLinkServer).GetField(
+                        "_runtimeContext", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(Server)!);
+                Session = session = RpcSessionTestFixture.CreateSessionOverTestTransport(
+                    "request-scope-review",
+                    _input.Reader,
+                    _output.Writer,
+                    RpcSessionTestFixture.ServerOptions(runtimeContext));
+                Connection = connection = new ServerConnectionState(
+                    Session,
+                    new RpcSessionGeneratedServerBridge(Session),
+                    new StripedLongMap<ServerCallCancellationState>(runtimeContext.Concurrency),
+                    CancellationToken.None,
+                    runtimeContext.TimeProvider);
+                if (!Connection.MarkReady(null))
+                    throw new Exception("connection must become ready");
+
+                var registration = ServiceRegistration.CreateSingleton(
+                    typeof(EvidenceService), stub, new EvidenceService(), ownsService: false);
+                _contracts = contracts = new ServerDispatchContractFixture(Server);
+                _contracts.Publish(new Dictionary<long, ServiceRegistration>
+                {
+                    [stub.InterfaceHash] = registration
+                }.ToFrozenDictionary());
+                _bindingToken = _contracts.Bind(Connection, registration);
+                typeof(SharpLinkServer).GetField(
+                        "_state", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .SetValue(Server, 2);
+            }
+            catch (Exception primary)
+            {
+                // No await-using owner exists if synchronous setup fails. Join every acquired
+                // owner independently, preserving the setup exception before cleanup failures.
+                ServerDispatchContractFixture.CleanupOwnedAsync(primary,
+                    () => connection?.CloseAsync() ?? ValueTask.CompletedTask,
+                    () => session?.DisposeAsync() ?? ValueTask.CompletedTask,
+                    () => contracts?.DisposeAsync() ?? ValueTask.CompletedTask,
+                    () => server?.DisposeAsync() ?? ValueTask.CompletedTask,
+                    () => _input.Writer.CompleteAsync(),
+                    () => _output.Reader.CompleteAsync()).AsTask().GetAwaiter().GetResult();
+                throw;
+            }
         }
 
         internal SharpLinkServer Server { get; }
@@ -366,20 +385,13 @@ public class SharpLinkServerRequestScopeReviewTests
             ProtocolV2FrameFlags flags = ProtocolV2FrameFlags.None,
             CancellationToken serverLoopToken = default,
             TimeSpan? timeBudget = null)
-            => (Task)DispatchRequestMethod.Invoke(Server,
-            [
-                Connection,
-                requestId,
-                flags,
-                CreateRequestPayload(timeBudget),
-                Connection.CallCancellations,
-                serverLoopToken
-            ])!;
+            => Server.DispatchRequestAsync(Connection, requestId, flags, CreateRequestPayload(timeBudget),
+                Connection.CallCancellations, serverLoopToken, ProtocolV2FrameType.Request);
 
         private ReadOnlySequence<byte> CreateRequestPayload(TimeSpan? timeBudget)
         {
             var request = new byte[sizeof(long) * (timeBudget.HasValue ? 3 : 2)];
-            BinaryPrimitives.WriteInt64LittleEndian(request, _stub.InterfaceHash);
+            BinaryPrimitives.WriteUInt64LittleEndian(request, _bindingToken);
             BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), ControlledStub.MethodHash);
             if (timeBudget is { } value)
             {
@@ -392,12 +404,16 @@ public class SharpLinkServerRequestScopeReviewTests
 
         public async ValueTask DisposeAsync()
         {
-            GlobalActiveCallsField.SetValue(CallAdmissionField.GetValue(Server), 0);
-            ConnectionActiveCallsField.SetValue(Connection, 0);
-            await Connection.CloseAsync();
-            await Server.DisposeAsync();
-            await _input.Writer.CompleteAsync();
-            await _output.Reader.CompleteAsync();
+            if (Interlocked.Exchange(ref _disposeStarted, 1) != 0) return;
+            await ServerDispatchContractFixture.CleanupOwnedAsync(null,
+                () => { GlobalActiveCallsField.SetValue(CallAdmissionField.GetValue(Server), 0); return ValueTask.CompletedTask; },
+                () => { ConnectionActiveCallsField.SetValue(Connection, 0); return ValueTask.CompletedTask; },
+                () => Connection.CloseAsync(),
+                () => Session.DisposeAsync(),
+                () => _contracts.DisposeAsync(),
+                () => Server.DisposeAsync(),
+                () => _input.Writer.CompleteAsync(),
+                () => _output.Reader.CompleteAsync()).ConfigureAwait(false);
         }
     }
 
@@ -413,8 +429,11 @@ public class SharpLinkServerRequestScopeReviewTests
     private sealed class ControlledStub(
         StubBehavior behavior,
         ILogger serviceLogger,
-        RpcMethodKind kind = RpcMethodKind.Unary) : IRpcStub
+        RpcMethodKind kind = RpcMethodKind.Unary) : IDeclaredServerFixtureStub
     {
+        public SharpLinkGeneratedMethodDescriptor DeclaredMethod
+            => ServerDispatchContractFixture.DeclareMethod(kind, supportsCancellation: true, MethodHash);
+
         public RpcMethodFacts ResolveMethodFacts(long methodHash)
             => TryGetMethodDescriptor(methodHash, out var descriptor)
                 ? MethodFactsTestHelper.FromDescriptor(descriptor)
