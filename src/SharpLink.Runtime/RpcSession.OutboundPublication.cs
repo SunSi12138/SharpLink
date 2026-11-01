@@ -52,6 +52,7 @@ internal sealed partial class RpcSession
         internal ProtocolV2FrameType FrameType;
         internal bool Reserved;
         internal bool TransferAttempted;
+        internal bool TerminalAbandoned;
         internal bool Finished;
         internal SendEnqueueResult Result;
         internal TaskCompletionSource<bool>? Completion;
@@ -60,6 +61,15 @@ internal sealed partial class RpcSession
         internal bool PhaseRefused;
         internal RpcSessionProtocolPhase RefusedPhase;
         internal bool Accepted => TransferAttempted && Result == SendEnqueueResult.Accepted;
+
+        // The original pending terminal won before queue transfer. This is neither a send
+        // attempt nor queue rejection; preparation still owns its exact refund/return duties.
+        internal void AbandonForTerminal()
+        {
+            if (TransferAttempted || Finished)
+                throw new InvalidOperationException("An attempted enqueue cannot be terminal-abandoned.");
+            TerminalAbandoned = true;
+        }
 
         // Caller-selected terminal errors are created outside its arbitration gate.
         internal void Reject(Exception reason)
@@ -110,7 +120,7 @@ internal sealed partial class RpcSession
     /// <summary>Only scalar checks and Channel.TryWrite. No cleanup, wake, callback or error factory.</summary>
     internal bool TryTransferPreparedFrame(ref PreparedFrameEnqueue admission)
     {
-        if (admission.TransferAttempted || admission.Finished || admission.Pump is null)
+        if (admission.TransferAttempted || admission.TerminalAbandoned || admission.Finished || admission.Pump is null)
             return false;
         admission.TransferAttempted = true;
         var phase = Volatile.Read(ref _protocolState).Phase;
@@ -148,6 +158,18 @@ internal sealed partial class RpcSession
             admission.Pump!.FinishAcceptedPublication();
             if (admission.Completion is not null)
                 emission = AwaitEmissionAsync(admission.Completion, admission.CancellationToken);
+            return;
+        }
+        if (admission.TerminalAbandoned)
+        {
+            // No synthetic Full/Closed outcome for an unattempted head. Actual cleanup
+            // callbacks/refunds still finish and propagate independently below the gate.
+            try { admission.Pump!.FinishTerminalAbandonedPrepared(ref admission); }
+            finally
+            {
+                if (admission.Completion is not null)
+                    ObserveAbandonedFlushCompletion(admission.Completion.Task);
+            }
             return;
         }
         rejection = admission.Refusal ?? (admission.PhaseRefused

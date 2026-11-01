@@ -14,9 +14,9 @@ internal static class ExternalApiBoundaryProbe
     {
         VerifyOwnerResolverForwarding();
         VerifyOwnerResolverFailures();
-        VerifyBalancedLegacySizing();
+        VerifyGeneratedSizingBoundary();
         VerifyExternalInheritance();
-        Console.WriteLine("EXTERNAL_API_BOUNDARIES_PASS resolver+sizing+inheritance; transport-constructors=compile-only");
+        Console.WriteLine("EXTERNAL_API_BOUNDARIES_PASS resolver+generated-sizing-boundary+inheritance; transport-constructors=compile-only");
     }
 
     // Intentionally never called: SocketServerTransportListener binds immediately.
@@ -104,35 +104,13 @@ internal static class ExternalApiBoundaryProbe
         throw new InvalidOperationException("A runtime without an owner resolver must be rejected explicitly.");
     }
 
-    private static void VerifyBalancedLegacySizing()
+    private static void VerifyGeneratedSizingBoundary()
     {
-        // No await or thread switch: the legacy depth is ThreadStatic, not an async scope.
-        if (RpcGeneratedCodecSizing.IsSuppressed)
-            throw new InvalidOperationException("Legacy sizing was already suppressed before the external probe.");
-        RpcGeneratedCodecSizing.Enter();
-        try
-        {
-            if (!RpcGeneratedCodecSizing.IsSuppressed)
-                throw new InvalidOperationException("Legacy sizing did not enter suppression.");
-            RpcGeneratedCodecSizing.Enter();
-            try
-            {
-                if (!RpcGeneratedCodecSizing.IsSuppressed)
-                    throw new InvalidOperationException("Nested legacy sizing lost suppression.");
-            }
-            finally
-            {
-                RpcGeneratedCodecSizing.Exit();
-            }
-            if (!RpcGeneratedCodecSizing.IsSuppressed)
-                throw new InvalidOperationException("Exiting the inner sizing scope cleared its outer scope.");
-        }
-        finally
-        {
-            RpcGeneratedCodecSizing.Exit();
-        }
-        if (RpcGeneratedCodecSizing.IsSuppressed)
-            throw new InvalidOperationException("Balanced legacy sizing did not restore the initial state.");
+        // The real generated snapshot ABI remains public; the unused legacy scope is removed.
+        var abstractions = typeof(IRpcSizedCodec<>).Assembly;
+        if (abstractions != typeof(IRpcSizedCodecSnapshot).Assembly ||
+            abstractions.GetType("SharpLink.Abstractions.RpcGeneratedCodecSizing", throwOnError: false) is not null)
+            throw new InvalidOperationException("Generated sizing ABI or removed legacy helper boundary changed.");
     }
 
     private static void VerifyExternalInheritance()

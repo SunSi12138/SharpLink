@@ -835,6 +835,7 @@ internal sealed partial class SharpLinkClient
             }
 
             var producerStarted = false;
+            var headTaskRetained = false;
             Exception? publicationFailure = null;
             try
             {
@@ -861,6 +862,7 @@ internal sealed partial class SharpLinkClient
                     {
                         var headTask = emission.AsTask(); // The original ValueTask is consumed ONCE.
                         group.RetainHeadTask(headTask);
+                        headTaskRetained = true;
                         await headTask.ConfigureAwait(false);
                     }
                     var producer = group!.HeadPublicationConfirmed
@@ -877,7 +879,8 @@ internal sealed partial class SharpLinkClient
 
             if (!producerStarted)
             {
-                var cleanup = FinishUnstartedClientStreamsAsync(connection!, group!, publicationFailure);
+                var cleanup = FinishUnstartedClientStreamsAsync(connection!, group!, publicationFailure,
+                    startupFailureOwnedByCaller: publicationFailure is not null && !headTaskRetained);
                 group.AttachOriginTask(cleanup);
             }
 
@@ -968,6 +971,7 @@ internal sealed partial class SharpLinkClient
                 : ProtocolV2FrameFlags.Cancellable;
             var streamCancellationToken = group!.ProducerToken;
             var producerStarted = false;
+            var headTaskRetained = false;
             Exception? publicationFailure = null;
             try
             {
@@ -995,6 +999,7 @@ internal sealed partial class SharpLinkClient
                     {
                         var headTask = emission.AsTask(); // No second await/AsTask of the ValueTask.
                         group.RetainHeadTask(headTask);
+                        headTaskRetained = true;
                         await headTask.ConfigureAwait(false);
                     }
                     var producerTask = group!.HeadPublicationConfirmed
@@ -1012,7 +1017,8 @@ internal sealed partial class SharpLinkClient
             {
                 if (!producerStarted)
                 {
-                    var cleanup = FinishUnstartedClientStreamsAsync(connection!, group!, publicationFailure);
+                    var cleanup = FinishUnstartedClientStreamsAsync(connection!, group!, publicationFailure,
+                        startupFailureOwnedByCaller: publicationFailure is not null && !headTaskRetained);
                     group.AttachOriginTask(cleanup);
                 }
             }
@@ -1039,9 +1045,10 @@ internal sealed partial class SharpLinkClient
         }
 
         private static async Task FinishUnstartedClientStreamsAsync(
-            ClientConnection connection, ClientStreamPublicationGroup group, Exception? publicationFailure)
+            ClientConnection connection, ClientStreamPublicationGroup group, Exception? publicationFailure,
+            bool startupFailureOwnedByCaller = false)
         {
-            try { await group.FinishAsync(publicationFailure).ConfigureAwait(false); }
+            try { await group.FinishAsync(publicationFailure, startupFailureOwnedByCaller).ConfigureAwait(false); }
             catch (PhysicalTaskFailureException) { throw; }
             catch (Exception independent) { throw PhysicalTaskFailureException.From(independent); }
         }

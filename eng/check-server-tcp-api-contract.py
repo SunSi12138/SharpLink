@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""External consumer compilation gate for 3.0's TCP, Builder and logger APIs.
+"""External consumer compilation gate for 3.0's TCP, Builder, logger and legacy-sizing APIs.
 
 This compiles a fresh project *outside* the repository against the real production
 projects. The negative compilations must fail for the removed Server overloads;
@@ -8,6 +8,7 @@ IP and standalone RuntimeContext. Both builders must remain publicly constructib
 and fluent, while external subclasses must fail specifically with CS0509.
 Explicit logger configuration and Hosting registration remain public, while each
 Host-only logger fallback must be inaccessible to the external consumer.
+The real generated sizing interfaces stay public; the removed legacy helper must fail to compile.
 No runtime socket or benchmark workload runs.
 """
 
@@ -31,6 +32,7 @@ using System.Net;
 using System.Net.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using SharpLink.Abstractions;
 using SharpLink.Client;
 using SharpLink.Hosting;
 using SharpLink.Runtime;
@@ -46,6 +48,8 @@ SUFFIX = """
 """
 
 POSITIVE = """
+        _ = typeof(IRpcSizedCodec<int>);
+        _ = typeof(IRpcSizedCodecSnapshot);
         _ = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback);
         _ = SharpLinkServerBuilder.Create().UseTcp(
             0, new SslServerAuthenticationOptions(), IPAddress.Loopback,
@@ -206,6 +210,25 @@ def verify_host_only_logger_fallbacks(folder: Path) -> None:
         print(f"PASS: external {builder}.UseLoggerFactoryIfUnset access rejected")
 
 
+def verify_removed_legacy_sizing(folder: Path) -> None:
+    for expression in ("IsSuppressed", "Enter()", "Exit()"):
+        statement = ("_ = " if expression == "IsSuppressed" else "")
+        rejected = compile_project(
+            f"        {statement}SharpLink.Abstractions.RpcGeneratedCodecSizing.{expression};", folder
+        )
+        details = rejected.stdout + rejected.stderr
+        errors = re.findall(r"(?m)^.*\berror\s+[A-Z]+\d+.*$", details)
+        if rejected.returncode == 0 or not errors or any(
+            not re.search(r"Probe\.cs\(\d+,\d+\): error CS0234:", error)
+            or "RpcGeneratedCodecSizing" not in error
+            for error in errors
+        ):
+            raise RuntimeError(
+                f"Expected removed legacy sizing {expression} to fail only with CS0234:\n" + details
+            )
+        print(f"PASS: external legacy sizing {expression} rejected with CS0234")
+
+
 def main() -> None:
     verify_static_contract()
     verify_no_legacy_server_calls_in_checkout()
@@ -253,7 +276,8 @@ def main() -> None:
             print(f"PASS: Server {name} string IP rejected by C# compiler")
         verify_sealed_builders(folder)
         verify_host_only_logger_fallbacks(folder)
-    print("PASS: 3.0 TCP, Builder and logger external-API contracts")
+        verify_removed_legacy_sizing(folder)
+    print("PASS: 3.0 TCP, Builder, logger and legacy-sizing external-API contracts")
 
 
 if __name__ == "__main__":

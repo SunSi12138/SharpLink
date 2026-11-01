@@ -2,13 +2,27 @@
 
 ## 当前 3.0 边界
 
+<!-- current-generated-boundary:start -->
+Current generated boundary: API **5**, ABI `sharplink-3.0-api5-contract-channel-complete-method-facts-v1`, Protocol **3**.
+<!-- current-generated-boundary:end -->
+
 SharpLink 3.0 是破坏性 major 升级，不承诺与 2.0.3 的源代码、进程内二进制或跨版本 Client/Server 互操作兼容。同一进程内的 SharpLink 包须统一为匹配的 3.0 版本；删除旧 `bin/obj` 和缓存生成源码，重新生成、构建并部署全部契约、服务和插件程序集。
 
-当前 Generated ABI 是 **API 5**，要求精确 identity `sharplink-3.0-api5-owner-bound-unsafe-blit-v1`。API 3、API 4，以及使用其他开发期 API 5 identity 的程序集必须在 Manifest 构造/发布前被拒绝；不能只比较整数 API 号。手写 locator 应使用当前 `SharpLinkGeneratedManifestVersions` 常量。owner-bound UnsafeBlit 和 standalone generated Codec 的迁移见 [3.0 Codec 迁移](unsafe-blit-3.0-migration.md)。
+当前 Generated ABI 是 **API 5**，要求精确 identity `sharplink-3.0-api5-contract-channel-complete-method-facts-v1`。API 3、API 4，以及使用其他开发期 API 5 identity 的程序集必须在 Manifest 构造/发布前被拒绝；不能只比较整数 API 号。手写 locator 应使用当前 `SharpLinkGeneratedManifestVersions` 常量。owner-bound UnsafeBlit 和 standalone generated Codec 的迁移见 [3.0 Codec 迁移](unsafe-blit-3.0-migration.md)。
 
-Generated ABI 与网络协议是独立版本轴：3.0 仍使用 **Protocol v2 / minor 4**，兼容下限为 4。API 5 不表示 wire minor 5；major 升级也不要求拒绝所有版本号不同的 peer。实际握手按 wire grammar、required capabilities、compression profile 与 frame/window 限制校验；契约绑定按精确 `RpcAssemblyHash` 校验。不支持的 wire generation 或不匹配的契约不得被当作可执行业务的输入。
+Generated ABI 与网络协议是独立版本轴：当前 3.0 使用 **Protocol 3**，不再是历史 Protocol v2 / minor 4。以 `SharpLinkGeneratedManifestVersions.Api`、`AbiIdentity`、`Protocol` 为生成边界的权威常量；整数 API 5 不能替代精确 ABI identity 或协议校验。旧 Protocol 2 生成程序集必须重新生成，不提供兼容 facade。
 
-发布要求验证当前 3.0 包的 Client/Server 互操作及拒绝路径的正确性。历史命名的 `eng/verify-protocol-v2-cross-version.sh` 实际从同一批当前包构建 Client/Server，覆盖双进程 Unary、Client/Server/Duplex Streaming 和 OneWay；它不是 2.0.3 ↔ 3.0 矩阵，不提供跨 major 成功互操作证据。该说明定义验证范围，不宣称任一候选已经通过。
+客户端通过 `CreateProxy<TContract>(options)` 创建 `RpcProxy<TContract>`，调用其 `Service`，需要等待原契约站点绑定时显式 `PrepareAsync(positiveFiniteTimeout, cancellationToken)`。低层入口是客户端签发的 `RpcLocalContract` 加 `CreateContractChannel` 返回的 `IRpcContractChannel`；不能自己构造 selector 或把旧 `IRpcChannel` facade 当作新调用通道。有限 Prepare 不更换本地注册、不因重连重置预算，也不是调用容量 lease 或未来调用成功承诺。详见 [3.0 channel 迁移](rpc-channel-3.0-migration.md)。
+
+发布仍要求验证当前 3.0 包的 Client/Server 互操作与拒绝路径。历史命名的 `eng/verify-protocol-v2-cross-version.sh` 不是 2.0.3 ↔ 3.0 成功互操作承诺；旧运行结果不能转作当前 Protocol 3 候选证据。本页只说明源码迁移边界，不宣称当前候选、实包或发布矩阵已经通过。
+
+### 删除 legacy sizing helper
+
+`RpcGeneratedCodecSizing` 及其线程静态 `IsSuppressed` / `Enter` / `Exit` 已删除，不提供 shim。
+它不是当前 Generator 的依赖；直接消费者须删除旧 suppression scope，并使用重新生成的 Codec，
+或直接调用自有 `IRpcCodec<T>`。不要用跨 async scope 或全局开关模拟旧行为。
+真实 generated ABI `IRpcSizedCodec<T>` / `IRpcSizedCodecSnapshot` 保持 public，
+包括 exact-size、snapshot 捕获/归还与 `SerializeSized`；删除 helper 不删除这些所有权契约。
 
 ## 历史参考：1.1.1 → 2.0
 

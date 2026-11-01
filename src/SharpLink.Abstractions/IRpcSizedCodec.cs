@@ -1,5 +1,3 @@
-using System.ComponentModel;
-
 namespace SharpLink.Abstractions;
 
 /// <summary>
@@ -36,25 +34,4 @@ public interface IRpcSizedCodec<T>
 /// <summary>Marker for a generated snapshot of member values captured during exact sizing.</summary>
 public interface IRpcSizedCodecSnapshot
 {
-}
-
-/// <summary>
-/// Thread-local suppression scope used by generated codecs after an ancestor has reserved
-/// enough capacity for the complete object graph. Nested codecs skip their own reservation
-/// and recursive size calculation while this scope is active.
-/// </summary>
-[EditorBrowsable(EditorBrowsableState.Never)]
-public static class RpcGeneratedCodecSizing
-{
-    [ThreadStatic]
-    private static int _suppressionDepth;
-
-    /// <summary>Gets whether generated codec descendants should skip their own reservation.</summary>
-    public static bool IsSuppressed => _suppressionDepth > 0;
-
-    /// <summary>Enters one nested exact-size serialization scope.</summary>
-    public static void Enter() => _suppressionDepth++;
-
-    /// <summary>Exits one nested exact-size serialization scope.</summary>
-    public static void Exit() => _suppressionDepth--;
 }

@@ -886,9 +886,9 @@
       "type": "T:SharpLink.Abstractions.RpcGeneratedCodecSizing",
       "decision": "keep-public",
       "role": "legacy-helper",
-      "rationale": "Retain the released 2.0.3 thread-local IsSuppressed/Enter/Exit helper for direct consumers. Current API5 generator does not use this legacy helper; same-thread nesting remains its contract.",
+      "rationale": "Historical retention proposal for the bound inventory only. Superseded by the explicit 3.0 removal decision in doc/3.0-api-decision-ledger.md: remove this unused legacy type and all four locked member IDs; retain IRpcSizedCodec<T>/IRpcSizedCodecSnapshot. The historical decision/IDs remain here to preserve inventory provenance, not to approve current public retention.",
       "evidence": [
-        "src/SharpLink.Abstractions/IRpcSizedCodec.cs:46",
+        "doc/3.0-api-decision-ledger.md",
         "doc/3.0-api-surface-audit-decisions.md",
         "test/SharpLink.PackageSmoke/ExternalApiBoundaryProbe.cs"
       ],

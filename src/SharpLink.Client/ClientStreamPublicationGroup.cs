@@ -242,7 +242,7 @@ internal sealed partial class ClientStreamPublicationGroup : RpcStreamPublicatio
     }
 
     // The sole physical reducer; normal Open/no-error success never waits for a remote result.
-    internal async Task FinishAsync(Exception? publicationFailure = null)
+    internal async Task FinishAsync(Exception? publicationFailure = null, bool startupFailureOwnedByCaller = false)
     {
         if (!HasProducerLifetime && HasSupervisionAnchor)
         {
@@ -264,7 +264,12 @@ internal sealed partial class ClientStreamPublicationGroup : RpcStreamPublicatio
             if (failure is not null) throw PhysicalTaskFailureException.From(failure);
             return;
         }
-        if (publicationFailure is not null) _writerPrimary = publicationFailure;
+        // A synchronous startup throw has a known direct caller and no opaque writer
+        // boundary. That caller retains the exact failure before starting this cleanup;
+        // physical callbacks/fences/terminal batches below remain independently owned here.
+        if (startupFailureOwnedByCaller && (publicationFailure is null || _writerInvoked))
+            throw new InvalidOperationException("Caller-owned startup failure requires an unstarted writer.");
+        if (publicationFailure is not null && !startupFailureOwnedByCaller) _writerPrimary = publicationFailure;
         Task publication;
         lock (_gate)
         {

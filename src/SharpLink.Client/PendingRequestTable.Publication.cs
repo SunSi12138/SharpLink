@@ -74,6 +74,11 @@ partial class PendingRequestTable
             }
         }
         catch (Exception error) { failure = error; }
+        // A removed/replaced original call (including a terminal selected above) never
+        // attempted transfer. Its immutable logical terminal owns this head disposition;
+        // capacity sampled during preparation must not manufacture a second send failure.
+        if (failure is null && !admission.TransferAttempted)
+            admission.AbandonForTerminal();
         // All independent deferred obligations survive errors in the other obligations.
         try { session.FinishPreparedFrameEnqueue(ref admission, out emission, out rejection); }
         catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }

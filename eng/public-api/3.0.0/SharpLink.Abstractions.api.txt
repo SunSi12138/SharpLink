@@ -504,12 +504,6 @@ namespace SharpLink.Abstractions
         public SharpLink.Abstractions.RpcEmptyRequest Deserialize(in System.Buffers.ReadOnlySequence<byte> buffer) { }
         public void Serialize(in SharpLink.Abstractions.RpcEmptyRequest value, System.Buffers.IBufferWriter<byte> buffer) { }
     }
-    public static class RpcGeneratedCodecSizing
-    {
-        public static bool IsSuppressed { get; }
-        public static void Enter() { }
-        public static void Exit() { }
-    }
     public static class RpcGeneratedCodecWire
     {
         public const int MaximumCollectionItems = 1048576;

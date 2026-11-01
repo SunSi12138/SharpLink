@@ -162,6 +162,18 @@ internal sealed partial class RpcSession
 
         internal void FinishAcceptedPublication() => SignalAcceptedPublication();
 
+        internal void FinishTerminalAbandonedPrepared(ref PreparedFrameEnqueue admission)
+        {
+            var frame = admission.Frame;
+            admission.Frame = default;
+            if (admission.Reserved)
+            {
+                admission.Reserved = false;
+                CompleteReserved(frame, exception: null);
+            }
+            else ReturnUnreserved(frame, terminalAbandoned: true);
+        }
+
         internal void FinishRejectedPrepared(ref PreparedFrameEnqueue admission, Exception rejection)
         {
             var frame = admission.Frame;
@@ -738,7 +750,7 @@ internal sealed partial class RpcSession
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
         }
 
-        private void ReturnUnreserved(OwnedFrame frame, Exception? exception = null)
+        private void ReturnUnreserved(OwnedFrame frame, Exception? exception = null, bool terminalAbandoned = false)
         {
             // Refusal owns every independent obligation too; a throwing return must not
             // bypass the failure observer or waiter. This runs only outside call gates.
@@ -752,7 +764,7 @@ internal sealed partial class RpcSession
             }
             try { _returnBuffer(frame.Owner); }
             catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
-            exception ??= CreateTransportClosedException();
+            if (!terminalAbandoned) exception ??= CreateTransportClosedException();
             var outcome = RpcPublicationErrors.Combine(exception, failure);
             if (outcome is not null && observer is not null)
             {
@@ -760,7 +772,8 @@ internal sealed partial class RpcSession
                 catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
             }
             outcome = RpcPublicationErrors.Combine(exception, failure);
-            frame.FlushCompletion?.TrySetException(outcome!);
+            if (outcome is null) frame.FlushCompletion?.TrySetResult(true);
+            else frame.FlushCompletion?.TrySetException(outcome);
             if (frame.FlushCompletion is not null)
                 ObserveAbandonedFlushCompletion(frame.FlushCompletion.Task);
             if (failure is not null)
