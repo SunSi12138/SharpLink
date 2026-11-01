@@ -158,23 +158,12 @@ internal sealed partial class PooledAsyncStreamDispatcher<T>
         Signal();
     }
 
-    private async ValueTask AwaitTerminalPublicationAndFinishDisposeAsync(
-        bool notifyConsumerAbandoned,
-        long disposingLeaseState)
-    {
-        await WaitForTerminalPublicationAsync().ConfigureAwait(false);
-        await MarkDisposedAndFinishDisposeAsync(
-            notifyConsumerAbandoned,
-            terminalPublished: true,
-            disposingLeaseState: disposingLeaseState).ConfigureAwait(false);
-    }
-
-    private ValueTask WaitForTerminalPublicationAsync()
+    private ValueTask WaitForTerminalPublicationAsync(bool invokeTestHooks = true)
     {
         if (Volatile.Read(ref _terminalPublicationState) == 2)
             return ValueTask.CompletedTask;
 
-        InvokeTestHook(2);
+        if (invokeTestHooks) InvokeTestHook(2);
 
         var completion = Volatile.Read(ref _terminalPublication);
         if (completion is null)
@@ -183,7 +172,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T>
             completion = Interlocked.CompareExchange(ref _terminalPublication, created, null) ?? created;
         }
 
-        InvokeTestHook(3);
+        if (invokeTestHooks) InvokeTestHook(3);
 
         // Fenced re-read (issue #206): mirrors the publisher-side fence in Complete. The
         // install CAS above is already a full barrier, but a fenced read keeps the two sides

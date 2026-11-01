@@ -1,5 +1,4 @@
 using System.Collections.Frozen;
-using System.Reflection;
 
 namespace SharpLink.IntegrationTests;
 
@@ -18,7 +17,9 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         Ensure(harness.DecodeAccepting, "persistent decode executor must accept work after server start");
 
-        var service = harness.Client.Get<IPersistentDecodeControlPlaneService>();
+        var serviceProxy = harness.Client.CreateProxy<IPersistentDecodeControlPlaneService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
         var workerCount = harness.DecodeWorkerCount;
         var cancellations = Enumerable.Range(0, workerCount + 1)
             .Select(static _ => new CancellationTokenSource())
@@ -109,25 +110,27 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         var provider = new BlockingServerCompressionProvider(new TestCompressionProvider());
         await using var harness = await PersistentDecodeHarness.CreateAsync(provider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
-        var registry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
-            "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(harness.Server)!;
-        var originalServices = registry.ServicesStorage;
-        var registration = originalServices.Values.Single(item =>
-            item.ContractType == typeof(IPersistentDecodeControlPlaneService));
-        Ensure(!registration.HasModule,
-            "this facts continuation probe uses a static registration, not dynamic retirement");
-        Ensure(registration.TryGetStaticSingleton(out var serviceInstance), "original singleton is available");
-        var original = new CountingPersistentFactsStub(registration.Stub);
-        var replacement = new CountingPersistentFactsStub(registration.Stub);
-        var installed = originalServices.ToDictionary(item => item.Key, item => item.Value);
-        installed[original.InterfaceHash] = ServiceRegistration.CreateSingleton(
-            registration.ContractType, original, serviceInstance, ownsService: false);
         using var cancellation = new CancellationTokenSource();
+        var services = ServerRegistryTestAccessor.OverrideServices(harness.Server);
         Task<int>? call = null;
+        List<Exception>? failures = null;
         try
         {
-            Volatile.Write(ref registry.ServicesStorage, installed.ToFrozenDictionary());
-            call = harness.Client.Get<IPersistentDecodeControlPlaneService>()
+            var originalServices = services.OriginalServices;
+            var registration = originalServices.Values.Single(item =>
+                item.ContractType == typeof(IPersistentDecodeControlPlaneService));
+            Ensure(!registration.HasModule,
+                "this facts continuation probe uses a static registration, not dynamic retirement");
+            Ensure(registration.TryGetStaticSingleton(out var serviceInstance), "original singleton is available");
+            var original = new CountingPersistentFactsStub(registration.Stub);
+            var replacement = new CountingPersistentFactsStub(registration.Stub);
+            var installed = originalServices.ToDictionary(item => item.Key, item => item.Value);
+            installed[original.InterfaceHash] = ServiceRegistration.CreateSingleton(
+                registration.ContractType, original, serviceInstance, ownsService: false);
+            services.Publish(installed.ToFrozenDictionary());
+            var serviceProxy = harness.Client.CreateProxy<IPersistentDecodeControlPlaneService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            call = serviceProxy.Service
                 .MeasureAsync(CreateLargePayload(0xB2), cancellation.Token).AsTask();
             await provider.WaitForStartedCountAsync(1);
             await WaitUntilAsync(() => harness.ActiveDecodes == 1, "one physical decode is blocked");
@@ -136,7 +139,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
                 "the request must actually enter one persistent decode operation");
             Ensure(original.Resolutions == 1 && original.LastResolved is { IsKnown: true } &&
                    original.Invocations == 0 && PersistentDecodeControlPlaneService.Invocations == 0,
-                "facts resolve once before decoding, with no business invocation yet");
+                "complete declared facts resolve once during cold publication, with no business invocation yet");
             var selectedFacts = original.LastResolved;
             var changed = originalServices.ToDictionary(item => item.Key, item => item.Value);
             if (remove)
@@ -144,32 +147,40 @@ public class CompressionPersistentDecodeDrainAndFailureTests
             else
                 changed[original.InterfaceHash] = ServiceRegistration.CreateSingleton(
                     registration.ContractType, replacement, new PersistentDecodeControlPlaneService(), ownsService: false);
-            Volatile.Write(ref registry.ServicesStorage, changed.ToFrozenDictionary());
+            services.Publish(changed.ToFrozenDictionary());
             provider.ReleaseAll();
             Ensure(await call.WaitAsync(TimeSpan.FromSeconds(5)) == LargePayloadBytes,
                 "the original provider/service must finish the retained request");
             Ensure(original.Resolutions == 1 && original.Invocations == 1 &&
                    ReferenceEquals(original.LastResolved, selectedFacts) && original.OriginalFactsForwarded &&
-                   replacement.Resolutions == 0 && replacement.Invocations == 0 &&
+                   replacement.Resolutions == (remove ? 0 : 1) && replacement.Invocations == 0 &&
                    PersistentDecodeControlPlaneService.Invocations == 1,
                 "persistent continuation neither resolves again nor retargets registry replacement");
             Ensure(provider.StartedCount == 1 && harness.DecodeStartedWorkCount == 1,
                 "registry mutation must not restart physical decoding");
             await AssertResourcesReleasedAsync(harness, "persistent original-facts continuation");
         }
-        finally
+        catch (Exception primary)
         {
-            provider.ReleaseAll();
-            try
-            {
-                if (call is not null)
-                    await ObserveTerminalAsync(call);
-            }
-            finally
-            {
-                Volatile.Write(ref registry.ServicesStorage, originalServices);
-            }
+            (failures ??= []).Add(primary);
         }
+
+        // Each owner is released independently. A body failure, failed terminal join and
+        // failed snapshot restoration are separate observations, even for the same exception.
+        try { provider.ReleaseAll(); }
+        catch (Exception error) { (failures ??= []).Add(error); }
+        try
+        {
+            if (call is not null)
+                await call.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception error) { (failures ??= []).Add(error); }
+        try { await services.DisposeAsync(); }
+        catch (Exception error) { (failures ??= []).Add(error); }
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null)
+            throw new AggregateException("Persistent decode body/join/registry cleanup failures.", failures);
     }
 
     private sealed class CountingPersistentFactsStub(IRpcStub inner) : IRpcStub
@@ -228,7 +239,9 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         await using var harness = await PersistentDecodeHarness.CreateAsync(serverProvider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         using var cancellation = new CancellationTokenSource();
-        var call = harness.Client.Get<IPersistentDecodeControlPlaneService>()
+        var serviceProxy = harness.Client.CreateProxy<IPersistentDecodeControlPlaneService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var call = serviceProxy.Service
             .MeasureAsync(CreateLargePayload(0xA1), cancellation.Token)
             .AsTask();
 

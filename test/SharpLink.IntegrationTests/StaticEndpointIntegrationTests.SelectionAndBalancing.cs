@@ -16,9 +16,12 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
         try
         {
-            _ = await client.Get<IConnectionBehaviorService>().PingAsync(1);
+            _ = await clientContractProxy.Service.PingAsync(1);
             throw new Exception("invalid selector should fail the current call");
         }
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.FailedPrecondition)
@@ -40,7 +43,10 @@ public sealed partial class StaticEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
-        var service = client.Get<IConnectionBehaviorService>();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+        var service = clientContractProxy.Service;
         var exception = await EnsureThrowsSharpLink(service.PingAsync(1).AsTask(), "throwing custom selector");
         Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition, "throwing selector error code");
         Ensure(await service.PingAsync(1) == 2, "later RPC should remain healthy");
@@ -75,7 +81,10 @@ public sealed partial class StaticEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "initial two-endpoint pool readiness");
-        var service = client.Get<IConnectionBehaviorService>();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+        var service = clientContractProxy.Service;
         var calls = new Task<int>[32];
         for (var index = 0; index < calls.Length; index++)
             calls[index] = service.SlowAsync(100, CancellationToken.None).AsTask();
@@ -120,11 +129,14 @@ public sealed partial class StaticEndpointIntegrationTests
 
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 2, TimeSpan.FromSeconds(5));
         await west.StopAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(2));
-
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
         var exception = await EnsureThrowsSharpLink(
-            client.Get<IConnectionBehaviorService>().PingAsync(1).AsTask(),
+            clientContractProxy.Service.PingAsync(1).AsTask(),
             "selector must reject the only non-matching static endpoint");
         Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
             "a strict static selector must not be bypassed for one candidate");
@@ -150,7 +162,10 @@ public sealed partial class StaticEndpointIntegrationTests
             await roundRobin.ConnectAsync();
             await WaitUntilAsync(() => ((SharpLinkClient)roundRobin).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
             Ensure(((SharpLinkClient)roundRobin).ReadyConnectionCount == 2, "round robin endpoints must both be ready");
-            var service = roundRobin.Get<IConnectionBehaviorService>();
+            var roundRobinContractProxy = roundRobin.CreateProxy<IConnectionBehaviorService>();
+            await roundRobinContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(roundRobin, roundRobinContractProxy, 1, TimeSpan.FromSeconds(5));
+            var service = roundRobinContractProxy.Service;
             var ids = new[]
             {
                 await service.GetEndpointIdAsync(),
@@ -169,7 +184,10 @@ public sealed partial class StaticEndpointIntegrationTests
         await custom.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)custom).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)custom).ReadyConnectionCount == 2, "custom selector endpoints must both be ready");
-        Ensure(await custom.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "west", "custom selector attributes");
+        var customContractProxy = custom.CreateProxy<IConnectionBehaviorService>();
+        await customContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(custom, customContractProxy, 1, TimeSpan.FromSeconds(5));
+        Ensure(await customContractProxy.Service.GetEndpointIdAsync() == "west", "custom selector attributes");
     }
 
     [Test]
@@ -194,7 +212,10 @@ public sealed partial class StaticEndpointIntegrationTests
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "least-pending endpoints must both be ready");
-        var service = client.Get<IConnectionBehaviorService>();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+        var service = clientContractProxy.Service;
         var slow = service.SlowAsync(200, CancellationToken.None).AsTask();
         var completed = await Task.WhenAny(first.Service.SlowCallStarted!.Task, second.Service.SlowCallStarted!.Task);
         var busyId = await ((Task<string>)completed);
@@ -225,7 +246,10 @@ public sealed partial class StaticEndpointIntegrationTests
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(2));
         Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "least-pending endpoints must both be ready");
-        var service = client.Get<IConnectionBehaviorService>();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+        var service = clientContractProxy.Service;
         var ids = new[]
         {
             await service.GetEndpointIdAsync(),

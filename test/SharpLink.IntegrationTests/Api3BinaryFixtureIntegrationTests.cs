@@ -130,7 +130,16 @@ public sealed class Api3BinaryFixtureIntegrationTests
         => GetClientAssemblyRegistry(client).DynamicModules.Count;
 
     private static int GetClientProxyCount(ISharpLinkClient client)
-        => GetClientAssemblyRegistry(client).CaptureProxySnapshot().Count;
+    {
+        var registry = GetClientAssemblyRegistry(client);
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var gate = (Lock)typeof(ClientAssemblyRegistry).GetField("_gate", flags)!.GetValue(registry)!;
+        var lookup = (ClientProxyLookup)typeof(ClientAssemblyRegistry).GetField("_proxyLookup", flags)!.GetValue(registry)!;
+        ClientProxySnapshot snapshot;
+        lock (gate) snapshot = lookup.Acquire();
+        using (snapshot)
+            return snapshot.Map.Count; // Retain the real metadata owner; only a scalar escapes.
+    }
 
     private static int GetSnapshotCount(object owner, string fieldName)
     {

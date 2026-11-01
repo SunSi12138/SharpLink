@@ -27,7 +27,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load($"queue-selection-{shape}-{replace}");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+        var proxy = GetProxyService(proxyHandle);
+        proxyHandle = null;
         var server = (SharpLinkServer)harness.Server;
         var holder = await HoldQueuedAdmissionAsync(server);
         var admission = server.CurrentAdmissionProgramForTests!;
@@ -99,7 +102,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load($"queue-cancel-{shape}");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+        var proxy = GetProxyService(proxyHandle);
+        proxyHandle = null;
         var server = (SharpLinkServer)harness.Server;
         var holder = await HoldQueuedAdmissionAsync(server);
         var admission = server.CurrentAdmissionProgramForTests!;
@@ -183,8 +189,30 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var context = new SharedContractServiceLoadContext(contractType.Assembly);
         var assembly = context.LoadFromAssemblyPath(servicePath);
         Ensure(server.RegisterAssembly(assembly).Succeeded, "isolated original service registers");
-        await WaitForRemoteContractManifestAsync(client, contractType);
-        var proxy = GetProxy(client, contractType);
+        object proxy;
+        try
+        {
+            await WaitForRemoteContractManifestAsync(client, contractType);
+            object? proxyHandle = CreateLocalProxyHandle(client, contractType);
+            await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+            proxy = GetProxyService(proxyHandle);
+            proxyHandle = null;
+        }
+        catch (Exception primary)
+        {
+            var failures = new List<Exception> { primary };
+            try
+            {
+                var removed = await server.UnregisterAssemblyAsync(assembly, TimeSpan.FromSeconds(2));
+                Ensure(removed.ReferencesReleased, "failed preparation must release its newly registered service assembly");
+            }
+            catch (Exception cleanup) { failures.Add(cleanup); }
+            try { context.Unload(); }
+            catch (Exception cleanup) { failures.Add(cleanup); }
+            if (failures.Count > 1)
+                throw new AggregateException(failures);
+            throw;
+        }
         var queued = InvokeValueTaskAsync<int>(proxy, contractType, "UnaryAsync", 1, CancellationToken.None).AsTask();
         await WaitUntilAsync(() => server.CurrentAdmissionProgramForTests!.Kernel.QueuedCalls == 1);
         var result = await server.ReplaceAssemblyAsync(assembly, replacement, TimeSpan.Zero);

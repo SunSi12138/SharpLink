@@ -423,7 +423,8 @@ public class CompressionPersistentDecodeReviewTests
 
         private static long ReadAnyInterfaceHash(ISharpLinkServer server)
         {
-            foreach (var key in ServerRegistryTestAccessor.Services((SharpLinkServer)server).Keys)
+            using var snapshot = ServerRegistryTestAccessor.AcquireServices((SharpLinkServer)server);
+            foreach (var key in snapshot.Services.Keys)
                 return key;
             throw new Exception("server has no registered service hash");
         }

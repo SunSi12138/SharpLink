@@ -13,7 +13,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("dynamic-unload");
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+        object? proxy = GetProxyService(proxyHandle);
+        proxyHandle = null;
         Ensure(InvokeProbeBlocking(proxy, plugin.ContractType) == 10, "ALC probe call");
         var payloadType = plugin.GetContractType("SharpLink.DynamicPlugin.DynamicPayload");
         var payload = Activator.CreateInstance(payloadType)!;
@@ -51,7 +54,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load($"api4-stream-exit-{exitMode}");
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+        object? proxy = GetProxyService(proxyHandle);
+        proxyHandle = null;
 
         if (string.Equals(exitMode, "normal", StringComparison.Ordinal))
         {
@@ -356,14 +362,37 @@ public sealed partial class RuntimeAssemblyIntegrationTests
     }
 
     private static bool HasLocalProxyDescriptor(ISharpLinkClient client, Type contractType)
-        => GetClientAssemblyRegistry(client).CaptureProxySnapshot().ContainsKey(contractType);
-
-    private static object GetProxy(ISharpLinkClient client, Type contractType)
     {
-        var get = typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.Get))!
-            .MakeGenericMethod(contractType);
-        return get.Invoke(client, null) ?? throw new InvalidOperationException("Dynamic proxy factory returned null.");
+        var registry = GetClientAssemblyRegistry(client);
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var gate = (Lock)typeof(ClientAssemblyRegistry).GetField("_gate", flags)!.GetValue(registry)!;
+        var lookup = (ClientProxyLookup)typeof(ClientAssemblyRegistry).GetField("_proxyLookup", flags)!.GetValue(registry)!;
+        ClientProxySnapshot snapshot;
+        lock (gate) snapshot = lookup.Acquire();
+        using (snapshot)
+            return snapshot.Map.ContainsKey(contractType); // No unretained dictionary or descriptor escapes.
     }
+
+    // Reflection is necessary because these Contract Types come from collectible plugins.
+    // Callers retain the actual RpcProxy handle through finite preparation, then release
+    // that extra reference while keeping the generated Service's original channel.
+    private static object CreateLocalProxyHandle(ISharpLinkClient client, Type contractType)
+    {
+        var create = typeof(ISharpLinkClient).GetMethod(nameof(ISharpLinkClient.CreateProxy))!
+            .MakeGenericMethod(contractType);
+        return create.Invoke(client, [null])
+            ?? throw new InvalidOperationException("Dynamic contract factory returned no handle.");
+    }
+
+    private static object GetProxyService(object handle)
+        => handle.GetType().GetProperty(nameof(RpcProxy<IService>.Service))!.GetValue(handle)
+            ?? throw new InvalidOperationException("Dynamic contract handle returned no service.");
+
+    private static ValueTask PrepareProxyHandleAsync(
+        object handle, TimeSpan timeout, CancellationToken cancellationToken = default)
+        => (ValueTask)(handle.GetType().GetMethod(nameof(RpcProxy<IService>.PrepareAsync))!
+            .Invoke(handle, [timeout, cancellationToken])
+            ?? throw new InvalidOperationException("Dynamic contract preparation returned no operation."));
 
     private static ValueTask<T> InvokeValueTaskAsync<T>(
         object proxy,

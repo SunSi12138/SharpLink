@@ -14,7 +14,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
         var server = (SharpLinkServer)harness.Server;
-        var proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+        var proxy = GetProxyService(proxyHandle);
+        proxyHandle = null;
         var payloadType = plugin.ContractAssembly.GetType("SharpLink.DynamicPlugin.DynamicPayload", throwOnError: true)!;
         var payload = Activator.CreateInstance(payloadType)!;
         payloadType.GetProperty("Value")!.SetValue(payload, 42);

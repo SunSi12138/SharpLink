@@ -33,7 +33,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var control = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), harness.Port).Build();
         await control.ConnectAsync();
-        var controlProxy = control.Get<IManifestReadinessControl>();
+        var controlHandle = control.CreateProxy<IManifestReadinessControl>();
+        await controlHandle.PrepareAsync(TimeSpan.FromSeconds(5));
+        var controlProxy = controlHandle.Service;
         var broadcastStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseBroadcast = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ((SharpLinkServer)harness.Server).ContractManifestPublishBarrierForTesting = () =>
@@ -59,7 +61,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(!wait.IsCompleted, "only the explicitly declared previous hash may wait for replacement propagation");
             releaseBroadcast.TrySetResult();
             await wait;
-            var proxy = GetProxy(harness.Client, replacement.ContractType);
+            object? proxyHandle = CreateLocalProxyHandle(harness.Client, replacement.ContractType);
+            await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+            var proxy = GetProxyService(proxyHandle);
+            proxyHandle = null;
             Ensure(await InvokeValueTaskAsync<int>(proxy, replacement.ContractType,
                 "UnaryAsync", 6, timeout.Token) == 7,
                 "the new generated proxy calls the replaced service over the original data connection");
@@ -93,7 +98,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var control = SharpClientBuilder.Create().DisableRequestTimeout()
             .UseTcp(IPAddress.Loopback.ToString(), harness.Port).Build();
         await control.ConnectAsync();
-        var controlProxy = control.Get<IManifestReadinessControl>();
+        var controlHandle = control.CreateProxy<IManifestReadinessControl>();
+        await controlHandle.PrepareAsync(TimeSpan.FromSeconds(5));
+        var controlProxy = controlHandle.Service;
         var broadcastStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseBroadcast = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ((SharpLinkServer)harness.Server).ContractManifestPublishBarrierForTesting = () =>
@@ -114,18 +121,15 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             var wait = harness.Client.WaitForRemoteContractAsync(
                 contractId, module.Manifest.RpcAssemblyHash, timeout.Token).AsTask();
             Ensure(!wait.IsCompleted, "ordinary Ready and registration success do not complete the contract barrier");
-            try
-            {
-                _ = GetProxy(harness.Client, plugin.ContractType);
-                throw new Exception("Get must fail while the remote manifest is still missing");
-            }
-            catch (System.Reflection.TargetInvocationException exception)
-                when (exception.InnerException is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition })
-            {
-            }
+            object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+            var preparation = PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5), timeout.Token).AsTask();
+            Ensure(!preparation.IsCompleted,
+                "local factory success must not complete exact binding preparation while the data locator is held");
             releaseBroadcast.TrySetResult();
             await wait;
-            var proxy = GetProxy(harness.Client, plugin.ContractType);
+            await preparation;
+            var proxy = GetProxyService(proxyHandle);
+            proxyHandle = null;
             Ensure(await InvokeValueTaskAsync<int>(proxy, plugin.ContractType,
                     "UnaryAsync", 4, timeout.Token) == 5,
                 "the public barrier permits a real TCP call without polling or reconnect");

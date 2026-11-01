@@ -38,7 +38,10 @@ public sealed partial class DynamicEndpointIntegrationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+            var service = clientContractProxy.Service;
             Ensure(await service.GetEndpointIdAsync() == "first", "initial resolver endpoint");
 
             resolver.Publish(new SharpLinkEndpointSnapshot(2,
@@ -50,6 +53,7 @@ public sealed partial class DynamicEndpointIntegrationTests
             Ensure(((SharpLinkClient)client).ReadyConnectionCount == 2, "added endpoint should become ready");
             Ensure(factoryCreates == 2, "only the added endpoint should create a factory");
 
+            await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 2, TimeSpan.FromSeconds(5));
             selector.Zone = "blue";
             Ensure(await service.GetEndpointIdAsync() == "first", "blue selector before attributes update");
             resolver.Publish(new SharpLinkEndpointSnapshot(3,
@@ -65,7 +69,12 @@ public sealed partial class DynamicEndpointIntegrationTests
             Ensure(await service.GetEndpointIdAsync() == "second", "removed endpoint must leave the candidate set");
 
             resolver.Publish(new SharpLinkEndpointSnapshot(5, [Endpoint("second", replacement.Port, "blue")]));
-            await WaitUntilAsync(async () => await service.GetEndpointIdAsync() == "replacement", TimeSpan.FromSeconds(4));
+            await WaitUntilAsync(async () =>
+            {
+                await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+                await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+                return await service.GetEndpointIdAsync() == "replacement";
+            }, TimeSpan.FromSeconds(4));
             Ensure(factoryCreates == 3, "address change must create exactly one new generation factory");
         }
         finally
@@ -194,7 +203,10 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "A/C replacement topology");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+        Ensure(await clientContractProxy.Service.GetEndpointIdAsync() == "third",
             "the replacement topology must route to the new C endpoint generation");
 
         var lastAccepted = client.GetReadinessSnapshot();
@@ -205,7 +217,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         ]));
         Ensure(client.GetReadinessSnapshot() == lastAccepted,
             "a stale resolver snapshot must leave readiness facts unchanged");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        Ensure(await clientContractProxy.Service.GetEndpointIdAsync() == "third",
             "a stale resolver snapshot must not restore the retired B endpoint");
 
         await resolver.PublishAndWaitAsync(new SharpLinkEndpointSnapshot(6,
@@ -217,7 +229,7 @@ public sealed partial class DynamicEndpointIntegrationTests
         ]));
         Ensure(client.GetReadinessSnapshot() == lastAccepted,
             "a rejected resolver snapshot must leave readiness facts unchanged");
-        Ensure(await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync() == "third",
+        Ensure(await clientContractProxy.Service.GetEndpointIdAsync() == "third",
             "a rejected resolver snapshot must retain the last accepted topology");
     }
 
@@ -270,7 +282,10 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "empty-to-two endpoint recovery");
-        var endpointId = await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+        var endpointId = await clientContractProxy.Service.GetEndpointIdAsync();
         Ensure(endpointId is "first" or "second", "topology recovery RPC");
     }
 
@@ -309,7 +324,10 @@ public sealed partial class DynamicEndpointIntegrationTests
             targetReadyEndpoints: 2,
             meetsTarget: true,
             "two active endpoints before retirement");
-        var service = client.Get<IConnectionBehaviorService>();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+        var service = clientContractProxy.Service;
         await using var stream = service.SlowRangeAsync(3, 500, CancellationToken.None).GetAsyncEnumerator();
         Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first stream item");
 
@@ -349,8 +367,11 @@ public sealed partial class DynamicEndpointIntegrationTests
             .Build();
 
         await client.ConnectAsync();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
         var call = Task.Run(async () =>
-            await client.Get<IConnectionBehaviorService>().GetEndpointIdAsync());
+            await clientContractProxy.Service.GetEndpointIdAsync());
         await selector.Entered.WaitAsync(TimeSpan.FromSeconds(2));
 
         try
@@ -397,11 +418,14 @@ public sealed partial class DynamicEndpointIntegrationTests
 
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 2, TimeSpan.FromSeconds(5));
         resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("east", east.Port, "east")]));
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1, TimeSpan.FromSeconds(3));
-
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
         var exception = await CaptureSharpLinkException(
-            client.Get<IConnectionBehaviorService>().GetEndpointIdAsync().AsTask());
+            clientContractProxy.Service.GetEndpointIdAsync().AsTask());
         Ensure(exception.Code == SharpLinkErrorCode.FailedPrecondition,
             "a strict dynamic selector must not be bypassed for one candidate");
     }
@@ -430,7 +454,10 @@ public sealed partial class DynamicEndpointIntegrationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+            var service = clientContractProxy.Service;
             Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic endpoint");
 
             resolver.Publish(new SharpLinkEndpointSnapshot(2, [Endpoint("replacement", replacement.Port, "green")]));

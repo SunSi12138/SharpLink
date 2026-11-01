@@ -107,6 +107,23 @@ internal sealed class FrameworkTaskSupervisor
             isStrictPhysical: false, ref receipt);
     }
 
+    internal FrameworkTaskRegistration Track(
+        Task task, string operation, TaskObservationMode observationMode,
+        Func<Exception, bool> shutdownExpectedExceptionClassifier,
+        ref FrameworkTaskRegistration? receipt)
+        => TrackCore(task, operation, observationMode, shutdownExpectedExceptionClassifier,
+            isStrictPhysical: false, ref receipt);
+
+    // The caller already owns physical work and must retain its actual root through task exit.
+    // This is not new-work admission: Seal alone does not reject an already-owned tail.
+    internal FrameworkTaskRegistration TrackOwnedStrictPhysicalTail(
+        Task task, string operation, object ownerRoot, ref FrameworkTaskRegistration? receipt)
+    {
+        ArgumentNullException.ThrowIfNull(ownerRoot);
+        return TrackCore(task, operation, TaskObservationMode.FrameworkOwned, static _ => false,
+            isStrictPhysical: true, ref receipt, ownerRoot, rejectOnSeal: false);
+    }
+
     internal FrameworkTaskRegistration TrackStrictPhysical(
         Task task, string operation, ref FrameworkTaskRegistration? receipt)
         => TrackCore(task, operation, TaskObservationMode.FrameworkOwned, static _ => false,
@@ -119,13 +136,13 @@ internal sealed class FrameworkTaskSupervisor
         // Caller has not started the origin. Seal is checked in the SAME existing gate as
         // insertion; this is admission, unlike already-owned nested-tail tracking.
         return TrackCore(anchorTask, operation, TaskObservationMode.FrameworkOwned, static _ => false,
-            isStrictPhysical: true, ref receipt, ownerRoot);
+            isStrictPhysical: true, ref receipt, ownerRoot, rejectOnSeal: true);
     }
 
     private FrameworkTaskRegistration TrackCore(
         Task task, string operation, TaskObservationMode observationMode,
         Func<Exception, bool> shutdownExpectedExceptionClassifier, bool isStrictPhysical,
-        ref FrameworkTaskRegistration? receipt, object? preStartOwnerRoot = null)
+        ref FrameworkTaskRegistration? receipt, object? retainedOwnerRoot = null, bool rejectOnSeal = false)
     {
         if (receipt is not null)
             throw new ArgumentException("A task registration receipt must start empty.", nameof(receipt));
@@ -138,7 +155,7 @@ internal sealed class FrameworkTaskSupervisor
         FrameworkTaskRegistration registration;
         lock (_gate)
         {
-            if (preStartOwnerRoot is not null && (_sealed || task.IsCompleted))
+            if (rejectOnSeal && (_sealed || task.IsCompleted))
             {
                 _rejectedRegistrations++;
                 throw new InvalidOperationException(_sealed
@@ -185,7 +202,7 @@ internal sealed class FrameworkTaskSupervisor
                 shutdownExpectedExceptionClassifier,
                 ++_nextSequence,
                 isStrictPhysical,
-                preStartOwnerRoot);
+                retainedOwnerRoot);
             _active.Add(task, registration);
             receipt = registration; // Definitive acceptance BEFORE continuation attachment can throw.
             _totalTracked++;

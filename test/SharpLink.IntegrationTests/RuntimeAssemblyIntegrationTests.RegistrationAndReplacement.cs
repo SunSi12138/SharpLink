@@ -43,7 +43,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load("dynamic-cancelled-unregister-waits");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+        object? proxy = GetProxyService(proxyHandle);
+        proxyHandle = null;
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
             plugin.ContractType,
@@ -82,7 +85,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(serverRegistration.Succeeded,
             "server background drain removes the cancelled waiter's old registration");
         await WaitForRemoteContractManifestAsync(harness.Client, plugin.ContractType);
-        object? reRegisteredProxy = GetProxy(harness.Client, plugin.ContractType);
+        object? reRegisteredProxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(reRegisteredProxyHandle, TimeSpan.FromSeconds(5));
+        object? reRegisteredProxy = GetProxyService(reRegisteredProxyHandle);
+        reRegisteredProxyHandle = null;
         Ensure(await InvokeValueTaskAsync<int>(
                 reRegisteredProxy,
                 plugin.ContractType,
@@ -117,7 +123,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var plugin = PluginBundle.Load("dynamic-shared-unregister");
         plugin.ResetServiceState();
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+        object? proxy = GetProxyService(proxyHandle);
+        proxyHandle = null;
         var blocked = InvokeValueTaskAsync<int>(
             proxy,
             plugin.ContractType,
@@ -160,7 +169,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         using var oldPlugin = PluginBundle.Load("replace-dependency-old");
         using var newPlugin = PluginBundle.Load("replace-dependency-new");
         await RegisterAllAsync(harness, oldPlugin);
-        object? oldProxy = GetProxy(harness.Client, oldPlugin.ContractType);
+        object? oldProxyHandle = CreateLocalProxyHandle(harness.Client, oldPlugin.ContractType);
+        await PrepareProxyHandleAsync(oldProxyHandle, TimeSpan.FromSeconds(5));
+        object? oldProxy = GetProxyService(oldProxyHandle);
+        oldProxyHandle = null;
 
         Ensure(string.Equals(
                 oldPlugin.ContractAssembly.FullName,
@@ -222,7 +234,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             "client Contract replacement without dependants remains supported");
         // Local replacement does not acknowledge the asynchronous server manifest notification.
         await WaitForRemoteContractManifestAsync(harness.Client, newPlugin.ContractType);
-        object? newProxy = GetProxy(harness.Client, newPlugin.ContractType);
+        object? newProxyHandle = CreateLocalProxyHandle(harness.Client, newPlugin.ContractType);
+        await PrepareProxyHandleAsync(newProxyHandle, TimeSpan.FromSeconds(5));
+        object? newProxy = GetProxyService(newProxyHandle);
+        newProxyHandle = null;
         Ensure(await InvokeValueTaskAsync<int>(
                 newProxy, newPlugin.ContractType, "UnaryAsync", 4, CancellationToken.None) == 5,
             "safe-order replacement publishes a usable new Contract/service generation");
@@ -246,7 +261,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         await using var harness = await DynamicHarness.CreateAsync();
         using var plugin = PluginBundle.Load("replace-validation");
         await RegisterAllAsync(harness, plugin);
-        object? proxy = GetProxy(harness.Client, plugin.ContractType);
+        object? proxyHandle = CreateLocalProxyHandle(harness.Client, plugin.ContractType);
+        await PrepareProxyHandleAsync(proxyHandle, TimeSpan.FromSeconds(5));
+        object? proxy = GetProxyService(proxyHandle);
+        proxyHandle = null;
 
         var result = await harness.Client.ReplaceAssemblyAsync(
             plugin.ContractAssembly,

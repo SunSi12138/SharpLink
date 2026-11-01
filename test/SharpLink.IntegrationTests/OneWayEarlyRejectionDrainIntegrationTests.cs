@@ -1,5 +1,3 @@
-using System.Collections.Frozen;
-using System.Reflection;
 
 namespace SharpLink.IntegrationTests;
 
@@ -16,12 +14,13 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         {
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
-        });
+        }, dynamicRegistration: true);
         var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
         await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var service = serviceProxy.Service;
 
-        using (harness.RejectOneWayInboundDrainServiceCalls())
+        var originalConnection = harness.SingleConnection;
+        harness.BeginDrain();
         {
             var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
             await send.WaitAsync(PhaseTimeout);
@@ -30,7 +29,11 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 "an immediately rejected OneWay request must not invoke the service method");
         }
 
+        await harness.ReleaseAndReregisterAsync();
+        await serviceProxy.PrepareAsync(PhaseTimeout);
         var probe = await service.PingAsync(51).AsTask().WaitAsync(PhaseTimeout);
+        Ensure(ReferenceEquals(originalConnection, harness.SingleConnection),
+            "the same physical server connection must survive rejection, drain and re-registration");
         Ensure(probe == 52,
             "a unary request on the same connection should succeed after the rejected client stream drains to peer terminal");
     }
@@ -45,11 +48,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
-        var service = serviceProxy.Service;
-
-        using (harness.HideOneWayInboundDrainMethodShape())
+        var service = await harness.CreateUnknownOneWayMethodServiceAsync();
         {
             var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
             var failure = await CaptureFailureAsync(send);
@@ -75,11 +74,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
             options.Compression.Providers.Add(compression);
         });
-        var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
-        var service = serviceProxy.Service;
-
-        using (harness.HideOneWayInboundDrainMethodShape())
+        var service = await harness.CreateUnknownOneWayMethodServiceAsync();
         {
             var requestPayload = Enumerable.Repeat((byte)0x67, 4096).ToArray();
             var send = service.IgnoreCorruptiblePayloadAndStreamAsync(
@@ -174,10 +169,6 @@ public class OneWayEarlyRejectionDrainIntegrationTests
 
     private sealed class Harness : IAsyncDisposable
     {
-        private static readonly FieldInfo DynamicModuleStateField = typeof(SharpLinkDynamicModule).GetField(
-            "_state", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("cannot find dynamic-module state field");
-
         private readonly CancellationTokenSource _serverCts;
         private readonly Task _serverTask;
 
@@ -196,150 +187,170 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             Client = client;
         }
 
-        public static async Task<Harness> CreateAsync(Action<SharpLinkRuntimeOptions> runtimeConfigure)
+        public static async Task<Harness> CreateAsync(
+            Action<SharpLinkRuntimeOptions> runtimeConfigure,
+            bool dynamicRegistration = false)
         {
             var cts = new CancellationTokenSource();
-            var serverBuilder = SharpLinkServerBuilder.Create()
-                .UseTcp(0, IPAddress.Loopback)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
-                .UseRuntime(runtimeConfigure);
-            var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
-            var server = serverBuilder.Build();
-            var serverTask = Task.Run(
-                () => server.RunUntilStoppedAsync(cts.Token).AsTask(),
-                CancellationToken.None);
-
-            var client = SharpClientBuilder.Create().DisableRequestTimeout()
-                .UseTcp(IPAddress.Loopback.ToString(), port)
-                .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
-                .UseRuntime(runtimeConfigure)
-                .Build();
-            await client.ConnectAsync(cts.Token);
-            return new Harness(cts, serverTask, server, client);
+            ISharpLinkServer? server = null;
+            ISharpLinkClient? client = null;
+            Task? serverTask = null;
+            try
+            {
+                var serverBuilder = SharpLinkServerBuilder.Create()
+                    .UseTcp(0, IPAddress.Loopback)
+                    .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
+                    .UseRuntime(runtimeConfigure);
+                var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
+                    .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
+                    .UseRuntime(runtimeConfigure);
+                if (dynamicRegistration)
+                {
+                    // This real assembly must not already belong to the static registry.
+                    var manifests = SharpLinkGeneratedAssemblyCatalog.CreateSnapshot()
+                        .Where(manifest => !ReferenceEquals(manifest.OwnerAssembly, typeof(IOneWayInboundDrainService).Assembly))
+                        .ToArray();
+                    serverBuilder.UseGeneratedManifestSource(new FixedGeneratedManifestSource(manifests));
+                }
+                var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
+                server = serverBuilder.Build();
+                client = clientBuilder.UseTcp(IPAddress.Loopback.ToString(), port).Build();
+                if (dynamicRegistration)
+                {
+                    var assembly = typeof(IOneWayInboundDrainService).Assembly;
+                    var serverRegistration = server.RegisterAssembly(assembly);
+                    Ensure(serverRegistration.Succeeded, $"real server fixture registration: {serverRegistration.Error}");
+                }
+                serverTask = Task.Run(
+                    () => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
+                await client.ConnectAsync(cts.Token).AsTask().WaitAsync(PhaseTimeout);
+                return new Harness(cts, serverTask, server, client);
+            }
+            catch (Exception primary)
+            {
+                await CleanupAsync(primary,
+                    () => client?.DisposeAsync() ?? ValueTask.CompletedTask,
+                    () => new ValueTask(cts.CancelAsync()),
+                    () => server?.DisposeAsync() ?? ValueTask.CompletedTask,
+                    () => ObserveServerAsync(serverTask, cts),
+                    () => { cts.Dispose(); return ValueTask.CompletedTask; });
+                throw;
+            }
         }
 
-        public IDisposable RejectOneWayInboundDrainServiceCalls()
+        internal ServerConnectionState SingleConnection
+            => ServerRegistryTestAccessor.ActiveConnections((SharpLinkServer)Server).Values.Single();
+
+        internal void BeginDrain()
         {
-            var server = (SharpLinkServer)Server;
-            var current = ServerRegistryTestAccessor.Services(server);
-            var target = current.Single(static pair =>
-                pair.Value.ContractType == typeof(IOneWayInboundDrainService));
-
-            var module = (SharpLinkDynamicModule)RuntimeHelpers.GetUninitializedObject(
-                typeof(SharpLinkDynamicModule));
-            DynamicModuleStateField.SetValue(
-                module,
-                (int)SharpLinkDynamicModuleState.Draining);
-            var replacement = ServiceRegistration.CreateSingleton(
-                target.Value.ContractType,
-                target.Value.Stub,
-                new OneWayInboundDrainService(),
-                ownsService: false,
-                module: module);
-            var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            updated[target.Key] = replacement;
-            ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
-            return new RestoreServicesScope(server, current);
+            var module = ServerRegistryTestAccessor.DynamicModule(Server, typeof(IOneWayInboundDrainService).Assembly);
+            Ensure(module.TryBeginDraining(), "the actually registered fixture module enters draining once");
         }
 
-        public IDisposable HideOneWayInboundDrainMethodShape()
+        internal async Task ReleaseAndReregisterAsync()
         {
-            var server = (SharpLinkServer)Server;
-            var current = ServerRegistryTestAccessor.Services(server);
-            var target = current.Single(static pair =>
-                pair.Value.ContractType == typeof(IOneWayInboundDrainService));
-
-            var replacement = ServiceRegistration.CreateSingleton(
-                target.Value.ContractType,
-                new UnknownMethodShapeStub(target.Value.Stub.InterfaceHash),
-                new OneWayInboundDrainService(),
-                ownsService: false);
-            var updated = current.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            updated[target.Key] = replacement;
-            ServerRegistryTestAccessor.PublishServices(server, updated.ToFrozenDictionary());
-            return new RestoreServicesScope(server, current);
+            var assembly = typeof(IOneWayInboundDrainService).Assembly;
+            Ensure((await Server.UnregisterAssemblyAsync(assembly, PhaseTimeout).AsTask().WaitAsync(PhaseTimeout)).ReferencesReleased,
+                "the drained server fixture must release its old exact registration");
+            // The client's static local identity remains live. Its actual cached call site
+            // must observe wire retirement before Prepare can claim readiness for the new token.
+            var channel = Client.CreateContractChannel(Client.GetLocalContract<IOneWayInboundDrainService>());
+            var site = channel as SharpLinkClient.ContractCallSite
+                ?? throw new InvalidOperationException("The fixture expects its actual static client contract site.");
+            using var retirementBudget = new CancellationTokenSource(PhaseTimeout);
+            while (site.HasBoundRoute)
+                await Task.Delay(10, retirementBudget.Token);
+            var serverRegistration = Server.RegisterAssembly(assembly);
+            Ensure(serverRegistration.Succeeded, $"server fixture re-registration: {serverRegistration.Error}");
         }
 
+        internal async Task<IOneWayInboundDrainService> CreateUnknownOneWayMethodServiceAsync()
+        {
+            var assembly = typeof(IOneWayInboundDrainService).Assembly;
+            var runtime = (SharpLinkRuntimeContext)Client.RuntimeContext;
+            var manifest = runtime.GeneratedManifests.Single(candidate => ReferenceEquals(candidate.OwnerAssembly, assembly));
+            Ensure(manifest is PreparedGeneratedManifest, "negative wire fixture uses the actually prepared generated manifest");
+            var descriptor = manifest.Contracts.Single(contract => contract.ContractType == typeof(IOneWayInboundDrainService));
+            var absentMethod = long.MinValue;
+            while (descriptor.Methods.Any(method => method.MethodId == absentMethod)) absentMethod++;
+            var channel = Client.CreateContractChannel(Client.GetLocalContract<IOneWayInboundDrainService>());
+            await channel.PrepareAsync(PhaseTimeout);
+            var provider = RpcGeneratedCodecResolver.GetProvider(Client.RuntimeContext, assembly);
+            return (IOneWayInboundDrainService)descriptor.ProxyFactory(
+                new UnknownOneWayMethodChannel(channel, absentMethod), provider);
+        }
+
+        private bool _disposed;
         public async ValueTask DisposeAsync()
         {
-            await Client.DisposeAsync();
-            await _serverCts.CancelAsync();
-            await Server.DisposeAsync();
-            await Task.WhenAny(_serverTask, Task.Delay(1000, CancellationToken.None));
-            _serverCts.Dispose();
+            if (_disposed) return;
+            _disposed = true;
+            await CleanupAsync(null,
+                () => Client.DisposeAsync(),
+                () => new ValueTask(_serverCts.CancelAsync()),
+                () => Server.DisposeAsync(),
+                () => ObserveServerAsync(_serverTask, _serverCts),
+                () => { _serverCts.Dispose(); return ValueTask.CompletedTask; });
         }
 
-        private sealed class UnknownMethodShapeStub(long interfaceHash) : IRpcStub
+        private static async ValueTask ObserveServerAsync(Task? task, CancellationTokenSource cancellation)
         {
-            public long InterfaceHash { get; } = interfaceHash;
-            public RpcMethodFacts ResolveMethodFacts(long methodHash) => RpcMethodFacts.UnknownMethod;
-
-            public bool TryGetMethodDescriptor(long methodHash, out RpcMethodDescriptor descriptor)
-            {
-                _ = methodHash;
-                descriptor = default;
-                return false;
-            }
-
-            public bool SupportsCancellation(long methodHash)
-            {
-                _ = methodHash;
-                return false;
-            }
-
-            public ValueTask InvokeNoReturnAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                RpcMethodFacts methodHash,
-                long requestId,
-                ReadOnlySequence<byte> args)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeNoReturnCancellableAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                RpcMethodFacts methodHash,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                CancellationToken cancellationToken)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                RpcMethodFacts methodHash,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                IBufferWriter<byte> output)
-                => throw UnexpectedInvocation();
-
-            public ValueTask InvokeCancellableAsync(
-                object service,
-                IRpcGeneratedServerBridge bridge,
-                RpcMethodFacts methodHash,
-                long requestId,
-                ReadOnlySequence<byte> args,
-                IBufferWriter<byte> output,
-                CancellationToken cancellationToken)
-                => throw UnexpectedInvocation();
-
-            private static InvalidOperationException UnexpectedInvocation()
-                => new("unresolved method-shape stub must never be invoked");
+            if (task is null) return;
+            try { await task.WaitAsync(PhaseTimeout); }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         }
 
-        private sealed class RestoreServicesScope(
-            SharpLinkServer server,
-            FrozenDictionary<long, ServiceRegistration> original) : IDisposable
+        // Failure of one cleanup step must not skip cancellation, endpoint release or join;
+        // the original setup error and independent cleanup errors remain observable together.
+        private static async ValueTask CleanupAsync(Exception? primary, params Func<ValueTask>[] steps)
         {
-            private SharpLinkServer? _server = server;
-
-            public void Dispose()
+            List<Exception>? failures = primary is null ? null : [primary];
+            foreach (var step in steps)
             {
-                var currentServer = Interlocked.Exchange(ref _server, null);
-                if (currentServer is null)
-                    return;
-                ServerRegistryTestAccessor.PublishServices(currentServer, original);
+                try { await step(); }
+                catch (Exception error)
+                {
+                    (failures ??= []).Add(error);
+                }
             }
+            if (failures is { Count: 1 })
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures is not null) throw new AggregateException("Fixture setup/cleanup failures.", failures);
+        }
+
+        // Real identity, codecs, metadata and stream writers are retained. Only an absent
+        // wire MethodId is injected; no unknown-facts stub or fabricated binding is installed.
+        private sealed class UnknownOneWayMethodChannel(IRpcContractChannel inner, long absentMethod) : IRpcContractChannel
+        {
+            public IRpcRuntimeContext RuntimeContext => inner.RuntimeContext;
+            public ValueTask PrepareAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
+                => inner.PrepareAsync(timeout, cancellationToken);
+            public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(RpcMethodDescriptor method,
+                in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+                SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
+                => inner.InvokeUnaryAsync(method, in request, requestCodec, responseCodec, metadata, cancellationToken);
+            public ValueTask InvokeOneWayAsync<TRequest, TStreams>(RpcMethodDescriptor method,
+                in TRequest request, IRpcCodec<TRequest> requestCodec, in TStreams streams,
+                SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
+                where TStreams : struct, IRpcClientStreamWriter
+                => inner.InvokeOneWayAsync(method with { MethodId = absentMethod }, in request, requestCodec,
+                    in streams, metadata, cancellationToken);
+            public ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
+                in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+                in TStreams streams, SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
+                where TStreams : struct, IRpcClientStreamWriter
+                => inner.InvokeClientStreamingAsync(method, in request, requestCodec, responseCodec,
+                    in streams, metadata, cancellationToken);
+            public IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
+                in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+                SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
+                => inner.InvokeServerStreamingAsync(method, in request, requestCodec, responseCodec, metadata, cancellationToken);
+            public IAsyncEnumerable<TResponse> InvokeDuplexStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
+                in TRequest request, IRpcCodec<TRequest> requestCodec, IRpcCodec<TResponse> responseCodec,
+                in TStreams streams, SharpLinkMetadata? metadata, CancellationToken cancellationToken = default)
+                where TStreams : struct, IRpcClientStreamWriter
+                => inner.InvokeDuplexStreamingAsync(method, in request, requestCodec, responseCodec,
+                    in streams, metadata, cancellationToken);
         }
     }
 }

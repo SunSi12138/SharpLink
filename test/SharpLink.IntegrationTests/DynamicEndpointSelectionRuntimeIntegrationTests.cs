@@ -31,7 +31,10 @@ public sealed partial class DynamicEndpointIntegrationTests
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
         Ensure(counter.Count == 2, "initial dynamic topology should dial exactly two Ready endpoints");
 
-        var service = client.Get<IConnectionBehaviorService>();
+        var clientContractProxy = client.CreateProxy<IConnectionBehaviorService>();
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 1, TimeSpan.FromSeconds(5));
+        var service = clientContractProxy.Service;
         Ensure(await service.GetEndpointIdAsync() == "first", "initial dynamic selector should route to first");
 
         client.UpdateEndpointSelector(new IdSelector("second"));
@@ -67,6 +70,8 @@ public sealed partial class DynamicEndpointIntegrationTests
             "the accepted stream should complete normally while its endpoint drains");
 
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2, TimeSpan.FromSeconds(3));
+        await clientContractProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, clientContractProxy, 2, TimeSpan.FromSeconds(5));
         await WaitUntilAsync(
             async () => await service.GetEndpointIdAsync() == "third",
             TimeSpan.FromSeconds(3));

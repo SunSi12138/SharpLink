@@ -90,7 +90,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
     private ushort _localAbortStreamId;
     private long _localAbortRetentionLeaseState;
     private int _localAbortDeliveryState;
+    // 0 = unclaimed, 1 = buffer/credit cleanup running, 2 = actual callback exited.
     private int _localAbortBufferRetired;
+    private int _localAbortCleanupThreadId;
+    private TaskCompletionSource? _localAbortCleanupCompletion;
 
     private const int InitialCapacity = 16;
     private const int ShrinkThreshold = 256;
@@ -235,6 +238,8 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _localAbortRetentionLeaseState, 0);
         Volatile.Write(ref _localAbortDeliveryState, 0);
         Volatile.Write(ref _localAbortBufferRetired, 0);
+        Volatile.Write(ref _localAbortCleanupThreadId, 0);
+        Volatile.Write(ref _localAbortCleanupCompletion, null);
         Volatile.Write(ref _consumerTerminal, 0);
         Volatile.Write(ref _terminalDispatchStateClosed, 0);
         Volatile.Write(ref _terminalPublication, null);
@@ -539,6 +544,9 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
 
     void IStreamLocalAbortDispatcher.RetireLocalAbortBuffer()
     {
+        // Capture this exact retention before callbacks. A duplicate retirement cannot
+        // release another caller's still-running callback or a later generation's retention.
+        var retentionLeaseState = Interlocked.Exchange(ref _localAbortRetentionLeaseState, 0);
         Exception? failure = null;
         try
         {
@@ -550,7 +558,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         }
         try
         {
-            ReleaseLocalAbortRetention();
+            if (retentionLeaseState != 0) ReleaseDispatch(retentionLeaseState);
         }
         catch (Exception exception)
         {
@@ -563,36 +571,55 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
     private void DrainLocalAbortBuffer()
     {
         if (Volatile.Read(ref _consumerTerminal) != ConsumerTerminalLocalAbort ||
-            Interlocked.Exchange(ref _localAbortBufferRetired, 1) != 0)
-        {
+            Interlocked.CompareExchange(ref _localAbortBufferRetired, 1, 0) != 0)
             return;
-        }
 
-        var spinner = new SpinWait();
-        while ((Volatile.Read(ref _localAbortDeliveryState) & LocalAbortDelivery) != 0)
-            spinner.SpinOnce();
-
-        var discardedBytes = 0;
-        while (TryDequeueCore(out _, out var encodedByteCount))
-            discardedBytes = checked(discardedBytes + encodedByteCount);
-        if (discardedBytes != 0)
+        // Action credit callbacks are synchronous. Reject only same-thread self waits,
+        // including A -> B -> Dispose(A); this is not cross-thread cycle detection.
+        Volatile.Write(ref _localAbortCleanupThreadId, Environment.CurrentManagedThreadId);
+        try
         {
-            _localAbortBytesConsumed?.Invoke(
-                _localAbortRequestId,
-                _localAbortStreamId,
-                discardedBytes);
+            var spinner = new SpinWait();
+            while ((Volatile.Read(ref _localAbortDeliveryState) & LocalAbortDelivery) != 0)
+                spinner.SpinOnce();
+            var discardedBytes = 0;
+            while (TryDequeueCore(out _, out var encodedByteCount))
+                discardedBytes = checked(discardedBytes + encodedByteCount);
+            if (discardedBytes != 0)
+                _localAbortBytesConsumed?.Invoke(_localAbortRequestId, _localAbortStreamId, discardedBytes);
         }
-
-        _localAbortBytesConsumed = null;
-        _localAbortRequestId = 0;
-        _localAbortStreamId = 0;
+        finally
+        {
+            _localAbortBytesConsumed = null;
+            _localAbortRequestId = 0;
+            _localAbortStreamId = 0;
+            Volatile.Write(ref _localAbortCleanupThreadId, 0);
+            TaskCompletionSource? completion;
+            lock (_dispatchStateGate)
+            {
+                completion = _localAbortCleanupCompletion;
+                Volatile.Write(ref _localAbortBufferRetired, 2);
+            }
+            // No field lookup after exit publication: another thread may now finish disposal
+            // and recycle the object. Only this captured original-generation holder is signaled.
+            completion?.TrySetResult();
+        }
     }
 
-    private void ReleaseLocalAbortRetention()
+    private ValueTask WaitForLocalAbortCleanupExitAsync()
     {
-        var retentionLeaseState = Interlocked.Exchange(ref _localAbortRetentionLeaseState, 0);
-        if (retentionLeaseState != 0)
-            ReleaseDispatch(retentionLeaseState);
+        if (Volatile.Read(ref _localAbortBufferRetired) != 1)
+            return ValueTask.CompletedTask;
+        lock (_dispatchStateGate)
+        {
+            // Installation and exit publication share the existing cold dispatch-state gate.
+            // No capture-null / install / publish-exit interval can lose the wakeup.
+            if (Volatile.Read(ref _localAbortBufferRetired) != 1)
+                return ValueTask.CompletedTask;
+            var completion = _localAbortCleanupCompletion ??=
+                new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return new ValueTask(completion.Task);
+        }
     }
 
     private bool TryClaimLocalAbort(
@@ -914,57 +941,9 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
-        var activeLeaseState = Volatile.Read(ref _leaseState);
-        var leaseStatus = GetLeaseStatus(activeLeaseState);
-        if (leaseStatus == LeaseInactive)
-            return ValueTask.CompletedTask;
-
-        if (leaseStatus == LeaseDisposing)
-            return AwaitConcurrentDisposeAsync(activeLeaseState);
-
-        if (leaseStatus != LeaseActive)
-            return ValueTask.CompletedTask;
-
-        var disposingLeaseState = unchecked(activeLeaseState + 1);
-        var observedLeaseState = Interlocked.CompareExchange(
-            ref _leaseState,
-            disposingLeaseState,
-            activeLeaseState);
-        if (observedLeaseState != activeLeaseState)
-        {
-            // A contender from an old lease must never retry against a newly rented generation.
-            return GetLeaseStatus(observedLeaseState) == LeaseDisposing &&
-                IsSameLeaseGeneration(observedLeaseState, activeLeaseState)
-                ? AwaitConcurrentDisposeAsync(observedLeaseState)
-                : ValueTask.CompletedTask;
-        }
-
-        var terminal = Volatile.Read(ref _consumerTerminal);
-        if (terminal == 0 && Interlocked.CompareExchange(
-                ref _consumerTerminal, ConsumerTerminalAbandoned, 0) == 0)
-        {
-            _error ??= new OperationCanceledException(
-                "The response stream consumer stopped before remote completion.");
-            Volatile.Write(ref _completed, true);
-            return MarkDisposedAndFinishDisposeAsync(
-                notifyConsumerAbandoned: true,
-                terminalPublished: false,
-                disposingLeaseState: disposingLeaseState);
-        }
-
-        terminal = Volatile.Read(ref _consumerTerminal);
-        var localReceiveFailure = terminal == ConsumerTerminalLocalReceiveFailure;
-        var terminalPublished = terminal is ConsumerTerminalRemoteComplete or
-            ConsumerTerminalLocalReceiveFailure;
-        if (terminalPublished && Volatile.Read(ref _terminalPublicationState) != 2)
-            return AwaitTerminalPublicationAndFinishDisposeAsync(
-                localReceiveFailure,
-                disposingLeaseState);
-
-        return MarkDisposedAndFinishDisposeAsync(
-            notifyConsumerAbandoned: localReceiveFailure,
-            terminalPublished: terminalPublished,
-            disposingLeaseState: disposingLeaseState);
+        var lease = Volatile.Read(ref _leaseState);
+        var claimed = false;
+        return DisposeLeaseAsync(lease, exactOutcome: false, ref claimed);
     }
 
     private ValueTask AwaitConcurrentDisposeAsync(long disposingLeaseState)
@@ -991,6 +970,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
                     // A delayed old-generation contender can lose the return race and install
                     // after this instance has already been rented again. Remove only the stale
                     // holder it observed, then let the current generation establish its own.
+                    // A new-generation holder may have been published after our earlier read.
+                    // Re-read the generation after observing that exact holder before removing it.
+                    if (Volatile.Read(ref _leaseState) != disposingLeaseState)
+                        return ValueTask.CompletedTask;
                     Interlocked.CompareExchange(ref _disposeCompletion, null, existing);
                     continue;
                 }
@@ -1020,137 +1003,12 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         }
     }
 
-    private ValueTask MarkDisposedAndFinishDisposeAsync(
-        bool notifyConsumerAbandoned,
-        bool terminalPublished,
-        long disposingLeaseState)
-    {
-        Volatile.Write(ref _disposed, true);
-        _current = default;
-
-        var dispatchState = Volatile.Read(ref _dispatchState);
-        if (dispatchState is null)
-        {
-            Signal();
-        }
-        else
-        {
-            lock (_dispatchStateGate)
-            {
-                if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
-                {
-                    if (terminalPublished)
-                    {
-                        // A terminal close is already published. Consumer disposal
-                        // performs the second close only after that close ended.
-                        boundDispatchState.Close();
-                    }
-                    else
-                    {
-                        CloseFirstTerminalDispatchState(boundDispatchState);
-                    }
-                }
-                Signal();
-            }
-        }
-
-        // Stop StreamManager from accepting another frame before observing that the
-        // already-acquired dispatches drained. This makes the final WindowUpdate and
-        // Cancel ordering deterministic without adding synchronization to normal reads.
-        if (dispatchState?.HasActiveDispatches == true)
-        {
-            return AwaitDispatchesAndFinishDisposeAsync(
-                notifyConsumerAbandoned,
-                dispatchState,
-                disposingLeaseState);
-        }
-
-        return FinishDisposeAsync(notifyConsumerAbandoned, dispatchState, disposingLeaseState);
-    }
-
-    // Must be called while _dispatchStateGate is held. It lets a late Bind race the first
-    // terminal publication without turning a state-free terminal path into a locked path.
+    // Must be called while _dispatchStateGate is held. Late Bind still shares the same
+    // first-close claim; this does not add locking to unbound successful disposal.
     private void CloseFirstTerminalDispatchState(IStreamDispatchState dispatchState)
     {
         if (Interlocked.CompareExchange(ref _terminalDispatchStateClosed, 1, 0) == 0)
             dispatchState.Close();
-    }
-
-    private async ValueTask AwaitDispatchesAndFinishDisposeAsync(
-        bool notifyConsumerAbandoned,
-        IStreamDispatchState dispatchState,
-        long disposingLeaseState)
-    {
-        await dispatchState.WaitForDispatchesDrainedAsync().ConfigureAwait(false);
-        await FinishDisposeAsync(
-            notifyConsumerAbandoned,
-            dispatchState,
-            disposingLeaseState).ConfigureAwait(false);
-    }
-
-    private ValueTask FinishDisposeAsync(
-        bool notifyConsumerAbandoned,
-        IStreamDispatchState? dispatchState,
-        long disposingLeaseState)
-    {
-        try
-        {
-            if (Volatile.Read(ref _consumerTerminal) == ConsumerTerminalLocalAbort)
-            {
-                // A local lifetime terminal owns buffered retirement and receive-credit return.
-                // Dispose may race it after dispatch drain, so share the one-shot drain without
-                // releasing the terminal owner's retention lease.
-                DrainLocalAbortBuffer();
-            }
-            else
-            {
-                // A dispatch acquired before Close may have published an item or returned
-                // receive credit after DisposeAsync began. Drain only after it is quiescent.
-                var discardedBytes = 0;
-                while (TryDequeueCore(out _, out var encodedByteCount))
-                    discardedBytes = checked(discardedBytes + encodedByteCount);
-                if (discardedBytes != 0)
-                    NotifyBytesConsumed(discardedBytes);
-            }
-            if (notifyConsumerAbandoned)
-            {
-                if (_consumerAbandonedAsync is { } callback)
-                {
-                    var completion = callback(_consumerAbandonedRequestId, dispatchState);
-                    if (!completion.IsCompletedSuccessfully)
-                        return AwaitConsumerAbandonmentAndFinalizeAsync(
-                            completion,
-                            disposingLeaseState);
-                    completion.GetAwaiter().GetResult();
-                }
-                else
-                {
-                    _consumerAbandoned?.Invoke(_consumerAbandonedRequestId);
-                }
-            }
-        }
-        catch
-        {
-            FinalizeDispose(disposingLeaseState);
-            throw;
-        }
-
-        FinalizeDispose(disposingLeaseState);
-        return ValueTask.CompletedTask;
-    }
-
-    private async ValueTask AwaitConsumerAbandonmentAndFinalizeAsync(
-        ValueTask completion,
-        long disposingLeaseState)
-    {
-        try
-        {
-            await completion.ConfigureAwait(false);
-        }
-        finally
-        {
-            FinalizeDispose(disposingLeaseState);
-        }
     }
 
     private void FinalizeDispose(long disposingLeaseState)
@@ -1164,7 +1022,9 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         // Publish finalization before looking for the lazy concurrent-dispose waiter. A waiter
         // installed immediately afterwards observes this state and completes itself, so the
         // common first-dispose path needs neither a lock nor a completion allocation.
-        Signal();
+        Exception? failure = null;
+        try { Signal(); }
+        catch (Exception error) { failure = error; }
         Volatile.Write(ref _disposeFinalizedLeaseState, disposingLeaseState);
         // Fenced re-read (issue #206): same store->load hazard as the remote-terminal
         // publication pair — a plain Volatile.Read could observe a null completion before the
@@ -1174,7 +1034,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         if (completion?.LeaseState == disposingLeaseState)
             completion.Completion.TrySetResult();
 
-        TryReturnToPool(disposingLeaseState);
+        try { TryReturnToPool(disposingLeaseState); }
+        catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     /// <inheritdoc />
@@ -1449,6 +1312,8 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         Volatile.Write(ref _localAbortRetentionLeaseState, 0);
         Volatile.Write(ref _localAbortDeliveryState, 0);
         Volatile.Write(ref _localAbortBufferRetired, 0);
+        Volatile.Write(ref _localAbortCleanupThreadId, 0);
+        Volatile.Write(ref _localAbortCleanupCompletion, null);
         Volatile.Write(ref _dispatchState, null);
         Volatile.Write(ref _disposeCompletion, null);
         Volatile.Write(ref _terminalPublication, null);
