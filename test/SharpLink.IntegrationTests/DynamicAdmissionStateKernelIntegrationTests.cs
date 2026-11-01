@@ -8,6 +8,8 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
     {
         await using var harness = await Harness.CreateAsync(
             options => options.Global.UseConcurrency(1));
+        var clientTestServiceProxy = harness.Client.CreateProxy<ITestService>();
+        await clientTestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var original = harness.Server.OwnedAdmissionProgramForTests!;
         var replacement = harness.Server.CreateAdmissionProgramForTests(
             options => options.Global.UseConcurrency(2));
@@ -32,7 +34,7 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
                     captured = observed;
             };
 
-            Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+            Ensure(await clientTestServiceProxy.Service.AddAsync(20, 22) == 42,
                 "request must retry to N+1 after its stale N read loses the retire/use CAS race");
             await WaitUntilAsync(() => original.IsReclaimed && replacement.ActiveUses == 0,
                 "stale N publication reclaims and N+1 request releases its use");
@@ -54,6 +56,8 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
     public async Task DisabledCaptureShouldRemainAllocationAndRefcountFree()
     {
         await using var harness = await Harness.CreateAsync();
+        var clientTestServiceProxy = harness.Client.CreateProxy<ITestService>();
+        await clientTestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var kernel = harness.Server.AdmissionStateKernelForTests!;
         Ensure(harness.Server.CaptureAdmissionProgramForTests() is null,
             "disabled capture warmup must return the disabled sentinel without a generation use");
@@ -71,7 +75,7 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
         Ensure(kernel.LiveProgramCount == 0 && kernel.RetiredProgramCount == 0 &&
                kernel.RuleStateCount == 0 && kernel.PartitionStateCount == 0,
             "disabled capture must not create generation refcounts or mutable admission state");
-        Ensure(await harness.Client.Get<ITestService>().AddAsync(20, 22) == 42,
+        Ensure(await clientTestServiceProxy.Service.AddAsync(20, 22) == 42,
             "disabled request path remains functional");
         Ensure(kernel.LiveProgramCount == 0 && kernel.QueuedCalls == 0 &&
                kernel.QueuedBytes == 0 && kernel.ActivePermits == 0,
@@ -85,13 +89,15 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
         TestService.ResetBlockingAdd();
         TestService.ResetNotify();
         await using var harness = await Harness.CreateAsync(ConfigureQueuedOneWay);
+        var clientTestServiceProxy = harness.Client.CreateProxy<ITestService>();
+        await clientTestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var original = harness.Server.OwnedAdmissionProgramForTests!;
         var replacement = harness.Server.CreateAdmissionProgramForTests(options =>
         {
             ConfigureQueuedOneWay(options);
             options.QueueOneWayCalls = false;
         });
-        var service = harness.Client.Get<ITestService>();
+        var service = clientTestServiceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         var hookCount = 0;
 
@@ -145,6 +151,8 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
     {
         await using var harness = await Harness.CreateAsync(
             options => options.Global.UseConcurrency(2));
+        var clientTestServiceProxy = harness.Client.CreateProxy<ITestService>();
+        await clientTestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var original = harness.Server.OwnedAdmissionProgramForTests!;
         var kernel = original.Kernel;
         Task? stopTask = null;
@@ -165,7 +173,7 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
             };
 
             var failure = await CaptureFailureAsync(
-                harness.Client.Get<ITestService>().AddAsync(20, 22).AsTask());
+                clientTestServiceProxy.Service.AddAsync(20, 22).AsTask());
             Ensure(failure is not ObjectDisposedException,
                 "Stop-vs-capture must terminate through controlled shutdown, never disposed limiter state");
             Ensure(stopTask is not null, "deterministic capture hook must start Stop");
@@ -251,6 +259,8 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
             options.MaxQueuedBytes = 64 * 1024;
             options.MaxQueueDelay = TimeSpan.FromSeconds(10);
         });
+        var clientTestServiceProxy = harness.Client.CreateProxy<ITestService>();
+        await clientTestServiceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
         var original = harness.Server.OwnedAdmissionProgramForTests!;
         var replacement = harness.Server.CreateAdmissionProgramForTests(options =>
         {
@@ -260,7 +270,7 @@ public sealed class DynamicAdmissionStateKernelIntegrationTests
             options.MaxQueueDelay = TimeSpan.FromSeconds(10);
         });
         var kernel = original.Kernel;
-        var service = harness.Client.Get<ITestService>();
+        var service = clientTestServiceProxy.Service;
         var active = service.BlockingAddAsync(1, 1, CancellationToken.None).AsTask();
         Task<int>? queued = null;
 

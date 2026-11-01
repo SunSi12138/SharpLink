@@ -45,7 +45,9 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
             var staleCall = Task.Run(async () => await service.GetEndpointIdAsync());
             await selector.Entered.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -56,6 +58,7 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
                       ((SharpLinkClient)client).ReadyConnectionCount == 1,
                 TimeSpan.FromSeconds(4));
 
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
             Ensure(await service.GetEndpointIdAsync() == "replacement",
                 "a call selecting after replacement publication must use the new generation");
 
@@ -105,7 +108,9 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
         try
         {
             await client.ConnectAsync();
-            var service = client.Get<IConnectionBehaviorService>();
+            var serviceProxy = client.CreateProxy<IConnectionBehaviorService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
             await using var stream = service.SlowRangeAsync(3, 80, CancellationToken.None).GetAsyncEnumerator();
             Ensure(await stream.MoveNextAsync() && stream.Current == 0, "first item must be accepted on the original generation");
 
@@ -117,6 +122,7 @@ public sealed class DynamicClusterRuntimeCharacterizationTests
 
             Ensure(firstFactory is { DisposeCount: 0 },
                 "the retiring generation factory must stay owned while its accepted stream is active");
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
             Ensure(await service.GetEndpointIdAsync() == "replacement",
                 "new calls must leave the retiring generation immediately");
             Ensure(await stream.MoveNextAsync() && stream.Current == 1,

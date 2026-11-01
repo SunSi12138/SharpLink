@@ -45,7 +45,9 @@ public class TlsTransportIntegrationTests
                     TimeSpan.FromSeconds(2))
                 .UseAuthenticator(CreateClientAuthenticator("runtime-token")));
         await client.WaitForReadyAsync("runtime").AsTask().WaitAsync(TimeSpan.FromSeconds(4));
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42,
+        var tlsProxy1 = client.CreateProxy<ITlsIntegrationService>();
+        await tlsProxy1.PrepareAsync(TimeSpan.FromSeconds(5));
+        Ensure(await tlsProxy1.Service.AddAsync(20, 22) == 42,
             "runtime Add must preserve TLS and client authentication configuration");
 
         await client.ReplaceClusterAsync(
@@ -58,7 +60,9 @@ public class TlsTransportIntegrationTests
                     TimeSpan.FromSeconds(2))
                 .UseAuthenticator(CreateClientAuthenticator("runtime-token")),
             TimeSpan.FromSeconds(2));
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(19, 23) == 42,
+        var tlsProxy2 = client.CreateProxy<ITlsIntegrationService>();
+        await tlsProxy2.PrepareAsync(TimeSpan.FromSeconds(5));
+        Ensure(await tlsProxy2.Service.AddAsync(19, 23) == 42,
             "runtime Replace must preserve TLS and client authentication configuration");
     }
 
@@ -70,7 +74,9 @@ public class TlsTransportIntegrationTests
         await using var firstServer = await StartServerAsync(port, CreateServerOptions(certificate));
         await using var client = CreateClient(port, CreateClientOptions("localhost"));
         await client.ConnectAsync();
-        await VerifyRpcShapesAsync(client.Get<ITlsIntegrationService>());
+        var tlsProxy3 = client.CreateProxy<ITlsIntegrationService>();
+        await tlsProxy3.PrepareAsync(TimeSpan.FromSeconds(5));
+        await VerifyRpcShapesAsync(tlsProxy3.Service);
 
         await firstServer.StopAsync();
         var concreteClient = (SharpLinkClient)client;
@@ -79,7 +85,9 @@ public class TlsTransportIntegrationTests
         await WaitUntilAsync(() =>
             concreteClient.ReadyConnectionCount != 0 &&
             concreteClient.State == SharpLinkConnectionState.Ready);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(20, 22) == 42, "TLS reconnect RPC");
+        var tlsProxy4 = client.CreateProxy<ITlsIntegrationService>();
+        await tlsProxy4.PrepareAsync(TimeSpan.FromSeconds(5));
+        Ensure(await tlsProxy4.Service.AddAsync(20, 22) == 42, "TLS reconnect RPC");
     }
 
     [Test]
@@ -138,7 +146,9 @@ public class TlsTransportIntegrationTests
                 async () =>
                 {
                     await missingCertificateClient.ConnectAsync();
-                    _ = await missingCertificateClient.Get<ITlsIntegrationService>().AddAsync(1, 1);
+                    var tlsProxy5 = missingCertificateClient.CreateProxy<ITlsIntegrationService>();
+                    await tlsProxy5.PrepareAsync(TimeSpan.FromSeconds(5));
+                    _ = await tlsProxy5.Service.AddAsync(1, 1);
                 },
                 "missing mutual TLS certificate");
         }
@@ -148,7 +158,9 @@ public class TlsTransportIntegrationTests
         clientOptions.ClientCertificates = new X509CertificateCollection { clientCertificate };
         await using var client = CreateClient(server.Port, clientOptions);
         await client.ConnectAsync();
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(2, 3) == 5, "mutual TLS RPC");
+        var tlsProxy6 = client.CreateProxy<ITlsIntegrationService>();
+        await tlsProxy6.PrepareAsync(TimeSpan.FromSeconds(5));
+        Ensure(await tlsProxy6.Service.AddAsync(2, 3) == 5, "mutual TLS RPC");
     }
 
     [Test]
@@ -187,7 +199,9 @@ public class TlsTransportIntegrationTests
             offline: true);
         await using var client = CreateClient(server.Port, clientOptions);
         await client.ConnectAsync();
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(3, 4) == 7,
+        var tlsProxy7 = client.CreateProxy<ITlsIntegrationService>();
+        await tlsProxy7.PrepareAsync(TimeSpan.FromSeconds(5));
+        Ensure(await tlsProxy7.Service.AddAsync(3, 4) == 7,
             "client certificate context mutual TLS RPC");
     }
 
@@ -251,10 +265,16 @@ public class TlsTransportIntegrationTests
 
         await client.ConnectAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 2);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(5, 6) == 11, "static TLS RPC");
+        var tlsProxy8 = client.CreateProxy<ITlsIntegrationService>();
+        await tlsProxy8.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, tlsProxy8, 2, TimeSpan.FromSeconds(5));
+        Ensure(await tlsProxy8.Service.AddAsync(5, 6) == 11, "static TLS RPC");
         await first.StopAsync();
         await WaitUntilAsync(() => ((SharpLinkClient)client).ReadyConnectionCount == 1);
-        Ensure(await client.Get<ITlsIntegrationService>().AddAsync(7, 8) == 15, "remaining static TLS endpoint");
+        var tlsProxy9 = client.CreateProxy<ITlsIntegrationService>();
+        await tlsProxy9.PrepareAsync(TimeSpan.FromSeconds(5));
+        await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, tlsProxy9, 1, TimeSpan.FromSeconds(5));
+        Ensure(await tlsProxy9.Service.AddAsync(7, 8) == 15, "remaining static TLS endpoint");
     }
 
     private static ISharpLinkClient CreateClient(int port, SslClientAuthenticationOptions options)
@@ -446,7 +466,11 @@ public class TlsTransportIntegrationTests
             await action();
             throw new Exception($"assert failed: {name} should fail TLS authentication");
         }
-        catch (Exception exception) when (exception is AuthenticationException or IOException or SharpLinkException)
+        catch (Exception exception) when (exception is AuthenticationException or IOException ||
+            exception is SharpLinkException
+            {
+                Code: SharpLinkErrorCode.AuthenticationRejected or SharpLinkErrorCode.ConnectionClosed
+            } || exception is SharpLinkException { InnerException: AuthenticationException or IOException })
         {
         }
     }

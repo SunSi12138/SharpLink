@@ -61,7 +61,10 @@ public sealed class DynamicCompressionPolicyIntegrationTests
             await connect.WaitAsync(TimeSpan.FromSeconds(5));
 
             var payload = Enumerable.Repeat((byte)0x2a, 8192).ToArray();
-            var response = await client.Get<ICompressionService>().EchoBytesAsync(payload);
+            var serviceProxy = client.CreateProxy<ICompressionService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, serviceProxy, expectedHooks, TimeSpan.FromSeconds(5));
+            var response = await serviceProxy.Service.EchoBytesAsync(payload);
             Ensure(response.SequenceEqual(payload), $"{topology}: response payload");
             Ensure(servers.All(static server => server.Provider.CompressCount == 0),
                 $"{topology}: a preference published in the handshake/Ready gap must disable every newly Ready server response");
@@ -88,7 +91,9 @@ public sealed class DynamicCompressionPolicyIntegrationTests
             .UseRequestCompressionPolicy(EnabledPolicy)
             .Build();
         await client.ConnectAsync();
-        var service = client.Get<ICompressionService>();
+        var serviceProxy = client.CreateProxy<ICompressionService>();
+        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+        var service = serviceProxy.Service;
 
         await AssertAllRpcShapesAsync(service, clientProvider, server.Provider,
             expectRequestCompression: true, expectResponseCompression: true, "initial enabled");
@@ -144,7 +149,10 @@ public sealed class DynamicCompressionPolicyIntegrationTests
 
             await client.SetResponseCompressionPreferenceAsync(false).AsTask().WaitAsync(TimeSpan.FromSeconds(3));
             var payload = Enumerable.Repeat((byte)0x33, 8192).ToArray();
-            var service = client.Get<ICompressionService>();
+            var serviceProxy = client.CreateProxy<ICompressionService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            await ContractBindingTestBarrier.WaitForAllReadyTargetsAsync(client, serviceProxy, 2, TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
             Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload), "first cohort response");
             Ensure((await service.EchoBytesAsync(payload)).SequenceEqual(payload), "second cohort response");
 

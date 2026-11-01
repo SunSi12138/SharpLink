@@ -71,7 +71,7 @@ internal sealed class DirectClientStreamTestGroup : IAsyncDisposable
         }
     }
 
-    internal async Task PublishHeadAsync()
+    internal async Task PublishHeadAsync(long methodId = 1)
     {
         var session = _connection.Session;
         IRpcByteBufferWriter? ownedWriter = session.RentFrameWriter();
@@ -81,7 +81,7 @@ internal sealed class DirectClientStreamTestGroup : IAsyncDisposable
             {
                 var payload = ownedWriter.GetSpan(16);
                 BinaryPrimitives.WriteUInt64LittleEndian(payload, Group.Binding.Token);
-                BinaryPrimitives.WriteInt64LittleEndian(payload[8..], 1);
+                BinaryPrimitives.WriteInt64LittleEndian(payload[8..], methodId);
                 ownedWriter.Advance(16);
             }
             var packet = ownedWriter;

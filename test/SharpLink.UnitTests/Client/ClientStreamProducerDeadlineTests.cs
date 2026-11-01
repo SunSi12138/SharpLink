@@ -13,36 +13,25 @@ public class ClientStreamProducerDeadlineTests
     public async Task ExpiredCallShouldNotReenterProducerBeforeDeadlineTimerRuns()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = ClientInvokerTestHelper.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder => builder.UseTimeProvider(timeProvider));
         await client.ConnectAsync();
 
+        var channel = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         var connection = GetOnlyReadyConnection(client);
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), timeProvider);
         var codec = client.RuntimeContext.Codecs.GetCodec<int>();
-        var operation = connection.PendingCalls.Rent(
-            codec,
-            PendingCallKind.ClientStreaming,
-            deadline,
-            CancellationToken.None,
-            out var requestId,
-            hasResponsePayload: true,
-            responseNullable: false);
-        var producerToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
+        await using var group = new DirectClientStreamTestGroup(connection,
+            DirectClientStreamTestGroup.CapturePreparedBinding(channel, connection), codec, deadline);
         var producer = new MoveNextProbeStream();
 
         // Cross the monotonic boundary without running the pending-call deadline timer. The
         // producer-side re-entry claimant, not timer scheduling, must stop the next MoveNextAsync.
         timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(1));
         var sendFailure = await CaptureSharpLinkExceptionAsync(
-            connection.SendClientStreamCoreAsync(
-                new TestRpcStreamPublication(connection.Session, requestId),
-                0,
-                producer,
-                codec,
-                producerToken));
+            group.SendAsync(producer, codec));
 
         Ensure(sendFailure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "producer re-entry after the frozen deadline must fail as DeadlineExceeded");
@@ -50,42 +39,31 @@ public class ClientStreamProducerDeadlineTests
             "an expired call must not invoke user MoveNextAsync before observing its terminal owner");
 
         var operationFailure = await CaptureSharpLinkExceptionAsync(
-            operation.AsValueTask().AsTask());
+            group.Response);
         Ensure(operationFailure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "the owning pending operation must publish the same deadline terminal");
+        await group.FinishAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        Ensure(connection.CallAdmissionReservationCount == 0 && connection.PendingCalls.Count == 0,
+            "the exact physical group must join before refunding its reservation and pending capacity");
     }
 
     [Test]
     public async Task StreamCodecCapabilityShouldBeReadOncePerClientStream()
     {
-        var transport = new TestClientTransportFactory();
+        var transport = ClientInvokerTestHelper.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(transport);
         await client.ConnectAsync();
 
+        var channel = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         var connection = GetOnlyReadyConnection(client);
-        await using var admission = new DirectProducerAdmission(connection);
         var responseCodec = client.RuntimeContext.Codecs.GetCodec<int>();
-        _ = connection.PendingCalls.Rent(
-            responseCodec,
-            PendingCallKind.ClientStreaming,
-            default,
-            CancellationToken.None,
-            out var requestId,
-            hasResponsePayload: true,
-            responseNullable: false);
-        var producerToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
         var codec = new CountingNonExactSizedIntCodec();
-        var group = new TestRpcStreamPublication(connection.Session, requestId);
-        group.SendHead();
-        admission.Admit(group);
-        await connection.Session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-
-        await admission.Own(connection.SendClientStreamCoreAsync(
-            group,
-            0,
-            Values(1, 2, 3),
-            codec,
-            producerToken));
+        await using var group = new DirectClientStreamTestGroup(connection,
+            DirectClientStreamTestGroup.CapturePreparedBinding(channel, connection), responseCodec);
+        // Method5 is the actually declared ClientStreaming method in the prepared manual domain.
+        await group.PublishHeadAsync(methodId: 5);
+        await group.SendAsync(Values(1, 2, 3), codec);
+        await group.FinishAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         Ensure(codec.CanExactSizeReadCount == 1,
             "the client stream must read CanExactSize once for the whole stream");
@@ -124,21 +102,11 @@ public class ClientStreamProducerDeadlineTests
             maxPendingCalls: 8,
             runtimeContext);
 
-        await using var admission = new DirectProducerAdmission(connection);
         var responseCodec = runtimeContext.Codecs.GetCodec<int>();
-        _ = connection.PendingCalls.Rent(
-            responseCodec,
-            PendingCallKind.ClientStreaming,
-            default,
-            CancellationToken.None,
-            out var requestId,
-            hasResponsePayload: true,
-            responseNullable: false);
-        var producerToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
-        var group = new TestRpcStreamPublication(session, requestId);
-        group.SendHead();
-        admission.Admit(group);
-        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        // Direct PipeSession credit control only: this host-only publication is not remote Bind evidence.
+        await using var group = new DirectClientStreamTestGroup(connection,
+            new TestRpcBindingPublication(session), responseCodec);
+        await group.PublishHeadAsync();
 
         await session.AcquireStreamSendCreditAsync(
             requestId: 72,
@@ -149,12 +117,7 @@ public class ClientStreamProducerDeadlineTests
         var firstSizeAttempt = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var codec = new CountingExactSizedIntCodec(firstSizeAttempt);
-        var send = admission.Own(connection.SendClientStreamCoreAsync(
-            group,
-            0,
-            Values(1, 2, 3),
-            codec,
-            producerToken));
+        var send = group.SendAsync(Values(1, 2, 3), codec);
 
         await firstSizeAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -171,6 +134,7 @@ public class ClientStreamProducerDeadlineTests
 
         session.ApplyWindowUpdate(72, new ProtocolV2WindowUpdate(0, flowWindowBytes));
         await send.WaitAsync(TimeSpan.FromSeconds(10));
+        await group.FinishAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         Ensure(codec.CanExactSizeReadCount == 1,
             "CanExactSize must stay hoisted across every item in the client stream");
@@ -178,51 +142,6 @@ public class ClientStreamProducerDeadlineTests
             "TryGetEncodedSize must still run once for every client stream item");
         Ensure(codec.SerializeSizedCount == itemCount,
             "SerializeSized must run once per item after credit admission");
-    }
-
-    // Direct table fixtures do not pass through endpoint selection. The positive paths
-    // explicitly own that original admission reservation through the physical core/fence;
-    // pending-table completion does not implicitly release it after callback removal.
-    private sealed class DirectProducerAdmission : IAsyncDisposable
-    {
-        private ClientConnection? _connection;
-        private RpcStreamPublication? _group;
-        private Task? _core;
-        internal DirectProducerAdmission(ClientConnection connection)
-        {
-            Ensure(connection.TryReserveExactCallAdmission(), "the direct producer fixture must reserve actual call admission");
-            _connection = connection;
-        }
-        internal void Admit(RpcStreamPublication group) => _group = group;
-        internal Task Own(Task core) { _core = core; return core; }
-        public async ValueTask DisposeAsync()
-        {
-            var connection = _connection;
-            if (connection is null) return;
-            _connection = null;
-            Exception? failure = null;
-            if (_core is { } core)
-            {
-                // A failed intermediate credit assertion must not abandon the real producer.
-                // These fixture enumerators/codecs are finite; pending cancellation releases
-                // its actual credit wait, then we join the SAME Task before any final fence.
-                if (!core.IsCompleted)
-                {
-                    try { connection.PendingCalls.TryComplete(_group!.RequestId, PendingCallCompletionReason.UserCancellation); }
-                    catch (Exception cleanup) { failure = cleanup; }
-                }
-                try { await core.ConfigureAwait(false); }
-                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
-            }
-            if (_group is { } group)
-            {
-                try { await connection.Session.CompleteStreamPublicationAsync(group).ConfigureAwait(false); }
-                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
-            }
-            try { connection.ReleaseCallAdmissionReservation(); }
-            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
-            if (failure is not null) throw failure;
-        }
     }
 
     private static ClientConnection GetOnlyReadyConnection(SharpLinkClient client)

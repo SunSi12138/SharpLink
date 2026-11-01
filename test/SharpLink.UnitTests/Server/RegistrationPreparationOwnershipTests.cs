@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 using SharpLink.Server;
 using SharpLink.UnitTests.Runtime;
