@@ -38,7 +38,7 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
                 "runtime add must accept a steady connection budget exactly at the configured limit");
             Ensure(client.GetClusterState("orders") == SharpLinkConnectionState.Created,
                 "the newly published child must remain Created until the shared connect");
-            Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+            Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
                 "the static contract route must become visible in the same add publication");
         }
         finally
@@ -61,13 +61,13 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
         await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         await client.ReplaceClusterAsync(
             "orders",
             child => child.UseTransport(replacementTransport),
             TimeSpan.FromSeconds(2));
-        var replacementProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var replacementProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(replacementTransport.ConnectCount == 0,
             "Created-state replacement must not connect before the coordinator connects");
@@ -86,18 +86,21 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
         await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(transport))
             .Build();
-        _ = client.Get<IOrdersContract>();
+        _ = client.CreateProxy<IOrdersContract>().Service;
 
         var result = await client.RemoveClusterAsync("orders", TimeSpan.FromSeconds(2));
 
         Ensure(result is { Succeeded: true, ReferencesReleased: true, ForcedStop: false },
             "a Created child should be removed and release its resources within the graceful timeout");
         Ensure(transport.DisposeCount == 1, "remove must dispose the retired child exactly once");
-        await EnsureThrows<InvalidOperationException>(() =>
+        SharpLinkException? missingLocal = null;
+        try { _ = client.CreateProxy<IOrdersContract>(); }
+        catch (SharpLinkException exception) { missingLocal = exception; }
+        Ensure(missingLocal is
         {
-            _ = client.Get<IOrdersContract>();
-            return Task.CompletedTask;
-        });
+            Code: SharpLinkErrorCode.FailedPrecondition,
+            DetailCode: SharpLinkErrorDetails.FailedPrecondition.LocalContractUnavailable
+        }, "an absent local route must fail with the exact LocalContractUnavailable taxonomy");
         await EnsureThrows<ArgumentException>(() =>
         {
             _ = client.GetClusterState("orders");
@@ -114,7 +117,7 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         var replacement = client.ReplaceClusterAsync(
             "orders",
@@ -122,7 +125,7 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
             TimeSpan.FromSeconds(2)).AsTask();
         await replacementTransport.ConnectStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        var proxyWhileCandidateIsConnecting = (OrdersProxy)client.Get<IOrdersContract>();
+        var proxyWhileCandidateIsConnecting = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
         Ensure(!replacement.IsCompleted,
             "replacement must remain pending while the candidate connect is blocked");
         Ensure(ReferenceEquals(oldProxy.Channel, proxyWhileCandidateIsConnecting.Channel),
@@ -132,7 +135,7 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
 
         replacementTransport.ReleaseConnect();
         await replacement.WaitAsync(TimeSpan.FromSeconds(2));
-        var newProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var newProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(replacementTransport.ConnectCount == 1,
             "a Ready coordinator must connect the replacement candidate exactly once");
@@ -154,13 +157,13 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
         await client.ConnectAsync();
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         var result = await client.ReplaceClusterAsync(
             "orders",
             child => child.UseTransport(failingCandidate),
             TimeSpan.FromSeconds(2));
-        var proxyAfterFailure = (OrdersProxy)client.Get<IOrdersContract>();
+        var proxyAfterFailure = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(result is
         {
@@ -321,7 +324,7 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
         await using var client = CreateStaticBuilder()
             .AddCluster("orders", child => child.UseTransport(oldTransport))
             .Build();
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
         await client.ConnectAsync();
 
         var result = await AddClusterWithFixedDiscoveryAsync(
@@ -330,7 +333,7 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
             child => child.UseTransport(rejectedTransport),
             manifests: [Manifest.Instance],
             routes: [conflictingRoute]);
-        var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var retainedProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(result is
         {
@@ -423,11 +426,11 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
                 slot => slot.AllowDynamicContracts = true)
             .Build();
         await AddClusterWithFixedDiscoveryAsync(client, "orders", child => child.UseTransport(originalTransport));
-        var originalProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var originalProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         var result = await AddClusterWithFixedDiscoveryAsync(client,
             "orders", child => child.UseTransport(duplicateTransport));
-        var proxyAfterFailure = (OrdersProxy)client.Get<IOrdersContract>();
+        var proxyAfterFailure = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(result is
         {

@@ -22,10 +22,29 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             => _items.Add((name, value as WeakReference ?? new WeakReference(value, trackResurrection: false)));
     }
 
-    private static object? GetMultiClusterProxy(ISharpLinkMultiClusterClient client, Type contractType)
-        => typeof(ISharpLinkMultiClusterClient).GetMethod(nameof(ISharpLinkMultiClusterClient.Get))!
-            .MakeGenericMethod(contractType)
-            .Invoke(client, null);
+    // Cold route/factory controls must not connect or wait for remote binding.
+    private static object CreateMultiClusterProxy(ISharpLinkMultiClusterClient client, Type contractType)
+    {
+        var handle = typeof(ISharpLinkMultiClusterClient).GetMethod(nameof(ISharpLinkMultiClusterClient.CreateProxy))!
+            .MakeGenericMethod(contractType).Invoke(client, [null])
+            ?? throw new InvalidOperationException("Multi-cluster proxy handle was null.");
+        return handle.GetType().GetProperty(nameof(RpcProxy<IService>.Service))!.GetValue(handle)
+            ?? throw new InvalidOperationException("Multi-cluster service was null.");
+    }
+
+    private static Task<object> CreatePreparedMultiClusterProxyAsync(
+        ISharpLinkMultiClusterClient client, Type contractType)
+        => (Task<object>)typeof(RuntimeAssemblyIntegrationTests).GetMethod(
+            nameof(CreatePreparedMultiClusterProxyCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!
+            .MakeGenericMethod(contractType).Invoke(null, [client])!;
+
+    private static async Task<object> CreatePreparedMultiClusterProxyCoreAsync<TContract>(
+        ISharpLinkMultiClusterClient client) where TContract : IService
+    {
+        var handle = client.CreateProxy<TContract>();
+        await handle.PrepareAsync(TimeSpan.FromSeconds(5));
+        return handle.Service;
+    }
 
     private sealed class PluginBundle : IDisposable
     {

@@ -22,8 +22,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var first = client.RegisterAssembly("plugins", plugin.ContractAssembly);
         Ensure(first.Succeeded, $"multi-cluster plugin registration: {first.Error}");
 
-        var proxy = GetMultiClusterProxy(client, plugin.ContractType);
-        Ensure(proxy is not null, "multi-cluster Get should create the dynamically routed proxy");
+        var proxy = CreateMultiClusterProxy(client, plugin.ContractType);
+        Ensure(proxy is not null, "multi-cluster local factory should create the dynamically routed proxy");
 
         var second = client.RegisterAssembly("other", plugin.ContractAssembly);
         Ensure(!second.Succeeded, "contract-owning assembly must not register in a second cluster");
@@ -122,7 +122,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         plugin.ResetServiceState();
         await RegisterMultiClusterPluginAsync(harness, client, plugin);
 
-        var proxy = GetMultiClusterProxy(client, plugin.ContractType)
+        var proxy = await CreatePreparedMultiClusterProxyAsync(client, plugin.ContractType)
             ?? throw new InvalidOperationException("Multi-cluster proxy factory returned null.");
         var activeCall = InvokeValueTaskAsync<int>(
             proxy, plugin.ContractType, "BlockAsync", CancellationToken.None).AsTask();
@@ -337,7 +337,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         oldPlugin.ResetServiceState();
         await RegisterMultiClusterPluginAsync(harness, client, oldPlugin);
 
-        var proxy = GetMultiClusterProxy(client, oldPlugin.ContractType)
+        var proxy = await CreatePreparedMultiClusterProxyAsync(client, oldPlugin.ContractType)
             ?? throw new InvalidOperationException("Multi-cluster proxy factory returned null.");
         var activeCall = InvokeValueTaskAsync<int>(
             proxy, oldPlugin.ContractType, "BlockAsync", CancellationToken.None).AsTask();
@@ -351,7 +351,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             TimeSpan.FromSeconds(2),
             cancellation.Token).AsTask();
 
-        var newProxy = GetMultiClusterProxy(client, newPlugin.ContractType)
+        var newProxy = await CreatePreparedMultiClusterProxyAsync(client, newPlugin.ContractType)
             ?? throw new InvalidOperationException("Multi-cluster replacement proxy factory returned null.");
         Ensure(await InvokeValueTaskAsync<int>(
                 newProxy, newPlugin.ContractType, "UnaryAsync", 1, CancellationToken.None) == 2,

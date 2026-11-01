@@ -22,8 +22,8 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         Ensure(client.State == SharpLinkConnectionState.Ready && transport.ConnectCount == 1,
             "remote contract readiness must join initial connectivity without requiring a separate Connect");
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "the observed exact handshake identity must permit synchronous contract acquisition");
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
+            "the routed local factory remains available after the separate exact locator observation");
     }
 
     [Test]
@@ -42,7 +42,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
     }
 
     [Test]
-    public async Task MissingReadyContractShouldWaitForLaterManifestBeforeGet()
+    public async Task MissingReadyContractShouldWaitForLaterLocatorPublication()
     {
         var transport = new TestClientTransportFactory(contractManifest: []);
         await using var client = CreateBuilder().UseTransport(transport).Build();
@@ -50,11 +50,11 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         var waiter = client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash).AsTask();
         Ensure(!waiter.IsCompleted, "Ready transport alone must not satisfy missing remote identity");
-        await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, MatchingHash)]);
+        await PublishAndFenceAsync(transport.Connection, 2, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
 
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "later registration visibility must permit Get on the original data connection");
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
+            "the local factory remains selected after later locator visibility on the original connection");
         Ensure(transport.ConnectCount == 1, "manifest propagation must preserve the existing connection");
     }
 
@@ -82,7 +82,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
         await client.ConnectAsync();
         var waiter = client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash).AsTask();
 
-        await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, WrongHash)]);
+        await PublishAndFenceAsync(transport.Connection, 2, [new(OrdersContractId, WrongHash)]);
         var failure = await CaptureExceptionAsync(waiter.WaitAsync(RaceCoordinationTimeout));
 
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
@@ -106,7 +106,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
             "caller cancellation must retain its token and cancel only that observation");
         Ensure(!surviving.IsCompleted && client.State == SharpLinkConnectionState.Ready,
             "a peer observation and Ready connection must survive cancellation");
-        await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, MatchingHash)]);
+        await PublishAndFenceAsync(transport.Connection, 2, [new(OrdersContractId, MatchingHash)]);
         await surviving.WaitAsync(RaceCoordinationTimeout);
     }
 
@@ -155,10 +155,10 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         var waiter = client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash).AsTask();
         Ensure(!waiter.IsCompleted, "one matching endpoint must not hide another Ready endpoint's missing identity");
-        await PublishAndFenceAsync(missing.Connection, 1, [new(OrdersContractId, MatchingHash)]);
+        await PublishAndFenceAsync(missing.Connection, 2, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
-            "all Ready endpoint identities must agree before synchronous acquisition is accepted");
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
+            "local factory selection remains available independently of the all-endpoint locator observation");
     }
 
     [Test]
@@ -180,19 +180,23 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
     }
 
     [Test]
-    public async Task ACompletedObservationShouldNotPromiseLaterGetSurvivesUnregister()
+    public async Task ACompletedObservationShouldNotLeaseLaterLocatorVisibility()
     {
         var transport = new TestClientTransportFactory();
         await using var client = CreateBuilder().UseTransport(transport).Build();
         await client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash);
-        await PublishAndFenceAsync(transport.Connection, 1, []);
+        await PublishAndFenceAsync(transport.Connection, 2, []);
 
-        Exception? failure = null;
-        try { _ = client.Get<IOrdersContract>(); }
-        catch (SharpLinkException exception) { failure = exception; }
-
-        Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
-            "readiness is an observation rather than an identity lease; later Get must still reject unregister");
+        var local = client.CreateProxy<IOrdersContract>();
+        using var cancellation = new CancellationTokenSource();
+        var later = client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash, cancellation.Token).AsTask();
+        Ensure(!later.IsCompleted && local.Service is OrdersProxy,
+            "the completed observation must not lease absent remote identity or revoke the local factory");
+        cancellation.Cancel();
+        var failure = await CaptureExceptionAsync(later.WaitAsync(RaceCoordinationTimeout));
+        Ensure(failure is OperationCanceledException canceled && canceled.CancellationToken == cancellation.Token &&
+               client.State == SharpLinkConnectionState.Ready && transport.ConnectCount == 1,
+            "the later missing-locator wait must remain caller-cancelable without changing the connection");
     }
 
     [Test]
@@ -211,8 +215,8 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
         await waiter.WaitAsync(RaceCoordinationTimeout);
 
         Ensure(transport.ConnectCount == 2 && client.State == SharpLinkConnectionState.Ready,
-            "the same observation must survive reconnect and accept the new session's generation zero manifest");
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+            "the same observation must survive reconnect and accept the new session's generation one manifest");
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
             "retired session generation nine must not suppress the new session's matching initial manifest");
     }
 
@@ -247,10 +251,10 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         var waiter = client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash, WrongHash).AsTask();
         Ensure(!waiter.IsCompleted, "the explicitly identified previous hash represents pending replacement propagation");
-        await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, MatchingHash)]);
+        await PublishAndFenceAsync(transport.Connection, 2, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
 
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy && transport.ConnectCount == 1,
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy && transport.ConnectCount == 1,
             "the target hash must unblock replacement observation on the original connection");
     }
 
@@ -262,7 +266,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
         await client.ConnectAsync();
         var waiter = client.WaitForRemoteContractAsync(OrdersContractId, MatchingHash, WrongHash).AsTask();
 
-        await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, new RpcHash128(3, 4))]);
+        await PublishAndFenceAsync(transport.Connection, 2, [new(OrdersContractId, new RpcHash128(3, 4))]);
         var failure = await CaptureExceptionAsync(waiter.WaitAsync(RaceCoordinationTimeout));
 
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
@@ -298,7 +302,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
         Ensure(failure is OperationCanceledException canceledException &&
                canceledException.CancellationToken == cancellation.Token && !surviving.IsCompleted,
             "replacement cancellation must remain private to its caller rather than release or cancel peer observations");
-        await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, MatchingHash)]);
+        await PublishAndFenceAsync(transport.Connection, 2, [new(OrdersContractId, MatchingHash)]);
         await surviving.WaitAsync(RaceCoordinationTimeout);
     }
 
@@ -338,9 +342,9 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         var waiter = client.WaitForRemoteContractAsync("orders", OrdersContractId, MatchingHash, WrongHash).AsTask();
         Ensure(!waiter.IsCompleted, "the selected child's known previous identity must remain pending");
-        await PublishAndFenceAsync(transport.Connection, 1, [new(OrdersContractId, MatchingHash)]);
+        await PublishAndFenceAsync(transport.Connection, 2, [new(OrdersContractId, MatchingHash)]);
         await waiter.WaitAsync(RaceCoordinationTimeout);
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
             "the scoped replacement barrier must preserve existing route and acquisition semantics");
     }
 
@@ -361,7 +365,7 @@ public sealed class SharpLinkClientRemoteContractReadinessTests : SharpLinkMulti
 
         Ensure(client.GetClusterState("unrelated") != SharpLinkConnectionState.Ready,
             "a selected cluster's exact identity must not depend on unrelated cluster connectivity");
-        Ensure(client.Get<IOrdersContract>() is OrdersProxy,
+        Ensure(client.CreateProxy<IOrdersContract>().Service is OrdersProxy,
             "the unchanged route must acquire the matching selected child's proxy");
     }
 

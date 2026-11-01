@@ -24,11 +24,14 @@ public sealed class SharpLinkMultiClusterValidationTests : SharpLinkMultiCluster
             .AddCluster("orders", child => child.UseTransport(new TestClientTransportFactory()))
             .Build();
 
-        await EnsureThrows<InvalidOperationException>(() =>
+        SharpLinkException? missingLocal = null;
+        try { _ = client.CreateProxy<IUnroutedContract>(); }
+        catch (SharpLinkException exception) { missingLocal = exception; }
+        Ensure(missingLocal is
         {
-            _ = client.Get<IUnroutedContract>();
-            return Task.CompletedTask;
-        });
+            Code: SharpLinkErrorCode.FailedPrecondition,
+            DetailCode: SharpLinkErrorDetails.FailedPrecondition.LocalContractUnavailable
+        }, "an absent local route must fail with the exact LocalContractUnavailable taxonomy");
     }
 
     [Test]

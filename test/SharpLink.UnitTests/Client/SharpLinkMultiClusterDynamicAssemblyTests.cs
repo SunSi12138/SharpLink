@@ -147,13 +147,13 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
             var dynamicAssembly = typeof(RollbackMarker).Assembly;
             var registration = client.RegisterAssembly("orders", dynamicAssembly);
             Ensure(registration.Succeeded, $"dynamic setup registration must succeed: {registration.Error}");
-            var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+            var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
             await client.ReplaceClusterAsync(
                 "orders",
                 child => child.UseTransport(replacementTransport),
                 TimeSpan.FromSeconds(2));
-            var replacementProxy = (OrdersProxy)client.Get<IOrdersContract>();
+            var replacementProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
             var duplicate = client.RegisterAssembly("orders", dynamicAssembly);
             var coordinator = (SharpLinkMultiClusterClient)client;
             var snapshot = (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
@@ -248,24 +248,17 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
             .AddCluster("orders", child => child.UseTransport(oldTransport),
                 slot => slot.AllowDynamicContracts = true)
             .Build();
-        var coordinator = (SharpLinkMultiClusterClient)client;
-        var snapshot = (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
-            .GetField("_snapshot", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(coordinator)!;
-        var registrations = (List<DynamicAssemblyRegistration>)typeof(SharpLinkMultiClusterClient)
-            .GetField("_dynamicRegistrations", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(coordinator)!;
-        registrations.Add(new DynamicAssemblyRegistration(
-            snapshot.Clusters["orders"],
-            typeof(string).Assembly,
-            new ThrowingCodecManifest()));
-        var oldProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var migration = new MigrationCodecState();
+        AddPreparedMigrationFixture((SharpLinkMultiClusterClient)client, migration);
+        Ensure(migration.ScopeCreateCount == 0 && migration.FactoryCreateCount == 0,
+            "capturing owned metadata must not materialize the candidate child's Codec");
+        var oldProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         var failure = await CaptureExceptionAsync(client.ReplaceClusterAsync(
             "orders",
             child => child.UseTransport(rejectedTransport),
             TimeSpan.Zero).AsTask());
-        var retainedProxy = (OrdersProxy)client.Get<IOrdersContract>();
+        var retainedProxy = (OrdersProxy)client.CreateProxy<IOrdersContract>().Service;
 
         Ensure(failure is InvalidOperationException exception &&
                exception.Message.Contains("migration", StringComparison.OrdinalIgnoreCase),
@@ -274,5 +267,117 @@ public sealed class SharpLinkMultiClusterDynamicAssemblyTests : SharpLinkMultiCl
             "dynamic migration rollback must preserve the old public route");
         Ensure(oldTransport.DisposeCount == 0 && rejectedTransport.DisposeCount == 1,
             "migration rollback must retain the old child and dispose only the candidate");
+        Ensure(failure!.Message.Contains(MigrationCodecState.FailureMarker, StringComparison.Ordinal),
+            "migration failure must retain the actual eager Codec factory failure marker");
+        Ensure(migration.ScopeCreateCount == 1 && migration.FactoryCreateCount == 1 &&
+               migration.ScopeDisposeCount == 1,
+            "the real candidate must create one adapter scope, attempt its Codec factory once, and release that scope once");
     }
+
+    // This is a metadata-only coordinator catalog fixture, as in the original test.
+    // The replacement child performs the real owned Codec preparation that must fail.
+    private static void AddPreparedMigrationFixture(
+        SharpLinkMultiClusterClient coordinator, MigrationCodecState state)
+    {
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var domain = (ColdMetadataDomain)typeof(SharpLinkMultiClusterClient)
+            .GetField("_metadataDomain", flags)!.GetValue(coordinator)!;
+        var gate = (Lock)typeof(SharpLinkMultiClusterClient)
+            .GetField("_gate", flags)!.GetValue(coordinator)!;
+        using var preparation = domain.BeginPreparation();
+        var manifest = PreparedGeneratedManifest.Capture(new MigrationCodecManifest(state), preparation);
+        SharpLinkGeneratedManifestStructureValidator.ValidatePrepared(manifest);
+        using var snapshot = (MultiClusterSnapshot)typeof(SharpLinkMultiClusterClient)
+            .GetMethod("AcquireSnapshot", flags)!.Invoke(coordinator, null)!;
+        var registration = new DynamicAssemblyRegistration(
+            snapshot.Clusters["orders"], manifest.OwnerAssembly, manifest);
+        try
+        {
+            lock (gate)
+            {
+                Ensure(ReferenceEquals(snapshot, typeof(SharpLinkMultiClusterClient)
+                    .GetField("_snapshot", flags)!.GetValue(coordinator)),
+                    "fixture insertion must still target the exact owned coordinator snapshot");
+                var registrations = (List<DynamicAssemblyRegistration>)typeof(SharpLinkMultiClusterClient)
+                    .GetField("_dynamicRegistrations", flags)!.GetValue(coordinator)!;
+                registrations.Add(registration);
+            }
+        }
+        catch (Exception primary)
+        {
+            try { registration.Dispose(); }
+            catch (Exception cleanup) { throw new AggregateException(primary, cleanup); }
+            throw;
+        }
+        // The catalog entry now owns its Retain lease; preparation admission and the
+        // temporary snapshot are released before replacement or coordinator shutdown.
+        preparation.Complete();
+    }
+
+    private sealed class MigrationCodecState
+    {
+        internal const string FailureMarker = "controlled eager migration Codec factory failure";
+        internal int ScopeCreateCount;
+        internal int FactoryCreateCount;
+        internal int ScopeDisposeCount;
+        internal MigrationCodecScope? Scope;
+        internal readonly InvalidOperationException Failure = new(FailureMarker);
+    }
+
+    private sealed class MigrationCodecManifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        private readonly IRpcGeneratedCodecFactory[] _codecs;
+        internal MigrationCodecManifest(MigrationCodecState state)
+            => _codecs = [new MigrationCodecFactory(state, new MigrationCodecAdapter(state))];
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "migration-codec-fixture";
+        public Assembly OwnerAssembly => typeof(RollbackMarker).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x6d69677261746531UL, 0x636f6465632d7631UL);
+        public string CompileTimeDescriptor => "owned-codec-only-migration-failure/v1";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } = [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; } = [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => _codecs;
+        public IReadOnlyList<string> Dependencies { get; } = [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; } = [];
+        public IReadOnlyList<string> ContractDependencies { get; } = [];
+    }
+
+    private sealed class MigrationCodecFactory(MigrationCodecState state, MigrationCodecAdapter adapter)
+        : IRpcGeneratedCodecFactory
+    {
+        public Type TargetType => typeof(RollbackMarker);
+        public RpcHash128 CodecHash => new(0x6d69677261746532UL, 0x636f6465632d7631UL);
+        public string? AdapterId => adapter.AdapterId;
+        public IRpcCodecAdapter? Adapter => adapter;
+        public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+        {
+            ArgumentNullException.ThrowIfNull(provider);
+            Ensure(adapterScope is MigrationCodecScope && ReferenceEquals(adapterScope, state.Scope),
+                "the actual candidate provider must pass this manifest's created adapter scope");
+            Interlocked.Increment(ref state.FactoryCreateCount);
+            throw state.Failure;
+        }
+        public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<RollbackMarker>;
+    }
+
+    private sealed class MigrationCodecAdapter(MigrationCodecState state) : IRpcCodecAdapter
+    {
+        public string AdapterId => "owned-migration-failure/v1";
+        public IRpcCodecAdapterScope CreateScope()
+        {
+            Interlocked.Increment(ref state.ScopeCreateCount);
+            return state.Scope = new MigrationCodecScope(state);
+        }
+    }
+
+    private sealed class MigrationCodecScope(MigrationCodecState state) : IRpcCodecAdapterScope
+    {
+        public IRpcCodec<T> CreateCodec<
+            [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(
+                System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All)] T>()
+            => throw new InvalidOperationException("The selected factory fails before requesting a scope Codec.");
+        public void Dispose() => Interlocked.Increment(ref state.ScopeDisposeCount);
+    }
+
 }

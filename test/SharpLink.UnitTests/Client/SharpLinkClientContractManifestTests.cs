@@ -9,16 +9,18 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
     private const long OrdersContractId = 8_101;
 
     [Test]
-    public async Task EqualRpcAssemblyHashShouldAllowContractAcquisition()
+    public async Task EqualRpcAssemblyHashShouldBeObservableWithoutAnRpcPayload()
     {
         var transport = CreateTransport(Manifest.Instance.RpcAssemblyHash);
         await using var client = CreateClient(transport);
 
         await client.ConnectAsync();
-        var proxy = client.Get<IOrdersContract>();
+        var proxy = client.CreateProxy<IOrdersContract>();
+        await client.WaitForRemoteContractAsync(OrdersContractId, Manifest.Instance.RpcAssemblyHash)
+            .AsTask().WaitAsync(RaceCoordinationTimeout);
 
-        Ensure(proxy is OrdersProxy,
-            "an exactly matching remote RpcAssemblyHash must allow contract acquisition");
+        Ensure(proxy.Service is OrdersProxy,
+            "the selected local factory must create its service independently of the matching locator observation");
         Ensure(!await transport.Connection.TryWaitForSentPacket(
                 ProtocolV2FrameType.Request,
                 TimeSpan.FromMilliseconds(50)),
@@ -26,49 +28,51 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
     }
 
     [Test]
-    public async Task MismatchedRpcAssemblyHashShouldRejectGetBeforeAnyRpcPayload()
+    public async Task MismatchedRpcAssemblyHashShouldRejectLocatorObservationBeforeAnyRpcPayload()
     {
         var remoteHash = new RpcHash128(0x0102030405060708UL, 0x1112131415161718UL);
         var transport = CreateTransport(remoteHash);
         await using var client = CreateClient(transport);
         await client.ConnectAsync();
 
-        var failure = CaptureGetFailure(client);
+        var local = client.CreateProxy<IOrdersContract>();
+        Ensure(local.Service is OrdersProxy, "a wrong remote locator must not invalidate the local factory");
+        var failure = await CaptureLocatorFailureAsync(client);
 
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
-            "a mismatched RpcAssemblyHash must fail contract acquisition with FailedPrecondition");
-        var exception = (SharpLinkException)failure;
-        Ensure(exception.Message.Contains(typeof(IOrdersContract).FullName!, StringComparison.Ordinal) &&
-               exception.Message.Contains(OrdersContractId.ToString(), StringComparison.Ordinal) &&
+            "a mismatched RpcAssemblyHash must fail locator observation with FailedPrecondition");
+        var exception = (SharpLinkException)failure!;
+        Ensure(exception.Message.Contains(OrdersContractId.ToString(), StringComparison.Ordinal) &&
                exception.Message.Contains(Manifest.Instance.RpcAssemblyHash.ToString(), StringComparison.Ordinal) &&
                exception.Message.Contains(remoteHash.ToString(), StringComparison.Ordinal),
-            "the mismatch diagnostic must identify the contract and both exact hashes");
+            "the locator mismatch diagnostic must identify the contract ID and both exact hashes");
         Ensure(!await transport.Connection.TryWaitForSentPacket(
                 ProtocolV2FrameType.Request,
                 TimeSpan.FromMilliseconds(50)),
-            "a bind mismatch must be rejected before any RPC Request payload is emitted");
+            "a locator mismatch must be reported without emitting any RPC Request payload");
     }
 
     [Test]
-    public async Task PreconnectedProxyShouldBeValidatedBeforeSessionBecomesCallable()
+    public async Task PreconnectedLocalProxyShouldNotMakeLocatorCompatibilityATransportReadinessCondition()
     {
         var remoteHash = new RpcHash128(0x2122232425262728UL, 0x3132333435363738UL);
         var transport = CreateTransport(remoteHash);
         await using var client = CreateClient(transport);
-        var preconnected = client.Get<IOrdersContract>();
+        var preconnected = client.CreateProxy<IOrdersContract>();
 
-        var failure = await CaptureExceptionAsync(client.ConnectAsync().AsTask());
+        await client.ConnectAsync();
+        var failure = await CaptureLocatorFailureAsync(client);
 
-        Ensure(preconnected is OrdersProxy,
-            "Get<T>() must retain the historical ability to create a proxy before ConnectAsync");
+        Ensure(preconnected.Service is OrdersProxy,
+            "the same locally created handle must keep its service across transport startup");
         Ensure(failure is SharpLinkException { Code: SharpLinkErrorCode.FailedPrecondition },
-            "the initial remote manifest must reject an already-acquired incompatible proxy before readiness publication");
-        Ensure(client.State != SharpLinkConnectionState.Ready,
-            "an incompatible pre-acquired proxy must prevent the connection from becoming Ready");
+            "the incompatible remote identity must fail explicit locator observation");
+        Ensure(client.State == SharpLinkConnectionState.Ready,
+            "local proxy construction and locator incompatibility must not redefine transport readiness");
         Ensure(!await transport.Connection.TryWaitForSentPacket(
                 ProtocolV2FrameType.Request,
                 TimeSpan.FromMilliseconds(50)),
-            "pre-connect compatibility rejection must occur before any RPC Request payload");
+            "observing incompatible identity must not emit any RPC Request payload");
     }
 
     [Test]
@@ -94,19 +98,20 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
     }
 
     [Test]
-    public async Task ManifestRefreshShouldRevalidateFutureGetWithoutRebindingHeldProxy()
+    public async Task ManifestRefreshShouldAffectFutureLocatorObservationsWithoutReplacingHeldService()
     {
         var transport = CreateTransport(Manifest.Instance.RpcAssemblyHash);
         await using var client = CreateClient(transport);
         await client.ConnectAsync();
-        var heldProxy = client.Get<IOrdersContract>();
+        var heldProxy = client.CreateProxy<IOrdersContract>();
+        var heldService = heldProxy.Service;
         var replacementHash = new RpcHash128(0x4142434445464748UL, 0x5152535455565758UL);
 
         using var payload = new PooledByteBufferWriter();
         ProtocolV2ContractManifestCodec.Write(
             payload,
             new ProtocolV2ContractManifest(
-                1,
+                2,
                 [new KeyValuePair<long, RpcHash128>(OrdersContractId, replacementHash)]),
             new SharpLinkProtocolOptions());
         await transport.Connection.InjectFrameAsync(
@@ -121,7 +126,7 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
         {
             try
             {
-                _ = client.Get<IOrdersContract>();
+                await client.WaitForRemoteContractAsync(OrdersContractId, Manifest.Instance.RpcAssemblyHash, timeout.Token);
             }
             catch (SharpLinkException exception)
             {
@@ -131,11 +136,13 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
             await Task.Delay(10, timeout.Token).ConfigureAwait(false);
         }
 
-        Ensure(heldProxy is OrdersProxy,
-            "a manifest refresh must not replace a proxy reference already returned to user code");
+        var future = client.CreateProxy<IOrdersContract>();
+        Ensure(heldService is OrdersProxy && ReferenceEquals(heldService, heldProxy.Service) &&
+               future.Service is OrdersProxy,
+            "a locator refresh must neither replace the held service nor reject future local factory construction");
         Ensure(mismatch is { Code: SharpLinkErrorCode.FailedPrecondition } &&
                mismatch.Message.Contains(replacementHash.ToString(), StringComparison.Ordinal),
-            "future Get<T>() must validate against the latest remote manifest generation");
+            "future locator observations must validate the latest remote manifest generation");
     }
 
     private static TestClientTransportFactory CreateTransport(RpcHash128 remoteHash)
@@ -152,18 +159,10 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
             .UseTransport(transport)
             .Build();
 
-    private static Exception CaptureGetFailure(ISharpLinkClient client)
-    {
-        try
-        {
-            _ = client.Get<IOrdersContract>();
-            return new Exception("expected RpcAssemblyHash mismatch");
-        }
-        catch (Exception exception)
-        {
-            return exception;
-        }
-    }
+    private static Task<Exception?> CaptureLocatorFailureAsync(ISharpLinkClient client)
+        => CaptureExceptionAsync(client.WaitForRemoteContractAsync(
+                OrdersContractId, Manifest.Instance.RpcAssemblyHash)
+            .AsTask().WaitAsync(RaceCoordinationTimeout));
 
     private sealed class OversizedManifestHandshakeTransportFactory : IClientTransportFactory
     {
@@ -177,10 +176,12 @@ public sealed class SharpLinkClientContractManifestTests : SharpLinkMultiCluster
                 responsePayload,
                 new ProtocolV2HandshakeResponse(
                     ProtocolV2Constants.MinorVersion,
-                    ProtocolV2Capabilities.ContractManifest,
+                    ProtocolV2Negotiator.MandatoryCapabilities,
                     2048,
                     1024 * 1024,
-                    16 * 1024 * 1024));
+                    16 * 1024 * 1024,
+                    null,
+                    _connection.Authority));
             await _connection.InjectFrameAsync(
                 ProtocolV2FrameType.HandshakeResponse,
                 ProtocolV2FrameFlags.None,

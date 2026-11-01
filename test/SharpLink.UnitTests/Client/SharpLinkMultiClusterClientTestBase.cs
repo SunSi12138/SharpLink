@@ -243,16 +243,47 @@ public abstract class SharpLinkMultiClusterClientTestBase
 
     protected sealed class ThrowingCodecManifest : ISharpLinkGeneratedAssemblyManifest
     {
+        private readonly IRpcGeneratedCodecFactory[] _codecs;
+        private int _codecsReadCount;
+        private int _factoryCreateCount;
+        internal ThrowingCodecManifest() => _codecs = [new UnrelatedCodecFactory(this)];
+        internal int CodecsReadCount => Volatile.Read(ref _codecsReadCount);
+        internal int FactoryCreateCount => Volatile.Read(ref _factoryCreateCount);
         public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
         public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
         public string GeneratorVersion => "test";
-        public Assembly OwnerAssembly => typeof(string).Assembly;
-        public string CompileTimeDescriptor => "unrelated-manifest";
-        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts => [];
-        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public Assembly OwnerAssembly => typeof(SharpLink.RollbackPlugin.RollbackMarker).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(0x756e72656c617465UL, 0x642d636f64656331UL);
+        public string CompileTimeDescriptor => "unrelated-codec-materialization/v1";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; } = [];
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; } = [];
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs
-            => throw new InvalidOperationException("Unrelated manifests must not be read by a filtered child.");
-        public IReadOnlyList<string> Dependencies => [];
+        {
+            get
+            {
+                Interlocked.Increment(ref _codecsReadCount);
+                return _codecs;
+            }
+        }
+        public IReadOnlyList<string> Dependencies { get; } = [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> ContractCodecs { get; } = [];
+        public IReadOnlyList<string> ContractDependencies { get; } = [];
+
+        private sealed class UnrelatedCodecFactory(ThrowingCodecManifest owner) : IRpcGeneratedCodecFactory
+        {
+            public Type TargetType => typeof(SharpLink.RollbackPlugin.RollbackMarker);
+            public RpcHash128 CodecHash => new(0x756e72656c617465UL, 0x642d636f64656332UL);
+            public string? AdapterId => null;
+            public IRpcCodecAdapter? Adapter => null;
+            public IRpcCodec Create(IRpcCodecProvider provider, IRpcCodecAdapterScope? adapterScope)
+            {
+                ArgumentNullException.ThrowIfNull(provider);
+                Ensure(adapterScope is null, "the native unrelated Codec must not receive an adapter scope");
+                Interlocked.Increment(ref owner._factoryCreateCount);
+                throw new InvalidOperationException("Unrelated Codec must not be materialized by the routed child.");
+            }
+            public bool IsCompatibleCodec(IRpcCodec codec) => codec is IRpcCodec<SharpLink.RollbackPlugin.RollbackMarker>;
+        }
     }
 
     protected sealed class UnconfiguredRouteManifest : ISharpLinkGeneratedClusterRouteManifest
