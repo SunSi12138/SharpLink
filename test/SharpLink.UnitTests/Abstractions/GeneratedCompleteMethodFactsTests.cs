@@ -50,13 +50,14 @@ public class GeneratedCompleteMethodFactsTests
     private static (SharpLinkGeneratedContractDescriptor Contract, SharpLinkRuntimeContext Context, IRpcStub Stub)
         CreateStub(Type type)
     {
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(type.Assembly, out var manifest);
-        if (!result.Succeeded || manifest is null)
-            throw new InvalidOperationException($"Generated facts fixture failed to load: {result.Error}");
-        var contract = manifest.Contracts.Single(item => item.ContractType == type);
         var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        using var preparation = context.Domain.BeginPreparation();
         try
         {
+            var result = SharpLinkAssemblyManifestLoader.TryLoad(type.Assembly, preparation, out var manifest);
+            if (!result.Succeeded || manifest is null)
+                throw new InvalidOperationException($"Generated facts fixture failed to load: {result.Error}");
+            var contract = manifest.Contracts.Single(item => item.ContractType == type);
             var registration = context.PrepareGeneratedManifest(manifest);
             context.AdoptGeneratedManifest(registration);
             var provider = RpcGeneratedCodecResolver.GetProvider(registration);
@@ -67,6 +68,6 @@ public class GeneratedCompleteMethodFactsTests
                 throw new InvalidOperationException("Generated instances must share one cold fact object per method.");
             return (contract, context, first);
         }
-        catch { context.Dispose(); throw; }
+        catch { preparation.Dispose(); context.Dispose(); throw; }
     }
 }

@@ -5,25 +5,21 @@ internal sealed partial class SharpLinkServer
     private int _bindingInvalidationDirty;
     private int _bindingInvalidationScheduled;
 
-    // Call after releasing the registry gate. One coalesced server worker owns all
-    // notification work; it never allocates a task/tombstone for each retired token.
+    // Retirement work never detaches a facts owner. It requests one lossless intake
+    // safe point per Session and wakes an idle reader without completing its buffer.
     private void ScheduleBindingInvalidations()
     {
-        if (CurrentState != ServerState.Running)
-            return; // Shutdown's admission/Session cut is authoritative; notifications are best effort.
+        foreach (var connection in _connectionRegistry.SnapshotOwned())
+            connection.RequestBindingMaintenance();
+    }
+
+    private void ScheduleBindingInvalidationNotifications()
+    {
         Volatile.Write(ref _bindingInvalidationDirty, 1);
-        if (Interlocked.CompareExchange(ref _bindingInvalidationScheduled, 1, 0) != 0)
-            return;
+        if (Interlocked.CompareExchange(ref _bindingInvalidationScheduled, 1, 0) != 0) return;
         var task = PublishBindingInvalidationsAsync();
-        try
-        {
-            TrackFrameworkTask(task, "BindingInvalidation");
-        }
-        catch (InvalidOperationException) when (CurrentState != ServerState.Running)
-        {
-            // The supervisor observes a rejected task. A concurrent stop may already
-            // have completed its drain; the worker below then drops remaining notifications.
-        }
+        try { TrackFrameworkTask(task, "BindingInvalidation"); }
+        catch (InvalidOperationException) when (CurrentState != ServerState.Running) { }
     }
 
     private async Task PublishBindingInvalidationsAsync()
@@ -31,25 +27,13 @@ internal sealed partial class SharpLinkServer
         await Task.Yield();
         try
         {
-            var tokens = new ulong[256];
             do
             {
                 Interlocked.Exchange(ref _bindingInvalidationDirty, 0);
-                if (CurrentState != ServerState.Running)
-                    return;
                 foreach (var connection in _connectionRegistry.SnapshotOwned())
                 {
-                    if (connection.BindingTableOrNull is not { } table || table.IsClosed)
-                        continue;
-                    var cursor = 0;
-                    while (cursor < table.SlotCount && !table.IsClosed && CurrentState == ServerState.Running)
-                    {
-                        // At most256 slot inspections and notifications per pump turn.
-                        var count = table.TakeRetiredTokens(tokens, ref cursor);
-                        for (var index = 0; index < count; index++)
-                            await TrySendBindingInvalidationAsync(connection, tokens[index]).ConfigureAwait(false);
-                        await Task.Yield();
-                    }
+                    while (connection.TryTakeBindingInvalidation(out var token))
+                        await TrySendBindingInvalidationAsync(connection, token).ConfigureAwait(false);
                 }
             }
             while (Volatile.Read(ref _bindingInvalidationDirty) != 0);
@@ -58,22 +42,38 @@ internal sealed partial class SharpLinkServer
         {
             Volatile.Write(ref _bindingInvalidationScheduled, 0);
             if (Volatile.Read(ref _bindingInvalidationDirty) != 0)
-                ScheduleBindingInvalidations();
+                ScheduleBindingInvalidationNotifications();
         }
     }
 
-    private async ValueTask TrySendBindingInvalidationAsync(ServerConnectionState connection, ulong token)
+    private async ValueTask AcknowledgeBindingRetirementsAtIntakeAsync(ServerConnectionState connection)
+    {
+        if (!connection.TryDetachBindingRetirementSlice(out var tokens, out var count)) return;
+        var queued = false;
+        for (var index = 0; index < count; index++)
+        {
+            queued |= connection.QueueBindingInvalidation(tokens[index]);
+            tokens[index] = 0;
+        }
+        if (queued) ScheduleBindingInvalidationNotifications();
+        connection.CompleteBindingRetirementSlice();
+        // Exactly one <=256-entry slice precedes this loop's actual Read/parse turn.
+        // Yield bounds cold CPU scheduling too, but never substitutes for reading.
+        await Task.Yield();
+    }
+
+    internal Action? BeforeBindingInvalidationPhysicalDrainForTesting { get; set; }
+
+    internal async ValueTask TrySendBindingInvalidationAsync(ServerConnectionState connection, ulong token)
     {
         var session = connection.Session;
-        if (!session.IsConnected || session.NegotiatedOptions is not { } options)
-            return;
-        var limits = options.Authority.Limits;
-        if (!connection.TryReserveBindingControlFrame(limits.QueuedControlFrames))
-            return; // Best-effort overflow drops notification, never the authoritative cut.
-
+        // Queue admission already owns one control-frame reservation. Every early
+        // terminal/drop path below returns it, independently of the facts owner.
         ServerBindingDeadline? deadlineOwner = null;
         try
         {
+            if (!session.IsConnected || session.NegotiatedOptions is not { } options) return;
+            var limits = options.Authority.Limits;
             var deadline = RpcDeadline.Create(TimeSpan.FromMilliseconds(limits.OperationDeadlineMs), _runtimeContext.TimeProvider);
             deadlineOwner = new ServerBindingDeadline(connection, deadline, _runtimeContext.TimeProvider);
             deadlineOwner.Arm();
@@ -99,7 +99,15 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            connection.FailBindingOperation(exception);
+            try { connection.FailBindingOperation(exception); }
+            finally
+            {
+                // A cancellable flush wait can end while its accepted frame/marker is
+                // still physically owned. Keep the control-frame permit through the
+                // exact outbound pump AND pending-enqueue cleanup, not whole disposal.
+                try { BeforeBindingInvalidationPhysicalDrainForTesting?.Invoke(); }
+                finally { await session.CloseAndDrainOutboundAsync(exception).ConfigureAwait(false); }
+            }
         }
         finally
         {

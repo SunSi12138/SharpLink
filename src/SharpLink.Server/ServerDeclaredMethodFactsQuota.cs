@@ -1,6 +1,7 @@
 namespace SharpLink.Server;
 
-// Cold accounting only. These charges are policy units, not measured CLR allocation sizes.
+// Server facts are another physical metadata copy in the SAME Runtime authority. This
+// adapter does not create an additional server-wide byte allowance.
 internal sealed class ServerDeclaredMethodFactsQuota
 {
     internal const int ContractMethodLimit = 65_536;
@@ -11,81 +12,94 @@ internal sealed class ServerDeclaredMethodFactsQuota
     internal const ulong ServerByteLimit = 256UL * 1024 * 1024;
     internal const ulong TableCharge = 256;
     internal const ulong MethodCharge = 128;
-
     internal readonly Lock Gate = new();
-    private readonly int _methodLimit;
-    private readonly ulong _byteLimit;
-    private int _methods;
-    private ulong _bytes;
+    internal ColdMetadataAuthority Authority { get; }
+    internal ColdMetadataDomain Domain { get; }
 
-    internal ServerDeclaredMethodFactsQuota(int methodLimit = ServerMethodLimit, ulong byteLimit = ServerByteLimit)
+    internal ServerDeclaredMethodFactsQuota(ColdMetadataDomain domain)
     {
-        if (methodLimit < 0 || methodLimit > ServerMethodLimit || byteLimit > ServerByteLimit)
-            throw new ArgumentOutOfRangeException(nameof(methodLimit));
-        _methodLimit = methodLimit;
-        _byteLimit = byteLimit;
+        Domain = domain ?? throw new ArgumentNullException(nameof(domain));
+        Authority = domain.Authority;
     }
 
-    internal int Methods { get { lock (Gate) return _methods; } }
-    internal ulong Bytes { get { lock (Gate) return _bytes; } }
-    internal ServerDeclaredMethodFactsGroupReservation BeginGroup() => new(this);
-    internal static ulong CalculateCharge(ulong methods) => checked(TableCharge + MethodCharge * methods);
+    // Kept for exact component owners; production always supplies its shared Runtime domain.
+    internal ServerDeclaredMethodFactsQuota() : this(new ColdMetadataAuthority().CreateDomain()) { }
 
-    internal void Reserve(int methods, ulong bytes)
+    internal int Methods => Authority.Methods;
+    internal ulong Bytes => Authority.Bytes;
+    internal ServerDeclaredMethodFactsGroupReservation BeginGroup(PreparedGeneratedManifest manifest)
+        => new(this, manifest.Preparation, manifest.RegistrationScope, manifest, ownsPreparation: false);
+    internal ServerDeclaredMethodFactsGroupReservation BeginGroup()
     {
-        // Caller holds Gate. Subtraction avoids overflowing a provisional sum.
-        if (methods > _methodLimit - _methods || bytes > _byteLimit - _bytes)
-            throw new ServerDeclaredMethodFactsException(SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
-                "Server declared-method facts capacity is exhausted.");
-        _methods = checked(_methods + methods);
-        _bytes = checked(_bytes + bytes);
+        var preparation = Domain.BeginPreparation();
+        try { return new(this, preparation, preparation.CreateRegistrationScope(), null, ownsPreparation: true); }
+        catch { preparation.Dispose(); throw; }
     }
-
-    internal void Release(int methods, ulong bytes)
-    {
-        if (methods > _methods || bytes > _bytes)
-            throw new InvalidOperationException("Declared-method facts charge released more than once.");
-        _methods -= methods;
-        _bytes -= bytes;
-    }
+    internal static ulong CalculateCharge(ulong count) => checked(TableCharge + MethodCharge * count);
 }
 
-// The parent preparation owner must outlive all inline callbacks and rollback cleanup.
-// Reserve every table/count before Seal; only then may any facts arrays/callbacks begin.
-internal sealed class ServerDeclaredMethodFactsGroupReservation(ServerDeclaredMethodFactsQuota quota) : IDisposable
+internal sealed class ServerDeclaredMethodFactsGroupReservation : IDisposable
 {
-    private readonly List<ServerDeclaredMethodFactsReservation> _reservations = [];
-    private int _methods;
-    private ulong _bytes;
+    private readonly List<ServerDeclaredMethodFactsReservation> _reservations;
+    private readonly ColdMetadataPreparation _preparation;
+    private readonly ColdMetadataScope _scope;
+    private PreparedGeneratedManifest? _manifest;
+    private readonly bool _ownsPreparation;
+    private readonly IDisposable _bundle;
+    private readonly ColdMetadataReservation _listCharge;
     private bool _sealed;
     private bool _committed;
+    private bool _readyToCommit;
     private bool _disposed;
-    internal ServerDeclaredMethodFactsQuota Quota => quota;
-    internal bool IsEmpty { get { lock (quota.Gate) return _bytes == 0; } }
+    internal ServerDeclaredMethodFactsQuota Quota { get; }
+    internal bool IsEmpty { get { lock (Quota.Gate) return _reservations.Count == 0; } }
+    internal ColdMetadataPreparation Preparation => _preparation;
+    internal ColdMetadataScope Scope => _scope;
 
-    internal ServerDeclaredMethodFactsReservation ReserveContract()
+    internal ServerDeclaredMethodFactsGroupReservation(ServerDeclaredMethodFactsQuota quota,
+        ColdMetadataPreparation preparation, ColdMetadataScope scope,
+        PreparedGeneratedManifest? manifest, bool ownsPreparation)
     {
-        lock (quota.Gate)
+        Quota = quota;
+        _preparation = preparation;
+        _scope = scope;
+        _manifest = manifest;
+        _ownsPreparation = ownsPreparation;
+        _bundle = preparation.Retain();
+        try
+        {
+            _listCharge = preparation.ReserveCollection(0, scope);
+            _reservations = [];
+        }
+        catch { _bundle.Dispose(); throw; }
+    }
+
+    internal ServerDeclaredMethodFactsReservation ReserveContract(long? contractId = null)
+    {
+        lock (Quota.Gate)
         {
             EnsureOpen();
-            Reserve(0, ServerDeclaredMethodFactsQuota.TableCharge);
+            // Local descriptors already own their exact method domain. Imported service
+            // contracts create a new incoming-registration domain, never value-deduplicated.
+            var local = contractId.HasValue && _manifest is not null &&
+                _manifest.Contracts.Any(item => item.ContractId == contractId.Value);
+            var scope = local ? _manifest!.GetContractScope(contractId!.Value) : _scope.CreateContractScope();
+            _listCharge.GrowTo(checked(_reservations.Count + 1));
+            var table = _preparation.ReserveCollection(0, scope);
             try
             {
-                var reservation = new ServerDeclaredMethodFactsReservation(this);
+                var reservation = new ServerDeclaredMethodFactsReservation(this, scope, table, local,
+                    local ? _manifest!.GetContractMethodReservation(contractId!.Value) : null);
                 _reservations.Add(reservation);
                 return reservation;
             }
-            catch
-            {
-                Release(0, ServerDeclaredMethodFactsQuota.TableCharge);
-                throw;
-            }
+            catch { table.Dispose(); throw; }
         }
     }
 
     internal void SetMethodCount(ServerDeclaredMethodFactsReservation reservation, int count)
     {
-        lock (quota.Gate)
+        lock (Quota.Gate)
         {
             EnsureOpen();
             if (reservation.CountAssigned || reservation.Released)
@@ -93,11 +107,15 @@ internal sealed class ServerDeclaredMethodFactsGroupReservation(ServerDeclaredMe
             if (count < 0)
                 throw new ServerDeclaredMethodFactsException(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                     "A declared method count cannot be negative.");
-            if (count > ServerDeclaredMethodFactsQuota.ContractMethodLimit ||
-                ServerDeclaredMethodFactsQuota.CalculateCharge((ulong)count) > ServerDeclaredMethodFactsQuota.ContractByteLimit)
-                throw new ServerDeclaredMethodFactsException(SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
-                    "Contract declared-method facts capacity is exhausted.");
-            Reserve(count, checked((ulong)count * ServerDeclaredMethodFactsQuota.MethodCharge));
+            reservation.Scope.ClaimFactsTable();
+            if (reservation.ReusesDeclaredDomain && reservation.Scope.Methods != count)
+                throw new ServerDeclaredMethodFactsException(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    "Facts count must match its exact prepared method domain.");
+            if (!reservation.ReusesDeclaredDomain)
+                reservation.MethodCharge = _preparation.ReserveMethods(count, reservation.Scope);
+            reservation.TableCharge.GrowTo(count);
+            // Separate, simultaneously live descriptor array used for drift verification.
+            reservation.SnapshotCharge = _preparation.ReserveCollection(count, reservation.Scope);
             reservation.Count = count;
             reservation.CountAssigned = true;
         }
@@ -105,127 +123,159 @@ internal sealed class ServerDeclaredMethodFactsGroupReservation(ServerDeclaredMe
 
     internal void Seal()
     {
-        lock (quota.Gate)
+        lock (Quota.Gate)
         {
             EnsureOpen();
-            _reservations.RemoveAll(static item => item.Released);
             if (_reservations.Any(static item => !item.CountAssigned))
                 throw new InvalidOperationException("Every table count must be reserved before preparation.");
             _sealed = true;
         }
     }
-
     internal void DiscardContract(ServerDeclaredMethodFactsReservation reservation)
     {
-        lock (quota.Gate)
+        lock (Quota.Gate)
         {
             EnsureOpen();
             if (!ReferenceEquals(reservation.Group, this) || reservation.CountAssigned || reservation.Started)
-                throw new InvalidOperationException("Only unused header-only reservations may be discarded.");
+                throw new InvalidOperationException("Only unused reservations may be discarded.");
+            _reservations.Remove(reservation);
             ReleaseTable(reservation);
         }
     }
-
     internal void BeginPreparation(ServerDeclaredMethodFactsReservation reservation)
     {
-        lock (quota.Gate)
+        lock (Quota.Gate)
         {
             if (!_sealed || _disposed || _committed || reservation.Started || reservation.Released)
                 throw new InvalidOperationException("Facts preparation requires one sealed, live reservation.");
             reservation.Started = true;
         }
     }
-
     internal void CompletePreparation(ServerDeclaredMethodFactsReservation reservation)
     {
-        lock (quota.Gate)
+        lock (Quota.Gate)
         {
             if (_disposed || reservation.Released)
                 throw new InvalidOperationException("Preparation owner was released before its callback returned.");
             reservation.Prepared = true;
         }
     }
-
+    internal void PrepareCommit()
+    {
+        lock (Quota.Gate)
+        {
+            if (!_sealed || _disposed || _committed || _readyToCommit ||
+                _reservations.Any(static item => !item.Prepared || item.Released))
+                throw new InvalidOperationException("Only a completely prepared group can prepare transfer.");
+            // Allocate exact cold token leases before entering the registry publication gate.
+            try
+            {
+                foreach (var item in _reservations)
+                {
+                    item.TableLease = item.TableCharge.Retain();
+                    item.MethodLease = (item.LocalMethodToken ?? item.MethodCharge
+                        ?? throw new InvalidOperationException("Facts method domain is missing.")).Retain();
+                }
+            }
+            catch
+            {
+                // Originals still protect every candidate array. Drop only the partial
+                // transfer leases; ordinary physical candidate cleanup owns final refund.
+                foreach (var item in _reservations)
+                {
+                    item.TableLease?.Dispose(); item.TableLease = null;
+                    item.MethodLease?.Dispose(); item.MethodLease = null;
+                }
+                throw;
+            }
+            foreach (var item in _reservations)
+            {
+                // No failing operation remains after the complete exact-token retain pass.
+                // Borrowed metadata originals are never disposed by the facts owner.
+                item.TableCharge.Dispose();
+                item.MethodCharge?.Dispose();
+            }
+            _readyToCommit = true;
+        }
+    }
     internal void Commit()
     {
-        lock (quota.Gate)
-        {
-            if (!_sealed || _disposed || _committed || _reservations.Any(static item => !item.Prepared || item.Released))
-                throw new InvalidOperationException("Only a completely prepared group can transfer ownership.");
-            _committed = true;
-            // Each table now owns its reservation. No retained graph of sibling tables/registrations.
-            _reservations.Clear();
-        }
+        // Final publication is scalar/root transfer only. Dispose is deliberately separate
+        // and must run outside registry/table gates after either success or rollback.
+        if (!_readyToCommit || _disposed || _committed)
+            throw new InvalidOperationException("Facts transfer was not prepared exactly once.");
+        _committed = true;
+        foreach (var item in _reservations) item.DetachPreparationOwner();
+        _reservations.Clear();
+        _manifest = null;
     }
-
-    internal void ReleaseTable(ServerDeclaredMethodFactsReservation reservation)
-    {
-        lock (quota.Gate)
-        {
-            if (reservation.Released)
-                return;
-            reservation.Released = true;
-            Release(reservation.Count, ServerDeclaredMethodFactsQuota.CalculateCharge((ulong)reservation.Count));
-        }
-    }
-
+    internal void ReleaseTable(ServerDeclaredMethodFactsReservation reservation) => reservation.Release();
     public void Dispose()
     {
-        lock (quota.Gate)
+        lock (Quota.Gate)
         {
-            if (_disposed)
-                return;
+            if (_disposed) return;
             _disposed = true;
             if (!_committed)
-            {
-                foreach (var reservation in _reservations)
-                    ReleaseTable(reservation);
-                _reservations.Clear();
-            }
+                foreach (var item in _reservations) ReleaseTable(item);
+            _reservations.Clear();
+            _manifest = null;
+            _listCharge.Dispose();
+            _bundle.Dispose();
+            if (_ownsPreparation) _preparation.Dispose();
         }
     }
-
     private void EnsureOpen()
     {
-        if (_sealed || _disposed)
-            throw new InvalidOperationException("The facts reservation prepass is closed.");
-    }
-
-    private void Reserve(int methods, ulong bytes)
-    {
-        if (methods > ServerDeclaredMethodFactsQuota.GroupMethodLimit - _methods ||
-            bytes > ServerDeclaredMethodFactsQuota.GroupByteLimit - _bytes)
-            throw new ServerDeclaredMethodFactsException(SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
-                "Registration-group declared-method facts capacity is exhausted.");
-        quota.Reserve(methods, bytes);
-        _methods = checked(_methods + methods);
-        _bytes = checked(_bytes + bytes);
-    }
-
-    private void Release(int methods, ulong bytes)
-    {
-        quota.Release(methods, bytes);
-        _methods -= methods;
-        _bytes -= bytes;
+        if (_sealed || _disposed) throw new InvalidOperationException("The facts reservation prepass is closed.");
     }
 }
 
-internal sealed class ServerDeclaredMethodFactsReservation(ServerDeclaredMethodFactsGroupReservation group)
+internal sealed class ServerDeclaredMethodFactsReservation(ServerDeclaredMethodFactsGroupReservation group,
+    ColdMetadataScope scope, ColdMetadataReservation tableCharge, bool reusesDeclaredDomain,
+    ColdMetadataReservation? localMethodToken)
 {
-    internal ServerDeclaredMethodFactsGroupReservation Group => group;
+    private ServerDeclaredMethodFactsGroupReservation? _group = group;
+    internal ServerDeclaredMethodFactsQuota Quota { get; } = group.Quota;
+    internal ServerDeclaredMethodFactsGroupReservation Group => _group ??
+        throw new InvalidOperationException("Committed facts no longer retain their preparation group.");
+    internal ColdMetadataScope Scope => scope;
+    internal ColdMetadataReservation TableCharge => tableCharge;
+    internal bool ReusesDeclaredDomain => reusesDeclaredDomain;
+    internal ColdMetadataReservation? LocalMethodToken => localMethodToken;
+    internal ColdMetadataReservation? MethodCharge;
+    internal ColdMetadataReservation? SnapshotCharge;
+    internal IDisposable? TableLease;
+    internal IDisposable? MethodLease;
     internal int Count;
     internal bool CountAssigned;
     internal bool Started;
     internal bool Prepared;
     internal bool Released;
-    internal void SetMethodCount(int count) => group.SetMethodCount(this, count);
+    internal void SetMethodCount(int count) => Group.SetMethodCount(this, count);
+    internal void DetachPreparationOwner() => _group = null;
+    internal void Release()
+    {
+        lock (Quota.Gate)
+        {
+            if (Released) return;
+            Released = true;
+            SnapshotCharge?.Dispose();
+            TableCharge.Dispose();
+            MethodCharge?.Dispose();
+            TableLease?.Dispose();
+            MethodLease?.Dispose();
+            SnapshotCharge = null;
+            TableLease = null;
+            MethodLease = null;
+            _group = null;
+        }
+    }
 }
 
-// Transaction-local exception. Parent maps these scalar fields to the existing reference-free result.
 internal sealed class ServerDeclaredMethodFactsException(
     SharpLinkAssemblyRegistrationErrorCode code, string message, long? contractId = null, long? methodId = null,
-    Exception? innerException = null)
-    : Exception(message, innerException)
+    Exception? innerException = null) : Exception(message, innerException)
 {
     internal SharpLinkAssemblyRegistrationErrorCode Code { get; } = code;
     internal long? ContractId { get; } = contractId;

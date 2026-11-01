@@ -46,6 +46,7 @@ internal sealed partial class RpcSession
         IAsyncEnumerator<T>? enumerator = null;
         Task? pendingOperation = null;
         var terminalSelected = false;
+        Exception? invocationFailure = null;
         try
         {
             enumerator = stream.GetAsyncEnumerator(lifetimeCancellation.Token);
@@ -68,7 +69,7 @@ internal sealed partial class RpcSession
                     pendingOperation = moveNextTask;
                     if (deadline.HasValue && deadlineTimeProvider is not null)
                     {
-                        if (!await SharpLinkTimer.WaitAsync(moveNextTask, deadline, deadlineTimeProvider,
+                        if (!await SharpLinkTimer.WaitForCompletionAsync(moveNextTask, deadline, deadlineTimeProvider,
                                 lifetimeCancellation.Token).ConfigureAwait(false))
                         {
                             terminalSelected = true;
@@ -79,10 +80,21 @@ internal sealed partial class RpcSession
                     {
                         // Incomplete cancellable operations without a deadline now need a
                         // Task conversion/wait so cancellation can leave a physical tail.
-                        await moveNextTask.WaitAsync(lifetimeCancellation.Token).ConfigureAwait(false);
+                        // Wait forwarding is suppressed in THIS existing state machine; no
+                        // completion adapter Task. Source-ready wins at arbitration, otherwise
+                        // caller cancellation wins while the original source stays pending.
+                        await ((Task)moveNextTask).WaitAsync(lifetimeCancellation.Token)
+                            .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                        if (!moveNextTask.IsCompleted)
+                        {
+                            lifetimeCancellation.Token.ThrowIfCancellationRequested();
+                            throw new InvalidOperationException("Generated source wait ended without completion or caller cancellation.");
+                        }
                     }
-                    hasNext = await moveNextTask.ConfigureAwait(false);
+                    // Wait and all timer cleanup succeeded without consuming the source.
+                    // Transfer its outcome to this invocation BEFORE the direct await can throw.
                     pendingOperation = null;
+                    hasNext = await moveNextTask.ConfigureAwait(false);
                 }
 
                 if (!hasNext)
@@ -116,7 +128,7 @@ internal sealed partial class RpcSession
                     pendingOperation = sendTask;
                     if (deadline.HasValue && deadlineTimeProvider is not null)
                     {
-                        if (!await SharpLinkTimer.WaitAsync(sendTask, deadline, deadlineTimeProvider,
+                        if (!await SharpLinkTimer.WaitForCompletionAsync(sendTask, deadline, deadlineTimeProvider,
                                 lifetimeCancellation.Token).ConfigureAwait(false))
                         {
                             terminalSelected = true;
@@ -127,10 +139,19 @@ internal sealed partial class RpcSession
                     {
                         // Incomplete cancellable operations without a deadline now need a
                         // Task conversion/wait so cancellation can leave a physical tail.
-                        await sendTask.WaitAsync(lifetimeCancellation.Token).ConfigureAwait(false);
+                        // Wait forwarding is suppressed in THIS existing state machine; no
+                        // completion adapter Task. Source-ready wins at arbitration, otherwise
+                        // caller cancellation wins while the original source stays pending.
+                        await sendTask.WaitAsync(lifetimeCancellation.Token)
+                            .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                        if (!sendTask.IsCompleted)
+                        {
+                            lifetimeCancellation.Token.ThrowIfCancellationRequested();
+                            throw new InvalidOperationException("Generated source wait ended without completion or caller cancellation.");
+                        }
                     }
-                    await sendTask.ConfigureAwait(false);
                     pendingOperation = null;
+                    await sendTask.ConfigureAwait(false);
                 }
             }
 
@@ -140,42 +161,57 @@ internal sealed partial class RpcSession
         catch (SharpLinkException exception) when (exception.Code == SharpLinkErrorCode.DeadlineExceeded)
         {
             terminalSelected = true;
+            invocationFailure = exception;
             throw;
         }
-        catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (lifetimeCancellation.IsCancellationRequested)
         {
             terminalSelected = true;
+            invocationFailure = exception;
+            throw;
+        }
+        catch (Exception exception)
+        {
+            invocationFailure = exception;
             throw;
         }
         finally
         {
-            TryCancelGeneratedLifetime(lifetimeCancellation);
+            Exception? residual = null;
+            Exception? lifetimeFailure = null;
+            try { lifetimeCancellation.Cancel(); }
+            catch (Exception error) { lifetimeFailure = error; }
             if (enumerator is null)
-                lifetimeCancellation.Dispose();
+                DisposeGeneratedLifetime(lifetimeCancellation, physicalOwner, lifetimeFailure, ref residual);
             else if (!terminalSelected && pendingOperation is null)
             {
-                // Keep ordinary asynchronous disposal in this existing state machine:
-                // no physical-tail helper, Task conversion, or hook on normal completion.
+                // Ordinary completion remains in this existing state machine: no tail Task,
+                // registration or helper state machine on the normal-success path.
                 try { await enumerator.DisposeAsync().ConfigureAwait(false); }
-                finally { lifetimeCancellation.Dispose(); }
+                catch (Exception error)
+                {
+                    ReportGeneratedPhysicalFailure(physicalOwner, GeneratedPhysicalFailureStage.EnumeratorDispose,
+                        error, ref residual);
+                }
+                DisposeGeneratedLifetime(lifetimeCancellation, physicalOwner, lifetimeFailure, ref residual);
             }
             else
-                await FinishGeneratedEnumeratorAsync(enumerator, pendingOperation, lifetimeCancellation,
-                    physicalOwner, terminalSelected)
-                    .ConfigureAwait(false);
-        }
-    }
-
-    private static void TryCancelGeneratedLifetime(CancellationTokenSource cancellation)
-    {
-        try
-        {
-            cancellation.Cancel();
-        }
-        catch
-        {
-            // Cancellation is cleanup after the call has already selected its terminal path.
-            // User callbacks cannot replace that terminal outcome.
+            {
+                try
+                {
+                    await FinishGeneratedEnumeratorAsync(enumerator, pendingOperation, lifetimeCancellation,
+                        physicalOwner, terminalSelected, lifetimeFailure).ConfigureAwait(false);
+                }
+                catch (Exception error) { residual = PhysicalTaskFailureException.GetRaw(error); }
+            }
+            if (residual is not null)
+            {
+                // A later untransferred infrastructure error cannot mask an earlier invocation
+                // failure. Accepted permit outcomes are NOT copied into this caller-owned residual.
+                if (invocationFailure is not null)
+                    residual = PhysicalTaskFailureException.CombineRaw(PhysicalTaskFailureException.GetRaw(invocationFailure), residual);
+                throw PhysicalTaskFailureException.From(residual!);
+            }
         }
     }
 

@@ -105,10 +105,13 @@ public class SharpLinkContractCallSiteOwnershipTests
     public async Task ActualGeneratedProxyFactoryStoresTheRegistrationSiteDirectly()
     {
         var contract = typeof(SharpLink.StaticCodecOwnerTest.Contracts.IGeneratedRawOwnerContract);
-        var loaded = SharpLinkAssemblyManifestLoader.TryLoad(contract.Assembly, out var manifest);
+        var metadataDomain = new ColdMetadataAuthority().CreateDomain();
+        using var preparation = metadataDomain.BeginPreparation();
+        var loaded = SharpLinkAssemblyManifestLoader.TryLoad(contract.Assembly, preparation, out var manifest);
         Require(loaded.Succeeded && manifest is not null, "Actual generated manifest was not loaded.");
         var builder = SharpClientBuilder.Create().DisableRequestTimeout().UseTransport(new TestClientTransportFactory());
-        var plan = builder.CompileForMultiCluster([manifest!]);
+        var plan = builder.CompileForMultiCluster([manifest!], metadataDomain);
+        preparation.Dispose(); // The compiled plan owns the prepared snapshot before Runtime shutdown can join.
         await using var client = (SharpLinkClient)builder.MaterializeCompiledPlan(plan);
         var proxy = client.CreateProxy<SharpLink.StaticCodecOwnerTest.Contracts.IGeneratedRawOwnerContract>().Service;
         var site = InnerChannel(proxy) as SharpLinkClient.ContractCallSite;

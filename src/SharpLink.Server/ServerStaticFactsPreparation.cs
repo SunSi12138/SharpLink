@@ -2,24 +2,52 @@ using System.Reflection;
 
 namespace SharpLink.Server;
 
-// Private Build ownership. Shared Runtime manifest validation precedes this server-specific
-// bound; this helper does not claim to bound those inherited Runtime validation allocations.
+// Private Server planning ownership, charged to the exact Runtime preparation from capture onward.
 internal sealed class ServerStaticFactsPreparation : IDisposable
 {
-    private readonly Dictionary<Assembly, ServerDeclaredMethodFactsGroupReservation> _groups =
-        new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<long, ContractEntry> _contracts = [];
+    private readonly Dictionary<Assembly, ServerDeclaredMethodFactsGroupReservation> _groups;
+    private readonly Dictionary<long, ContractEntry> _contracts;
     private bool _sealed;
     private bool _disposed;
 
-    internal ServerDeclaredMethodFactsQuota Quota { get; } = new();
+    private readonly ColdMetadataPreparation _preparation;
+    private readonly IDisposable _bundle;
+    private readonly ColdMetadataReservation _groupsCharge;
+    private readonly ColdMetadataReservation _contractsCharge;
+    internal ServerDeclaredMethodFactsQuota Quota { get; }
+
+    private ServerStaticFactsPreparation(ColdMetadataPreparation preparation)
+    {
+        _preparation = preparation;
+        Quota = new(preparation.Domain);
+        _groupsCharge = preparation.ReserveCollection(0);
+        _contractsCharge = preparation.ReserveCollection(0);
+        _groups = new(ReferenceEqualityComparer.Instance);
+        _contracts = [];
+        _bundle = preparation.Retain();
+    }
+    internal ColdMetadataPreparation Preparation => _preparation;
+    private ColdMetadataReservation? _servicePlansCharge;
+    private ColdMetadataReservation? _runtimeServicesCharge;
+    private ColdMetadataReservation? _runtimeServicesWorkspaceCharge;
+    internal ColdMetadataReservation TakeRuntimeServicesCharge()
+        => Interlocked.Exchange(ref _runtimeServicesCharge, null) ?? throw new InvalidOperationException("Service map charge already transferred.");
+    internal void ReleaseRuntimeServiceWorkspace() => Interlocked.Exchange(ref _runtimeServicesWorkspaceCharge, null)?.Dispose();
+    internal ServerServiceRegistrationPlanEntry[] CaptureServicePlans(List<ServerServiceRegistrationPlanEntry> source)
+    {
+        _servicePlansCharge = _preparation.ReserveCollection(source.Count);
+        return [.. source];
+    }
+    internal ColdMetadataReservation TakeServicePlansCharge()
+        => Interlocked.Exchange(ref _servicePlansCharge, null) ??
+            throw new InvalidOperationException("Service planning array charge was already transferred.");
     internal int ContractCount => _contracts.Count;
     internal IEnumerable<ContractEntry> Contracts => _contracts.Values;
 
-    internal static ServerStaticFactsPreparation Capture(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
+    internal static ServerStaticFactsPreparation Capture(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests, ColdMetadataPreparation preparation)
     {
         ArgumentNullException.ThrowIfNull(manifests);
-        var owner = new ServerStaticFactsPreparation();
+        var owner = new ServerStaticFactsPreparation(preparation);
         try
         {
             // manifests is the existing Runtime-owned frozen outer list. Never allocate an
@@ -40,11 +68,13 @@ internal sealed class ServerStaticFactsPreparation : IDisposable
                     var assembly = manifest.OwnerAssembly;
                     if (!owner._groups.TryGetValue(assembly, out var group))
                     {
-                        group = owner.Quota.BeginGroup();
+                        owner._groupsCharge.GrowTo(checked(owner._groups.Count + 1));
+                        group = owner.Quota.BeginGroup((PreparedGeneratedManifest)manifest);
                         try { owner._groups.Add(assembly, group); }
                         catch { group.Dispose(); throw; }
                     }
-                    var reservation = group.ReserveContract();
+                    owner._contractsCharge.GrowTo(checked(owner._contracts.Count + 1));
+                    var reservation = group.ReserveContract(contract.ContractId);
                     // This entry and dictionary growth are covered by the already reserved header.
                     var entry = new ContractEntry(contract, manifest, reservation, contracts, index, count);
                     if (!owner._contracts.TryAdd(contract.ContractId, entry))
@@ -69,6 +99,8 @@ internal sealed class ServerStaticFactsPreparation : IDisposable
         if (_disposed || _sealed)
             throw new InvalidOperationException("Static facts preparation has already been sealed.");
         VerifySnapshot();
+        _runtimeServicesCharge = _preparation.ReserveCollection(services.Length);
+        _runtimeServicesWorkspaceCharge = _preparation.ReserveCollection(services.Length);
         foreach (var service in services)
         {
             if (!_contracts.TryGetValue(service.ContractId, out var entry) ||
@@ -115,7 +147,10 @@ internal sealed class ServerStaticFactsPreparation : IDisposable
         if (!_sealed || _disposed)
             throw new InvalidOperationException("Static facts ownership is not ready to publish.");
         foreach (var group in _groups.Values)
+        {
+            group.PrepareCommit();
             group.Commit();
+        }
         Dispose(); // Groups have transferred their charges to the prepared tables.
     }
 
@@ -130,6 +165,12 @@ internal sealed class ServerStaticFactsPreparation : IDisposable
         foreach (var group in _groups.Values)
             group.Dispose();
         _groups.Clear();
+        _contractsCharge.Dispose();
+        _groupsCharge.Dispose();
+        _servicePlansCharge?.Dispose();
+        _runtimeServicesCharge?.Dispose();
+        ReleaseRuntimeServiceWorkspace();
+        _bundle.Dispose();
     }
 
     private static ServerDeclaredMethodFactsException Invalid(string message, long? contractId = null)

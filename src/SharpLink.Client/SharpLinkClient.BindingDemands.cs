@@ -10,6 +10,7 @@ internal sealed partial class SharpLinkClient
 
     private void RegisterContractDemand(ContractCallSite site)
     {
+        BindingBudget.SetTaskObserver(ObserveBindingMaintenanceTask);
         site.LocalControl.SetRetirementCallback(OnLocalContractRetired);
         lock (_contractDemandGate)
         {
@@ -47,13 +48,15 @@ internal sealed partial class SharpLinkClient
 
     private void OnLocalContractRetired(ClientLocalContractControl control)
     {
+        ContractCallSite[] retired;
         lock (_contractDemandGate)
         {
-            foreach (var weak in _contractDemands)
-                if (weak.TryGetTarget(out var site) && ReferenceEquals(site.LocalControl, control))
-                    site.RetireDemand();
+            retired = _contractDemands.Select(static weak => weak.TryGetTarget(out var site) ? site : null)
+                .Where(site => site is not null && ReferenceEquals(site.LocalControl, control)).ToArray()!;
             _contractDemands.RemoveAll(weak => !weak.TryGetTarget(out var site) || ReferenceEquals(site.LocalControl, control));
         }
+        // Cancellation and cleanup supervision can invoke callbacks; no demand/site/publication gate.
+        foreach (var site in retired) site.RetireDemand();
     }
 
     private void PulseContractBindingWaiters()
@@ -121,11 +124,20 @@ internal sealed partial class SharpLinkClient
                 return;
             }
             var published = false;
+            ContractCallSite.BoundTarget target;
+            try { target = new ContractCallSite.BoundTarget(connection, result.Token); }
+            catch (Exception exception)
+            {
+                connection.Binding.Close(exception);
+                await connection.Session.CloseAndDrainOutboundAsync(exception).ConfigureAwait(false);
+                throw;
+            }
             try
             {
+                await TrackBindingCandidateAsync(site, target).ConfigureAwait(false);
                 if (!site.LocalControl.IsRetired && connection.CanAcceptCalls)
                     published = connection.Binding.Publication.TryCommit(result.Token,
-                        () => site.PublishBinding(connection, result.Token));
+                        () => site.PublishBinding(target));
                 if (!published)
                     site.BindingFailed(connection, NoBoundRoute());
             }
@@ -134,7 +146,7 @@ internal sealed partial class SharpLinkClient
                 // A callback can lose the local retirement race and throw. The successful token
                 // still owns a server slot even when no local route ever escaped.
                 if (!published)
-                    await connection.Binding.ReleaseAsync(result.Token).ConfigureAwait(false);
+                    await RetireBindingCandidateAsync(target).ConfigureAwait(false);
             }
         }
         catch (Exception exception)

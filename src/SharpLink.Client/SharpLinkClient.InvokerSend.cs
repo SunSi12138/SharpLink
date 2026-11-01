@@ -4,9 +4,9 @@ internal sealed partial class SharpLinkClient
 {
     internal sealed partial class ContractCallSite
     {
-        private ValueTask SendRpcCall<TRequest>(
+        internal ValueTask SendRpcCall<TRequest>(
             RpcSession session,
-            long contractId,
+            RpcFramePublication publication,
             long methodId,
             long requestId,
             ProtocolV2FrameFlags flags,
@@ -19,6 +19,14 @@ internal sealed partial class SharpLinkClient
             IRequestEmissionFailureObserver? failureObserver = null,
             PendingRequestTable? publicationTable = null)
         {
+            var binding = publication switch
+            {
+                RpcBindingPublication direct => direct,
+                RpcStreamPublication group => group.Binding,
+                _ => throw new InvalidOperationException("Request publication requires its exact binding owner.")
+            };
+            if (!ReferenceEquals(binding.Session, session))
+                throw new InvalidOperationException("Request publication cannot cross physical Sessions.");
             var hasMetadata = metadata is { Count: > 0 };
             var metadataLength = 0;
             if (deadline.HasValue)
@@ -41,22 +49,26 @@ internal sealed partial class SharpLinkClient
                 flags |= ProtocolV2FrameFlags.HasMetadata;
             }
 
+            var streamedOneWay = (flags & ProtocolV2FrameFlags.OneWay) != 0 && publication is ClientStreamPublicationGroup;
+            var requestPrefix = streamedOneWay ? ProtocolV2Constants.OneWayStreamRequestPrefixBytes : ProtocolV2Constants.RequestPrefixBytes;
             var writer = session.RentFrameWriter();
             var ownsWriter = true;
             try
             {
                 using (writer.BeginPacketScope(
-                           ProtocolV2FrameType.Request,
+                           streamedOneWay ? ProtocolV2FrameType.OneWayStreamRequest : ProtocolV2FrameType.Request,
                            flags,
                            unchecked((ulong)requestId)))
                 {
-                    var prefixLength = ProtocolV2Constants.RequestPrefixBytes + (deadline.HasValue ? sizeof(long) : 0);
+                    var prefixLength = requestPrefix + (deadline.HasValue ? sizeof(long) : 0);
                     var span = writer.GetSpan(prefixLength);
-                    BinaryPrimitives.WriteInt64LittleEndian(span, contractId);
+                    BinaryPrimitives.WriteUInt64LittleEndian(span, binding.Token);
                     BinaryPrimitives.WriteInt64LittleEndian(span[8..], methodId);
+                    if (streamedOneWay)
+                        BinaryPrimitives.WriteUInt16LittleEndian(span[16..], checked((ushort)((ClientStreamPublicationGroup)publication).StreamCount));
                     if (deadline.HasValue)
                         BinaryPrimitives.WriteInt64LittleEndian(
-                            span[ProtocolV2Constants.RequestPrefixBytes..],
+                            span[requestPrefix..],
                             deadline.GetRemaining(_owner._runtimeContext.TimeProvider).Ticks);
                     writer.Advance(prefixLength);
                     if (hasMetadata)
@@ -82,9 +94,10 @@ internal sealed partial class SharpLinkClient
                             prepared,
                             observeEmission,
                             cancellationToken,
-                            failureObserver,
+                            failureObserver ?? table,
                             out var emission,
-                            out var rejection))
+                            out var rejection,
+                            publication))
                     {
                         if (rejection is not null)
                         {
@@ -98,7 +111,6 @@ internal sealed partial class SharpLinkClient
                         // that terminal decision just emitted - a cancel the peer discards, followed by
                         // a Request it happily dispatches. Drop the frame instead; the caller observes
                         // the terminal reason through its pending operation.
-                        _owner._runtimeContext.Buffers.Return(prepared);
                         return ValueTask.CompletedTask;
                     }
                     return emission;
@@ -138,7 +150,9 @@ internal sealed partial class SharpLinkClient
                         cancellationToken,
                         failureObserver,
                         out var plainEmission,
-                        out var plainRejection))
+                        out var plainRejection,
+                        publication: publication,
+                        publicationRole: RpcFramePublicationRole.RequestHead))
                 {
                     throw plainRejection!;
                 }

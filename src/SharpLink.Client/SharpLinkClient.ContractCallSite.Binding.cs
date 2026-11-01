@@ -60,14 +60,15 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        internal void PublishBinding(ClientConnection connection, ulong token)
+        internal void PublishBinding(BoundTarget binding)
         {
+            var connection = binding.Connection;
             lock (_bindingGate)
             {
                 if (_demandRetired || LocalControl.IsRetired || !connection.CanAcceptCalls)
                     throw NoBoundRoute();
                 var targets = _boundTargets.Where(target => !ReferenceEquals(target.Connection, connection) && target.IsEligible)
-                    .Append(new BoundTarget(connection, token)).ToArray();
+                    .Append(binding).ToArray();
                 Volatile.Write(ref _boundTargets, targets);
                 _bindingAttempts[connection].Completed = true;
                 PulseBindingWaitersLocked();
@@ -119,20 +120,7 @@ internal sealed partial class SharpLinkClient
             foreach (var target in targets)
             {
                 target.Connection.Binding.Publication.Invalidate(target.Token);
-                _owner.TrackFrameworkTask(ReleaseRetiredBindingAsync(target), "ReleaseContractBinding");
-            }
-        }
-
-        private static async Task ReleaseRetiredBindingAsync(BoundTarget target)
-        {
-            try
-            {
-                if (target.Connection.Session.IsConnected)
-                    await target.Connection.Binding.ReleaseAsync(target.Token).ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                target.Connection.Session.NotifyDisconnected(exception);
+                _ = _owner.RetireBindingCandidateAsync(target); // Session owns/supervises the coalesced cleanup Task once.
             }
         }
 
@@ -172,7 +160,7 @@ internal sealed partial class SharpLinkClient
         }
 
         private ClientConnection ReserveBoundConnection(RpcMethodDescriptor method,
-            EndpointRetrySelectionState? retrySelection, AttemptOutcomeState? outcome, out ulong bindingId)
+            EndpointRetrySelectionState? retrySelection, AttemptOutcomeState? outcome, out BoundTarget bindingId)
         {
             LocalControl.ThrowIfRetired();
             var targets = Volatile.Read(ref _boundTargets);
@@ -188,17 +176,17 @@ internal sealed partial class SharpLinkClient
             {
                 if (ReferenceEquals(target.Connection, connection) && target.IsEligible && !LocalControl.IsRetired)
                 {
-                    bindingId = target.Token;
+                    bindingId = target;
                     return connection;
                 }
             }
             connection.ReleaseCallAdmissionReservation();
-            bindingId = 0;
+            bindingId = null!;
             throw NoBoundRoute();
         }
 
         private ClientConnection ReserveFixedBoundConnection(BoundTarget[] targets,
-            AttemptOutcomeState? outcome, out ulong bindingId)
+            AttemptOutcomeState? outcome, out BoundTarget bindingId)
         {
             var eligibleCount = 0;
             foreach (var target in targets)
@@ -231,12 +219,12 @@ internal sealed partial class SharpLinkClient
                     target.Connection.ReleaseCallAdmissionReservation();
                     continue;
                 }
-                bindingId = target.Token;
+                bindingId = target;
                 if (target.Connection.ActiveCallCount != 0)
                     _owner.EnsureExpansion();
                 return target.Connection;
             }
-            bindingId = 0;
+            bindingId = null!;
             throw NoBoundRoute();
         }
 
@@ -251,8 +239,10 @@ internal sealed partial class SharpLinkClient
             internal bool Completed;
             internal Exception? Failure;
         }
-        private sealed record BoundTarget(ClientConnection Connection, ulong Token)
+        internal sealed class BoundTarget(ClientConnection connection, ulong token)
+            : RpcBindingPublication(connection.Session, token)
         {
+            internal ClientConnection Connection { get; } = connection;
             internal bool IsEligible => Connection.CanAcceptCalls && Connection.Binding.Publication.IsEligible(Token);
         }
     }

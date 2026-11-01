@@ -3,7 +3,7 @@ using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Server;
 
-public class ServerBindingTableTests
+public partial class ServerBindingTableTests
 {
     [Test]
     public void CompletedCancelIsNoOpAndNeverReleasesTheNextCreator()
@@ -25,7 +25,7 @@ public class ServerBindingTableTests
         Ensure(!table.Cancel(3));
         ExpectViolation(() => table.TryBind(3, registration, out _));
         ExpectViolation(() => table.Cancel(4));
-        table.Close();
+        CloseAfterIntake(table);
     }
 
     [Test]
@@ -40,17 +40,17 @@ public class ServerBindingTableTests
         retired.Retire();
         var tokens = new ulong[1];
         var cursor = 0;
-        Ensure(table.TakeRetiredTokens(tokens, ref cursor, scanLimit: 1) == 1);
+        Ensure(table.DetachRetiredAtIntakeSafePoint(tokens, ref cursor, scanLimit: 1) == 1);
         Ensure(tokens[0] == old.Token && cursor == 1 && quota.Used == 1);
         var reused = Bind(table, 3, live);
         Ensure(Protocol3BindingToken.Slot(reused.Token) == Protocol3BindingToken.Slot(old.Token));
-        Ensure(table.TakeRetiredTokens(tokens, ref cursor, scanLimit: 1) == 0 && cursor == 2);
+        Ensure(table.DetachRetiredAtIntakeSafePoint(tokens, ref cursor, scanLimit: 1) == 0 && cursor == 2);
         Ensure(!table.Release(old.Token));
         Ensure(ReferenceEquals(table.Capture(reused.Token), reused));
         Ensure(ReferenceEquals(table.Capture(second.Token), second) && quota.Used == 2);
         cursor = 0;
-        Ensure(table.TakeRetiredTokens(tokens, ref cursor) == 0 && cursor == 2);
-        table.Close();
+        Ensure(table.DetachRetiredAtIntakeSafePoint(tokens, ref cursor) == 0 && cursor == 2);
+        CloseAfterIntake(table);
         Ensure(quota.Used == 0);
     }
 
@@ -130,7 +130,7 @@ public class ServerBindingTableTests
         Ensure(current.Registration.TryGetExactPayload(out var newSelected) && ReferenceEquals(newSelected, newPayload));
         GC.KeepAlive(oldPayload);
         GC.KeepAlive(newPayload);
-        table.Close();
+        CloseAfterIntake(table);
         Ensure(quota.Used == 0);
     }
 
@@ -143,27 +143,34 @@ public class ServerBindingTableTests
         var entry = Bind(table, 1, registration);
         var captured = table.Capture(entry.Token) ?? throw new InvalidOperationException("Missing captured entry.");
         table.Close();
-        Ensure(table.IsClosed && quota.Used == 0);
-        Ensure(!table.CanUseCaptured(captured) && table.Capture(entry.Token) is null);
+        Ensure(table.IsClosed && quota.Used == 1 && !table.CanUseCaptured(captured));
+        Ensure(ReferenceEquals(table.Capture(entry.Token), entry)); // Seal is not acknowledgment.
+        table.AcknowledgeClosedIntake();
+        Ensure(quota.Used == 0 && table.Capture(entry.Token) is null);
         Ensure(!table.Release(entry.Token) && !table.Cancel(1));
-        table.Close();
+        CloseAfterIntake(table);
         Ensure(quota.Used == 0);
         table.ObserveBindId(2);
         Ensure(table.TryBind(2, registration, out var refused) == Protocol3BindStatus.SessionDraining && refused is null);
     }
 
     [Test]
-    public void RetainedEntryAndControlDoNotRootRetiredPayloadOrFullFactsTable()
+    public void RetainedEntryOwnsOnlyScalarFactsUntilItsIntakeAcknowledgment()
     {
         var (table, captured, payload, stub, facts) = CaptureRetiredWeakSelection();
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
         GC.WaitForPendingFinalizers();
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
-        Ensure(!payload.TryGetTarget(out _) && !stub.TryGetTarget(out _) && !facts.TryGetTarget(out _));
+        Ensure(!payload.TryGetTarget(out _) && !stub.TryGetTarget(out _) && IsWeakAlive(facts));
+        CloseAfterIntake(table);
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        GC.WaitForPendingFinalizers();
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+        Ensure(!IsWeakAlive(facts));
         Ensure(captured.Registration.Facts is null && !captured.Registration.TryGetExactPayload(out _));
         Ensure(!table.CanUseCaptured(captured));
         GC.KeepAlive(captured);
-        table.Close();
+        CloseAfterIntake(table);
     }
 
     [Test]
@@ -207,7 +214,7 @@ public class ServerBindingTableTests
         Ensure(table.Capture(first.Token) is null && ReferenceEquals(table.Capture(second.Token), second));
         Ensure(quota.Used == 1);
         Ensure(table.CanUseCaptured(second));
-        table.Close();
+        CloseAfterIntake(table);
         Ensure(quota.Used == 0);
     }
 
@@ -222,14 +229,14 @@ public class ServerBindingTableTests
         second.ObserveBindId(1);
         Ensure(second.TryBind(1, registration, out var full) == Protocol3BindStatus.BindingCapacity && full is null);
         Ensure(quota.Used == 1);
-        first.Close();
+        CloseAfterIntake(first);
         Ensure(!first.Release(entry.Token) && !first.Cancel(1) && quota.Used == 0);
         var secondEntry = Bind(second, 2, registration);
         Ensure(Protocol3BindingToken.Incarnation(secondEntry.Token) == 1);
         // Equal numeric tokens in different physical Sessions convey no cross-Session ownership.
         Ensure(!second.CanUseCaptured(entry));
         Ensure(second.Release(secondEntry.Token));
-        second.Close();
+        CloseAfterIntake(second);
         Ensure(quota.Used == 0);
     }
 
@@ -250,7 +257,7 @@ public class ServerBindingTableTests
         table.ObserveBindId(3);
         Ensure(table.TryBind(3, registration, out var retired) == Protocol3BindStatus.RegistrationRetiring && retired is null);
         Ensure(quota.Used == 0);
-        table.Close();
+        CloseAfterIntake(table);
     }
 
     [Test]
@@ -267,7 +274,7 @@ public class ServerBindingTableTests
         table.ObserveBindId(3);
         Ensure(table.TryBind(3, registration, out exhausted) == Protocol3BindStatus.SessionDraining && exhausted is null);
         Ensure(quota.Used == 0 && table.Capture(last.Token) is null);
-        table.Close();
+        CloseAfterIntake(table);
     }
 
     [Test]
@@ -284,7 +291,7 @@ public class ServerBindingTableTests
         Ensure(!table.Cancel(1) && ReferenceEquals(table.Capture(entry.Token), entry));
         Ensure(table.Release(entry.Token));
         ExpectViolation(() => table.TryBind(2, registration, out _));
-        table.Close();
+        CloseAfterIntake(table);
         Ensure(quota.Used == 0);
     }
 
@@ -315,7 +322,16 @@ public class ServerBindingTableTests
         Ensure(final.CreatorOperationId == long.MaxValue);
         Ensure(table.Cancel(long.MaxValue) && quota.Used == 0);
         ExpectViolation(() => table.TryBind(long.MaxValue, registration, out _));
+        CloseAfterIntake(table);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool IsWeakAlive<T>(WeakReference<T> weak) where T : class => weak.TryGetTarget(out _);
+
+    private static void CloseAfterIntake(ServerBindingTable table)
+    {
         table.Close();
+        table.AcknowledgeClosedIntake();
     }
 
     private static ServerBindingEntry Bind(ServerBindingTable table, ulong id, ServerBindingRegistration registration)
@@ -345,6 +361,7 @@ public class ServerBindingTableTests
         slot.SetMethodCount(descriptor.Methods.Count);
         preparation.Seal();
         var facts = ServerDeclaredMethodFacts.Prepare(descriptor, stub, slot);
+        preparation.PrepareCommit();
         preparation.Commit();
         payload.DeclaredFacts = facts;
         var registration = group is null

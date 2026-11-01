@@ -12,59 +12,79 @@ internal sealed partial class SharpLinkServer
         ThrowIfRegistrationCallbackReentry();
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
-        Task<SharpLinkAssemblyUnregisterResult> operation;
-        TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion;
-        SharpLinkDynamicModule module;
-        lock (_registryGate)
+        while (true)
         {
-            if (_unregisterOperations.TryGetValue(assembly, out operation!))
-                return WaitForUnregisterAsync(operation, cancellationToken);
-            if (!_dynamicModules.TryGetValue(assembly, out module!))
+            SharpLinkDynamicModule module;
+            ServerServiceSnapshot.Lease snapshot;
+            lock (_registryGate)
             {
-                return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult
-                {
-                    ReferencesReleased = false
-                });
+                if (_unregisterOperations.TryGetValue(assembly, out var existing))
+                    return WaitForUnregisterAsync(existing, cancellationToken);
+                if (!_dynamicModules.TryGetValue(assembly, out module!))
+                    return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+                snapshot = _serviceModuleRegistry.CaptureServices();
             }
-            EnsureNoDynamicDependants(module);
-            completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            operation = completion.Task;
-            if (_detachedModuleServices.TryGetValue(module, out _))
+            using (snapshot)
+            using (var storage = _runtimeContext.CreateMetadataStorage())
             {
-                // A previous finite wait may have timed out while physical cleanup is
-                // still owned. Reattach to that retirement, not a second publication.
-                _unregisterOperations.Add(assembly, operation);
-            }
-            else
-            {
-                // Exhaustion/fallible snapshot construction precedes every retirement cut.
-                var generation = NextBindingPublicationGeneration();
-                var retiringBindings = _services.Values.Where(service => ReferenceEquals(service.Module, module)).ToArray();
-                var nextServices = _services.Where(pair => !ReferenceEquals(pair.Value.Module, module))
-                    .ToDictionary(static pair => pair.Key, static pair => pair.Value).ToFrozenDictionary();
-                _unregisterOperations.Add(assembly, operation);
+                ServerServiceSnapshot? old = null;
+                ServerServiceSnapshot? next = null;
+                ServerDetachedServices? detached = null;
+                var transferred = false;
+                TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? completion = null;
                 try
                 {
-                    _detachedModuleServices.Add(module, retiringBindings);
+                    var source = snapshot.Services;
+                    var count = source.Values.Count(service => ReferenceEquals(service.Module, module));
+                    var detachedCharge = storage.ReserveCollection(count);
+                    var retiringBindings = source.Values.Where(service => ReferenceEquals(service.Module, module)).ToArray();
+                    detached = new ServerDetachedServices(retiringBindings, storage, detachedCharge);
+                    using var mutableCharge = storage.ReserveCollection(source.Count - count);
+                    var nextMap = source.Where(pair => !ReferenceEquals(pair.Value.Module, module))
+                        .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                    var snapshotCharge = storage.ReserveCollection(nextMap.Count);
+                    next = new ServerServiceSnapshot(nextMap.ToFrozenDictionary(), storage, snapshotCharge);
+                    nextMap.Clear();
+                    lock (_registryGate)
+                    {
+                        if (_unregisterOperations.TryGetValue(assembly, out var existing))
+                            return WaitForUnregisterAsync(existing, cancellationToken);
+                        if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
+                            return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+                        if (!_serviceModuleRegistry.IsCurrentServices(snapshot)) continue;
+                        EnsureNoDynamicDependants(module);
+                        completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        if (_detachedModuleServices.TryGetValue(module, out _))
+                        {
+                            _unregisterOperations.Add(assembly, completion.Task);
+                        }
+                        else
+                        {
+                            var generation = NextBindingPublicationGeneration();
+                            _unregisterOperations.Add(assembly, completion.Task);
+                            try { _detachedModuleServices.Add(module, detached); }
+                            catch { _unregisterOperations.Remove(assembly); throw; }
+                            old = _serviceModuleRegistry.PublishServices(next);
+                            transferred = true;
+                            module.TryBeginDraining();
+                            RetireBindingGroup(retiringBindings);
+                            _registryGeneration = generation;
+                        }
+                        module.TryBeginDraining();
+                    }
                 }
-                catch
+                finally
                 {
-                    _unregisterOperations.Remove(assembly);
-                    throw;
+                    old?.Dispose(); // Cold quota release is outside the registry gate.
+                    if (!transferred) { next?.Dispose(); detached?.Dispose(); }
                 }
-                module.TryBeginDraining();
-                RetireBindingGroup(retiringBindings);
-                Volatile.Write(ref _services, nextServices);
-                _registryGeneration = generation;
+                ScheduleBindingInvalidations();
+                ScheduleContractManifestPublish();
+                _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion!);
+                TrackFrameworkTask(completion!.Task, "DynamicAssemblyUnregister", TaskObservationMode.ExternallyObserved);
+                return WaitForUnregisterAsync(completion.Task, cancellationToken);
             }
-            module.TryBeginDraining();
         }
-        ScheduleBindingInvalidations();
-        ScheduleContractManifestPublish();
-        _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
-        TrackFrameworkTask(operation, "DynamicAssemblyUnregister", TaskObservationMode.ExternallyObserved);
-        return WaitForUnregisterAsync(operation, cancellationToken);
     }
 
     private static ValueTask<SharpLinkAssemblyUnregisterResult> WaitForUnregisterAsync(
@@ -146,41 +166,76 @@ internal sealed partial class SharpLinkServer
         // post-permit physical invocation lease; there is no binding-group call counter.
         await module.WaitForDrainAsync().ConfigureAwait(false);
         ServiceRegistration[] removedServices;
+        ServerDetachedServices? detachedOwner = null;
         RpcGeneratedManifestRegistration codecRegistration;
-        lock (_registryGate)
+        while (true)
         {
-            if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
-                return;
-            var services = Volatile.Read(ref _services);
-            if (!_detachedModuleServices.TryGetValue(module, out removedServices!))
+            ServerServiceSnapshot.Lease snapshot;
+            lock (_registryGate)
             {
-                removedServices = services.Values
-                    .Where(service => ReferenceEquals(service.Module, module))
-                    .ToArray();
+                if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module)) return;
+                snapshot = _serviceModuleRegistry.CaptureServices();
+                codecRegistration = module.CodecRegistration;
             }
-            var nextServices = services
-                .Where(pair => !ReferenceEquals(pair.Value.Module, module))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                .ToFrozenDictionary();
-            var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
-            codecRegistration = module.CodecRegistration;
-            var removedCodecTypes = codecRegistration.Codecs.Keys.ToArray();
-            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            for (var index = 0; index < removedCodecTypes.Length; index++)
+            using (snapshot)
+            using (var storage = _runtimeContext.CreateMetadataStorage())
             {
-                var codecType = removedCodecTypes[index];
-                var replacement = FindReplacementCodec(codecType, module);
-                if (replacement is null)
-                    nextFactories.Remove(codecType);
-                else
-                    nextFactories[codecType] = replacement;
+                using var workspace = new ServerMetadataWorkspace(storage);
+                var services = snapshot.Services;
+                workspace.Reserve(services.Count);
+                var nextMap = services.Where(pair => !ReferenceEquals(pair.Value.Module, module))
+                    .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                workspace.ClearBeforeRelease(nextMap.Clear);
+                var mapCharge = storage.ReserveCollection(nextMap.Count);
+                ServerServiceSnapshot? next = null;
+                ServerServiceSnapshot? old = null;
+                ServerDetachedServices? fallback = null;
+                var published = false;
+                try
+                {
+                    next = new ServerServiceSnapshot(nextMap.ToFrozenDictionary(), storage, mapCharge);
+                    var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
+                    workspace.Reserve(factories.Count);
+                    var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
+                    workspace.ClearBeforeRelease(nextFactories.Clear);
+                    var count = services.Values.Count(service => ReferenceEquals(service.Module, module));
+                    var fallbackCharge = storage.ReserveCollection(count);
+                    fallback = new ServerDetachedServices(services.Values
+                        .Where(service => ReferenceEquals(service.Module, module)).ToArray(), storage, fallbackCharge);
+                    lock (_registryGate)
+                    {
+                        if (!_serviceModuleRegistry.IsCurrentServices(snapshot)) continue;
+                        foreach (var codecType in codecRegistration.Codecs.Keys)
+                        {
+                            var replacement = FindReplacementCodec(codecType, module);
+                            if (replacement is null) nextFactories.Remove(codecType);
+                            else nextFactories[codecType] = replacement;
+                        }
+                    }
+                    // Fallible wrapper construction/validation is outside the registry gate.
+                    using var publication = _runtimeContext.PrepareGeneratedCodecPublication(nextFactories);
+                    lock (_registryGate)
+                    {
+                        if (!_serviceModuleRegistry.IsCurrentServices(snapshot) ||
+                            !_runtimeContext.IsCurrentGeneratedCodecPublication(publication)) continue;
+                        if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module)) return;
+                        _runtimeContext.CommitGeneratedCodecPublication(publication);
+                        old = _serviceModuleRegistry.PublishServices(next);
+                        _dynamicModules.Remove(assembly);
+                        if (!_detachedModuleServices.Remove(module, out detachedOwner!))
+                        { detachedOwner = fallback; fallback = null; }
+                        removedServices = detachedOwner.Services;
+                        published = true;
+                    }
+                }
+                finally
+                {
+                    old?.Dispose();
+                    if (!published) next?.Dispose();
+                    fallback?.Dispose();
+                }
+                break;
             }
-            _runtimeContext.PublishGeneratedCodecs(nextFactories);
-            Volatile.Write(ref _services, nextServices);
-            _dynamicModules.Remove(assembly);
-            _detachedModuleServices.Remove(module, out _);
-            // Admission publication happened at the unregister/replacement cut. Physical
-            // codec/service cleanup is not a new registration generation transaction.
         }
 
         List<Exception>? failures = null;
@@ -221,6 +276,7 @@ internal sealed partial class SharpLinkServer
         finally
         {
             module.MarkReleased();
+            detachedOwner?.Dispose();
         }
         if (failures is { Count: 1 })
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();

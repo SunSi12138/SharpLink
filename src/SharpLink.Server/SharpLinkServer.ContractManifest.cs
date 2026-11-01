@@ -17,7 +17,7 @@ internal sealed partial class SharpLinkServer
     private ProtocolV2ContractManifest CreateContractManifestSnapshotLocked()
     {
         var modules = _dynamicModules.Values.ToArray();
-        var services = Volatile.Read(ref _services);
+        var services = _services;
         var entries = new KeyValuePair<long, RpcHash128>[services.Count];
         var index = 0;
         foreach (var service in services.OrderBy(static pair => pair.Key))

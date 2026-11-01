@@ -77,18 +77,22 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private async Task ProcessRequestLoop(ServerConnectionState connection)
+    internal async Task ProcessRequestLoop(ServerConnectionState connection)
     {
         var session = connection.Session;
         var ct = connection.ConnectionToken;
         var reader = session.Input;
         var requestCancellationMap = connection.CallCancellations;
+        if (!connection.TryStartBindingIntake()) return;
         try
         {
             //处理握手
             while (session.IsConnected && !ct.IsCancellationRequested)
             {
-                // 1. 等待数据读取
+                await AcknowledgeBindingRetirementsAtIntakeAsync(connection).ConfigureAwait(false);
+                if (!session.IsConnected || ct.IsCancellationRequested) break;
+                // CancelPendingRead is also a local maintenance wake. It does not consume
+                // unread partial frame bytes or mean the physical transport is terminal.
                 var result = await reader.ReadAsync(ct);
                 var buffer = result.Buffer;
 
@@ -175,7 +179,7 @@ internal sealed partial class SharpLinkServer
                             try
                             {
                                 var failedRequestId = unchecked((long)header.RequestId);
-                                if (header.Type == ProtocolV2FrameType.Request)
+                                if (header.Type is ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayStreamRequest)
                                 {
                                     if ((header.Flags & ProtocolV2FrameFlags.OneWay) != 0)
                                     {
@@ -280,6 +284,7 @@ internal sealed partial class SharpLinkServer
                                         ct).ConfigureAwait(false);
                                     break;
                                 case ProtocolV2FrameType.Request:
+                                case ProtocolV2FrameType.OneWayStreamRequest:
                                     {
                                         var requestId = unchecked((long)header.RequestId);
                                         _ = DispatchRequestAsync(
@@ -343,10 +348,6 @@ internal sealed partial class SharpLinkServer
                                         HealthStatus,
                                         ct).ConfigureAwait(false);
                                     break;
-                                // Type23 has been structurally validated without decompression above.
-                                // Its producer/discard lifecycle is not part of this source slice; do not
-                                // dispatch business code or pretend that parsing supplies that ownership.
-                                case ProtocolV2FrameType.OneWayStreamRequest:
                                 case ProtocolV2FrameType.HandshakeRequest:
                                 case ProtocolV2FrameType.HandshakeResponse:
                                 case ProtocolV2FrameType.ResponseCompressionPreferenceAck:
@@ -388,6 +389,7 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
+            connection.CompleteBindingIntake();
             // Outstanding observers retain the map and remove their own state after user work ends.
             // Cooperative methods already observe serverLoopToken; non-cooperative methods suppress
             // their response because the token is checked before response ownership is claimed.
@@ -416,6 +418,8 @@ internal sealed partial class SharpLinkServer
                         new SharpLinkException(SharpLinkErrorCode.Unavailable,
                             SharpLinkErrorDetails.Unavailable.BindingUnknown, "Binding is unknown or retired."),
                         connection.ConnectionToken).ConfigureAwait(false);
+                else if (frameType == ProtocolV2FrameType.OneWayStreamRequest)
+                    DrainRejectedOneWayStreams(connection.Session, requestId, routing.ClientStreamCount);
                 return;
             }
             if (!boundMethod.Method.IsKnown)
@@ -428,6 +432,8 @@ internal sealed partial class SharpLinkServer
                                 SharpLinkErrorDetails.NotFound.UnknownBoundMethod, "Method is not in the bound registration.")
                             : new SharpLinkException(SharpLinkErrorCode.Internal, "The RPC stub returned invalid method facts."),
                         connection.ConnectionToken).ConfigureAwait(false);
+                else if (frameType == ProtocolV2FrameType.OneWayStreamRequest)
+                    DrainRejectedOneWayStreams(connection.Session, requestId, routing.ClientStreamCount);
                 return;
             }
             if ((boundMethod.Method.Kind == RpcMethodKind.OneWay) != ((flags & ProtocolV2FrameFlags.OneWay) != 0))

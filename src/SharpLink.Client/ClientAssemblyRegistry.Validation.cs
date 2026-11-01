@@ -8,20 +8,23 @@ internal sealed partial class ClientAssemblyRegistry
         ISharpLinkGeneratedAssemblyManifest incoming,
         SharpLinkDynamicModule module,
         FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> currentProxies,
+        ClientProxySnapshot sourceOwners,
         SharpLinkDynamicModule[] currentModules,
-        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration>? currentCodecs,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> currentCodecs,
+        ColdMetadataPreparation preparation,
         out SharpLinkAssemblyRegistrationError? error)
     {
-        error = ValidateDependencies(incoming, currentModules);
+        error = ValidateDependencies(incoming, currentModules, preparation);
         if (error is not null)
             return default;
 
-        var nextProxies = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>();
+        var proxyCount = checked(currentProxies.Count + incoming.Contracts.Count);
+        for (var copy = 0; copy < 3; copy++) preparation.ReserveCollection(proxyCount);
+        var nextProxies = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>(proxyCount);
         foreach (var pair in currentProxies)
             nextProxies[pair.Key] = pair.Value;
-        var byId = nextProxies.Values.ToDictionary(
-            static registration => registration.Descriptor.ContractId,
-            static registration => registration);
+        var byId = new Dictionary<long, SharpLinkClient.ClientProxyRegistration>(proxyCount);
+        foreach (var registration in nextProxies.Values) byId.Add(registration.Descriptor.ContractId, registration);
         foreach (var contract in incoming.Contracts)
         {
             if (byId.TryGetValue(contract.ContractId, out var existing))
@@ -41,8 +44,11 @@ internal sealed partial class ClientAssemblyRegistry
             byId.Add(contract.ContractId, registration);
         }
 
-        var nextFactories = (currentCodecs ?? _runtimeContext.CreateGeneratedCodecSnapshot())
-            .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+        var codecSource = currentCodecs;
+        preparation.ReserveCollection(checked(codecSource.Count + module.CodecRegistration.Codecs.Count));
+        var nextFactories = new Dictionary<Type, RpcGeneratedCodecRegistration>(
+            checked(codecSource.Count + module.CodecRegistration.Codecs.Count));
+        foreach (var pair in codecSource) nextFactories.Add(pair.Key, pair.Value);
         foreach (var pair in module.CodecRegistration.Codecs)
         {
             var codec = pair.Value;
@@ -63,14 +69,17 @@ internal sealed partial class ClientAssemblyRegistry
             }
             nextFactories.Add(pair.Key, codec);
         }
-        return new RegistrationCandidate(nextProxies.ToFrozenDictionary(), nextFactories);
+        return new RegistrationCandidate(ClientProxySnapshot.Create(nextProxies.ToFrozenDictionary(), preparation, sourceOwners, (PreparedGeneratedManifest)incoming), nextFactories);
     }
 
     private IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateCodecSnapshotWithout(
-        SharpLinkDynamicModule removedModule)
+        SharpLinkDynamicModule removedModule,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> source,
+        ColdMetadataPreparation preparation)
     {
-        var nextFactories = _runtimeContext.CreateGeneratedCodecSnapshot()
-            .ToDictionary(static pair => pair.Key, static pair => pair.Value);
+        preparation.ReserveCollection(source.Count);
+        var nextFactories = new Dictionary<Type, RpcGeneratedCodecRegistration>(source.Count);
+        foreach (var pair in source) nextFactories.Add(pair.Key, pair.Value);
         foreach (var codec in removedModule.CodecRegistration.Codecs)
         {
             var replacement = FindReplacementCodec(codec.Key, removedModule);
@@ -120,9 +129,13 @@ internal sealed partial class ClientAssemblyRegistry
 
     private SharpLinkAssemblyRegistrationError? ValidateDependencies(
         ISharpLinkGeneratedAssemblyManifest incoming,
-        SharpLinkDynamicModule[] currentModules)
+        SharpLinkDynamicModule[] currentModules,
+        ColdMetadataPreparation? preparation = null)
     {
-        var available = new HashSet<Assembly>(ReferenceEqualityComparer.Instance);
+        var availableCount = checked(_staticManifests.Count + currentModules.Length);
+        preparation?.ReserveCollection(availableCount);
+        preparation?.ReserveCollection(checked(incoming.Dependencies.Count + incoming.ContractDependencies.Count));
+        var available = new HashSet<Assembly>(availableCount, ReferenceEqualityComparer.Instance);
         for (var index = 0; index < _staticManifests.Count; index++)
             available.Add(_staticManifests[index].OwnerAssembly);
         for (var index = 0; index < currentModules.Length; index++)
@@ -280,6 +293,6 @@ internal sealed partial class ClientAssemblyRegistry
             IncomingFingerprint: incomingContract.Fingerprint);
 
     private readonly record struct RegistrationCandidate(
-        FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> Proxies,
+        ClientProxySnapshot Proxies,
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Codecs);
 }

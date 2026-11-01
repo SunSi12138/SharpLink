@@ -49,6 +49,9 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     private bool _childDetachFinalizing;
     private TaskCompletionSource? _childDispatchesDrained;
     private TaskCompletionSource? _childDetachedCompletion;
+    private TaskCompletionSource? _childPhysicalCompletion; // Lazy service-facing physical join, not an item counter.
+    private bool _childPhysicalCompleted;
+    private Exception? _childPhysicalFailure;
 
     internal static Action<long, ushort, bool>? BufferedItemObserverForTests
     {
@@ -392,19 +395,20 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             _localAbandonRequested = true;
             _discarding = true;
             _childClosed = true;
-            if (_dispatcher is not null || _attachmentInProgress)
-            {
-                _childDetachRequested = true;
-                _disposeChildOnDetach = true;
-            }
+            _childDetachRequested = true; // Also completes the no-child fast path.
+            _disposeChildOnDetach = _dispatcher is not null || _attachmentInProgress;
             discarded = TakeBufferedItemsLocked();
             if (_activeChildDispatches == 0)
                 dispatchesDrained = TakeDispatchesDrainedCompletionLocked();
         }
 
-        DiscardBufferedItems(discarded);
+        Exception? failure = null;
+        try { DiscardBufferedItems(discarded); }
+        catch (Exception cleanup) { failure = cleanup; }
         dispatchesDrained?.TrySetResult();
         TryFinalizeChildDetach();
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     internal bool TryBeginAttach(IStreamDispatcher dispatcher, out bool alreadyCompleted)
@@ -549,7 +553,8 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             }
         }
 
-        DiscardBufferedItems(discarded);
+        try { DiscardBufferedItems(discarded); }
+        catch { /* Batch cleanup already retained its failure before releasing ownership. */ }
         TryFinalizeChildDetach();
     }
 
@@ -614,10 +619,39 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                 dispatchesDrained = TakeDispatchesDrainedCompletionLocked();
         }
 
-        DiscardBufferedItems(discarded);
-        dispatchesDrained?.TrySetResult();
-        TryFinalizeChildDetach();
+        try { DiscardBufferedItems(discarded); }
+        finally
+        {
+            dispatchesDrained?.TrySetResult();
+            TryFinalizeChildDetach();
+        }
     }
+
+    internal bool IsAvailableForAdmission
+    {
+        get
+        {
+            lock (_gate)
+                return !_localAbandonRequested && !_discarding && _completion is null &&
+                    _dispatcher is null && !_attachmentInProgress;
+        }
+    }
+
+    // Ownership of an ALREADY accepted declared route is not new-route admission. Stored
+    // peer EOF/Error must still be replayed to the future typed consumer without reopening it.
+    internal bool IsAvailableForInvocationCapture
+    {
+        get
+        {
+            lock (_gate)
+                return !_localAbandonRequested && !_discarding && !_childClosed &&
+                    !_childDetachRequested && !_childDetached && !_childDetachFinalizing &&
+                    _dispatcher is null && !_attachmentInProgress;
+        }
+    }
+
+    internal void ReconfigureForAdmission(PreAdmissionStreamDispatcher replacement)
+        => ReconfigureFrom(replacement);
 
     private void ReconfigureFrom(PreAdmissionStreamDispatcher replacement)
     {
@@ -652,6 +686,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
 
     private async Task ReplayBufferedItemsAsync(IStreamDispatcher dispatcher)
     {
+        Exception? failure = null;
         try
         {
             while (true)
@@ -698,6 +733,7 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                 if (stop)
                     return;
 
+                Exception? itemFailure = null;
                 try
                 {
                     var bufferedPayload = new ReadOnlySequence<byte>(item.Owner.WrittenMemory);
@@ -713,20 +749,27 @@ internal sealed partial class PreAdmissionStreamDispatcher(
                             item.EncodedByteCount);
                     await dispatch.ConfigureAwait(false);
                 }
-                finally
-                {
-                    ReleaseBufferedItem(item, notifyBytesConsumed: false);
-                }
+                catch (Exception error) { itemFailure = error; }
+                // Returning the original buffered owner is independent of dispatch outcome.
+                // A throwing budget/pool callback must not replace the primary dispatch fault.
+                try { ReleaseBufferedItem(item, notifyBytesConsumed: false); }
+                catch (Exception cleanup) { itemFailure = RpcPublicationErrors.Combine(itemFailure, cleanup); }
+                if (itemFailure is not null)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(itemFailure).Throw();
             }
         }
         catch (Exception exception)
         {
-            FailAttachment(dispatcher, exception);
-            throw;
+            failure = exception;
+            try { FailAttachment(dispatcher, exception); }
+            catch (Exception cleanup) { failure = cleanup; } // FailAttachment preserves the original.
         }
         finally
         {
-            FinalizeAttachmentEnd();
+            try { FinalizeAttachmentEnd(); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
     }
 
@@ -745,6 +788,8 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             if (!ReferenceEquals(_dispatcher, dispatcher))
                 return;
 
+            // Publish the original failure while attachment still excludes finalization.
+            _childPhysicalFailure = RpcPublicationErrors.Combine(_childPhysicalFailure, exception);
             _attachmentInProgress = false;
             _replayedDuringAttach = 0;
             _discarding = true;
@@ -764,13 +809,19 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             discarded = TakeBufferedItemsLocked();
         }
 
-        DiscardBufferedItems(discarded);
+        // The original attachment failure and every cleanup failure remain visible before
+        // the last existing dispatch use can publish physical completion.
+        Exception? failure = exception;
+        try { DiscardBufferedItems(discarded); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
         if (completionDispatcher is not null)
         {
             try { CompleteAttachedDispatcher(completionDispatcher, exception); }
-            catch { }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
         }
-        TryFinalizeChildDetach();
+        try { TryFinalizeChildDetach(); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure!).Throw();
     }
 
     private void FinalizeAttachmentEnd()
@@ -787,8 +838,8 @@ internal sealed partial class PreAdmissionStreamDispatcher(
             }
         }
 
-        DiscardBufferedItems(discarded);
-        TryFinalizeChildDetach();
+        try { DiscardBufferedItems(discarded); }
+        finally { TryFinalizeChildDetach(); }
     }
 
     private void ConfigureAttachedDispatcher(IStreamDispatcher dispatcher)
@@ -985,8 +1036,17 @@ internal sealed partial class PreAdmissionStreamDispatcher(
     {
         if (dispatcher is null)
             return;
+        Exception? failure = null;
         try { dispatcher.Complete(exception); }
-        finally { ReleaseChildDispatch(); }
+        catch (Exception cleanup)
+        {
+            failure = cleanup;
+            RecordChildPhysicalFailure(cleanup);
+        }
+        try { ReleaseChildDispatch(); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private bool CanRetainLocked(RetentionPolicy policy, int retainedBytes)
@@ -997,6 +1057,9 @@ internal sealed partial class PreAdmissionStreamDispatcher(
         if (_items.Count == 0)
             return [];
         var items = _items.ToArray();
+        // One existing dispatch use per actual extracted cleanup batch, acquired under the
+        // mailbox gate BEFORE outside buffer/budget/credit callbacks. Not a per-item counter.
+        _activeChildDispatches++;
         _items.Clear();
         return items;
     }
@@ -1010,25 +1073,46 @@ internal sealed partial class PreAdmissionStreamDispatcher(
 
     private void ReleaseBufferedItem(BufferedItem item, bool notifyBytesConsumed)
     {
-        buffers.Return(item.Owner);
+        Exception? failure = null;
+        try { buffers.Return(item.Owner); }
+        catch (Exception cleanup) { failure = cleanup; }
         lock (_gate)
         {
             _retainedBytes -= item.RetainedBytes;
             if (_retainedBytes < 0)
             {
                 _retainedBytes += item.RetainedBytes;
-                throw new InvalidOperationException("Inbound stream mailbox retained-byte count underflowed.");
+                failure = RpcPublicationErrors.Combine(failure,
+                    new InvalidOperationException("Inbound stream mailbox retained-byte count underflowed."));
             }
         }
-        item.ReleaseBytes(item.RetainedBytes);
+        try { item.ReleaseBytes(item.RetainedBytes); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
         if (notifyBytesConsumed)
-            NotifyBytesConsumed(item.EncodedByteCount);
+        {
+            try { NotifyBytesConsumed(item.EncodedByteCount); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
-    private void DiscardBufferedItems(IEnumerable<BufferedItem> items)
+    private void DiscardBufferedItems(BufferedItem[] items)
     {
+        if (items.Length == 0) return;
+        Exception? failure = null;
         foreach (var item in items)
-            ReleaseBufferedItem(item, notifyBytesConsumed: true);
+        {
+            try { ReleaseBufferedItem(item, notifyBytesConsumed: true); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        }
+        // Record first, then independently return the batch's exact existing dispatch use.
+        // Finalization may start at this decrement; never carry this use into child Dispose.
+        if (failure is not null) RecordChildPhysicalFailure(failure);
+        try { ReleaseChildDispatch(); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private static RetentionPolicy CreateRetentionPolicy(

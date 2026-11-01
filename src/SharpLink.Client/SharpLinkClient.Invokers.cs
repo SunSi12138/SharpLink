@@ -2,6 +2,32 @@ namespace SharpLink.Client;
 
 internal sealed partial class SharpLinkClient
 {
+    private static Exception CompleteFailedPending(ClientConnection connection, long requestId, Exception failure)
+    {
+        try { connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, failure); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+        return failure;
+    }
+
+    // Selected producing failures already own exact pending identity. Do not consult an
+    // application clock again while resolving a failed serializer/setup/head publication.
+    internal static Exception CompleteFailedProducingPending(ClientConnection connection,
+        ClientStreamPublicationGroup group, Exception failure)
+    {
+        var reason = failure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+            ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.SendFailure;
+        try { connection.PendingCalls.CompleteProducingSetupFailure(group, failure, reason); }
+        catch (Exception cleanup) { failure = ClientStreamPublicationGroup.AddPhysical(failure, cleanup)!; }
+        return failure;
+    }
+
+    private static async ValueTask<T> ObserveFailedOperationAsync<T>(RpcRequestOperation<T> operation, Exception failure)
+    {
+        try { _ = await operation.AsValueTask().ConfigureAwait(false); }
+        catch (Exception terminal) { failure = RpcPublicationErrors.Combine(failure, terminal)!; }
+        return await ValueTask.FromException<T>(failure).ConfigureAwait(false);
+    }
+
     internal sealed partial class ContractCallSite
     {
         public ValueTask<TResponse> InvokeUnaryAsync<TRequest, TResponse>(
@@ -360,10 +386,18 @@ internal sealed partial class SharpLinkClient
             CancellationToken cancellationToken)
             where TStreams : struct, IRpcClientStreamWriter
         {
-            var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable);
-            _owner.TrackFrameworkTask(
-                StartDuplexStreamingInvokerAsync(dispatcher, method, request, requestCodec, streams, control, cancellationToken),
-                "DuplexStreamingInvoker");
+            var group = new ClientStreamPublicationGroup(method.ClientStreamCount);
+            group.AdmitSupervision(_owner, "DuplexStreamingInvocation");
+            PooledAsyncStreamDispatcher<TResponse> dispatcher;
+            try { dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable); }
+            catch
+            {
+                group.MarkNoPending();
+                group.AttachOriginTask(Task.CompletedTask);
+                throw;
+            }
+            var origin = StartDuplexStreamingInvokerAsync(dispatcher, group, method, request, requestCodec, streams, control, cancellationToken);
+            group.AttachOriginTask(origin);
             return dispatcher;
         }
 
@@ -398,9 +432,14 @@ internal sealed partial class SharpLinkClient
                     hasResponsePayload: method.HasResponsePayload,
                     responseNullable: method.ResponseNullable);
                 reservationOwned = false;
+                try { connection.ReleaseCallAdmissionReservation(); }
+                catch (Exception transferFailure)
+                {
+                    return ObserveFailedOperationAsync(operation, CompleteFailedPending(connection, requestId, transferFailure));
+                }
                 return StartUnaryCall(
                     connection,
-                    unchecked((long)bindingId),
+                    bindingId,
                     method.MethodId,
                     requestId,
                     method.HasResponsePayload,
@@ -422,7 +461,7 @@ internal sealed partial class SharpLinkClient
 
         private ValueTask<TResponse> StartUnaryCall<TRequest, TResponse>(
             ClientConnection connection,
-            long contractId,
+            RpcBindingPublication binding,
             long methodId,
             long requestId,
             bool hasResponsePayload,
@@ -442,7 +481,7 @@ internal sealed partial class SharpLinkClient
                 {
                     _ = SendRpcCall(
                         connection.Session,
-                        contractId,
+                        binding,
                         methodId,
                         requestId,
                         flags,
@@ -457,7 +496,11 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
+                try { connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception); }
+                catch (Exception cleanup)
+                {
+                    return ObserveFailedOperationAsync(operation, RpcPublicationErrors.Combine(exception, cleanup)!);
+                }
             }
 
             return operation.AsValueTask();
@@ -544,7 +587,7 @@ internal sealed partial class SharpLinkClient
                 SharpLinkTelemetry.RecordClientAttempt();
 
             ClientConnection? connection = null;
-            ulong bindingId;
+            BoundTarget bindingId;
             var reservationOwned = false;
             try
             {
@@ -621,7 +664,7 @@ internal sealed partial class SharpLinkClient
                 {
                     var emission = SendRpcCall(
                         connection.Session,
-                        unchecked((long)bindingId),
+                        bindingId,
                         method.MethodId,
                         requestId,
                         flags,
@@ -674,8 +717,10 @@ internal sealed partial class SharpLinkClient
             if (outcome is null)
                 SharpLinkTelemetry.RecordClientAttempt();
 
+            var group = new ClientStreamPublicationGroup(method.ClientStreamCount);
+            group.AdmitSupervision(_owner, "OneWayStreamingInvocation");
             ClientConnection? connection = null;
-            ulong bindingId;
+            BoundTarget bindingId;
             var reservationOwned = false;
             try
             {
@@ -687,9 +732,16 @@ internal sealed partial class SharpLinkClient
             catch (Exception exception)
             {
                 if (reservationOwned)
-                    connection!.ReleaseCallAdmissionReservation();
-                exception = ArbitrateLogicalCallFailure(control, exception);
-                outcome?.CompleteLocalFailure(exception);
+                {
+                    reservationOwned = false;
+                    try { connection!.ReleaseCallAdmissionReservation(); }
+                    catch (Exception cleanup) { exception = RpcPublicationErrors.Combine(exception, cleanup)!; }
+                }
+                group.AttachOriginTask(group.FinishAsync());
+                try { exception = ArbitrateLogicalCallFailure(control, exception); }
+                catch (Exception arbitration) { exception = ClientStreamPublicationGroup.AddPhysical(exception, arbitration)!; }
+                try { outcome?.CompleteLocalFailure(exception); }
+                catch (Exception cleanup) { exception = ClientStreamPublicationGroup.AddPhysical(exception, cleanup)!; }
                 throw exception;
             }
 
@@ -697,36 +749,65 @@ internal sealed partial class SharpLinkClient
             if (control.Deadline.HasValue || cancellationToken.CanBeCanceled)
                 flags |= ProtocolV2FrameFlags.Cancellable;
 
-            PendingRequestLease<RpcEmptyRequest> oneWayStreamLease;
-            long requestId;
+            PendingRequestLease<RpcEmptyRequest> oneWayStreamLease = default;
+            var requestId = 0L;
             try
             {
                 EnsureLogicalCallProgress(control);
-                oneWayStreamLease = connection!.PendingCalls.RegisterOneWayClientStream(
-                    control.Deadline, cancellationToken, outcome);
+                group.PrepareRegistration(connection!, bindingId);
                 reservationOwned = false;
+                oneWayStreamLease = connection!.PendingCalls.RegisterOneWayClientStream(
+                    control.Deadline, cancellationToken, outcome, group);
                 requestId = oneWayStreamLease.Id;
+                _ = group.TakeRegisteredOperation<RpcEmptyRequest>();
             }
             catch (Exception exception)
             {
+                if (group.IsAdopted)
+                {
+                    requestId = group.RequestId;
+                    var original = group.TakeRegisteredOperation<RpcEmptyRequest>();
+                    if (oneWayStreamLease.Operation is null && original is not null)
+                        oneWayStreamLease = new PendingRequestLease<RpcEmptyRequest>(requestId, original);
+                }
                 if (reservationOwned)
                 {
-                    connection!.ReleaseCallAdmissionReservation();
                     reservationOwned = false;
+                    try { connection!.ReleaseCallAdmissionReservation(); }
+                    catch (Exception cleanup) { exception = RpcPublicationErrors.Combine(exception, cleanup)!; }
                 }
-                exception = ArbitrateLogicalCallFailure(control, exception);
-                outcome?.CompleteLocalFailure(exception);
+                if (requestId != 0)
+                {
+                    try { connection!.PendingCalls.CompleteProducingSetupFailure(group, exception); }
+                    catch (Exception cleanup) { exception = ClientStreamPublicationGroup.AddPhysical(exception, cleanup)!; }
+                }
+                // Own real cleanup before any further awaited result or user clock/outcome callback.
+                // Setup failure belongs to this caller. The immutable logical winner is not
+                // rewritten; this task owns ONLY independent physical cleanup/refund failures.
+                group.AttachOriginTask(group.FinishAsync());
+                if (oneWayStreamLease.Operation is not null)
+                {
+                    try { _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false); }
+                    catch (Exception terminal) { exception = RpcPublicationErrors.Combine(exception, terminal)!; }
+                }
+                try { exception = ArbitrateLogicalCallFailure(control, exception); }
+                catch (Exception arbitration) { exception = ClientStreamPublicationGroup.AddPhysical(exception, arbitration)!; }
+                try { outcome?.CompleteLocalFailure(exception); }
+                catch (Exception cleanup) { exception = ClientStreamPublicationGroup.AddPhysical(exception, cleanup)!; }
                 throw exception;
             }
 
+            var producerStarted = false;
+            Exception? publicationFailure = null;
             try
             {
-                if (connection!.PendingCalls.Contains(requestId))
+                if (group!.HasProducerLifetime)
                 {
-                    var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
+                    group.TakeProducerOwner(SharpLinkClientStreamModuleLeaseContext.Current);
+                    var streamCancellationToken = group.ProducerToken;
                     var emission = SendRpcCall(
                         connection.Session,
-                        unchecked((long)bindingId),
+                        group!,
                         method.MethodId,
                         requestId,
                         flags,
@@ -738,20 +819,37 @@ internal sealed partial class SharpLinkClient
                         // The pending call owns producer cancellation and request publication.
                         cancellationToken: streamCancellationToken,
                         publicationTable: connection.PendingCalls);
-                    await emission.ConfigureAwait(false);
-                    await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
-                    connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.LocalStreamComplete);
+                    if (emission.IsCompletedSuccessfully) await emission.ConfigureAwait(false);
+                    else
+                    {
+                        var headTask = emission.AsTask(); // The original ValueTask is consumed ONCE.
+                        group.RetainHeadTask(headTask);
+                        await headTask.ConfigureAwait(false);
+                    }
+                    var producer = group!.HeadPublicationConfirmed
+                        ? RunGeneratedClientStreamsAsync(connection, group, streams, streamCancellationToken, completeOneWay: true)
+                        : FinishUnstartedClientStreamsAsync(connection, group, null);
+                    producerStarted = true;
+                    group.AttachOriginTask(producer);
                 }
             }
             catch (Exception exception)
             {
-                // Preserve the pending owner's terminal arbitration and observe its lease once.
-                connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
+                publicationFailure = CompleteFailedProducingPending(connection!, group, exception);
+            }
+
+            if (!producerStarted)
+            {
+                var cleanup = FinishUnstartedClientStreamsAsync(connection!, group!, publicationFailure);
+                group.AttachOriginTask(cleanup);
             }
 
             // Registration may already have completed and removed the pending entry. Its operation
             // still owns that terminal result and must be consumed exactly once to return it to the pool.
-            _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
+            if (publicationFailure is not null)
+                _ = await ObserveFailedOperationAsync(oneWayStreamLease.Operation, publicationFailure).ConfigureAwait(false);
+            else
+                _ = await oneWayStreamLease.Operation.AsValueTask().ConfigureAwait(false);
         }
 
         private async ValueTask<TResponse> InvokeClientStreamingCoreAsync<TRequest, TResponse, TStreams>(
@@ -768,17 +866,21 @@ internal sealed partial class SharpLinkClient
             var outcome = _owner._endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(_owner, method);
             if (outcome is null)
                 SharpLinkTelemetry.RecordClientAttempt();
+            var group = new ClientStreamPublicationGroup(method.ClientStreamCount);
+            group.AdmitSupervision(_owner, "ClientStreamingInvocation");
             ClientConnection? connection = null;
-            ulong bindingId;
+            BoundTarget bindingId;
             var reservationOwned = false;
-            long requestId;
-            RpcRequestOperation<TResponse> operation;
+            var requestId = 0L;
+            RpcRequestOperation<TResponse>? operation = null;
             try
             {
                 EnsureLogicalCallProgress(control);
                 connection = ReserveBoundConnection(method, retrySelection: null, outcome, out bindingId);
                 reservationOwned = true;
                 EnsureLogicalCallProgress(control);
+                group.PrepareRegistration(connection, bindingId);
+                reservationOwned = false;
                 operation = connection.PendingCalls.Rent(
                     responseCodec,
                     PendingCallKind.ClientStreaming,
@@ -787,30 +889,57 @@ internal sealed partial class SharpLinkClient
                     out requestId,
                     outcome,
                     hasResponsePayload: method.HasResponsePayload,
-                    responseNullable: method.ResponseNullable);
-                reservationOwned = false;
+                    responseNullable: method.ResponseNullable,
+                    producerGroup: group);
+                _ = group.TakeRegisteredOperation<TResponse>();
             }
             catch (Exception exception)
             {
+                if (group.IsAdopted)
+                {
+                    requestId = group.RequestId;
+                    operation ??= group.TakeRegisteredOperation<TResponse>();
+                }
                 if (reservationOwned)
-                    connection!.ReleaseCallAdmissionReservation();
-                exception = ArbitrateLogicalCallFailure(control, exception);
-                outcome?.CompleteLocalFailure(exception);
+                {
+                    reservationOwned = false;
+                    try { connection!.ReleaseCallAdmissionReservation(); }
+                    catch (Exception cleanup) { exception = RpcPublicationErrors.Combine(exception, cleanup)!; }
+                }
+                if (requestId != 0)
+                {
+                    try { connection!.PendingCalls.CompleteProducingSetupFailure(group, exception); }
+                    catch (Exception cleanup) { exception = ClientStreamPublicationGroup.AddPhysical(exception, cleanup)!; }
+                }
+                // Own real cleanup before any further awaited result or user clock/outcome callback.
+                // Setup failure belongs to this caller. The immutable logical winner is not
+                // rewritten; this task owns ONLY independent physical cleanup/refund failures.
+                group.AttachOriginTask(group.FinishAsync());
+                if (operation is not null)
+                {
+                    try { _ = await operation.AsValueTask().ConfigureAwait(false); }
+                    catch (Exception terminal) { exception = RpcPublicationErrors.Combine(exception, terminal)!; }
+                }
+                try { exception = ArbitrateLogicalCallFailure(control, exception); }
+                catch (Exception arbitration) { exception = ClientStreamPublicationGroup.AddPhysical(exception, arbitration)!; }
+                try { outcome?.CompleteLocalFailure(exception); }
+                catch (Exception cleanup) { exception = ClientStreamPublicationGroup.AddPhysical(exception, cleanup)!; }
                 throw exception;
             }
             var flags = method.HasResponsePayload
                 ? ProtocolV2FrameFlags.HasReturn | ProtocolV2FrameFlags.Cancellable
                 : ProtocolV2FrameFlags.Cancellable;
-            var streamCancellationToken = connection!.PendingCalls.GetProducerCancellationToken(requestId);
-            SharpLinkDynamicModuleLease producerLease = default;
+            var streamCancellationToken = group!.ProducerToken;
+            var producerStarted = false;
+            Exception? publicationFailure = null;
             try
             {
-                if (connection.PendingCalls.Contains(requestId))
+                if (group.HasProducerLifetime)
                 {
-                    producerLease = moduleProducerLifetime?.TakeLease() ?? default;
-                    await SendRpcCall(
+                    group.TakeProducerOwner(moduleProducerLifetime);
+                    var emission = SendRpcCall(
                         connection.Session,
-                        unchecked((long)bindingId),
+                        group!,
                         method.MethodId,
                         requestId,
                         flags,
@@ -823,44 +952,61 @@ internal sealed partial class SharpLinkClient
                         // its pending entry, so the emission wait has to observe the token that entry
                         // cancels when it reaches a terminal reason.
                         cancellationToken: streamCancellationToken,
-                        publicationTable: connection.PendingCalls).ConfigureAwait(false);
-                    var producerTask = RunGeneratedClientStreamsAsync(connection, streams, requestId, streamCancellationToken, producerLease);
-                    producerLease = default;
-                    _owner.TrackFrameworkTask(producerTask, "ClientStreamingProducer");
+                        publicationTable: connection.PendingCalls);
+                    if (emission.IsCompletedSuccessfully) await emission.ConfigureAwait(false);
+                    else
+                    {
+                        var headTask = emission.AsTask(); // No second await/AsTask of the ValueTask.
+                        group.RetainHeadTask(headTask);
+                        await headTask.ConfigureAwait(false);
+                    }
+                    var producerTask = group!.HeadPublicationConfirmed
+                        ? RunGeneratedClientStreamsAsync(connection, group, streams, streamCancellationToken)
+                        : FinishUnstartedClientStreamsAsync(connection, group, null);
+                    producerStarted = true;
+                    group.AttachOriginTask(producerTask);
                 }
             }
             catch (Exception exception)
             {
-                connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
+                publicationFailure = CompleteFailedProducingPending(connection!, group, exception);
             }
             finally
             {
-                producerLease.Dispose();
+                if (!producerStarted)
+                {
+                    var cleanup = FinishUnstartedClientStreamsAsync(connection!, group!, publicationFailure);
+                    group.AttachOriginTask(cleanup);
+                }
             }
 
-            return await operation.AsValueTask().ConfigureAwait(false);
+            return publicationFailure is null
+                ? await operation!.AsValueTask().ConfigureAwait(false)
+                : await ObserveFailedOperationAsync(operation!, publicationFailure).ConfigureAwait(false);
         }
 
-        private async Task RunGeneratedClientStreamsAsync<TStreams>(
-            ClientConnection connection,
-            TStreams streams,
-            long requestId,
-            CancellationToken cancellationToken,
-            SharpLinkDynamicModuleLease producerLease)
+        private static async Task RunGeneratedClientStreamsAsync<TStreams>(
+            ClientConnection connection, ClientStreamPublicationGroup group, TStreams streams,
+            CancellationToken cancellationToken, bool completeOneWay = false)
             where TStreams : struct, IRpcClientStreamWriter
         {
             try
             {
-                await streams.WriteAsync(connection, requestId, cancellationToken).ConfigureAwait(false);
+                await group.RunWriterAsync(streams, cancellationToken).ConfigureAwait(false);
+                // Open/no-error group success MUST precede this logical completion (no self-join).
+                if (completeOneWay)
+                    connection.PendingCalls.TryComplete(group.RequestId, PendingCallCompletionReason.LocalStreamComplete);
             }
-            catch (Exception exception)
-            {
-                connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception);
-            }
-            finally
-            {
-                producerLease.Dispose();
-            }
+            catch (PhysicalTaskFailureException) { throw; }
+            catch (Exception independent) { throw PhysicalTaskFailureException.From(independent); }
+        }
+
+        private static async Task FinishUnstartedClientStreamsAsync(
+            ClientConnection connection, ClientStreamPublicationGroup group, Exception? publicationFailure)
+        {
+            try { await group.FinishAsync(publicationFailure).ConfigureAwait(false); }
+            catch (PhysicalTaskFailureException) { throw; }
+            catch (Exception independent) { throw PhysicalTaskFailureException.From(independent); }
         }
 
         private async Task StartServerStreamingInvokerAsync<TRequest, TResponse>(
@@ -889,7 +1035,7 @@ internal sealed partial class SharpLinkClient
                 {
                     await SendRpcCall(
                         connection.Session,
-                        unchecked((long)registration.BindingId),
+                        registration.Binding,
                         method.MethodId,
                         requestId,
                         ProtocolV2FrameFlags.Cancellable,
@@ -918,6 +1064,7 @@ internal sealed partial class SharpLinkClient
 
         private async Task StartDuplexStreamingInvokerAsync<TRequest, TResponse, TStreams>(
             PooledAsyncStreamDispatcher<TResponse> dispatcher,
+            ClientStreamPublicationGroup group,
             RpcMethodDescriptor method,
             TRequest request,
             IRpcCodec<TRequest> requestCodec,
@@ -927,49 +1074,120 @@ internal sealed partial class SharpLinkClient
             where TStreams : struct, IRpcClientStreamWriter
         {
             var moduleProducerLifetime = SharpLinkClientStreamModuleLeaseContext.Current;
-            SharpLinkDynamicModuleLease producerLease = default;
-            var registrationLease = dispatcher.RetainForRegistration();
+            var registrationLease = 0L;
             ClientConnection? connection = null;
             var requestId = 0L;
+            var reservationOwned = false;
+            var groupFinished = false;
+            Exception? publicationFailure = null;
+            Exception? physicalFailure = null;
             try
             {
-                var registration = await PrepareGeneratedServerStreamAsync(
-                    dispatcher,
-                    PendingCallKind.DuplexStreaming,
-                    method,
-                    control,
-                    cancellationToken).ConfigureAwait(false);
+                registrationLease = dispatcher.RetainForRegistration();
+                group.BeginResponseRoutePublication();
+                StreamCallRegistration registration;
+                try
+                {
+                    registration = await PrepareGeneratedServerStreamAsync(
+                        dispatcher, PendingCallKind.DuplexStreaming, method, control, cancellationToken,
+                        producerGroup: group, dispatcherLease: registrationLease).ConfigureAwait(false);
+                }
+                finally
+                {
+                    // Settle successful, throwing and never-attempted publication BEFORE any
+                    // physical Finish that may depend on terminal route cleanup. No self-join.
+                    group.CompleteResponseRoutePublication();
+                }
                 connection = registration.Connection;
                 requestId = registration.RequestId;
-                var streamCancellationToken = connection.PendingCalls.GetProducerCancellationToken(requestId);
-                producerLease = moduleProducerLifetime?.TakeLease() ?? default;
-                await SendRpcCall(
-                    connection.Session,
-                    unchecked((long)registration.BindingId),
-                    method.MethodId,
-                    requestId,
-                    ProtocolV2FrameFlags.Cancellable,
-                    request,
-                    requestCodec,
-                    control.Deadline,
-                    control.Metadata,
-                    observeEmission: control.Deadline.HasValue,
-                    // This head Request is owned by its pending entry, so the emission wait has to
-                    // observe the token that entry cancels: the deadline that ends the call also has
-                    // to release the producer side from a stalled transport write.
-                    cancellationToken: streamCancellationToken,
-                    publicationTable: connection.PendingCalls).ConfigureAwait(false);
-                await streams.WriteAsync(connection, requestId, streamCancellationToken).ConfigureAwait(false);
+                reservationOwned = false;
+                if (!group.HasProducerLifetime)
+                {
+                    groupFinished = true;
+                    await group.FinishAsync().ConfigureAwait(false);
+                }
+                else
+                {
+                    var streamCancellationToken = group.ProducerToken;
+                    group.TakeProducerOwner(moduleProducerLifetime);
+                    await SendRpcCall(
+                        connection.Session,
+                        group,
+                        method.MethodId,
+                        requestId,
+                        ProtocolV2FrameFlags.Cancellable,
+                        request,
+                        requestCodec,
+                        control.Deadline,
+                        control.Metadata,
+                        observeEmission: control.Deadline.HasValue,
+                        // This head Request is owned by its pending entry, so the emission wait has to
+                        // observe the token that entry cancels: the deadline that ends the call also has
+                        // to release the producer side from a stalled transport write.
+                        cancellationToken: streamCancellationToken,
+                        publicationTable: connection.PendingCalls).ConfigureAwait(false);
+                    groupFinished = true; // RunWriter owns its terminal join even when it fails.
+                    if (group.HeadPublicationConfirmed)
+                        await group.RunWriterAsync(streams, streamCancellationToken).ConfigureAwait(false);
+                    else
+                        await group.FinishAsync().ConfigureAwait(false);
+                }
             }
+            catch (PhysicalTaskFailureException reduced) { physicalFailure = reduced.RawException; }
             catch (Exception exception)
             {
-                CompleteFailedGeneratedStream(dispatcher, connection, requestId, exception);
+                publicationFailure = exception;
+                connection ??= group.PreparedConnection;
+                requestId = group.IsAdopted ? group.RequestId : 0;
+                try { if (group.IsAdopted) publicationFailure = CompleteFailedProducingPending(connection!, group, exception); }
+                catch (Exception independent) { physicalFailure = ClientStreamPublicationGroup.AddPhysical(physicalFailure, independent); }
+                if (!group.IsAdopted)
+                {
+                    var delivered = StreamSinkPublicationDisposition.NotPublished;
+                    var sink = (IStreamSinkPublicationReceipt)dispatcher;
+                    long retained = 0;
+                    try
+                    {
+                        if (sink.TryRetainSinkPublication(registrationLease, out retained))
+                            sink.PublishSinkTerminal(exception, false, registrationLease, ref delivered);
+                    }
+                    catch (Exception independent) { physicalFailure = ClientStreamPublicationGroup.AddPhysical(physicalFailure, independent); }
+                    finally
+                    {
+                        if (retained != 0)
+                        {
+                            try { sink.ReleaseSinkPublication(retained); }
+                            catch (Exception independent) { physicalFailure = ClientStreamPublicationGroup.AddPhysical(physicalFailure, independent); }
+                        }
+                    }
+                    if (delivered == StreamSinkPublicationDisposition.NotPublished)
+                        physicalFailure = ClientStreamPublicationGroup.AddPhysical(physicalFailure, exception);
+                }
             }
             finally
             {
-                producerLease.Dispose();
-                dispatcher.ReleaseRegistrationRetention(registrationLease);
+                if (!groupFinished)
+                {
+                    try { await group.FinishAsync(publicationFailure).ConfigureAwait(false); }
+                    catch (PhysicalTaskFailureException reduced) { physicalFailure = ClientStreamPublicationGroup.AddPhysical(physicalFailure, reduced.RawException); }
+                    catch (Exception independent) { physicalFailure = ClientStreamPublicationGroup.AddPhysical(physicalFailure, independent); }
+                }
+                try { if (reservationOwned) connection!.ReleaseCallAdmissionReservation(); }
+                catch (Exception independent) { physicalFailure = ClientStreamPublicationGroup.AddPhysical(physicalFailure, independent); }
+                try
+                {
+                    if (registrationLease != 0)
+                    {
+                        // Before successful adoption the original origin owns this pin alone.
+                        // After adoption, leave it with the exact pending sink until BOTH uses
+                        // and route publication are done. No second retain or consumer wait.
+                        var owned = group.IsAdopted ? group.FinishOriginSinkUseForRetention() : registrationLease;
+                        if (owned != 0) dispatcher.ReleaseRegistrationRetention(owned);
+                    }
+                }
+                catch (Exception independent) { physicalFailure = ClientStreamPublicationGroup.AddPhysical(physicalFailure, independent); }
             }
+            if (physicalFailure is not null) throw PhysicalTaskFailureException.From(physicalFailure);
         }
 
         private ValueTask<StreamCallRegistration> PrepareGeneratedServerStreamAsync<TResponse>(
@@ -978,7 +1196,9 @@ internal sealed partial class SharpLinkClient
             RpcMethodDescriptor method,
             ResolvedCallControl control,
             CancellationToken cancellationToken,
-            bool captureTerminalSignal = false)
+            bool captureTerminalSignal = false,
+            ClientStreamPublicationGroup? producerGroup = null,
+            long dispatcherLease = 0)
         {
             var outcome = _owner._endpointAdmissionPolicy is null ? null : new AttemptOutcomeState(_owner, method);
             if (outcome is null)
@@ -995,44 +1215,104 @@ internal sealed partial class SharpLinkClient
                 connection = ReserveBoundConnection(method, retrySelection: null, outcome, out var bindingId);
                 reservationOwned = true;
                 EnsureLogicalCallProgress(control);
+                if (producerGroup is not null)
+                {
+                    producerGroup.PrepareRegistration(connection, bindingId, dispatcherLease);
+                    reservationOwned = false;
+                }
                 requestId = connection.PendingCalls.RegisterStream(
                     kind,
                     dispatcher,
                     control.Deadline,
                     cancellationToken,
-                    completionObserver);
-                reservationOwned = false;
+                    completionObserver,
+                    producerGroup);
+                if (kind == PendingCallKind.ServerStreaming)
+                {
+                    reservationOwned = false;
+                    connection.ReleaseCallAdmissionReservation();
+                }
                 if (!connection.PendingCalls.Contains(requestId))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     _ = control.LogicalCall?.TryClaimDeadline();
                     throw CreateDeadlineExceededException();
                 }
-                dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
-                connection.Session.StreamManager.Register(requestId, 0, dispatcher);
+                if (producerGroup is not null)
+                {
+                    using var publication = PrepareDuplexResponseRoute(connection, requestId, dispatcher, producerGroup);
+                    publication.Publish();
+                }
+                else
+                {
+                    dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
+                    connection.Session.StreamManager.Register(requestId, 0, dispatcher);
+                }
+                reservationOwned = false; // Duplex transfers the original reservation to its producer group.
                 return ValueTask.FromResult(new StreamCallRegistration(connection, requestId, terminalSignal, bindingId));
             }
             catch (Exception exception)
             {
+                if (producerGroup?.IsAdopted == true) requestId = producerGroup.RequestId;
+                var failure = exception;
+                try
+                {
+                    exception = ArbitrateLogicalCallFailure(control, exception);
+                    failure = exception;
+                }
+                catch (Exception arbitration) { failure = RpcPublicationErrors.Combine(failure, arbitration)!; }
                 if (reservationOwned)
-                    connection!.ReleaseCallAdmissionReservation();
-                exception = ArbitrateLogicalCallFailure(control, exception);
-                if (connection is not null && requestId != 0)
                 {
-                    connection.PendingCalls.TryComplete(
-                        requestId,
-                        exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
-                            ? PendingCallCompletionReason.DeadlineExceeded
-                            : PendingCallCompletionReason.SendFailure,
-                        exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded } ? null : exception);
+                    reservationOwned = false;
+                    try { connection!.ReleaseCallAdmissionReservation(); }
+                    catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
                 }
-                else
+                try
                 {
-                    outcome?.CompleteLocalFailure(exception);
+                    if (connection is not null && requestId != 0)
+                    {
+                        if (producerGroup is not null)
+                            connection.PendingCalls.CompleteProducingSetupFailure(producerGroup, exception,
+                                exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+                                    ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.SendFailure);
+                        else
+                            connection.PendingCalls.TryComplete(
+                                requestId,
+                                exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+                                    ? PendingCallCompletionReason.DeadlineExceeded
+                                    : PendingCallCompletionReason.SendFailure,
+                                exception is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded } ? null : exception);
+                    }
+                    else
+                    {
+                        outcome?.CompleteLocalFailure(exception);
+                    }
                 }
-                terminalSignal?.StopObservingTerminal();
-                throw exception;
+                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+                try { terminalSignal?.StopObservingTerminal(); }
+                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+                throw failure;
             }
+        }
+
+        // Production-used steps expose the actual setup/publication gap without a test hook,
+        // callback field or global seam. The value owns only this exact group's phase-finally.
+        internal static DuplexResponseRoutePublication<T> PrepareDuplexResponseRoute<T>(ClientConnection connection,
+            long requestId, PooledAsyncStreamDispatcher<T> dispatcher, ClientStreamPublicationGroup group)
+        {
+            dispatcher.SetConsumerAbandonedCallback(connection.ConsumerAbandonedCallback, requestId);
+            return new DuplexResponseRoutePublication<T>(connection, requestId, dispatcher, group);
+        }
+
+        internal readonly struct DuplexResponseRoutePublication<T>(ClientConnection connection, long requestId,
+            PooledAsyncStreamDispatcher<T> dispatcher, ClientStreamPublicationGroup group) : IDisposable
+        {
+            internal void Publish()
+            {
+                group.ClaimResponseRoutePublication();
+                connection.Session.StreamManager.Register(requestId, 0, dispatcher);
+            }
+            public void Dispose() => group.CompleteResponseRoutePublication();
         }
 
         private void CompleteFailedGeneratedStream<TResponse>(
@@ -1051,6 +1331,6 @@ internal sealed partial class SharpLinkClient
             ClientConnection Connection,
             long RequestId,
             PendingCallTerminalSignal? TerminalSignal,
-            ulong BindingId);
+            BoundTarget Binding);
     }
 }

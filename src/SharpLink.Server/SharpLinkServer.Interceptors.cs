@@ -17,59 +17,92 @@ internal sealed partial class SharpLinkServer
     {
         var registration = resolved.Registration;
         requestOwner.VerifyProtectedRegistration(registration);
-        IRpcGeneratedServerBridge generatedBridge = connection.GeneratedBridge;
-        if (generatedBridge is ServerGeneratedBridge bridge &&
-            resolved.Method.Kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
-        {
-            if (!connection.CallCancellations.TryCapture(requestId,
-                    static (id, state) => state.CaptureLease(id), out var callLease))
-                throw new SharpLinkProtocolViolationException(ProtocolViolationReason.InternalState,
-                    "Generated streaming requires its original call-state owner before invocation.");
-            requestOwner.RememberPhysicalCallState(in callLease);
-            BeforeGeneratedPhysicalInvocationForTesting?.Invoke(callLease);
-            generatedBridge = bridge.WithPhysicalOwner(requestOwner);
-        }
-        if (registration.TryGetStaticSingleton(
-                generatedBridge,
-                requestId,
-                out var singleton))
-        {
-            return InvokeServiceTrackedAsync(
-                resolved,
-                singleton,
-                session,
-                generatedBridge,
-                requestId,
-                arguments,
-                output,
-                cancellationToken,
-                context);
-        }
-
-        var hasRequestStreams = resolved.ClientStreamCount != 0;
-
-        ValueTask<ServiceLease> acquisition;
+        var clientStreamCount = resolved.ClientStreamCount;
+        StreamManager.CapturedRequestStreamCleanup capturedInbound = default;
+        if (clientStreamCount != 0 &&
+            !session.StreamManager.TryCaptureRequestStreamsForInvocation(
+                requestId, clientStreamCount, out capturedInbound))
+            return ValueTask.FromException(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed,
+                "The complete inbound route set was closed before service entry."));
         try
         {
-            acquisition = registration.AcquirePreparedAsync(
-                connection,
-                requestOwner,
-                generatedBridge,
-                requestId);
-        }
-        catch (Exception exception)
-        {
-            var failedTelemetry = StartServerTelemetryCall(
-                resolved.Method, requestId);
-            failedTelemetry.Complete(exception);
-            throw;
-        }
+            if (clientStreamCount != 0)
+                requestOwner.MarkInboundStreamCleanupOwned();
+            IRpcGeneratedServerBridge generatedBridge = connection.GeneratedBridge;
+            if (generatedBridge is ServerGeneratedBridge bridge &&
+                resolved.Method.Kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
+            {
+                if (!connection.CallCancellations.TryCapture(requestId,
+                        static (id, state) => state.CaptureLease(id), out var callLease))
+                    throw new SharpLinkProtocolViolationException(ProtocolViolationReason.InternalState,
+                        "Generated streaming requires its original call-state owner before invocation.");
+                requestOwner.RememberPhysicalCallState(in callLease);
+                BeforeGeneratedPhysicalInvocationForTesting?.Invoke(callLease);
+                generatedBridge = bridge.WithPhysicalOwner(requestOwner);
+            }
+            if (registration.TryGetStaticSingleton(
+                    generatedBridge,
+                    requestId,
+                    out var singleton))
+            {
+                if (resolved.ClientStreamCount != 0 ||
+                    resolved.Method.Kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
+                    return InvokeAcquiredServiceAsync(resolved, new ServiceLease(singleton), session,
+                        generatedBridge, requestId, arguments, output, cancellationToken, context,
+                        resolved.ClientStreamCount, requestOwner, capturedInbound);
+                return InvokeServiceTrackedAsync(
+                    resolved,
+                    singleton,
+                    session,
+                    generatedBridge,
+                    requestId,
+                    arguments,
+                    output,
+                    cancellationToken,
+                    context);
+            }
 
-        if (!acquisition.IsCompletedSuccessfully)
-        {
-            return InvokeServiceAfterAcquisitionAsync(
-                acquisition,
+            ValueTask<ServiceLease> acquisition;
+            try
+            {
+                acquisition = registration.AcquirePreparedAsync(
+                    connection,
+                    requestOwner,
+                    generatedBridge,
+                    requestId);
+            }
+            catch (Exception exception)
+            {
+                try
+                {
+                    var failedTelemetry = StartServerTelemetryCall(resolved.Method, requestId);
+                    failedTelemetry.Complete(exception);
+                }
+                catch (Exception telemetryFailure)
+                {
+                    throw CombineTerminalExceptions(exception, telemetryFailure);
+                }
+                throw;
+            }
+
+            if (!acquisition.IsCompletedSuccessfully)
+            {
+                return InvokeServiceAfterAcquisitionAsync(
+                    acquisition,
+                    resolved,
+                    session,
+                    generatedBridge,
+                    requestId,
+                    arguments,
+                    output,
+                    cancellationToken,
+                    context,
+                    clientStreamCount, requestOwner, capturedInbound);
+            }
+
+            return InvokeAcquiredServiceAsync(
                 resolved,
+                acquisition.Result,
                 session,
                 generatedBridge,
                 requestId,
@@ -77,20 +110,15 @@ internal sealed partial class SharpLinkServer
                 output,
                 cancellationToken,
                 context,
-                hasRequestStreams, requestOwner);
+                clientStreamCount, requestOwner, capturedInbound);
         }
-
-        return InvokeAcquiredServiceAsync(
-            resolved,
-            acquisition.Result,
-            session,
-            generatedBridge,
-            requestId,
-            arguments,
-            output,
-            cancellationToken,
-            context,
-            hasRequestStreams, requestOwner);
+        catch (Exception setupFailure)
+        {
+            // No service lease was transferred on synchronous setup/factory/acquisition failure.
+            // The exact entry capture still owns child cleanup even if Session lookup is empty.
+            return CompleteFailedCapturedInvocationSetupAsync(
+                setupFailure, session, requestOwner, capturedInbound);
+        }
     }
 
     private ValueTask InvokeAcquiredServiceAsync(
@@ -103,10 +131,12 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams,
-        ServerRequestPermit requestOwner)
+        int clientStreamCount,
+        ServerRequestPermit requestOwner,
+        StreamManager.CapturedRequestStreamCleanup capturedInbound)
     {
-        if (!lease.RequiresDisposal && !hasRequestStreams)
+        if (!lease.RequiresDisposal && clientStreamCount == 0 &&
+            resolved.Method.Kind is not (RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming))
         {
             return InvokeServiceTrackedAsync(
                 resolved,
@@ -130,7 +160,7 @@ internal sealed partial class SharpLinkServer
             output,
             cancellationToken,
             context,
-            hasRequestStreams, requestOwner);
+            clientStreamCount, requestOwner, capturedInbound);
     }
 
     private async ValueTask InvokeServiceAfterAcquisitionAsync(
@@ -143,8 +173,9 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams,
-        ServerRequestPermit requestOwner)
+        int clientStreamCount,
+        ServerRequestPermit requestOwner,
+        StreamManager.CapturedRequestStreamCleanup capturedInbound)
     {
         ServiceLease lease;
         try
@@ -153,10 +184,16 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            var failedTelemetry = StartServerTelemetryCall(
-                resolved.Method, requestId);
-            failedTelemetry.Complete(exception);
-            throw;
+            Exception failure = exception;
+            try
+            {
+                var failedTelemetry = StartServerTelemetryCall(resolved.Method, requestId);
+                failedTelemetry.Complete(exception);
+            }
+            catch (Exception telemetryFailure) { failure = CombineTerminalExceptions(failure, telemetryFailure); }
+            await CompleteFailedCapturedInvocationSetupAsync(
+                failure, session, requestOwner, capturedInbound).ConfigureAwait(false);
+            return;
         }
 
         await InvokeAcquiredServiceAsync(
@@ -169,7 +206,7 @@ internal sealed partial class SharpLinkServer
             output,
             cancellationToken,
             context,
-            hasRequestStreams, requestOwner).ConfigureAwait(false);
+            clientStreamCount, requestOwner, capturedInbound).ConfigureAwait(false);
     }
 
     private ValueTask InvokeServiceTrackedAsync(
@@ -224,8 +261,9 @@ internal sealed partial class SharpLinkServer
         IRpcByteBufferWriter? output,
         CancellationToken cancellationToken,
         SharpLinkCallContextSnapshot context,
-        bool hasRequestStreams,
-        ServerRequestPermit requestOwner)
+        int clientStreamCount,
+        ServerRequestPermit requestOwner,
+        StreamManager.CapturedRequestStreamCleanup capturedInbound)
     {
         Exception? terminalException = null;
         try
@@ -246,23 +284,62 @@ internal sealed partial class SharpLinkServer
             terminalException = exception;
         }
 
-        if (requestOwner.HasPhysicalTails)
+        if (terminalException is PhysicalTaskFailureException physicalTerminal)
         {
-            // Keep the logical terminal prompt. Physical cleanup, including service/scope
-            // disposal, transfers to a supervised owner rather than delaying the RPC result.
-            var cleanup = CompletePhysicalServiceCleanupAsync(requestOwner, lease, session, requestId, hasRequestStreams);
-            requestOwner.AttachPhysicalServiceCleanup(cleanup);
-            TrackServerRuntimeTask(cleanup, "GeneratedPhysicalServiceCleanup");
+            try { ReportStrictPhysicalRuntimeFailure(physicalTerminal.RawException, acceptedReceipt: null); }
+            catch (Exception reportingFailure)
+            { terminalException = CombineTerminalExceptions(terminalException, reportingFailure); }
+        }
+
+        // Seal/claim before starting a task: a synchronously finished tail may still have
+        // an error, and a synchronously finished cleanup must not race task attachment.
+        var hasPhysicalCleanup = requestOwner.BeginPhysicalServiceCleanup();
+        var outgoingTails = hasPhysicalCleanup ? requestOwner.JoinPhysicalTailsAsync().AsTask() : null;
+        // Execute the original entry capture from BEFORE factory/stub/user entry. Session
+        // CompleteAll cannot turn an empty later lookup into a false physical-completion proof.
+        ValueTask inboundCleanup;
+        try { inboundCleanup = CompleteCapturedRequestStreamsAsync(session, ref capturedInbound, outgoingTails); }
+        catch (Exception setupFailure) { inboundCleanup = ValueTask.FromException(setupFailure); }
+        if (hasPhysicalCleanup)
+        {
+            // No cycle: this task joins outgoing tails/children, marks its phase finished,
+            // then performs any deferred permit release itself under strict supervision.
+            var cleanup = CompletePhysicalServiceCleanupAsync(requestOwner, lease, outgoingTails!, inboundCleanup);
+            FrameworkTaskRegistration? receipt = null;
+            try
+            {
+                requestOwner.AttachPhysicalServiceCleanup(cleanup);
+                TrackStrictPhysicalRuntimeTask(cleanup, "GeneratedPhysicalServiceCleanup", ref receipt);
+            }
+            catch (Exception setupFailure)
+            {
+                Exception physicalFailure = setupFailure;
+                try { await cleanup.ConfigureAwait(false); }
+                catch (Exception cleanupFailure)
+                {
+                    // Accepted registration owns its task outcome even if later setup threw.
+                    if (receipt is null)
+                        physicalFailure = CombineTerminalExceptions(physicalFailure,
+                            cleanupFailure is PhysicalTaskFailureException marked ? marked.RawException : cleanupFailure);
+                }
+                if (receipt is not null)
+                {
+                    try { receipt.Supervisor.CompleteAcceptedRegistration(receipt); }
+                    catch (Exception completeFailure)
+                    { physicalFailure = CombineTerminalExceptions(physicalFailure, completeFailure); }
+                }
+                try { ReportStrictPhysicalRuntimeFailure(physicalFailure, acceptedReceipt: null); }
+                catch (Exception reportingFailure)
+                { physicalFailure = CombineTerminalExceptions(physicalFailure, reportingFailure); }
+                terminalException = CombineTerminalExceptions(terminalException,
+                    PhysicalTaskFailureException.From(physicalFailure));
+            }
             if (terminalException is not null)
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalException).Throw();
             return;
         }
 
-        try
-        {
-            await CompleteDynamicRequestStreamsAsync(session, requestId, hasRequestStreams)
-                .ConfigureAwait(false);
-        }
+        try { await inboundCleanup.ConfigureAwait(false); }
         catch (Exception exception)
         {
             terminalException = CombineTerminalExceptions(terminalException, exception);
@@ -281,38 +358,57 @@ internal sealed partial class SharpLinkServer
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalException).Throw();
     }
 
-    private static async Task CompletePhysicalServiceCleanupAsync(ServerRequestPermit owner,
-        ServiceLease lease, RpcSession session, long requestId, bool hasRequestStreams)
+    private static async Task CompletePhysicalServiceCleanupAsync(
+        ServerRequestPermit owner, ServiceLease lease, Task outgoingTails, ValueTask inboundCleanup)
     {
-        await owner.JoinPhysicalTailsAsync().ConfigureAwait(false);
         Exception? failure = null;
-        try
-        {
-            await CompleteDynamicRequestStreamsAsync(session, requestId, hasRequestStreams).ConfigureAwait(false);
-        }
+        try { await outgoingTails.ConfigureAwait(false); }
         catch (Exception exception) { failure = exception; }
+        // This is the originally captured operation, not a later request-table lookup.
+        try { await inboundCleanup.ConfigureAwait(false); }
+        catch (Exception exception) { failure = CombineTerminalExceptions(failure, exception); }
         try { await lease.DisposeAsync().ConfigureAwait(false); }
         catch (Exception exception) { failure = CombineTerminalExceptions(failure, exception); }
+        try { owner.FinishPhysicalServiceCleanup(); }
+        catch (Exception exception) { failure = CombineTerminalExceptions(failure, exception); }
         if (failure is not null)
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            throw PhysicalTaskFailureException.From(failure);
     }
 
     private static Exception CombineTerminalExceptions(Exception? first, Exception next)
         => first is null ? next : new AggregateException(first, next);
 
-    private static ValueTask CompleteDynamicRequestStreamsAsync(
-        RpcSession session,
-        long requestId,
-        bool hasRequestStreams)
+    private static ValueTask CompleteCapturedRequestStreamsAsync(
+        RpcSession session, ref StreamManager.CapturedRequestStreamCleanup capture,
+        Task? beforeAbandon = null)
     {
-        if (hasRequestStreams && session.StreamManager is StreamManager manager)
+        try { return session.StreamManager.AbandonCapturedRequestStreamsAsync(
+            ref capture, beforeAbandon, prerequisiteFailureOwnedByCaller: true); }
+        finally { capture.Dispose(); }
+    }
+
+    private static async ValueTask CompleteFailedCapturedInvocationSetupAsync(
+        Exception failure, RpcSession session, ServerRequestPermit requestOwner,
+        StreamManager.CapturedRequestStreamCleanup capture)
+    {
+        var physicalOwned = requestOwner.BeginPhysicalServiceCleanup();
+        var outgoing = physicalOwned ? requestOwner.JoinPhysicalTailsAsync().AsTask() : null;
+        ValueTask childCleanup;
+        try { childCleanup = CompleteCapturedRequestStreamsAsync(session, ref capture, outgoing); }
+        catch (Exception cleanup) { childCleanup = ValueTask.CompletedTask; failure = CombineTerminalExceptions(failure, cleanup); }
+        if (outgoing is not null)
         {
-            return manager.CompleteRequestStreamsAfterDispatchesAsync(
-                requestId,
-                new OperationCanceledException(
-                    "The RPC handler completed before its request streams drained."));
+            try { await outgoing.ConfigureAwait(false); }
+            catch (Exception cleanup) { failure = CombineTerminalExceptions(failure, cleanup); }
         }
-        return ValueTask.CompletedTask;
+        try { await childCleanup.ConfigureAwait(false); }
+        catch (Exception cleanup) { failure = CombineTerminalExceptions(failure, cleanup); }
+        if (physicalOwned)
+        {
+            try { requestOwner.FinishPhysicalServiceCleanup(); }
+            catch (Exception cleanup) { failure = CombineTerminalExceptions(failure, cleanup); }
+        }
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private ValueTask InvokeServiceCoreAsync(

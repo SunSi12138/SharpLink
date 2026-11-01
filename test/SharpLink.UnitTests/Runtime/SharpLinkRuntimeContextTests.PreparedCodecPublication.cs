@@ -63,19 +63,16 @@ public partial class SharpLinkRuntimeContextTests
     }
 
     [Test]
-    public void CodecPublicationPreparationCallbackFailureShouldLeaveRegistryUnchanged()
+    public void CodecMetadataCaptureCallbackFailureShouldLeaveRegistryUnchanged()
     {
         using var context = CreateRuntimeBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new PublicationGuardManifest();
-        using var registration = context.PrepareGeneratedManifest(manifest);
         manifest.RejectCallbacks = true;
-        Ensure(CaptureFailure(() => context.PrepareGeneratedCodecPublication(registration.Codecs, registration, true))
-                is InvalidOperationException,
-            "dependency callback failure is observed during private preparation");
+        Ensure(CaptureFailure(() => context.PrepareGeneratedManifest(manifest)) is InvalidOperationException,
+            "metadata callback failure is observed during private capture, not replayed at publication");
         Ensure(context.CreateGeneratedCodecSnapshot().Count == 0 &&
                context.FindGeneratedCodec(manifest, typeof(ThirdAdapterValue)) is null,
             "failed preparation changes neither codec publication nor adoption");
-        registration.ThrowIfDisposed();
     }
 
     private sealed class PublicationGuardManifest

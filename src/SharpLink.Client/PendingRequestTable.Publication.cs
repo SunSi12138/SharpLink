@@ -1,46 +1,12 @@
 namespace SharpLink.Client;
 
-/// <summary>
-/// Request publication for <see cref="PendingRequestTable"/>.
-/// </summary>
 partial class PendingRequestTable
 {
     /// <summary>
-    /// Publishes one Request frame under the owning call's completion gate.
+    /// Takes the prepared writer on entry on EVERY outcome. Preparation/reservation and final
+    /// callbacks are outside CompletionGate; only callback-free queue transfer and scalar exact
+    /// head disposition commit run inside. Accepted ownership survives deferred callback failure.
     /// </summary>
-    /// <remarks>
-    /// The gate is the ordering authority between "this Request reached the session send queue" and
-    /// "this call produced a terminal reason that has to tell the peer". A terminal transition that
-    /// wins the race removes the slot first, so this method then refuses to publish and the caller
-    /// drops the frame instead of delivering a Request after its own cancel. A publication that
-    /// wins marks <see cref="PendingCall.RequestPublished"/> only for an accepted frame and before
-    /// the gate is released, so a later terminal transition still emits its cancel - behind the
-    /// Request, because both frames share the session's normal queue.
-    /// <para>
-    /// The same gate is the authority on whether this call's deadline already passed, exactly as it
-    /// is for an inbound response: the deadline scheduler's callback is the wake-up, not the fact.
-    /// A clock that crossed the boundary while the frame was still being prepared refuses the
-    /// publication here even when the timer has not run yet, so a Request can never reach the peer
-    /// carrying a budget that already elapsed on the client.
-    /// </para>
-    /// </remarks>
-    /// <param name="writer">
-    /// A frame that the caller already prepared outside this gate. It owns the packet on entry, and
-    /// every path except a refused publication either queues it or returns it.
-    /// </param>
-    /// <param name="id">The request identifier whose pending slot gates this publication.</param>
-    /// <param name="session">The session the prepared frame has to be admitted to.</param>
-    /// <param name="observeEmission">Whether the caller needs a waiter for the transport write.</param>
-    /// <param name="cancellationToken">Caller cancellation observed while waiting for emission.</param>
-    /// <param name="failureObserver">Observer notified when the queued frame fails in the transport.</param>
-    /// <param name="emission">
-    /// The emission waiter for an accepted frame, or <c>default</c> for every other outcome.
-    /// </param>
-    /// <param name="rejection">
-    /// Set when the session refused admission and already returned the frame. The caller owns the
-    /// frame on every other path.
-    /// </param>
-    /// <returns><c>true</c> when the frame reached the send queue.</returns>
     public bool TryPublishRequest(
         long id,
         RpcSession session,
@@ -49,64 +15,80 @@ partial class PendingRequestTable
         CancellationToken cancellationToken,
         IRequestEmissionFailureObserver? failureObserver,
         out ValueTask emission,
-        out Exception? rejection)
+        out Exception? rejection,
+        RpcFramePublication? publication = null)
     {
         emission = default;
         rejection = null;
-        var slots = Volatile.Read(ref _slots);
-        if (slots is null)
-            return false;
-
-        var index = (int)(id & _indexMask);
-        var current = Volatile.Read(ref slots[index]);
-        if (current is null || current.Id != id)
-            return false;
-
-        PendingCall? expiredCall = null;
-        lock (current.CompletionGate)
+        var admission = session.PrepareFrameEnqueue(writer, observeEmission, cancellationToken,
+            failureObserver, publication, publication is null ? RpcFramePublicationRole.None : RpcFramePublicationRole.RequestHead);
+        var group = publication as ClientStreamPublicationGroup;
+        PendingCall? terminal = null;
+        PendingCallCompletionReason terminalReason = default;
+        Exception? terminalException = null;
+        Exception? failure = null;
+        try
         {
-            if (!ReferenceEquals(Volatile.Read(ref slots[index]), current) || current.Id != id)
-                return false;
-
-            if (current.Deadline.IsExpired(_timeProvider))
+            var slots = Volatile.Read(ref _slots);
+            var index = (int)(id & _indexMask);
+            var current = slots is null ? null : Volatile.Read(ref slots[index]);
+            if (current is not null && current.Id == id)
             {
-                // The deadline boundary and the admission have to be decided together. Relying on
-                // the scheduler callback here would let a late callback publish a Request whose
-                // budget already elapsed, and the peer would then dispatch work the caller has
-                // already given up on.
-                if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
-                    return false;
-                current.WaitUntilRegistered();
-                expiredCall = current;
-            }
-            else
-            {
-                // Admission is the linearization point and it is synchronous: the frame is either in
-                // the queue now or it was already returned. Marking the call published on a faulted
-                // or deferred send is what produced a cancel for a Request the peer never received.
-                if (!session.TryEnqueuePreparedFrame(
-                        writer,
-                        observeEmission,
-                        cancellationToken,
-                        failureObserver,
-                        out emission,
-                        out rejection))
+                // Virtual clock sampling belongs outside the commit gate. Reentrant cancellation
+                // may remove this exact call; only the subsequent scalar/full-ID recheck commits.
+                // No guarantee is made about wall time advancing across a scheduler pause here.
+                long timestamp;
+                try { timestamp = current.Deadline.HasValue ? _timeProvider.GetTimestamp() : 0; }
+                catch (Exception error)
                 {
-                    emission = default;
-                    return false;
+                    terminal = TakeCallAfterClockFailure(slots!, index, current, id);
+                    terminalReason = PendingCallCompletionReason.SendFailure;
+                    terminalException = error;
+                    throw;
                 }
-
-                current.MarkRequestPublished();
-                return true;
+                lock (current.CompletionGate)
+                {
+                    if (ReferenceEquals(Volatile.Read(ref slots![index]), current) && current.Id == id &&
+                        (group is null || ReferenceEquals(current.StreamGroup, group)))
+                    {
+                        var expired = current.Deadline.IsExpired(timestamp);
+                        if (expired || current.CancellationToken.IsCancellationRequested)
+                        {
+                            terminalReason = expired ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.UserCancellation;
+                            if (TryRemoveTerminalCall(slots!, index, current))
+                            {
+                                current.WaitUntilRegistered();
+                                group?.ResolveHeadUnderCompletionGate(accepted: false);
+                                terminal = current;
+                            }
+                        }
+                        else
+                        {
+                            var accepted = session.TryTransferPreparedFrame(ref admission);
+                            if (accepted) current.MarkRequestPublished();
+                            group?.ResolveHeadUnderCompletionGate(accepted);
+                        }
+                    }
+                    // A prior terminal committed DefinitelyNeverAccepted under this same gate.
+                }
             }
         }
-
-        var emptyPayload = ReadOnlySequence<byte>.Empty;
-        CompleteTakenCall(
-            expiredCall!,
-            PendingCallCompletionReason.DeadlineExceeded,
-            exception: null,
-            ref emptyPayload);
-        return false;
+        catch (Exception error) { failure = error; }
+        // All independent deferred obligations survive errors in the other obligations.
+        try { session.FinishPreparedFrameEnqueue(ref admission, out emission, out rejection); }
+        catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        try { group?.NotifyHeadResolved(); }
+        catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        if (terminal is not null)
+        {
+            try
+            {
+                var empty = ReadOnlySequence<byte>.Empty;
+                CompleteTakenCall(terminal, terminalReason, terminalException, ref empty);
+            }
+            catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        return admission.Accepted;
     }
 }

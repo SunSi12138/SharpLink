@@ -45,7 +45,8 @@ public sealed class Api3BinaryFixtureIntegrationTests
         await using var assemblyStream = new MemoryStream(assemblyBytes, writable: false);
         var assembly = loadContext.LoadFromStream(assemblyStream);
 
-        var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, preparation, out var manifest);
         Ensure(!loaded.Succeeded && manifest is null,
             "the 2.0 Runtime must reject the published API 3 fixture");
 

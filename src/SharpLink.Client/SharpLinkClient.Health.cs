@@ -32,6 +32,11 @@ internal sealed partial class SharpLinkClient
                 cancellationToken,
                 out var requestId);
             reservationOwned = false;
+            try { connection.ReleaseCallAdmissionReservation(); }
+            catch (Exception transferFailure)
+            {
+                return await ObserveFailedOperationAsync(operation, CompleteFailedPending(connection, requestId, transferFailure)).ConfigureAwait(false);
+            }
             try
             {
                 if (connection.PendingCalls.Contains(requestId))
@@ -39,10 +44,11 @@ internal sealed partial class SharpLinkClient
             }
             catch (Exception exception)
             {
-                connection.PendingCalls.TryComplete(
-                    requestId,
-                    PendingCallCompletionReason.SendFailure,
-                    exception);
+                try { connection.PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, exception); }
+                catch (Exception cleanup)
+                {
+                    return await ObserveFailedOperationAsync(operation, RpcPublicationErrors.Combine(exception, cleanup)!).ConfigureAwait(false);
+                }
             }
 
             return await operation.AsValueTask().ConfigureAwait(false);

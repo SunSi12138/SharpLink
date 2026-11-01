@@ -34,7 +34,8 @@ internal sealed partial class RpcSession
                 RuntimeContext.TimeProvider,
                 _lifetimeToken,
                 ReturnBuffer,
-                FaultAfterSendPumpFailure);
+                FaultAfterSendPumpFailure,
+                Fault);
             Volatile.Write(ref _pump, pump);
             if (Volatile.Read(ref _terminal) is { } terminal)
             {
@@ -53,10 +54,12 @@ internal sealed partial class RpcSession
                 throw terminal.Exception;
             return GetOrCreatePump();
         }
-        catch
+        catch (Exception failure)
         {
-            RuntimeContext.Buffers.Return(packet);
-            throw;
+            try { RuntimeContext.Buffers.Return(packet); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            throw new UnreachableException();
         }
     }
 }

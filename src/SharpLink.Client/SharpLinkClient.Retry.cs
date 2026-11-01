@@ -178,9 +178,14 @@ internal sealed partial class SharpLinkClient
                     throw;
                 }
 
+                try { connection.ReleaseCallAdmissionReservation(); }
+                catch (Exception transferFailure)
+                {
+                    return ObserveFailedOperationAsync(operation, CompleteFailedPending(connection, requestId, transferFailure));
+                }
                 return StartUnaryCall(
                     connection,
-                    unchecked((long)bindingId),
+                    bindingId,
                     methodId,
                     requestId,
                     hasResponsePayload,

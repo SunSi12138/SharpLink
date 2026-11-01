@@ -122,9 +122,7 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>, IThreadPoolWorkItem
         if (s > Latched &&
             Interlocked.CompareExchange(ref _state, Idle, s) == s)
         {
-            if ((s & DeadlineBit) != 0)
-                CancelDeadline(s & ~Latched);
-            _core.SetResult(true);
+            CompleteClaimedWake(s);
             return;
         }
 
@@ -141,12 +139,27 @@ internal sealed class WakeupSignal : IValueTaskSource<bool>, IThreadPoolWorkItem
                 return;
             if (Interlocked.CompareExchange(ref _state, Idle, t) == t)
             {
-                if ((t & DeadlineBit) != 0)
-                    CancelDeadline(t & ~Latched);
-                _core.SetResult(true);
+                CompleteClaimedWake(t);
                 return;
             }
         }
+    }
+
+    private void CompleteClaimedWake(long arm)
+    {
+        Exception? failure = null;
+        try
+        {
+            if ((arm & DeadlineBit) != 0)
+                CancelDeadline(arm & ~Latched);
+        }
+        catch (Exception cleanup) { failure = cleanup; }
+        // Claim ownership is irreversible. A throwing user timer Dispose cannot leave
+        // the pump's already-claimed wait incomplete and strand its physical drain.
+        try { _core.SetResult(true); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private void CancelDeadline(long arm)

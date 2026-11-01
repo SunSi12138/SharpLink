@@ -73,8 +73,6 @@ public class ClientStreamLocalReceiveFailureTests
                 out _,
                 out var rejection))
         {
-            if (rejection is null)
-                runtimeContext.Buffers.Return(preparedRequest);
             throw new Exception($"test Request was not published: {rejection}");
         }
 

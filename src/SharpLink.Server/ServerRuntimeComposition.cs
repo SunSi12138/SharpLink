@@ -12,7 +12,7 @@ internal sealed class ServerRuntimeComposition
 
     internal ServerRuntimeComposition(
         IServerTransportListener transportListener,
-        FrozenDictionary<long, ServiceRegistration> services,
+        ServerServiceSnapshot serviceSnapshot,
         TimeSpan heartbeatCheckInterval,
         TimeSpan heartbeatTimeout,
         ILogger logger,
@@ -34,7 +34,9 @@ internal sealed class ServerRuntimeComposition
         FrameworkTaskSupervisor frameworkTasks)
     {
         TransportListener = transportListener ?? throw new ArgumentNullException(nameof(transportListener));
-        Services = services ?? throw new ArgumentNullException(nameof(services));
+        ServiceSnapshot = serviceSnapshot ?? throw new ArgumentNullException(nameof(serviceSnapshot));
+        Services = serviceSnapshot.Services;
+        var services = Services;
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatCheckInterval, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatTimeout, TimeSpan.Zero);
         if (heartbeatTimeout <= heartbeatCheckInterval)
@@ -51,7 +53,7 @@ internal sealed class ServerRuntimeComposition
         DeclaredFactsQuota = declaredFactsQuota ?? throw new ArgumentNullException(nameof(declaredFactsQuota));
         foreach (var registration in services.Values)
         {
-            if (registration.DeclaredFacts is not { } facts || !ReferenceEquals(facts.Group.Quota, declaredFactsQuota))
+            if (registration.DeclaredFacts is not { } facts || !ReferenceEquals(facts.Quota, declaredFactsQuota))
                 throw new InvalidOperationException("Runtime composition requires prepared facts charged to its exact server quota.");
         }
         ArgumentNullException.ThrowIfNull(staticManifests);
@@ -78,6 +80,7 @@ internal sealed class ServerRuntimeComposition
     internal IServerTransportListener TransportListener { get; }
 
     internal FrozenDictionary<long, ServiceRegistration> Services { get; }
+    internal ServerServiceSnapshot ServiceSnapshot { get; }
 
     internal TimeSpan HeartbeatCheckInterval { get; }
 

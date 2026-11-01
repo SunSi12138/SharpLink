@@ -2,7 +2,7 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    private sealed partial class SendPump
+    internal sealed partial class SendPump
     {
         private static readonly TimeSpan MaximumTimerDelay = TimeSpan.FromMilliseconds(int.MaxValue);
 
@@ -29,6 +29,7 @@ internal sealed partial class RpcSession
         private readonly CancellationToken _sessionCancellation;
         private readonly Action<IRpcByteBufferWriter> _returnBuffer;
         private readonly Action<Exception> _onTransportFaulted;
+        private readonly Action<Exception> _onPublicationFaulted;
         private readonly Channel<OwnedFrame> _progressQueue;
         private readonly Channel<OwnedFrame> _normalQueue;
         private readonly Lock _admissionGate = new();
@@ -41,6 +42,7 @@ internal sealed partial class RpcSession
         private long _queuedBytes;
         private int _stopped;
         private int _faulted;
+        private Exception? _pumpCleanupFailure; // Single consumer, exceptional cleanup only.
 
         internal bool IsStopRequested => Volatile.Read(ref _stopped) != 0;
         internal bool HasPendingIdleWait => _wakeup.HasPendingIdleWait;
@@ -52,7 +54,8 @@ internal sealed partial class RpcSession
             TimeProvider timeProvider,
             CancellationToken sessionCancellation,
             Action<IRpcByteBufferWriter> returnBuffer,
-            Action<Exception> onTransportFaulted)
+            Action<Exception> onTransportFaulted,
+            Action<Exception> onPublicationFaulted)
         {
             ArgumentNullException.ThrowIfNull(output);
             ArgumentNullException.ThrowIfNull(flushPolicyState);
@@ -65,6 +68,7 @@ internal sealed partial class RpcSession
             _sessionCancellation = sessionCancellation;
             _returnBuffer = returnBuffer ?? throw new ArgumentNullException(nameof(returnBuffer));
             _onTransportFaulted = onTransportFaulted ?? throw new ArgumentNullException(nameof(onTransportFaulted));
+            _onPublicationFaulted = onPublicationFaulted ?? throw new ArgumentNullException(nameof(onPublicationFaulted));
             _flushPolicyChanged = _wakeup.Signal;
             _flushPolicyState.RegisterChanged(_flushPolicyChanged);
 
@@ -108,32 +112,100 @@ internal sealed partial class RpcSession
         public SendEnqueueResult TryEnqueueForBackpressure(OwnedFrame frame)
             => TryEnqueue(frame, returnFrameWhenFull: false);
 
-        private SendEnqueueResult TryEnqueue(OwnedFrame frame, bool returnFrameWhenFull)
+        internal PreparedFrameEnqueue PrepareEnqueue(OwnedFrame frame)
         {
+            var admission = new PreparedFrameEnqueue { Pump = this, Frame = frame, Result = SendEnqueueResult.Closed };
+            if (Volatile.Read(ref _stopped) != 0) return admission;
+            try
+            {
+                admission.Reserved = TryReserve(frame.Length, frame.IsProtocolProgress);
+                admission.Result = admission.Reserved ? SendEnqueueResult.Closed : SendEnqueueResult.Full;
+                return admission;
+            }
+            catch (Exception failure)
+            {
+                try { ReturnUnreserved(frame, failure); }
+                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                throw new UnreachableException();
+            }
+        }
+
+        internal bool TryTransferPrepared(ref PreparedFrameEnqueue admission)
+        {
+            if (!admission.Reserved) return false;
             if (Volatile.Read(ref _stopped) != 0)
             {
-                ReturnUnreserved(frame, CreateTransportClosedException());
-                return SendEnqueueResult.Closed;
+                admission.Result = SendEnqueueResult.Closed;
+                return false;
             }
-            if (!TryReserve(frame.Length, frame.IsProtocolProgress))
+            var frame = admission.Frame;
+            if (!(frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
             {
-                if (returnFrameWhenFull)
+                admission.Result = SendEnqueueResult.Closed;
+                return false;
+            }
+            // Transfer is final before any further producer code, even if the consumer wins now.
+            admission.Result = SendEnqueueResult.Accepted;
+            admission.Reserved = false;
+            admission.Frame = default;
+            RecordTerminalQueueAcceptance(frame);
+            return true;
+        }
+
+        private static void RecordTerminalQueueAcceptance(OwnedFrame frame)
+        {
+            if (frame.PublicationRole == RpcFramePublicationRole.StreamTerminal &&
+                frame.Publication is RpcStreamPublication group)
+                group.RecordTerminalQueued(frame.StreamId);
+        }
+
+        internal void FinishAcceptedPublication() => SignalAcceptedPublication();
+
+        internal void FinishRejectedPrepared(ref PreparedFrameEnqueue admission, Exception rejection)
+        {
+            var frame = admission.Frame;
+            admission.Frame = default;
+            if (admission.Reserved)
+            {
+                admission.Reserved = false;
+                CompleteReserved(frame, rejection);
+            }
+            else ReturnUnreserved(frame, rejection);
+        }
+
+        private SendEnqueueResult TryEnqueue(OwnedFrame frame, bool returnFrameWhenFull)
+        {
+            var admission = PrepareEnqueue(frame);
+            admission.TransferAttempted = true;
+            bool accepted;
+            try { accepted = TryTransferPrepared(ref admission); }
+            catch (Exception failure)
+            {
+                // Channel transfer threw before ownership was accepted. Never abandon the
+                // already-published byte reservation merely because queue growth failed.
+                if (!admission.Accepted)
                 {
-                    ReturnUnreserved(frame, SharpLinkResourceExhaustion.Create(
-                        SharpLinkResourceExhaustion.SendQueueCapacity,
-                        $"Session send queue exceeded its {_maxQueuedBytes}-byte limit (send_queue_capacity)."));
+                    try { FinishRejectedPrepared(ref admission, failure); }
+                    catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
                 }
-                return SendEnqueueResult.Full;
+                else SignalAcceptedPublication();
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                throw new UnreachableException();
             }
-            var queue = frame.IsProtocolProgress ? _progressQueue : _normalQueue;
-            if (queue.Writer.TryWrite(frame))
+            if (accepted)
             {
-                _wakeup.Signal();
+                SignalAcceptedPublication();
                 return SendEnqueueResult.Accepted;
             }
-
-            CompleteReserved(frame, CreateTransportClosedException());
-            return SendEnqueueResult.Closed;
+            if (admission.Result == SendEnqueueResult.Full && !returnFrameWhenFull)
+                return SendEnqueueResult.Full; // Backpressure caller still owns its original frame.
+            var rejection = admission.Result == SendEnqueueResult.Full
+                ? SharpLinkResourceExhaustion.Create(SharpLinkResourceExhaustion.SendQueueCapacity,
+                    $"Session send queue exceeded its {_maxQueuedBytes}-byte limit (send_queue_capacity).")
+                : CreateTransportClosedException();
+            FinishRejectedPrepared(ref admission, rejection);
+            return admission.Result;
         }
 
         public ValueTask<SendEnqueueResult> EnqueueAsync(
@@ -152,11 +224,11 @@ internal sealed partial class RpcSession
             {
                 try
                 {
-                    ReturnUnreserved(frame);
+                    ReturnUnreserved(frame, exception);
                 }
                 catch (Exception cleanupException)
                 {
-                    return ValueTask.FromException<SendEnqueueResult>(cleanupException);
+                    return ValueTask.FromException<SendEnqueueResult>(RpcPublicationErrors.Combine(exception, cleanupException)!);
                 }
                 return ValueTask.FromException<SendEnqueueResult>(exception);
             }
@@ -169,7 +241,8 @@ internal sealed partial class RpcSession
                 if (Volatile.Read(ref _stopped) == 0 &&
                     (frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
                 {
-                    _wakeup.Signal();
+                    RecordTerminalQueueAcceptance(frame);
+                    SignalAcceptedPublication();
                     return ValueTask.FromResult(SendEnqueueResult.Accepted);
                 }
 
@@ -224,27 +297,28 @@ internal sealed partial class RpcSession
                     var normalFramesSinceInterleave = 0;
                     while (_normalQueue.Reader.TryRead(out var frame))
                     {
-                        if (pending.Count == 0)
-                            batchStartTimestamp = _timeProvider.GetTimestamp();
-
                         // Take ownership of the frame before any write can fail: a fault during
                         // the batch copy/FlushAsync must still release the frame and complete its
                         // flush waiter through the terminal ReleaseBatch in the finally block.
-                        pending.Add(frame);
-                        // The frame already carries the wire TimeBudget stamped once by the
-                        // producer, so the pump never samples, rewrites, or compacts a
-                        // process-local deadline. It only coalesces the batch's frames into one
-                        // output span at flush time.
-                        bytesAccumulated += frame.Length;
-
-                        var flushPolicy = _flushPolicyState.Capture();
-                        if (frame.ForceFlush ||
-                            flushPolicy.FlushEveryFrame ||
-                            bytesAccumulated >= flushPolicy.FlushSizeThreshold)
+                        if (ClaimAndAddFrame(pending, frame))
                         {
-                            await FlushAndReleaseAsync(pending).ConfigureAwait(false);
-                            bytesAccumulated = 0;
-                            batchStartTimestamp = 0;
+                            if (pending.Count == 1)
+                                batchStartTimestamp = _timeProvider.GetTimestamp();
+                            // The frame already carries the wire TimeBudget stamped once by the
+                            // producer, so the pump never samples, rewrites, or compacts a
+                            // process-local deadline. It only coalesces the batch's frames into one
+                            // output span at flush time.
+                            bytesAccumulated += frame.Length;
+
+                            var flushPolicy = _flushPolicyState.Capture();
+                            if (frame.ForceFlush ||
+                                flushPolicy.FlushEveryFrame ||
+                                bytesAccumulated >= flushPolicy.FlushSizeThreshold)
+                            {
+                                await FlushAndReleaseAsync(pending).ConfigureAwait(false);
+                                bytesAccumulated = 0;
+                                batchStartTimestamp = 0;
+                            }
                         }
 
                         // Bounded progress interleave: the progress check is
@@ -295,7 +369,8 @@ internal sealed partial class RpcSession
             catch (Exception ex)
             {
                 terminalException = NormalizeTransportException(ex);
-                ReportFaultOnce(terminalException);
+                try { ReportFaultOnce(terminalException); }
+                catch (Exception cleanup) { terminalException = RpcPublicationErrors.Combine(terminalException, cleanup)!; }
             }
             finally
             {
@@ -305,10 +380,19 @@ internal sealed partial class RpcSession
                 Interlocked.Exchange(ref _stopped, 1);
                 _progressQueue.Writer.TryComplete();
                 _normalQueue.Writer.TryComplete();
-                _flushPolicyState.UnregisterChanged(_flushPolicyChanged);
-                ReleaseBatch(pending, terminalException);
-                DrainQueuedFrames(terminalException);
-                PulseCapacityWaiters();
+                Exception? cleanupFailure = null;
+                try { _flushPolicyState.UnregisterChanged(_flushPolicyChanged); }
+                catch (Exception cleanup) { cleanupFailure = cleanup; }
+                try { ReleaseBatch(pending, terminalException); }
+                catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
+                try { DrainQueuedFrames(terminalException); }
+                catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
+                try { PulseCapacityWaiters(); }
+                catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
+                cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, _pumpCleanupFailure);
+                if (cleanupFailure is not null)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(
+                        RpcPublicationErrors.Combine(terminalException, cleanupFailure)!).Throw();
             }
         }
 
@@ -321,7 +405,7 @@ internal sealed partial class RpcSession
             while (drainedCount < ProgressFramesPerDrain &&
                    _progressQueue.Reader.TryRead(out var frame))
             {
-                pending.Add(frame);
+                ClaimAndAddFrame(pending, frame);
                 drained = true;
                 drainedCount++;
                 if (_flushPolicyState.Capture().FlushEveryFrame)
@@ -455,65 +539,261 @@ internal sealed partial class RpcSession
                     return false;
                 if (Interlocked.CompareExchange(ref _queuedBytes, current + bytes, current) == current)
                 {
-                    SharpLinkTelemetry.AddSendQueueBytes(bytes);
+                    try { SharpLinkTelemetry.AddSendQueueBytes(bytes); }
+                    catch (Exception failure)
+                    {
+                        // The caller has not received a reservation yet. Roll back the
+                        // scalar claim here, not by pretending an unreserved frame owns it.
+                        Interlocked.Add(ref _queuedBytes, -bytes);
+                        try { SharpLinkTelemetry.AddSendQueueBytes(-bytes); }
+                        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+                        try { PulseCapacityWaiters(); }
+                        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                    }
                     return true;
                 }
             }
         }
 
+        // This is the sole wire-admission authority. No producer-side eligibility check
+        // substitutes for ordering these claims on this Session's normal FIFO.
+        private bool ClaimAndAddFrame(List<OwnedFrame> pending, OwnedFrame frame)
+        {
+            var transferred = false;
+            try
+            {
+                var publication = frame.Publication;
+                var role = frame.PublicationRole;
+                if (publication is null)
+                {
+                    if (role != RpcFramePublicationRole.None)
+                        throw new InvalidOperationException("Publication role has no control.");
+                }
+                else
+                {
+                    if (frame.IsProtocolProgress)
+                        throw new InvalidOperationException("Publication controls cannot bypass normal FIFO ordering.");
+                    var group = publication as RpcStreamPublication;
+                    var binding = group?.Binding ?? publication as RpcBindingPublication
+                        ?? throw new InvalidOperationException("Unknown publication control.");
+                    var reject = false;
+                    var lateData = false;
+                    switch (role)
+                    {
+                        case RpcFramePublicationRole.RequestHead:
+                            if (group is not null)
+                            {
+                                if (group.HeadDisposition != RpcStreamHeadDisposition.Pending)
+                                    throw new InvalidOperationException("Stream group has more than one request head.");
+                                // Publish before any observer, buffer return or waiter can run.
+                                group.HeadDisposition = binding.ReleaseClaimed
+                                    ? RpcStreamHeadDisposition.Rejected : RpcStreamHeadDisposition.Admitted;
+                            }
+                            reject = binding.ReleaseClaimed;
+                            break;
+                        case RpcFramePublicationRole.ReleaseBinding:
+                            if (group is not null || binding.ReleaseClaimed)
+                                throw new InvalidOperationException("Duplicate or invalid binding release claim.");
+                            binding.ReleaseClaimed = true;
+                            break;
+                        case RpcFramePublicationRole.StreamData:
+                            if (group is null || group.HeadDisposition == RpcStreamHeadDisposition.Pending)
+                                throw new InvalidOperationException("Stream data preceded its exact request head.");
+                            lateData = group.IsTerminalConsumed(frame.StreamId);
+                            reject = group.HeadDisposition == RpcStreamHeadDisposition.Rejected || lateData;
+                            break;
+                        case RpcFramePublicationRole.StreamTerminal:
+                            if (group is null || group.HeadDisposition == RpcStreamHeadDisposition.Pending)
+                                throw new InvalidOperationException("Stream terminal preceded its exact request head.");
+                            reject = group.HeadDisposition == RpcStreamHeadDisposition.Rejected || group.IsTerminalConsumed(frame.StreamId);
+                            if (!reject) group.MarkTerminalConsumed(frame.StreamId); // Before cleanup/observers.
+                            break;
+                        case RpcFramePublicationRole.StreamCleanupFence:
+                        case RpcFramePublicationRole.StreamFence:
+                            if (group is null || group.HeadDisposition == RpcStreamHeadDisposition.Pending ||
+                                frame.Length != 0 || frame.ForceFlush)
+                                throw new InvalidOperationException("Invalid physical stream fence.");
+                            break;
+                        default:
+                            throw new InvalidOperationException("Unknown publication role.");
+                    }
+                    if (reject)
+                    {
+                        transferred = true; // Cleanup owns the frame even if a callback throws.
+                        CompleteReserved(frame, RpcPublicationErrors.Rejected(), accepted: true);
+                        // A late data frame already spent sender credit. Rather than fabricate
+                        // a successful emission/refund against a terminal route, fail this exact
+                        // Session; its existing flow-control teardown releases all credit owners.
+                        if (lateData) throw new SharpLinkException(SharpLinkErrorCode.FailedPrecondition,
+                            "Client stream data reached publication after its terminal cutoff.");
+                        return false;
+                    }
+                }
+                pending.Add(frame);
+                transferred = true;
+                return true;
+            }
+            catch (Exception failure)
+            {
+                if (!transferred)
+                {
+                    try { CompleteReserved(frame, failure, accepted: true); }
+                    catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+                }
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                throw new UnreachableException();
+            }
+        }
+
         private void ReleaseBatch(List<OwnedFrame> pending, Exception? exception)
         {
+            Exception? failure = null;
             for (var index = 0; index < pending.Count; index++)
-                CompleteReserved(pending[index], exception, completeFlushWaiter: true);
+            {
+                var frame = pending[index];
+                pending[index] = default; // Detach before arbitrary cleanup or reentrancy.
+                try { CompleteReserved(frame, exception, accepted: true); }
+                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            }
             pending.Clear();
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
         private void DrainQueuedFrames(Exception exception)
         {
+            Exception? failure = null;
             while (_progressQueue.Reader.TryRead(out var frame))
-                CompleteReserved(frame, exception, completeFlushWaiter: true);
+            {
+                RejectUnclaimedHead(frame);
+                try { CompleteReserved(frame, exception, accepted: true); }
+                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            }
             while (_normalQueue.Reader.TryRead(out var frame))
-                CompleteReserved(frame, exception, completeFlushWaiter: true);
+            {
+                RejectUnclaimedHead(frame);
+                try { CompleteReserved(frame, exception, accepted: true); }
+                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            }
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        private static void RejectUnclaimedHead(OwnedFrame frame)
+        {
+            if (frame.PublicationRole == RpcFramePublicationRole.RequestHead &&
+                frame.Publication is RpcStreamPublication group &&
+                group.HeadDisposition == RpcStreamHeadDisposition.Pending)
+                group.HeadDisposition = RpcStreamHeadDisposition.Rejected;
         }
 
         private void CompleteReserved(
             OwnedFrame frame,
             Exception? exception,
-            bool completeFlushWaiter = true)
+            bool completeFlushWaiter = true,
+            bool accepted = false)
         {
-            // Capture the identity before returning the writer: returning a pooled writer
-            // invalidates its bytes and permits another producer to reuse that buffer.
-            var failureObserver = exception is not null && completeFlushWaiter
-                ? frame.FailureObserver
-                : null;
-            var failedRequestId = failureObserver is null
-                ? 0
-                : BinaryPrimitives.ReadInt64LittleEndian(frame.Memory.Span.Slice(7, sizeof(long)));
-            try
+            Exception? cleanupFailure = null;
+            var observer = completeFlushWaiter ? frame.FailureObserver : null;
+            long requestId = 0;
+            // Capture BEFORE returning the pooled buffer, including successful-flush cleanup
+            // faults which may still need to notify the independent failure observer.
+            if (observer is not null)
             {
-                _returnBuffer(frame.Owner);
+                try { requestId = BinaryPrimitives.ReadInt64LittleEndian(frame.Memory.Span.Slice(7, sizeof(long))); }
+                catch (Exception cleanup) { cleanupFailure = cleanup; observer = null; }
             }
-            finally
+            try { _returnBuffer(frame.Owner); }
+            catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
+            Interlocked.Add(ref _queuedBytes, -frame.Length);
+            try { SharpLinkTelemetry.AddSendQueueBytes(-frame.Length); }
+            catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
+            try { PulseCapacityWaiters(); }
+            catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
+            var outcome = RpcPublicationErrors.Combine(exception, cleanupFailure);
+            if (outcome is not null && observer is not null)
             {
-                Interlocked.Add(ref _queuedBytes, -frame.Length);
-                SharpLinkTelemetry.AddSendQueueBytes(-frame.Length);
-                if (completeFlushWaiter)
-                {
-                    if (exception is null)
-                        frame.FlushCompletion?.TrySetResult(true);
-                    else
-                        frame.FlushCompletion?.TrySetException(exception);
-                }
-                PulseCapacityWaiters();
-                // This belongs to the pump's existing lifetime. There is no detached task,
-                // and no admission lock is held while the pending-call owner completes it.
-                failureObserver?.OnRequestEmissionFailure(failedRequestId, exception!);
+                try { observer.OnRequestEmissionFailure(requestId, outcome); }
+                catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
             }
+            var group = accepted ? frame.Publication as RpcStreamPublication : null;
+            if (accepted && cleanupFailure is not null)
+            {
+                _pumpCleanupFailure = RpcPublicationErrors.Combine(_pumpCleanupFailure, cleanupFailure);
+                if (group is not null)
+                    group.CleanupFailure = RpcPublicationErrors.Combine(group.CleanupFailure, cleanupFailure);
+            }
+            outcome = RpcPublicationErrors.Combine(exception, cleanupFailure);
+            if (frame.PublicationRole is (RpcFramePublicationRole.StreamFence or RpcFramePublicationRole.StreamCleanupFence) && group is not null)
+                outcome = RpcPublicationErrors.Combine(outcome, group.CleanupFailure);
+            // Last: a physical fence is not complete until all preceding frame cleanup,
+            // capacity notification and failure observation have physically returned.
+            if (completeFlushWaiter)
+            {
+                if (outcome is null) frame.FlushCompletion?.TrySetResult(true);
+                else frame.FlushCompletion?.TrySetException(outcome);
+            }
+            if (cleanupFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
         }
 
         private void ReturnUnreserved(OwnedFrame frame, Exception? exception = null)
         {
-            _returnBuffer(frame.Owner);
+            // Refusal owns every independent obligation too; a throwing return must not
+            // bypass the failure observer or waiter. This runs only outside call gates.
+            Exception? failure = null;
+            long requestId = 0;
+            var observer = frame.FailureObserver;
+            if (observer is not null)
+            {
+                try { requestId = BinaryPrimitives.ReadInt64LittleEndian(frame.Memory.Span.Slice(7, sizeof(long))); }
+                catch (Exception cleanup) { failure = cleanup; observer = null; }
+            }
+            try { _returnBuffer(frame.Owner); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            exception ??= CreateTransportClosedException();
+            var outcome = RpcPublicationErrors.Combine(exception, failure);
+            if (outcome is not null && observer is not null)
+            {
+                try { observer.OnRequestEmissionFailure(requestId, outcome); }
+                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            }
+            outcome = RpcPublicationErrors.Combine(exception, failure);
+            frame.FlushCompletion?.TrySetException(outcome!);
+            if (frame.FlushCompletion is not null)
+                ObserveAbandonedFlushCompletion(frame.FlushCompletion.Task);
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        private void SignalAcceptedPublication()
+        {
+            try { _wakeup.Signal(); }
+            catch (Exception failure)
+            {
+                // TryWrite already transferred ownership. Do not tell the caller that this
+                // was neveraccepted: retain accepted semantics, terminalize, and report the
+                // failure through the physical stop join. Publish error ownership BEFORE a
+                // terminal callback can reenter that join.
+                RecordPublicationCleanupFailure(failure);
+                try { Stop(); }
+                catch (Exception cleanup)
+                {
+                    RecordPublicationCleanupFailure(cleanup);
+                    failure = RpcPublicationErrors.Combine(failure, cleanup)!;
+                }
+                // This is a producer failure, NOT proof that the output await is quiescent.
+                // Keep the ordinary terminal path distinct from the pump-catch callback.
+                try { _onPublicationFaulted(failure); }
+                catch (Exception cleanup) { RecordPublicationCleanupFailure(cleanup); }
+            }
+        }
+
+        private void RecordPublicationCleanupFailure(Exception failure)
+        {
+            lock (_admissionGate)
+                _backpressureCleanupFailure = RpcPublicationErrors.Combine(_backpressureCleanupFailure, failure);
         }
 
         public long QueuedBytes => Volatile.Read(ref _queuedBytes);
@@ -524,8 +804,13 @@ internal sealed partial class RpcSession
                 return;
             _progressQueue.Writer.TryComplete();
             _normalQueue.Writer.TryComplete();
-            _wakeup.Signal();
-            PulseCapacityWaiters();
+            Exception? failure = null;
+            try { _wakeup.Signal(); }
+            catch (Exception cleanup) { failure = cleanup; }
+            try { PulseCapacityWaiters(); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
         private void ReportFaultOnce(Exception exception)
@@ -535,9 +820,15 @@ internal sealed partial class RpcSession
             Interlocked.Exchange(ref _stopped, 1);
             _progressQueue.Writer.TryComplete(exception);
             _normalQueue.Writer.TryComplete(exception);
-            _wakeup.Signal();
-            PulseCapacityWaiters();
-            _onTransportFaulted(exception);
+            Exception? cleanupFailure = null;
+            try { _wakeup.Signal(); }
+            catch (Exception cleanup) { cleanupFailure = cleanup; }
+            try { PulseCapacityWaiters(); }
+            catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
+            try { _onTransportFaulted(exception); }
+            catch (Exception cleanup) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, cleanup); }
+            if (cleanupFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
         }
 
         private static SharpLinkException NormalizeTransportException(Exception exception)
@@ -549,18 +840,22 @@ internal sealed partial class RpcSession
 
         public async ValueTask WaitForStopAsync()
         {
+            Exception? failure = null;
             try
             {
                 var lifetime = Volatile.Read(ref _pumpLifetime);
                 var pumpTask = lifetime is Task task ? task : ((PendingEnqueueQueue)lifetime).PumpTask;
                 await pumpTask.ConfigureAwait(false);
             }
-            finally
-            {
-                // Stop prevents new pending nodes. Join cancellation/failed
-                // reservation cleanup even when the pump itself has finished.
-                await CaptureBackpressuredSendDrain().ConfigureAwait(false);
-            }
+            catch (Exception exception) { failure = exception; }
+            // Stop prevents new pending nodes. Join cancellation/failed reservation
+            // cleanup even if the pump failed, then retain its actual cleanup errors.
+            try { await CaptureBackpressuredSendDrain().ConfigureAwait(false); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            lock (_admissionGate)
+                failure = RpcPublicationErrors.Combine(failure, _backpressureCleanupFailure);
+            if (failure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
     }
 }

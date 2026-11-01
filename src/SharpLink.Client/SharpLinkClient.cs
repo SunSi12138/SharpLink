@@ -140,6 +140,7 @@ internal sealed partial class SharpLinkClient :
 
     public ValueTask StopAsync(CancellationToken cancellationToken = default)
     {
+        ColdMetadataPreparation.ThrowIfCallbackReentry(_runtimeContext.Domain);
         Task stopTask;
         lock (_stateGate)
         {
@@ -177,6 +178,8 @@ internal sealed partial class SharpLinkClient :
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         PulseReadySignal();
+        try { await StopBindingMaintenanceAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
 
         var stoppingException = CreateConnectionClosedException("Client is stopping.");
         ClientConnection[] connections;
@@ -205,6 +208,8 @@ internal sealed partial class SharpLinkClient :
         catch (Exception exception) { cleanupFailures.Add(exception); }
         try { _shutdownCts.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _assemblyRegistry.ReleaseMetadataAfterDrain(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         try { _runtimeContext.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         TransitionTo(SharpLinkConnectionState.Stopped);
@@ -222,6 +227,8 @@ internal sealed partial class SharpLinkClient :
         try { await _shutdownCts.CancelAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         PulseReadySignal();
+        try { await StopBindingMaintenanceAsync().ConfigureAwait(false); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
         try { await _cluster.StopAsync().ConfigureAwait(false); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
 
@@ -235,6 +242,8 @@ internal sealed partial class SharpLinkClient :
         try { _reconnectSignal.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         try { _shutdownCts.Dispose(); }
+        catch (Exception exception) { cleanupFailures.Add(exception); }
+        try { _assemblyRegistry.ReleaseMetadataAfterDrain(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
         try { _runtimeContext.Dispose(); }
         catch (Exception exception) { cleanupFailures.Add(exception); }
@@ -260,6 +269,13 @@ internal sealed partial class SharpLinkClient :
         string operation,
         TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
         => _frameworkTasks.Track(task, operation, observationMode, IsExpectedStopException);
+
+    internal void AdmitStreamSupervision(Task task, string operation, object ownerRoot,
+        ref FrameworkTaskRegistration? receipt)
+        => _frameworkTasks.AdmitStrictPhysicalAnchor(task, operation, ownerRoot, ref receipt);
+
+    internal void CompleteAcceptedStreamSupervision(FrameworkTaskRegistration receipt)
+        => _frameworkTasks.CompleteAcceptedRegistration(receipt);
 
     internal FrameworkTaskSupervisorSnapshot FrameworkTaskSnapshotForDiagnostics
         => _frameworkTasks.CaptureSnapshot();

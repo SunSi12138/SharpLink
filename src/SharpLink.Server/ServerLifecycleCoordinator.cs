@@ -243,24 +243,11 @@ internal sealed partial class SharpLinkServer
         {
             var stopTask = BeginTerminalFailure(failure);
             lock (_stateGate)
-                _terminalFailureObserverTask ??= ObserveTerminalFailureAsync(stopTask);
+                EnsureTerminalObserverLocked(stopTask);
         }
 
         internal Task? TerminalFailureObserverTaskForDiagnostics
             => Volatile.Read(ref _terminalFailureObserverTask);
-
-        private static async Task ObserveTerminalFailureAsync(Task stopTask)
-        {
-            try
-            {
-                await stopTask.ConfigureAwait(false);
-            }
-            catch
-            {
-                // Observation is intentionally separate from propagation: the shared stop task stays
-                // faulted so a later StopAsync caller can still join and rethrow the terminal failure.
-            }
-        }
 
         internal Task BeginTerminalFailure(Exception failure)
         {
@@ -296,6 +283,11 @@ internal sealed partial class SharpLinkServer
                 cleanupFailure = exception;
             }
 
+            // Preserve the primary even if the supervisor outcome is incomplete or
+            // also contains it. Duplicate final reporting is preferable to losing it.
+            try { cleanupFailure = CombineStrictLifecycleFailures(cleanupFailure, CaptureStrictDrainOutcomeForStop()); }
+            catch (Exception exception) { cleanupFailure = CombineStrictLifecycleFailures(cleanupFailure, exception); }
+
             Exception terminalFailure;
             lock (_stateGate)
             {
@@ -305,9 +297,9 @@ internal sealed partial class SharpLinkServer
                 terminalFailure = cleanupFailure is null
                     ? primaryFailure
                     : new AggregateException(primaryFailure, cleanupFailure);
+                _terminalFailure = terminalFailure;
             }
 
-            Volatile.Write(ref _terminalFailure, terminalFailure);
             _terminalCompletion.TrySetException(terminalFailure);
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminalFailure).Throw();
         }
@@ -412,7 +404,7 @@ internal sealed partial class SharpLinkServer
 
                 CancelForShutdown(_forceStopCts, "CallCancellation");
                 var closeSessionsTask = DisposeAllSessionsAsync();
-                var frameworkTasksTask = _server._frameworkTasks.DrainAsync();
+                var frameworkTasksTask = GetOrStartFrameworkDrain();
                 var frameworkCleanupTask = Task.WhenAll(
                     listenerDisposeTask,
                     goAwayTask,
@@ -432,22 +424,52 @@ internal sealed partial class SharpLinkServer
                 {
                     faulted = true;
                     frameworkCleanupCompleted = true;
-                    SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Framework", exception);
-                    AddTaskFailures(ref stopFailures, frameworkCleanupTask, exception);
+                    if (HasStrictPhysicalOwnership)
+                    {
+                        AddTaskFailures(ref stopFailures, frameworkCleanupTask, exception);
+                        LogStrictStopFailure(ref stopFailures, "Framework", exception);
+                    }
+                    else
+                    {
+                        SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Framework", exception);
+                        AddTaskFailures(ref stopFailures, frameworkCleanupTask, exception);
+                    }
                 }
 
                 if (!frameworkCleanupCompleted)
                 {
                     faulted = true;
-                    SharpLinkServer.LogFrameworkCleanupTimeout(
-                        _server._logger,
-                        (int)_server._shutdownPlan.CleanupBudget.TotalSeconds);
-                    _shutdownCleanupObserver = ObserveShutdownAndDisposeTokensAsync(frameworkCleanupTask);
+                    if (HasStrictPhysicalOwnership)
+                    {
+                        _shutdownCleanupObserver = ObserveShutdownAndDisposeTokensAsync(frameworkCleanupTask);
+                        try { SharpLinkServer.LogFrameworkCleanupTimeout(_server._logger,
+                            (int)_server._shutdownPlan.CleanupBudget.TotalSeconds); }
+                        catch (Exception reportingFailure) { (stopFailures ??= []).Add(reportingFailure); }
+                    }
+                    else
+                    {
+                        SharpLinkServer.LogFrameworkCleanupTimeout(_server._logger,
+                            (int)_server._shutdownPlan.CleanupBudget.TotalSeconds);
+                        _shutdownCleanupObserver = ObserveShutdownAndDisposeTokensAsync(frameworkCleanupTask);
+                    }
                 }
                 else
                 {
-                    _acceptCts.Dispose();
-                    _forceStopCts.Dispose();
+                    if (HasStrictPhysicalOwnership)
+                    {
+                        Exception? tokenFailure = null;
+                        DisposeStrictShutdownTokens(ref tokenFailure);
+                        if (tokenFailure is not null)
+                        {
+                            faulted = true;
+                            (stopFailures ??= []).Add(tokenFailure);
+                        }
+                    }
+                    else
+                    {
+                        _acceptCts.Dispose();
+                        _forceStopCts.Dispose();
+                    }
                 }
 
                 if (callsDrained)
@@ -468,21 +490,55 @@ internal sealed partial class SharpLinkServer
                     catch (Exception exception)
                     {
                         faulted = true;
-                        SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Services", exception);
-                        AddTaskFailures(ref stopFailures, serviceCleanupTask, exception);
+                        if (HasStrictPhysicalOwnership)
+                        {
+                            AddTaskFailures(ref stopFailures, serviceCleanupTask, exception);
+                            LogStrictStopFailure(ref stopFailures, "Services", exception);
+                        }
+                        else
+                        {
+                            SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Services", exception);
+                            AddTaskFailures(ref stopFailures, serviceCleanupTask, exception);
+                        }
                     }
                 }
             }
             catch (Exception exception)
             {
                 faulted = true;
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Stop", exception);
-                (stopFailures ??= []).Add(exception);
+                if (HasStrictPhysicalOwnership)
+                {
+                    (stopFailures ??= []).Add(exception);
+                    LogStrictStopFailure(ref stopFailures, "Stop", exception);
+                }
+                else
+                {
+                    SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Stop", exception);
+                    (stopFailures ??= []).Add(exception);
+                }
             }
 
+            try
+            {
+                if (CaptureStrictDrainOutcomeForStop() is { } strictFailure)
+                {
+                    faulted = true;
+                    (stopFailures ??= []).Add(strictFailure);
+                }
+            }
+            catch (Exception exception)
+            {
+                faulted = true;
+                (stopFailures ??= []).Add(exception);
+            }
             var terminalFailure = CreateTerminalFailure(faulted, stopFailures);
-            _server.TransitionTo(terminalFailure is null ? ServerState.Stopped : ServerState.Faulted);
-            Volatile.Write(ref _terminalFailure, terminalFailure);
+            lock (_stateGate)
+            {
+                if ((_strictPhysicalState & StrictDrainRequested) != 0)
+                    terminalFailure = CombineStrictLifecycleFailures(_terminalFailure, terminalFailure);
+                _server.TransitionTo(terminalFailure is null ? ServerState.Stopped : ServerState.Faulted);
+                _terminalFailure = terminalFailure;
+            }
             if (terminalFailure is null)
             {
                 _terminalCompletion.TrySetResult(true);
@@ -495,6 +551,7 @@ internal sealed partial class SharpLinkServer
 
         private async Task CleanupAfterRuntimeFailureAsync()
         {
+            Exception? strictCleanupFailure = null;
             var timeProvider = _server._runtimeContext.TimeProvider;
             var deadline = SharpLinkTime.AddDuration(
                 timeProvider.GetTimestamp(),
@@ -525,7 +582,7 @@ internal sealed partial class SharpLinkServer
                 StartListenerDispose(_server._transportListener),
                 DisposeAllSessionsAsync(),
                 WaitForAcceptRuntimeShutdownAsync(),
-                _server._frameworkTasks.DrainAsync());
+                GetOrStartFrameworkDrain());
             var frameworkCleanupCompleted = false;
             try
             {
@@ -536,20 +593,37 @@ internal sealed partial class SharpLinkServer
             catch (Exception exception)
             {
                 frameworkCleanupCompleted = true;
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Framework", exception);
+                if (HasStrictPhysicalOwnership)
+                    RetainStrictCleanupFailure(ref strictCleanupFailure, "Framework", frameworkCleanupTask.Exception ?? exception);
+                else
+                    SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Framework", exception);
             }
 
             if (frameworkCleanupCompleted)
             {
-                _acceptCts.Dispose();
-                _forceStopCts.Dispose();
+                if (HasStrictPhysicalOwnership)
+                    DisposeStrictShutdownTokens(ref strictCleanupFailure);
+                else
+                {
+                    _acceptCts.Dispose();
+                    _forceStopCts.Dispose();
+                }
             }
             else
             {
-                SharpLinkServer.LogFrameworkCleanupTimeout(
-                    _server._logger,
-                    (int)_server._shutdownPlan.CleanupBudget.TotalSeconds);
+                // Own the actual cleanup before any diagnostic callback can fail.
                 _shutdownCleanupObserver = ObserveShutdownAndDisposeTokensAsync(frameworkCleanupTask);
+                if (HasStrictPhysicalOwnership)
+                {
+                    try { SharpLinkServer.LogFrameworkCleanupTimeout(_server._logger,
+                        (int)_server._shutdownPlan.CleanupBudget.TotalSeconds); }
+                    catch (Exception reportingFailure)
+                    {
+                        strictCleanupFailure = CombineStrictLifecycleFailures(strictCleanupFailure, reportingFailure);
+                    }
+                }
+                else SharpLinkServer.LogFrameworkCleanupTimeout(_server._logger,
+                    (int)_server._shutdownPlan.CleanupBudget.TotalSeconds);
             }
 
             if (callsDrained)
@@ -568,9 +642,14 @@ internal sealed partial class SharpLinkServer
                 }
                 catch (Exception exception)
                 {
-                    SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Services", exception);
+                    if (HasStrictPhysicalOwnership)
+                        RetainStrictCleanupFailure(ref strictCleanupFailure, "Services", serviceCleanupTask.Exception ?? exception);
+                    else
+                        SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Services", exception);
                 }
             }
+            if (strictCleanupFailure is not null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(strictCleanupFailure).Throw();
         }
 
         internal void TrySignalCallsDrained(ServerConnectionState? releasingConnection = null)

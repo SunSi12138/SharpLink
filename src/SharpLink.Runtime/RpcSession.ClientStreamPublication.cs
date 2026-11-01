@@ -10,8 +10,10 @@ internal sealed partial class RpcSession
         IRpcSizedCodec<T>? exactSizeCodec,
         RpcDeadline deadline,
         TimeProvider timeProvider,
-        CancellationToken terminalToken)
+        CancellationToken terminalToken,
+        RpcStreamPublication group)
     {
+        group.ValidateProducer(this, requestId);
         ArgumentNullException.ThrowIfNull(codec);
         ArgumentNullException.ThrowIfNull(timeProvider);
         ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
@@ -28,7 +30,7 @@ internal sealed partial class RpcSession
                 sizedSnapshot,
                 deadline,
                 timeProvider,
-                terminalToken);
+                terminalToken, group);
         }
 
         return SendClientUnsizedStreamChunkAsync(
@@ -38,7 +40,7 @@ internal sealed partial class RpcSession
             codec,
             deadline,
             timeProvider,
-            terminalToken);
+            terminalToken, group);
     }
 
     internal void SendClientStreamComplete(
@@ -46,8 +48,10 @@ internal sealed partial class RpcSession
         ushort streamId,
         RpcDeadline deadline,
         TimeProvider timeProvider,
-        CancellationToken terminalToken)
+        CancellationToken terminalToken,
+        RpcStreamPublication group)
     {
+        group.ValidateProducer(this, requestId);
         ArgumentNullException.ThrowIfNull(timeProvider);
         var writer = RentFrameWriter();
         var ownsWriter = true;
@@ -69,7 +73,7 @@ internal sealed partial class RpcSession
                 // before the call became terminal, so re-arbitrate immediately before enqueue.
                 ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
                 ownsWriter = false;
-                SendPacket(writer);
+                SendPacket(writer, publication: group, publicationRole: RpcFramePublicationRole.StreamTerminal);
             }
             finally
             {
@@ -89,9 +93,11 @@ internal sealed partial class RpcSession
         SharpLinkException exception,
         RpcDeadline deadline,
         TimeProvider timeProvider,
-        CancellationToken terminalToken)
+        CancellationToken terminalToken,
+        RpcStreamPublication group)
     {
         ArgumentNullException.ThrowIfNull(exception);
+        group.ValidateProducer(this, requestId);
         ArgumentNullException.ThrowIfNull(timeProvider);
         var writer = RentFrameWriter();
         var ownsWriter = true;
@@ -120,7 +126,7 @@ internal sealed partial class RpcSession
                 // already owns the call must suppress this late wire terminal as well.
                 ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
                 ownsWriter = false;
-                SendPacket(writer);
+                SendPacket(writer, publication: group, publicationRole: RpcFramePublicationRole.StreamTerminal);
             }
             finally
             {
@@ -134,6 +140,43 @@ internal sealed partial class RpcSession
         }
     }
 
+    /// <summary>Bounded host cleanup only: no business token/deadline, no user codec or enumeration.</summary>
+    internal void SendClientStreamCleanupError(
+        RpcStreamPublication group, ushort streamId, SharpLinkException exception)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+        group.ValidateProducer(this, group.RequestId);
+        group.ValidateStreamId(streamId);
+        ArgumentNullException.ThrowIfNull(exception);
+        var writer = RentFrameWriter();
+        var ownsWriter = true;
+        Exception? failure = null;
+        try
+        {
+            var packet = writer.BeginPacket(ProtocolV2FrameType.StreamComplete,
+                ProtocolV2FrameFlags.Error, unchecked((ulong)group.RequestId));
+            BinaryPrimitives.WriteUInt16LittleEndian(writer.GetSpan(sizeof(ushort)), streamId);
+            writer.Advance(sizeof(ushort));
+            ProtocolV2PayloadCodec.WriteError(writer, exception.Code, exception.Message,
+                RuntimeContext.Protocol.MaxErrorMessageBytes, out var truncated);
+            writer.EndPacket(packet);
+            if (truncated) writer.WrittenSpan[packet.StartOffset + 6] |= (byte)ProtocolV2FrameFlags.Truncated;
+            ownsWriter = false;
+            SendPacket(writer, publication: group, publicationRole: RpcFramePublicationRole.StreamTerminal);
+        }
+        catch (Exception error) { failure = error; }
+        // Both local credit completion and writer return remain independent physical obligations.
+        if (ownsWriter)
+        {
+            try { RuntimeContext.Buffers.Return(writer); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        }
+        try { CompleteSendStream(group.RequestId, streamId, exception); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
     private async ValueTask SendClientStreamChunkKnownSizeAsync<T>(
         long requestId,
         ushort streamId,
@@ -143,7 +186,8 @@ internal sealed partial class RpcSession
         IRpcSizedCodecSnapshot? sizedSnapshot,
         RpcDeadline deadline,
         TimeProvider timeProvider,
-        CancellationToken terminalToken)
+        CancellationToken terminalToken,
+        RpcStreamPublication group)
     {
         var creditBytes = Math.Max(1, encodedBytes);
         var creditAcquired = false;
@@ -189,7 +233,7 @@ internal sealed partial class RpcSession
 
             ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
             ownsWriter = false;
-            SendPacket(writer);
+            SendPacket(writer, publication: group, publicationRole: RpcFramePublicationRole.StreamData);
         }
         catch
         {
@@ -231,7 +275,8 @@ internal sealed partial class RpcSession
         IRpcCodec<T> codec,
         RpcDeadline deadline,
         TimeProvider timeProvider,
-        CancellationToken terminalToken)
+        CancellationToken terminalToken,
+        RpcStreamPublication group)
     {
         IRpcByteBufferWriter? writer = null;
         var ownsWriter = true;
@@ -267,7 +312,7 @@ internal sealed partial class RpcSession
                 {
                     ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
                     ownsWriter = false;
-                    SendPacket(writer);
+                    SendPacket(writer, publication: group, publicationRole: RpcFramePublicationRole.StreamData);
                 }
                 catch
                 {
@@ -294,7 +339,7 @@ internal sealed partial class RpcSession
                 budget,
                 deadline,
                 timeProvider,
-                terminalToken);
+                terminalToken, group);
         }
         finally
         {
@@ -312,7 +357,8 @@ internal sealed partial class RpcSession
         PreCreditSerializedBudget budget,
         RpcDeadline deadline,
         TimeProvider timeProvider,
-        CancellationToken terminalToken)
+        CancellationToken terminalToken,
+        RpcStreamPublication group)
     {
         var ownsWriter = true;
         var ownsBudget = false;
@@ -334,7 +380,7 @@ internal sealed partial class RpcSession
 
             ThrowIfClientStreamPublicationRejected(deadline, timeProvider, terminalToken);
             ownsWriter = false;
-            SendPacket(writer);
+            SendPacket(writer, publication: group, publicationRole: RpcFramePublicationRole.StreamData);
         }
         catch
         {

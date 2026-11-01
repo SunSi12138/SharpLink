@@ -34,8 +34,10 @@ internal readonly record struct PendingCallCompletion(
 
 internal interface IPendingCallOwner
 {
-    void OnPendingCallRegistered();
     void OnPendingCallCompleted(in PendingCallCompletion completion);
+    void OnPendingCallCompleted(in PendingCallCompletion completion,
+        ref StreamSinkPublicationDisposition disposition, long dispatcherLease, ClientStreamPublicationGroup? group = null)
+        => OnPendingCallCompleted(in completion);
     void OnProducerCancellationCallbackFailed(Exception exception);
 
     // Called at most once after the permanent admission seal. Must not tear down admitted tails.
@@ -118,6 +120,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
     public int Capacity => _capacity;
 
+    // Existing finite capacity ownership, including logically removed producers whose
+    // physical group has not finished. Count remains the live logical slot census.
     internal int ActiveCount => Volatile.Read(ref _activeSlots);
 
     internal bool RequestIdsExhausted => Volatile.Read(ref _requestIdsExhausted) != 0;
@@ -173,13 +177,14 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         out long id,
         IPendingCallCompletionObserver? completionObserver = null,
         bool hasResponsePayload = true,
-        bool responseNullable = false)
+        bool responseNullable = false,
+        ClientStreamPublicationGroup? producerGroup = null)
     {
         ArgumentNullException.ThrowIfNull(responseCodec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
                 responseCodec, kind, deadline, cancellationToken, hasResponsePayload, responseNullable,
-                completionObserver, out id, out var operation))
+                completionObserver, out id, out var operation, producerGroup))
             return operation;
 
         throw CreateResourceExhaustedException();
@@ -287,7 +292,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         IStreamDispatcher dispatcher,
         RpcDeadline deadline,
         CancellationToken cancellationToken,
-        IPendingCallCompletionObserver? completionObserver = null)
+        IPendingCallCompletionObserver? completionObserver = null,
+        ClientStreamPublicationGroup? producerGroup = null)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -301,7 +307,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 deadline,
                 cancellationToken,
                 out var id,
-                completionObserver))
+                completionObserver, producerGroup))
         {
             return id;
         }
@@ -312,7 +318,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
     public PendingRequestLease<RpcEmptyRequest> RegisterOneWayClientStream(
         RpcDeadline deadline,
         CancellationToken cancellationToken,
-        IPendingCallCompletionObserver? completionObserver = null)
+        IPendingCallCompletionObserver? completionObserver = null,
+        ClientStreamPublicationGroup? producerGroup = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (TryRent(
@@ -324,7 +331,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 responseNullable: false,
                 completionObserver,
                 out var id,
-                out var operation))
+                out var operation, producerGroup))
             return new PendingRequestLease<RpcEmptyRequest>(id, operation);
         throw CreateResourceExhaustedException();
     }
@@ -356,10 +363,11 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
 
                 if (current.Deadline.IsExpired(_timeProvider))
                 {
-                    var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
-                    if (!ReferenceEquals(exchanged, current))
+                    var removed = TryRemoveTerminalCall(slots, index, current);
+                    if (!removed)
                         return false;
                     current.WaitUntilRegistered();
+                    current.StreamGroup?.ResolveHeadUnderCompletionGate(accepted: false);
                     expiredCall = current;
                 }
                 else
@@ -442,10 +450,11 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             if (!current.Deadline.IsExpired(_timeProvider))
                 return true;
 
-            var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
-            if (!ReferenceEquals(exchanged, current))
+            var removed = TryRemoveTerminalCall(slots, index, current);
+            if (!removed)
                 return false;
             current.WaitUntilRegistered();
+            current.StreamGroup?.ResolveHeadUnderCompletionGate(accepted: false);
             expiredCall = current;
         }
 
@@ -483,6 +492,38 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         return call is not null && call.Id == id;
     }
 
+    internal bool TryAcquireProducerLifetime(long id, out ProducerLifetimeLease lifetime,
+        out CancellationToken originalToken, ClientStreamPublicationGroup? group = null)
+    {
+        lifetime = default;
+        originalToken = default;
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null) return false;
+        var index = (int)(id & _indexMask);
+        var call = Volatile.Read(ref slots[index]);
+        if (call is null || call.Id != id) return false;
+        lock (call.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[index]), call) || call.Id != id ||
+                !call.TryAttachProducer(out originalToken)) return false;
+            call.StreamGroup = group;
+            lifetime = new ProducerLifetimeLease(this, call, id);
+            return true;
+        }
+    }
+
+    // A copied lease can neither release twice nor affect a later pooled incarnation.
+    // Only the original group owns Dispose, after actual producers and its frame fence.
+    internal readonly struct ProducerLifetimeLease : IDisposable
+    {
+        private readonly PendingRequestTable? _table;
+        private readonly PendingCall? _call;
+        private readonly long _id;
+        internal ProducerLifetimeLease(PendingRequestTable table, PendingCall call, long id)
+        { _table = table; _call = call; _id = id; }
+        public void Dispose() => _call?.ReleaseProducerLifetime(_table!, _id);
+    }
+
     public CancellationToken GetProducerCancellationToken(long id)
     {
         var slots = Volatile.Read(ref _slots);
@@ -492,7 +533,12 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         var call = Volatile.Read(ref slots[(int)(id & _indexMask)]);
         if (call is null || call.Id != id)
             return new CancellationToken(canceled: true);
-        return call.ProducerCancellationToken;
+        lock (call.CompletionGate)
+        {
+            if (!ReferenceEquals(Volatile.Read(ref slots[(int)(id & _indexMask)]), call) || call.Id != id)
+                return new CancellationToken(canceled: true);
+            return call.ProducerCancellationToken;
+        }
     }
 
     public bool TryGetProducerDeadline(long id, out RpcDeadline deadline)
@@ -544,20 +590,19 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         if (slots is null)
             return;
 
+        List<Exception>? failures = null;
         for (var index = 0; index < slots.Length; index++)
         {
-            if (!TryTakeCallAtIndex(index, out var call, out var deadlineExpired))
-                continue;
-
+            if (!TryTakeCallAtIndex(index, out var call, out var deadlineExpired)) continue;
             var payload = ReadOnlySequence<byte>.Empty;
-            CompleteTakenCall(
-                call!,
-                deadlineExpired
-                    ? PendingCallCompletionReason.DeadlineExceeded
-                    : PendingCallCompletionReason.ConnectionClosed,
-                deadlineExpired ? null : exception,
-                ref payload);
+            try
+            {
+                CompleteTakenCall(call!, deadlineExpired ? PendingCallCompletionReason.DeadlineExceeded :
+                    PendingCallCompletionReason.ConnectionClosed, deadlineExpired ? null : exception, ref payload);
+            }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
         }
+        ThrowTerminalFailures(failures);
     }
 
     public void Dispose()
@@ -565,15 +610,22 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
-        _deadlineScheduler.Dispose();
-        FailAllPendingRequests(new SharpLinkException(
-            SharpLinkErrorCode.ConnectionClosed,
-            "Pending request table is disposed."));
-
-        if (Volatile.Read(ref _waiterCount) == 0)
-            DisposeSlotAvailable();
-        else
-            SignalSlotAvailable();
+        List<Exception>? failures = null;
+        try { _deadlineScheduler.Dispose(); }
+        catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+        try
+        {
+            FailAllPendingRequests(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed,
+                "Pending request table is disposed."));
+        }
+        catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+        try
+        {
+            if (Volatile.Read(ref _waiterCount) == 0) DisposeSlotAvailable();
+            else SignalSlotAvailable();
+        }
+        catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+        ThrowTerminalFailures(failures);
     }
 
     private bool TryRent<T>(
@@ -585,7 +637,8 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         bool responseNullable,
         IPendingCallCompletionObserver? completionObserver,
         out long id,
-        out RpcRequestOperation<T> operation)
+        out RpcRequestOperation<T> operation,
+        ClientStreamPublicationGroup? producerGroup = null)
     {
         ThrowIfRequestIdsExhausted();
         operation = RpcOperationPool<T>.Rent();
@@ -603,7 +656,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                     completionObserver,
                     hasResponsePayload,
                     responseNullable,
-                    out registrationPublished))
+                    out registrationPublished, producerGroup))
                 return true;
         }
         catch
@@ -634,9 +687,11 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         IPendingCallCompletionObserver? completionObserver,
         bool hasResponsePayload,
         bool responseNullable,
-        out bool published)
+        out bool published,
+        ClientStreamPublicationGroup? producerGroup = null)
     {
         published = false;
+        producerGroup?.BeginPendingRegistration(kind);
         if (!TryAcquireCapacity())
         {
             id = 0;
@@ -665,11 +720,27 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                         deadline,
                         cancellationToken,
                         completionObserver);
-                    if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
+                    if (producerGroup is null
+                        ? Interlocked.CompareExchange(ref slots[index], call, null) is null
+                        : TryPublishProducingRegistration(slots, index, call, producerGroup, ref published))
                     {
                         published = true;
-                        OnRegistered(call);
-                        CompleteRegistrationIfDisposed(call);
+                        if (producerGroup is null)
+                        {
+                            OnRegistered(call);
+                            CompleteRegistrationIfDisposed(call);
+                        }
+                        else
+                        {
+                            // These are registrar originals, not pooled call reads after callbacks.
+                            try { OnProducingRegistered(id, deadline, cancellationToken); }
+                            catch (Exception failure)
+                            {
+                                try { CompleteProducingSetupFailure(producerGroup, failure); }
+                                catch (Exception cleanup) { failure = ClientStreamPublicationGroup.AddPhysical(failure, cleanup)!; }
+                                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                            }
+                        }
                         return true;
                     }
 
@@ -697,8 +768,10 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         RpcDeadline deadline,
         CancellationToken cancellationToken,
         out long id,
-        IPendingCallCompletionObserver? completionObserver = null)
+        IPendingCallCompletionObserver? completionObserver = null,
+        ClientStreamPublicationGroup? producerGroup = null)
     {
+        producerGroup?.BeginPendingRegistration(kind);
         if (!TryAcquireCapacity())
         {
             id = 0;
@@ -727,11 +800,27 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                         deadline,
                         cancellationToken,
                         completionObserver);
-                    if (Interlocked.CompareExchange(ref slots[index], call, null) is null)
+                    if (producerGroup is null
+                        ? Interlocked.CompareExchange(ref slots[index], call, null) is null
+                        : TryPublishProducingRegistration(slots, index, call, producerGroup, ref published))
                     {
                         published = true;
-                        OnRegistered(call);
-                        CompleteRegistrationIfDisposed(call);
+                        if (producerGroup is null)
+                        {
+                            OnRegistered(call);
+                            CompleteRegistrationIfDisposed(call);
+                        }
+                        else
+                        {
+                            // These are registrar originals, not pooled call reads after callbacks.
+                            try { OnProducingRegistered(id, deadline, cancellationToken); }
+                            catch (Exception failure)
+                            {
+                                try { CompleteProducingSetupFailure(producerGroup, failure); }
+                                catch (Exception cleanup) { failure = ClientStreamPublicationGroup.AddPhysical(failure, cleanup)!; }
+                                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                            }
+                        }
                         return true;
                     }
 
@@ -797,10 +886,52 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             _owner.OnPendingCallCapacityIdle();
     }
 
+    private bool TryPublishProducingRegistration(PendingCall?[] slots, int index, PendingCall call,
+        ClientStreamPublicationGroup group, ref bool published)
+    {
+        // Exact scalar registration identity and producer lease commit before any remover can
+        // enter CompletionGate. No user callback or transport runs in this transaction.
+        var id = call.Id;
+        lock (call.CompletionGate)
+        {
+            if (Interlocked.CompareExchange(ref slots[index], call, null) is not null) return false;
+            published = true;
+            try { group.AdoptRegisteredCall(this, call, id); }
+            finally { call.MarkRegistered(); }
+            return true;
+        }
+    }
+
+    // Producing setup/head failure must not resample the same broken application clock.
+    // Exact group/slot identity is the authority; all terminal obligations stay outside gates.
+    internal void CompleteProducingSetupFailure(ClientStreamPublicationGroup group, Exception error,
+        PendingCallCompletionReason? reason = null)
+    {
+        if (!group.IsAdopted) return;
+        var id = group.RequestId;
+        var slots = Volatile.Read(ref _slots);
+        if (slots is null) return;
+        var index = (int)(id & _indexMask);
+        var call = Volatile.Read(ref slots[index]);
+        if (call is null || call.Id != id || !ReferenceEquals(call.StreamGroup, group)) return;
+        var terminal = TakeCallAfterClockFailure(slots, index, call, id);
+        if (terminal is null) return;
+        var empty = ReadOnlySequence<byte>.Empty;
+        CompleteTakenCall(terminal, reason ?? (error is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded }
+            ? PendingCallCompletionReason.DeadlineExceeded : PendingCallCompletionReason.SendFailure), error, ref empty);
+    }
+
+    private void OnProducingRegistered(long id, RpcDeadline deadline, CancellationToken token)
+    {
+        SharpLinkTelemetry.AddPendingRequests(1);
+        if (deadline.HasValue) _deadlineScheduler.Observe(deadline);
+        if (token.IsCancellationRequested) TryComplete(id, PendingCallCompletionReason.UserCancellation);
+        if (Volatile.Read(ref _disposed) != 0) TryComplete(id, PendingCallCompletionReason.ConnectionClosed);
+    }
+
     private void OnRegistered(PendingCall call)
     {
         SharpLinkTelemetry.AddPendingRequests(1);
-        _owner.OnPendingCallRegistered();
         call.MarkRegistered();
         if (call.Deadline.HasValue)
             _deadlineScheduler.Observe(call.Deadline);
@@ -849,11 +980,12 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 // descheduled until after the boundary; a response claiming after it loses.
                 deadlineExpired = current.Deadline.IsExpired(_timeProvider);
 
-                var exchanged = Interlocked.CompareExchange(ref slots[index], null, current);
-                if (!ReferenceEquals(exchanged, current))
+                var removed = TryRemoveTerminalCall(slots, index, current);
+                if (!removed)
                     continue;
 
                 current.WaitUntilRegistered();
+                current.StreamGroup?.ResolveHeadUnderCompletionGate(accepted: false);
                 call = current;
                 return true;
             }
@@ -882,77 +1014,146 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                     continue;
 
                 deadlineExpired = current.Deadline.IsExpired(_timeProvider);
-                if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, current), current))
+                if (!TryRemoveTerminalCall(slots, index, current))
                     continue;
 
                 current.WaitUntilRegistered();
+                current.StreamGroup?.ResolveHeadUnderCompletionGate(accepted: false);
                 call = current;
                 return true;
             }
         }
     }
 
-    private void CompleteTakenCall(
-        PendingCall call,
-        PendingCallCompletionReason reason,
-        Exception? exception,
-        ref ReadOnlySequence<byte> payload)
+    // Every slot-removal caller owns CompletionGate. The attached group's existing gate
+    // covers provisional receipt selection and the same removal CAS as one transaction.
+    private static bool TryRemoveTerminalCall(PendingCall?[] slots, int index, PendingCall expected)
+        => expected.StreamGroup is { } group
+            ? group.TrySelectTerminal(slots, index, expected)
+            : ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, expected), expected);
+
+    private void CompleteTakenCall(PendingCall call, PendingCallCompletionReason reason,
+        Exception? exception, ref ReadOnlySequence<byte> payload)
     {
+        // Capture ALL receipt identities before SetError/CompleteResponse can let application
+        // continuations consume/reset a pooled operation, or terminal processing returns call.
+        var group = call.StreamGroup;
+        var id = call.Id;
+        var kind = call.Kind;
+        var operation = call.Operation;
+        var dispatcher = call.Dispatcher;
+        var observer = call.CompletionObserver;
+        var requestPublished = call.RequestPublished;
+        var producing = call.IsProducing;
+        var dispatcherLease = group?.ResponseDispatcherLease ?? 0;
+        var receiptSink = dispatcher as IStreamSinkPublicationReceipt;
+        var retainedLease = 0L;
+        var disposition = StreamSinkPublicationDisposition.NotPublished;
+        List<Exception>? failures = null;
         try
         {
-            call.DisposeCancellationRegistration();
+            if (kind == PendingCallKind.DuplexStreaming && receiptSink is not null && dispatcherLease != 0)
+            {
+                try { if (!receiptSink.TryRetainSinkPublication(dispatcherLease, out retainedLease)) dispatcherLease = 0; }
+                catch (Exception failure) { dispatcherLease = 0; AddTerminalFailure(ref failures, failure); }
+            }
+            try { call.AcceptanceReady?.TrySetResult(false); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            try { group?.OnPendingTerminal(); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            try { call.DisposeCancellationRegistration(); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
             var producerCancellationFailure = call.CancelProducer(reason);
             if (producerCancellationFailure is not null)
             {
-                try
+                try { _owner.OnProducerCancellationCallbackFailed(producerCancellationFailure); }
+                catch (Exception failure)
                 {
-                    _owner.OnProducerCancellationCallbackFailed(producerCancellationFailure);
-                }
-                catch
-                {
-                    // Diagnostics must never interrupt the terminal pending-call transition.
+                    AddTerminalFailure(ref failures, producerCancellationFailure);
+                    AddTerminalFailure(ref failures, failure);
                 }
             }
             var isResponse = reason is PendingCallCompletionReason.Response or PendingCallCompletionReason.LocalStreamComplete;
-            if (isResponse && call.Operation is { } responseOperation)
+            if (isResponse && operation is not null)
             {
-                exception = responseOperation.TryDeserializeResponse(ref payload);
-                if (exception is not null)
-                    reason = PendingCallCompletionReason.RemoteError;
+                try { exception = operation.TryDeserializeResponse(ref payload); }
+                catch (Exception failure) { exception = failure; }
+                if (exception is not null) reason = PendingCallCompletionReason.RemoteError;
             }
             exception ??= CreateCompletionException(call, reason);
-
-            var completion = new PendingCallCompletion(
-                call.Id,
-                call.Kind,
-                reason,
-                call.Dispatcher,
-                exception,
-                call.RequestPublished);
-            // Decode response payloads before reporting the terminal admission outcome so malformed
-            // endpoint responses are not published as successful attempts.
-            call.CompletionObserver?.OnPendingCallCompleted(in completion);
-
-            if (call.Operation is { } operation)
+            var completion = new PendingCallCompletion(id, kind, reason, dispatcher, exception, requestPublished);
+            try { observer?.OnPendingCallCompleted(in completion); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            try
             {
-                if (isResponse)
-                    operation.CompleteResponse(exception);
-                else
-                    operation.SetError(exception ?? new SharpLinkException(
-                        SharpLinkErrorCode.Internal,
+                if (operation is not null)
+                {
+                    if (isResponse) operation.CompleteResponse(exception);
+                    else operation.SetError(exception ?? new SharpLinkException(SharpLinkErrorCode.Internal,
                         "A pending request completed without a result."));
+                    disposition = StreamSinkPublicationDisposition.Published;
+                }
             }
-
-            _owner.OnPendingCallCompleted(in completion);
-            call.ReturnCompleted();
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            try { _owner.OnPendingCallCompleted(in completion, ref disposition, dispatcherLease, group); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            try { SharpLinkTelemetry.AddPendingRequests(-1); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            if (!producing)
+            {
+                try { ReleaseCapacity(); }
+                catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            }
         }
-        catch
+        finally
         {
-            ReleaseSlot();
-            throw;
+            if (retainedLease != 0)
+            {
+                try { receiptSink!.ReleaseSinkPublication(retainedLease); }
+                catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            }
+            // The original registration retention is distinct from the temporary receipt
+            // retention above. This unique terminal owner has finished every sink access and
+            // initiated exact route cleanup. It never waits for consumer/pool/response drain.
+            if (kind == PendingCallKind.DuplexStreaming && group is not null && receiptSink is not null)
+            {
+                try
+                {
+                    var originalLease = group.FinishPendingSinkUseForRetention();
+                    if (originalLease != 0) receiptSink.ReleaseSinkPublication(originalLease);
+                }
+                catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            }
+            try { call.CompleteTerminalProcessing(); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            // Do not read call/operation/dispatcher after the previous stage. Receipt and batch
+            // handoff use captured originals only; Accepted and Published are separate facts.
+            if (group is not null)
+            {
+                Exception? batch = null;
+                Exception? handoffFailure = null;
+                try { batch = failures is null ? null : failures.Count == 1 ? failures[0] :
+                    new AggregateException("Independent pending terminal stages failed.", failures); }
+                catch (Exception failure) { handoffFailure = failure; }
+                var accepted = false;
+                try { group.FinalizeLogicalReceipt(reason, exception, disposition, batch, ref accepted); }
+                catch (Exception failure) { handoffFailure = ClientStreamPublicationGroup.AddPhysical(handoffFailure, failure); }
+                if (accepted) failures = null; // The physical group now exclusively owns this raw batch.
+                if (handoffFailure is not null) AddTerminalFailure(ref failures, handoffFailure);
+            }
         }
+        ThrowTerminalFailures(failures);
+    }
 
-        ReleaseSlot();
+    private static void AddTerminalFailure(ref List<Exception>? failures, Exception failure)
+        => (failures ??= []).Add(failure);
+
+    private static void ThrowTerminalFailures(List<Exception>? failures)
+    {
+        if (failures is null) return;
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException("Pending terminal cleanup failed after all obligations were attempted.", failures);
     }
 
     private static Exception? CreateCompletionException(
@@ -974,23 +1175,23 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             _ => null
         };
 
-    private void ReleaseSlot()
-    {
-        SharpLinkTelemetry.AddPendingRequests(-1);
-        ReleaseCapacity();
-    }
-
     private void ReleaseCapacity()
     {
         var remaining = Interlocked.Decrement(ref _activeSlots);
         if (remaining < 0)
             throw new InvalidOperationException("Pending request capacity accounting underflowed.");
-
+        List<Exception>? failures = null;
         if (Volatile.Read(ref _waiterCount) != 0)
-            SignalSlotAvailable();
-
+        {
+            try { SignalSlotAvailable(); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+        }
         if (remaining == 0)
-            _owner.OnPendingCallCapacityIdle();
+        {
+            try { _owner.OnPendingCallCapacityIdle(); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+        }
+        ThrowTerminalFailures(failures);
     }
 
     private void SignalSlotAvailable()
@@ -1081,13 +1282,14 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 return false;
             }
 
-            if (!ReferenceEquals(Interlocked.CompareExchange(ref slots[index], null, expected), expected))
+            if (!TryRemoveTerminalCall(slots, index, expected))
             {
                 call = null;
                 return false;
             }
 
             expected.WaitUntilRegistered();
+            expected.StreamGroup?.ResolveHeadUnderCompletionGate(accepted: false);
             call = expected;
             return true;
         }
@@ -1170,7 +1372,7 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         }
     }
 
-    private sealed class PendingCall
+    internal sealed class PendingCall
     {
         private const int MaxRetained = 4096;
         private static readonly ConcurrentQueue<PendingCall> Pool = new();
@@ -1182,11 +1384,22 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
         private IPendingCallCompletionObserver? _completionObserver;
         private int _registered;
         private bool _requestPublished;
+        private bool _producerLifetimeAttached;
+        private bool _producerLifetimeEverAttached;
+        private bool _terminalProcessingComplete;
+        private bool _finalCleanupClaimed;
+
+        internal ClientStreamPublicationGroup? StreamGroup;
+        internal TaskCompletionSource<bool>? AcceptanceReady;
+        internal bool PeerAccepted;
+        internal bool ProducerStarted;
 
         public object CompletionGate { get; } = new();
 
         public long Id { get; private set; }
         public PendingCallKind Kind { get; private set; }
+        internal bool IsProducing => Kind is PendingCallKind.ClientStreaming or
+            PendingCallKind.DuplexStreaming or PendingCallKind.OneWayClientStreaming;
         public IRpcOperation? Operation { get; private set; }
         public IStreamDispatcher? Dispatcher { get; private set; }
         public RpcDeadline Deadline { get; private set; }
@@ -1227,6 +1440,15 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
             call._table = table;
             Volatile.Write(ref call._registered, 0);
             call._requestPublished = false;
+            call.StreamGroup = null;
+            call.PeerAccepted = false;
+            call.ProducerStarted = false;
+            call.AcceptanceReady = kind is PendingCallKind.ClientStreaming or PendingCallKind.DuplexStreaming
+                ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously) : null;
+            call._producerLifetimeAttached = false;
+            call._producerLifetimeEverAttached = false;
+            call._terminalProcessingComplete = false;
+            call._finalCleanupClaimed = false;
             call.Id = id;
             call.Kind = kind;
             call.Operation = operation;
@@ -1263,52 +1485,101 @@ internal sealed partial class PendingRequestTable : IDisposable, IRequestEmissio
                 spinner.SpinOnce();
         }
 
-        public Exception? CancelProducer(PendingCallCompletionReason reason)
+        // Caller owns CompletionGate and has checked exact slot/full-ID publication.
+        internal bool TryAttachProducer(out CancellationToken token)
         {
-            var producerCancellation = _producerCancellation;
-            if (producerCancellation is null)
-                return null;
-            _producerCancellation = null;
-            if (reason == PendingCallCompletionReason.LocalStreamComplete)
-            {
-                producerCancellation.Dispose();
-                return null;
-            }
-            return CancelAndDisposeProducer(producerCancellation);
+            token = default;
+            if (_producerLifetimeEverAttached || _terminalProcessingComplete || _finalCleanupClaimed ||
+                _producerCancellation is null) return false;
+            token = _producerCancellation.Token;
+            _producerLifetimeEverAttached = true;
+            _producerLifetimeAttached = true;
+            return true;
         }
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static Exception? CancelAndDisposeProducer(
-            CancellationTokenSource producerCancellation)
+        public Exception? CancelProducer(PendingCallCompletionReason reason)
         {
-            Exception? callbackFailure = null;
-            try
+            var source = _producerCancellation;
+            if (source is null || reason == PendingCallCompletionReason.LocalStreamComplete) return null;
+            try { source.Cancel(); return null; }
+            catch (Exception failure) { return failure; }
+            // Disposal belongs to the joint logical/physical final claimant, not Cancel.
+        }
+
+        internal void ReleaseProducerLifetime(PendingRequestTable table, long id)
+        {
+            CancellationTokenSource? source;
+            lock (CompletionGate)
             {
-                producerCancellation.Cancel();
+                if (!_producerLifetimeAttached || Id != id || !ReferenceEquals(_table, table)) return;
+                _producerLifetimeAttached = false;
+                if (!TryClaimFinalCleanup(out source)) return;
             }
-            catch (Exception exception)
+            FinishFinalCleanup(source);
+        }
+
+        internal void CompleteTerminalProcessing()
+        {
+            // Nonproducing calls cannot acquire this attachment; preserve their direct
+            // terminal pool return without an added ordinary-unary gate transition.
+            if (!IsProducing) { ReturnCore(); return; }
+            CancellationTokenSource? source;
+            lock (CompletionGate)
             {
-                callbackFailure = exception;
+                _terminalProcessingComplete = true;
+                // These roots have completed their final actual use, even if the original
+                // producer group must retain this PendingCall and its CTS much longer.
+                Operation = null;
+                Dispatcher = null;
+                _completionObserver = null;
+                _cancellationRegistration = default;
+                CancellationToken = CancellationToken.None;
+                if (!TryClaimFinalCleanup(out source)) return;
             }
-            finally
-            {
-                producerCancellation.Dispose();
-            }
-            return callbackFailure;
+            FinishFinalCleanup(source);
+        }
+
+        private bool TryClaimFinalCleanup(out CancellationTokenSource? source)
+        {
+            source = null;
+            if (!_terminalProcessingComplete || _producerLifetimeAttached || _finalCleanupClaimed) return false;
+            _finalCleanupClaimed = true;
+            source = _producerCancellation;
+            _producerCancellation = null;
+            return true;
+        }
+
+        private void FinishFinalCleanup(CancellationTokenSource? source)
+        {
+            // The final claimant owns the ORIGINAL registrar capacity unit. No new
+            // counter or reservation is acquired for the producer, task set or fence.
+            var table = _table!;
+            List<Exception>? failures = null;
+            try { source?.Dispose(); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            try { table.ReleaseCapacity(); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            try { ReturnCore(); }
+            catch (Exception failure) { AddTerminalFailure(ref failures, failure); }
+            ThrowTerminalFailures(failures);
         }
 
         public void ReturnUnused()
         {
-            _cancellationRegistration.Dispose();
-            _producerCancellation?.Dispose();
-            _producerCancellation = null;
-            ReturnCore();
+            try { _cancellationRegistration.Dispose(); }
+            finally
+            {
+                try { _producerCancellation?.Dispose(); }
+                finally { _producerCancellation = null; ReturnCore(); }
+            }
         }
-
-        public void ReturnCompleted() => ReturnCore();
 
         private void ReturnCore()
         {
+            StreamGroup = null;
+            AcceptanceReady = null;
+            PeerAccepted = false;
+            ProducerStarted = false;
             _table = null;
             Id = 0;
             Kind = default;

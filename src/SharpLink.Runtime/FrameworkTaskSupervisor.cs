@@ -17,7 +17,9 @@ internal sealed class FrameworkTaskRegistration
         string operation,
         TaskObservationMode observationMode,
         Func<Exception, bool> shutdownExpectedExceptionClassifier,
-        long sequence)
+        long sequence,
+        bool isStrictPhysical = false,
+        object? retainedOwnerRoot = null)
     {
         Supervisor = supervisor;
         Task = task;
@@ -25,6 +27,8 @@ internal sealed class FrameworkTaskRegistration
         ObservationMode = observationMode;
         ShutdownExpectedExceptionClassifier = shutdownExpectedExceptionClassifier;
         Sequence = sequence;
+        IsStrictPhysical = isStrictPhysical;
+        _retainedOwnerRoot = retainedOwnerRoot;
     }
 
     internal FrameworkTaskSupervisor Supervisor { get; }
@@ -38,6 +42,14 @@ internal sealed class FrameworkTaskRegistration
     internal Func<Exception, bool> ShutdownExpectedExceptionClassifier { get; }
 
     internal long Sequence { get; }
+
+    internal bool IsStrictPhysical { get; }
+
+    // Optional pre-start group root. Its actual origin/drain Tasks are fields of that same
+    // existing group; the anchor TCS Task alone is not treated as a producer root.
+    private object? _retainedOwnerRoot;
+    internal object? RetainedOwnerRoot => Volatile.Read(ref _retainedOwnerRoot);
+    internal void ReleaseOwnerRoot() => Volatile.Write(ref _retainedOwnerRoot, null);
 }
 
 internal sealed record FrameworkTaskDiagnosticSnapshot(
@@ -90,6 +102,33 @@ internal sealed class FrameworkTaskSupervisor
         TaskObservationMode observationMode,
         Func<Exception, bool> shutdownExpectedExceptionClassifier)
     {
+        FrameworkTaskRegistration? receipt = null;
+        return TrackCore(task, operation, observationMode, shutdownExpectedExceptionClassifier,
+            isStrictPhysical: false, ref receipt);
+    }
+
+    internal FrameworkTaskRegistration TrackStrictPhysical(
+        Task task, string operation, ref FrameworkTaskRegistration? receipt)
+        => TrackCore(task, operation, TaskObservationMode.FrameworkOwned, static _ => false,
+            isStrictPhysical: true, ref receipt);
+
+    internal FrameworkTaskRegistration AdmitStrictPhysicalAnchor(
+        Task anchorTask, string operation, object ownerRoot, ref FrameworkTaskRegistration? receipt)
+    {
+        ArgumentNullException.ThrowIfNull(ownerRoot);
+        // Caller has not started the origin. Seal is checked in the SAME existing gate as
+        // insertion; this is admission, unlike already-owned nested-tail tracking.
+        return TrackCore(anchorTask, operation, TaskObservationMode.FrameworkOwned, static _ => false,
+            isStrictPhysical: true, ref receipt, ownerRoot);
+    }
+
+    private FrameworkTaskRegistration TrackCore(
+        Task task, string operation, TaskObservationMode observationMode,
+        Func<Exception, bool> shutdownExpectedExceptionClassifier, bool isStrictPhysical,
+        ref FrameworkTaskRegistration? receipt, object? preStartOwnerRoot = null)
+    {
+        if (receipt is not null)
+            throw new ArgumentException("A task registration receipt must start empty.", nameof(receipt));
         ArgumentNullException.ThrowIfNull(task);
         ArgumentException.ThrowIfNullOrWhiteSpace(operation);
         ArgumentNullException.ThrowIfNull(shutdownExpectedExceptionClassifier);
@@ -99,6 +138,13 @@ internal sealed class FrameworkTaskSupervisor
         FrameworkTaskRegistration registration;
         lock (_gate)
         {
+            if (preStartOwnerRoot is not null && (_sealed || task.IsCompleted))
+            {
+                _rejectedRegistrations++;
+                throw new InvalidOperationException(_sealed
+                    ? $"Physical anchor '{operation}' cannot start after supervisor Seal."
+                    : $"Physical anchor '{operation}' must be admitted before its task can complete.");
+            }
             if (_drainStarted && _active.Count == 0)
             {
                 _rejectedRegistrations++;
@@ -117,10 +163,12 @@ internal sealed class FrameworkTaskSupervisor
                     operation,
                     observationMode,
                     shutdownExpectedExceptionClassifier,
-                    ++_nextSequence);
+                    ++_nextSequence,
+                    isStrictPhysical);
                 _totalTracked++;
                 if (_sealed)
                     _lateRegistrations++;
+                receipt = registration; // Already-successful task has no active ownership to join.
                 return registration;
             }
             if (_active.ContainsKey(task))
@@ -135,8 +183,11 @@ internal sealed class FrameworkTaskSupervisor
                 operation,
                 observationMode,
                 shutdownExpectedExceptionClassifier,
-                ++_nextSequence);
+                ++_nextSequence,
+                isStrictPhysical,
+                preStartOwnerRoot);
             _active.Add(task, registration);
+            receipt = registration; // Definitive acceptance BEFORE continuation attachment can throw.
             _totalTracked++;
             if (_sealed)
                 _lateRegistrations++;
@@ -234,27 +285,60 @@ internal sealed class FrameworkTaskSupervisor
         }
     }
 
+    internal void CompleteAcceptedRegistration(FrameworkTaskRegistration registration)
+    {
+        ArgumentNullException.ThrowIfNull(registration);
+        if (!ReferenceEquals(registration.Supervisor, this))
+            throw new ArgumentException("The registration belongs to another supervisor.", nameof(registration));
+        if (!registration.Task.IsCompleted)
+            throw new InvalidOperationException("An accepted task must physically complete before fallback completion.");
+        Complete(registration, registration.Task);
+    }
+
     private void Complete(FrameworkTaskRegistration registration, Task completedTask)
     {
         List<Exception>? unexpected = null;
         TaskCompletionSource<bool>? drained = null;
         lock (_gate)
         {
-            if (!_active.Remove(completedTask))
-                return;
+            if (!_active.TryGetValue(completedTask, out var activeRegistration) ||
+                !ReferenceEquals(activeRegistration, registration))
+                return; // Old completion/fallback cannot consume a newer registration for this Task.
+            _active.Remove(completedTask);
+            registration.ReleaseOwnerRoot(); // Actual anchor completion certified all group phases/tasks joined.
 
             if (registration.ObservationMode == TaskObservationMode.FrameworkOwned)
             {
                 if (completedTask.Exception is { } aggregate)
                 {
-                    foreach (var exception in aggregate.Flatten().InnerExceptions)
-                        RecordFailureLocked(registration, exception, ref unexpected);
+                    if (registration.IsStrictPhysical)
+                    {
+                        // Only Task's outer container is traversed. A user's AggregateException
+                        // and a framework raw stage aggregate remain their exact opaque objects.
+                        foreach (var exception in aggregate.InnerExceptions)
+                        {
+                            if (exception is PhysicalTaskFailureException physical)
+                                RecordFailureLocked(registration, physical.RawException, ref unexpected);
+                            else
+                            {
+                                RecordFailureLocked(registration, exception, ref unexpected);
+                                RecordFailureLocked(registration, new InvalidOperationException(
+                                    "A strict physical task fault escaped without its raw failure envelope."), ref unexpected);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        foreach (var exception in aggregate.Flatten().InnerExceptions)
+                            RecordFailureLocked(registration, exception, ref unexpected);
+                    }
                 }
                 else if (completedTask.IsCanceled)
                 {
-                    RecordFailureLocked(
-                        registration,
-                        new TaskCanceledException(completedTask),
+                    RecordFailureLocked(registration,
+                        registration.IsStrictPhysical
+                            ? new InvalidOperationException("A strict physical task canceled without transporting its original raw failure.")
+                            : new TaskCanceledException(completedTask),
                         ref unexpected);
                 }
             }
@@ -289,7 +373,7 @@ internal sealed class FrameworkTaskSupervisor
         Exception exception,
         ref List<Exception>? unexpected)
     {
-        if (_sealed && registration.ShutdownExpectedExceptionClassifier(exception))
+        if (!registration.IsStrictPhysical && _sealed && registration.ShutdownExpectedExceptionClassifier(exception))
         {
             _suppressedShutdownFailures++;
             return;

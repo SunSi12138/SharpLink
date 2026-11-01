@@ -34,19 +34,38 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
     {
         if (!module.TryAcquire(method.HasClientStreams, out var lease))
             return ValueTask.FromException(Draining());
-        var combined = Combine(cancellationToken, module.ForcedCancellation);
+        CombinedCancellation combined = default;
+        SharpLinkClientStreamModuleLeaseOwner? producerLifetime = null;
         try
         {
-            var call = inner.InvokeOneWayAsync(method, request, requestCodec, streams, metadata, combined.Token);
+            combined = Combine(cancellationToken, module.ForcedCancellation);
+            if (method.HasClientStreams)
+            {
+                // OneWay already owns one module lease. Transfer it; do not acquire a second.
+                producerLifetime = new SharpLinkClientStreamModuleLeaseOwner(lease, combined.Source, keepLeaseUntilLogicalCompletion: true);
+                lease = default;
+                combined = new CombinedCancellation(combined.Token, null);
+            }
+            ValueTask call;
+            if (producerLifetime is null)
+                call = inner.InvokeOneWayAsync(method, request, requestCodec, streams, metadata, combined.Token);
+            else
+            {
+                using (SharpLinkClientStreamModuleLeaseContext.Push(producerLifetime))
+                    call = inner.InvokeOneWayAsync(method, request, requestCodec, streams, metadata, combined.Token);
+            }
             if (call.IsCompletedSuccessfully)
             {
-                lease.Dispose();
-                combined.Dispose();
+                CleanupLogicalOwnership(ref lease, ref producerLifetime, ref combined);
                 return call;
             }
-            return AwaitAsync(call, lease, combined);
+            return AwaitOneWayAsync(call, lease, combined, producerLifetime);
         }
-        catch { lease.Dispose(); combined.Dispose(); throw; }
+        catch (Exception failure)
+        {
+            CleanupLogicalOwnership(ref lease, ref producerLifetime, ref combined, failure);
+            throw;
+        }
     }
 
     public ValueTask<TResponse> InvokeClientStreamingAsync<TRequest, TResponse, TStreams>(RpcMethodDescriptor method,
@@ -61,10 +80,14 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
             lease.Dispose();
             return ValueTask.FromException<TResponse>(Draining());
         }
-        var producerLifetime = new SharpLinkClientStreamModuleLeaseOwner(producerLease);
-        var combined = Combine(cancellationToken, module.ForcedCancellation);
+        SharpLinkClientStreamModuleLeaseOwner? producerLifetime = null;
+        CombinedCancellation combined = default;
         try
         {
+            combined = Combine(cancellationToken, module.ForcedCancellation);
+            producerLifetime = new SharpLinkClientStreamModuleLeaseOwner(producerLease, combined.Source);
+            producerLease = default;
+            combined = new CombinedCancellation(combined.Token, null);
             ValueTask<TResponse> call;
             using (SharpLinkClientStreamModuleLeaseContext.Push(producerLifetime))
             {
@@ -73,14 +96,18 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
             }
             if (call.IsCompletedSuccessfully)
             {
-                lease.Dispose();
-                producerLifetime.Dispose();
-                combined.Dispose();
+                CleanupLogicalOwnership(ref lease, ref producerLifetime, ref combined);
                 return call;
             }
             return AwaitAsync(call, lease, combined, producerLifetime);
         }
-        catch { lease.Dispose(); producerLifetime.Dispose(); combined.Dispose(); throw; }
+        catch (Exception failure)
+        {
+            try { producerLease.Dispose(); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+            CleanupLogicalOwnership(ref lease, ref producerLifetime, ref combined, failure);
+            throw;
+        }
     }
 
     public IAsyncEnumerable<TResponse> InvokeServerStreamingAsync<TRequest, TResponse>(RpcMethodDescriptor method,
@@ -120,10 +147,38 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
         ValueTask<T> call,
         SharpLinkDynamicModuleLease lease,
         CombinedCancellation combined,
-        SharpLinkClientStreamModuleLeaseOwner producerLifetime)
+        SharpLinkClientStreamModuleLeaseOwner? producerLifetime)
     {
-        try { return await call.ConfigureAwait(false); }
-        finally { lease.Dispose(); producerLifetime.Dispose(); combined.Dispose(); }
+        T result = default!;
+        Exception? failure = null;
+        try { result = await call.ConfigureAwait(false); }
+        catch (Exception error) { failure = error; }
+        CleanupLogicalOwnership(ref lease, ref producerLifetime, ref combined, failure);
+        return result;
+    }
+
+    private static async ValueTask AwaitOneWayAsync(ValueTask call, SharpLinkDynamicModuleLease lease,
+        CombinedCancellation combined, SharpLinkClientStreamModuleLeaseOwner? producerLifetime)
+    {
+        Exception? failure = null;
+        try { await call.ConfigureAwait(false); }
+        catch (Exception error) { failure = error; }
+        CleanupLogicalOwnership(ref lease, ref producerLifetime, ref combined, failure);
+    }
+
+    private static void CleanupLogicalOwnership(ref SharpLinkDynamicModuleLease lease,
+        ref SharpLinkClientStreamModuleLeaseOwner? producerLifetime, ref CombinedCancellation combined, Exception? failure = null)
+    {
+        var ownedLease = lease;
+        var ownedProducer = producerLifetime;
+        var ownedCombined = combined;
+        lease = default;
+        producerLifetime = null;
+        combined = default;
+        try { ownedLease.Dispose(); } catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        try { ownedProducer?.Dispose(); } catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        try { ownedCombined.Dispose(); } catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private static async ValueTask AwaitAsync(ValueTask call, SharpLinkDynamicModuleLease lease,
@@ -196,20 +251,57 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
             throw;
         }
 
-        var producerLifetime = new SharpLinkClientStreamModuleLeaseOwner(producerLease);
-        var combined = Combine(callCancellation, module.ForcedCancellation);
+        SharpLinkClientStreamModuleLeaseOwner? producerLifetime = null;
+        CombinedCancellation combined = default;
+        Exception? invocationFailure = null;
         try
         {
+            try
+            {
+                combined = Combine(callCancellation, module.ForcedCancellation);
+                producerLifetime = new SharpLinkClientStreamModuleLeaseOwner(producerLease, combined.Source);
+                producerLease = default;
+                combined = new CombinedCancellation(combined.Token, null);
+            }
+            catch (Exception error) { invocationFailure = error; throw; }
             using (SharpLinkClientStreamModuleLeaseContext.Push(producerLifetime))
             {
-                SharpLinkClient.EnsureLogicalCallProgress(control);
-                var stream = inner.InvokeDuplexStreamingResolved(
-                    method, request, requestCodec, responseCodec, streams, interceptors, control, combined.Token);
-                await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
-                    yield return item;
+                IAsyncEnumerator<TResponse> enumerator;
+                try
+                {
+                    SharpLinkClient.EnsureLogicalCallProgress(control);
+                    var stream = inner.InvokeDuplexStreamingResolved(
+                        method, request, requestCodec, responseCodec, streams, interceptors, control, combined.Token);
+                    enumerator = stream.GetAsyncEnumerator(enumerationCancellation);
+                }
+                catch (Exception error) { invocationFailure = error; throw; }
+                try
+                {
+                    while (true)
+                    {
+                        bool next;
+                        try { next = await enumerator.MoveNextAsync().ConfigureAwait(false); }
+                        catch (Exception error) { invocationFailure = error; throw; }
+                        if (!next) break;
+                        TResponse current;
+                        try { current = enumerator.Current; }
+                        catch (Exception error) { invocationFailure = error; throw; }
+                        yield return current;
+                    }
+                }
+                finally
+                {
+                    try { await enumerator.DisposeAsync().ConfigureAwait(false); }
+                    catch (Exception error) { invocationFailure = RpcPublicationErrors.Combine(invocationFailure, error); }
+                }
             }
         }
-        finally { lease.Dispose(); producerLifetime.Dispose(); combined.Dispose(); }
+        finally
+        {
+            try { producerLease.Dispose(); }
+            catch (Exception error) { invocationFailure = RpcPublicationErrors.Combine(invocationFailure, error); }
+            CleanupLogicalOwnership(ref lease, ref producerLifetime, ref combined, invocationFailure);
+        }
     }
 
     private static SharpLinkException Draining() => new(SharpLinkErrorCode.Unavailable, "RPC module is draining");
@@ -225,25 +317,75 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
     private readonly struct CombinedCancellation(CancellationToken token, CancellationTokenSource? source) : IDisposable
     {
         internal CancellationToken Token { get; } = token;
-        public void Dispose() => source?.Dispose();
+        internal CancellationTokenSource? Source { get; } = source;
+        public void Dispose() => Source?.Dispose();
     }
 }
 
-internal sealed class SharpLinkClientStreamModuleLeaseOwner(SharpLinkDynamicModuleLease lease) : IDisposable
+// Existing producer owner now holds the linked source too. Only this per-stream-call
+// owner synchronizes logical/physical exit; no candidate-wide or ordinary unary count.
+internal sealed class SharpLinkClientStreamModuleLeaseOwner : IDisposable
 {
-    private int _claimed;
+    private readonly Lock _gate = new();
+    private SharpLinkDynamicModuleLease _lease;
+    private CancellationTokenSource? _source;
+    private readonly bool _keepLeaseUntilLogicalCompletion;
+    private bool _claimed;
+    private bool _physicalCompleted;
+    private bool _logicalCompleted;
+    private bool _leaseReleased;
 
-    internal SharpLinkDynamicModuleLease TakeLease()
+    internal SharpLinkClientStreamModuleLeaseOwner(SharpLinkDynamicModuleLease lease,
+        CancellationTokenSource? source, bool keepLeaseUntilLogicalCompletion = false)
     {
-        if (Interlocked.CompareExchange(ref _claimed, 1, 0) != 0)
-            throw new InvalidOperationException("The dynamic client-stream producer lease was already claimed.");
-        return lease;
+        _lease = lease;
+        _source = source;
+        _keepLeaseUntilLogicalCompletion = keepLeaseUntilLogicalCompletion;
     }
 
-    public void Dispose()
+    internal bool TryClaimPhysical()
     {
-        if (Interlocked.CompareExchange(ref _claimed, 2, 0) == 0)
-            lease.Dispose();
+        lock (_gate)
+        {
+            if (_claimed || _logicalCompleted) return false;
+            _claimed = true;
+            return true;
+        }
+    }
+
+    internal void CompletePhysical() => Complete(logical: false);
+    public void Dispose() => Complete(logical: true);
+
+    private void Complete(bool logical)
+    {
+        SharpLinkDynamicModuleLease lease = default;
+        CancellationTokenSource? source = null;
+        lock (_gate)
+        {
+            if (logical) _logicalCompleted = true;
+            else
+            {
+                if (!_claimed) throw new InvalidOperationException("Unclaimed dynamic producer physical completion.");
+                _physicalCompleted = true;
+            }
+            var physicalDone = !_claimed || _physicalCompleted;
+            if (!_leaseReleased && physicalDone &&
+                (_logicalCompleted || !_keepLeaseUntilLogicalCompletion && _claimed))
+            {
+                _leaseReleased = true;
+                lease = _lease;
+                _lease = default;
+            }
+            if (_logicalCompleted && physicalDone)
+            {
+                source = _source;
+                _source = null;
+            }
+        }
+        Exception? failure = null;
+        try { source?.Dispose(); } catch (Exception error) { failure = error; }
+        try { lease.Dispose(); } catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 }
 

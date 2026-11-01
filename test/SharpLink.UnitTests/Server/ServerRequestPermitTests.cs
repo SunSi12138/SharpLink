@@ -7,7 +7,7 @@ using SharpLink.UnitTests.Runtime;
 
 namespace SharpLink.UnitTests.Server;
 
-public class ServerRequestPermitTests
+public partial class ServerRequestPermitTests
 {
     [Test]
     [Arguments(true)]

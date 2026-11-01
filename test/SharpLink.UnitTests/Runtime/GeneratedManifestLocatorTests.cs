@@ -31,16 +31,35 @@ public sealed class GeneratedManifestLocatorTests
             "current manifest's collectible load context should be released after fixture disposal");
     }
 
+    [Test]
+    public void CodecStructureValidationShouldUseCapturedTablesAfterLoaderCompatibility()
+    {
+        using var fixture = CreateFixture();
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        using var preparation = context.Domain.BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, preparation, out var manifest);
+        Ensure(result.Succeeded && manifest is not null, "loader compatibility retains its original scope");
+        var reads = fixture.State.ShapeReads;
+        var rejected = false;
+        try { context.PrepareGeneratedManifest(manifest!); }
+        catch (InvalidOperationException exception)
+        { rejected = exception.Message.Contains("deterministic RPC assembly identity", StringComparison.Ordinal); }
+        Ensure(rejected, "the missing Codec structure identity is rejected before Codec resources are created");
+        Ensure(fixture.State.ConstructorCalls == 1 && fixture.State.ShapeReads == reads,
+            "later Codec structure validation must consume the captured tables without getter replay");
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static WeakReference LoadCurrentFixtureAndRelease()
     {
         using var fixture = CreateFixture();
         var loadContext = fixture.CreateLoadContextWeakReference();
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, preparation, out var manifest);
 
         Ensure(result.Succeeded && result.Error is null,
             $"current locator should load successfully: {result.Error}");
-        Ensure(manifest is not null && manifest.GetType().Assembly == fixture.Assembly,
+        Ensure(manifest is not null && manifest.OriginalManifest.GetType().Assembly == fixture.Assembly,
             "loader should materialize the incoming assembly's locator-owned manifest type");
         Ensure(fixture.State.ConstructorCalls == 1,
             "current manifest should be constructed exactly once");
@@ -59,7 +78,8 @@ public sealed class GeneratedManifestLocatorTests
     public void NonCurrentLocatorAbiShouldRejectBeforeConstruction(string identity)
     {
         using var fixture = CreateFixture(locatorAbiIdentity: identity);
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, preparation, out var manifest);
         Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest && manifest is null,
             "an incompatible exact generated ABI must fail before publication");
         Ensure(fixture.State.ConstructorCalls == 0 && fixture.State.ShapeReads == 0,
@@ -81,7 +101,8 @@ public sealed class GeneratedManifestLocatorTests
             locatorApiVersion: locatorApiVersion,
             locatorProtocolVersion: locatorProtocolVersion);
 
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, preparation, out var manifest);
 
         AssertVersionRejection(
             result,
@@ -111,7 +132,8 @@ public sealed class GeneratedManifestLocatorTests
             manifestProtocolVersion: manifestProtocolVersion,
             manifestGeneratorVersion: manifestGeneratorVersion);
 
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, preparation, out var manifest);
 
         Ensure(!result.Succeeded && manifest is null,
             "locator/materialized metadata mismatch should publish no manifest");
@@ -133,7 +155,8 @@ public sealed class GeneratedManifestLocatorTests
     {
         using var fixture = CreateFixture(malformedShape: true);
 
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, preparation, out var manifest);
 
         Ensure(!result.Succeeded && manifest is null,
             "malformed current manifest should not be published");
@@ -153,7 +176,8 @@ public sealed class GeneratedManifestLocatorTests
     {
         using var fixture = CreateFixture(includeLocator: false);
 
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, preparation, out var manifest);
 
         Ensure(!result.Succeeded && manifest is null,
             "missing locator should publish no manifest");
@@ -171,7 +195,8 @@ public sealed class GeneratedManifestLocatorTests
     {
         using var fixture = CreateFixture(locatorGeneratorVersion: "   ");
 
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(fixture.Assembly, preparation, out var manifest);
 
         Ensure(!result.Succeeded && manifest is null,
             "malformed locator should publish no manifest");

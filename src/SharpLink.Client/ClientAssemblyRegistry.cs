@@ -5,20 +5,21 @@ namespace SharpLink.Client;
 /// <summary>Lock-free proxy lookup facade whose immutable snapshot is owned by <see cref="ClientAssemblyRegistry"/>.</summary>
 internal sealed class ClientProxyLookup
 {
-    private FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> _snapshot;
+    private ClientProxySnapshot _snapshot;
+    internal ClientProxyLookup(ClientProxySnapshot snapshot) => _snapshot = snapshot;
+    // Every current consumer is a cold registry operation under its mutation gate.
+    internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> Capture() => _snapshot.Map;
+    internal ClientProxySnapshot Acquire() => _snapshot.Retain();
+    internal ClientProxySnapshot Current => _snapshot; // Caller holds registry gate.
+    internal void Publish(ClientProxySnapshot snapshot)
+    {
+        var previous = _snapshot;
+        _snapshot = snapshot;
+        previous.Dispose();
+    }
+    internal void Clear() => Publish(new ClientProxySnapshot(
+        FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration>.Empty));
 
-    internal ClientProxyLookup(FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> snapshot)
-        => _snapshot = snapshot ?? throw new ArgumentNullException(nameof(snapshot));
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal bool TryGetValue(Type contractType, out SharpLinkClient.ClientProxyRegistration registration)
-        => Volatile.Read(ref _snapshot).TryGetValue(contractType, out registration!);
-
-    internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> Capture()
-        => Volatile.Read(ref _snapshot);
-
-    internal void Publish(FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> snapshot)
-        => Volatile.Write(ref _snapshot, snapshot);
 }
 
 /// <summary>
@@ -30,7 +31,7 @@ internal sealed partial class ClientAssemblyRegistry
     private const int MaximumDynamicModules = 4_096;
 
     private readonly SharpLinkRuntimeContext _runtimeContext;
-    private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
+    private IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
     private readonly ClientProxyLookup _proxyLookup;
     private readonly Func<SharpLinkConnectionState> _stateProvider;
     private readonly Action<Task, string, TaskObservationMode> _trackFrameworkTask;
@@ -41,6 +42,7 @@ internal sealed partial class ClientAssemblyRegistry
         new(ReferenceEqualityComparer.Instance);
     private long _generation;
     private bool _shutdownStarted;
+    private Task _metadataPreparationsJoined = Task.CompletedTask;
 
     internal ClientAssemblyRegistry(
         SharpLinkRuntimeContext runtimeContext,
@@ -61,8 +63,6 @@ internal sealed partial class ClientAssemblyRegistry
 
     internal IReadOnlyDictionary<Assembly, SharpLinkDynamicModule> DynamicModules => _dynamicModules;
 
-    internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> CaptureProxySnapshot()
-        => _proxyLookup.Capture();
 
 
 
@@ -95,6 +95,7 @@ internal sealed partial class ClientAssemblyRegistry
         {
             retired = CaptureLocalControlsLocked();
             _shutdownStarted = true;
+            _metadataPreparationsJoined = _runtimeContext.Domain.SealAndJoinAsync();
             RetireLocalControls(retired);
         }
         NotifyLocalRetirement(retired);
@@ -102,99 +103,82 @@ internal sealed partial class ClientAssemblyRegistry
 
     internal SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
     {
-        var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
-        if (!loaded.Succeeded)
-            return loaded;
-        if (RejectMutation(out var state))
-            return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                $"Client state '{state}' does not accept runtime assembly registration.", assembly);
+        using var preparation = _runtimeContext.Domain.BeginPreparation();
+        var loaded = SharpLinkAssemblyManifestLoader.TryLoad(assembly, preparation, out var manifest);
+        return loaded.Succeeded ? RegisterPreparedAssembly(manifest!) : loaded;
+    }
 
+    internal SharpLinkAssemblyRegistrationResult RegisterPreparedAssembly(
+        PreparedGeneratedManifest manifest,
+        Func<Func<SharpLinkAssemblyRegistrationResult>, SharpLinkAssemblyRegistrationResult>? publication = null)
+    {
+        using var preparation = _runtimeContext.Domain.BeginPreparation();
+        PreparedGeneratedManifest.Capture(manifest, preparation);
+        var assembly = manifest.OwnerAssembly;
         RpcGeneratedManifestRegistration? codecRegistration = null;
+        ClientProxySnapshot? candidateSnapshot = null;
+        var published = false;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
-        var published = false;
         try
         {
-            while (true)
+            long generation;
+            ClientProxySnapshot current;
+            SharpLinkDynamicModule[] modules;
+            lock (_gate)
             {
-                long generation;
-                FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> currentProxies;
-                SharpLinkDynamicModule[] currentModules;
-                lock (_gate)
-                {
-                    if (IsAssemblyRegistered(assembly))
-                        return Failure(SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
-                            "The same Assembly object is already registered on this client.", assembly);
-                    if (_dynamicModules.Count >= MaximumDynamicModules)
-                        return Failure(SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
-                            $"The client runtime module limit of {MaximumDynamicModules} has been reached.", assembly);
-                    generation = _generation;
-                    currentProxies = _proxyLookup.Capture();
-                    currentModules = [.. _dynamicModules.Values];
-                }
-
-                codecRegistration = _runtimeContext.PrepareGeneratedManifest(manifest!);
-                var module = new SharpLinkDynamicModule(assembly, manifest!, codecRegistration);
-                var candidate = BuildRegistrationCandidate(
-                    manifest!, module, currentProxies, currentModules, currentCodecs: null, out var error);
+                if (RejectMutationLocked(out var state))
+                    return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                        $"Client state '{state}' does not accept runtime assembly registration.", assembly);
+                if (IsAssemblyRegistered(assembly))
+                    return Failure(SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
+                        "The same Assembly object is already registered on this client.", assembly);
+                if (_dynamicModules.Count >= MaximumDynamicModules)
+                    return Failure(SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
+                        $"The client runtime module limit of {MaximumDynamicModules} has been reached.", assembly);
+                preparation.ReserveCollection(_dynamicModules.Count);
+                modules = [.. _dynamicModules.Values];
+                generation = _generation;
+                current = _proxyLookup.Acquire();
+            }
+            using (current)
+            {
+                codecRegistration = _runtimeContext.PrepareGeneratedManifest(manifest);
+                using var codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
+                var module = new SharpLinkDynamicModule(assembly, manifest, codecRegistration);
+                var candidate = BuildRegistrationCandidate(manifest, module, current.Map, current,
+                    modules, codecSource.Registrations, preparation, out var error);
                 if (error is not null)
                 {
                     rollbackError = error;
                     return SharpLinkAssemblyRegistrationResult.Failure(error);
                 }
-
-                var retry = false;
-                lock (_gate)
+                candidateSnapshot = candidate.Proxies;
+                using var codecPublication = _runtimeContext.PrepareGeneratedCodecPublication(
+                    candidate.Codecs, codecRegistration, adoptPendingRegistration: true, sourceSnapshot: codecSource);
+                SharpLinkAssemblyRegistrationResult Commit()
                 {
-                    if (generation != _generation)
+                    lock (_gate)
                     {
-                        retry = true;
-                    }
-                    else
-                    {
-                        if (RejectMutationLocked(out state))
-                        {
-                            rollbackError = CreateError(
-                                SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                                $"Client state '{state}' does not accept runtime assembly registration.", assembly);
-                            return SharpLinkAssemblyRegistrationResult.Failure(rollbackError);
-                        }
-                        if (IsAssemblyRegistered(assembly))
-                        {
-                            rollbackError = CreateError(
-                                SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
-                                "The same Assembly object is already registered on this client.", assembly);
-                            return SharpLinkAssemblyRegistrationResult.Failure(rollbackError);
-                        }
-                        var dependencyError = ValidateDependencies(
-                            manifest!,
-                            [.. _dynamicModules.Values]);
-                        if (dependencyError is not null)
-                        {
-                            rollbackError = dependencyError;
-                            return SharpLinkAssemblyRegistrationResult.Failure(dependencyError);
-                        }
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
-                        _runtimeContext.AdoptGeneratedManifest(codecRegistration);
-                        _proxyLookup.Publish(candidate.Proxies);
+                        if (generation != _generation || RejectMutationLocked(out _) ||
+                            !_runtimeContext.IsCurrentGeneratedCodecPublication(codecPublication))
+                            return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                                "The registry changed while this exact candidate was prepared; no callbacks were replayed.", assembly);
+                        _runtimeContext.CommitGeneratedCodecPublication(codecPublication);
                         _dynamicModules.Add(assembly, module);
+                        _proxyLookup.Publish(candidateSnapshot);
                         _generation++;
                         published = true;
                         return SharpLinkAssemblyRegistrationResult.Success();
                     }
                 }
-                if (retry)
-                {
-                    var abandonedRegistration = codecRegistration;
-                    codecRegistration = null;
-                    abandonedRegistration.Dispose();
-                }
+                return publication is null ? Commit() : publication(Commit);
             }
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
             rollbackException = exception;
-            rollbackError = CreateError(
+            rollbackError = CreateError(exception is ColdMetadataException cold ? cold.Code :
                 SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 $"Assembly registration failed transactionally: {exception.GetType().Name}: {exception.Message}", assembly);
             return SharpLinkAssemblyRegistrationResult.Failure(rollbackError);
@@ -203,14 +187,10 @@ internal sealed partial class ClientAssemblyRegistry
         {
             if (!published)
             {
-                try
-                {
-                    codecRegistration?.Dispose();
-                }
+                candidateSnapshot?.Dispose();
+                try { codecRegistration?.Dispose(); }
                 catch (Exception cleanupException)
-                {
-                    ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException);
-                }
+                { ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException); }
             }
         }
     }
@@ -219,7 +199,8 @@ internal sealed partial class ClientAssemblyRegistry
         Assembly oldAssembly,
         Assembly newAssembly,
         TimeSpan gracefulTimeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        PreparedGeneratedManifest? preparedManifest = null)
     {
         ArgumentNullException.ThrowIfNull(oldAssembly);
         ArgumentNullException.ThrowIfNull(newAssembly);
@@ -232,15 +213,25 @@ internal sealed partial class ClientAssemblyRegistry
                 newAssembly)));
         }
 
-        var loaded = SharpLinkAssemblyManifestLoader.TryLoad(newAssembly, out var manifest);
-        if (!loaded.Succeeded)
-            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
+        using var preparation = _runtimeContext.Domain.BeginPreparation();
+        PreparedGeneratedManifest? manifest;
+        if (preparedManifest is not null)
+            manifest = PreparedGeneratedManifest.Capture(preparedManifest, preparation, newAssembly);
+        else
+        {
+            var loaded = SharpLinkAssemblyManifestLoader.TryLoad(newAssembly, preparation, out manifest);
+            if (!loaded.Succeeded)
+                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(loaded.Error!));
+        }
 
+        using var codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
         ClientLocalContractControl[] retiredControls = [];
         Task<SharpLinkAssemblyUnregisterResult>? drainOperation = null;
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
+        ClientProxySnapshot? candidateSnapshot = null;
+        ClientProxySnapshot? retainedSourceOwners = null;
         RpcGeneratedManifestRegistration? codecRegistration = null;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
@@ -290,6 +281,10 @@ internal sealed partial class ClientAssemblyRegistry
                         return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(replacementDependencyError));
 
                     generation = _generation;
+                    retainedSourceOwners = _proxyLookup.Acquire();
+                    preparation.ReserveCollection(_dynamicModules.Count);
+                    preparation.ReserveCollection(_proxyLookup.Capture().Count);
+                    preparation.ReserveCollection(_proxyLookup.Capture().Count);
                     currentModules = _dynamicModules.Values
                         .Where(module => !ReferenceEquals(module, oldModule))
                         .ToArray();
@@ -297,25 +292,29 @@ internal sealed partial class ClientAssemblyRegistry
                         .Where(pair => !ReferenceEquals(pair.Value.Module, oldModule))
                         .ToDictionary(static pair => pair.Key, static pair => pair.Value)
                         .ToFrozenDictionary();
-                    retainedCodecs = CreateCodecSnapshotWithout(oldModule);
+                    retainedCodecs = CreateCodecSnapshotWithout(oldModule, codecSource.Registrations, preparation);
                 }
 
                 codecRegistration = _runtimeContext.PrepareGeneratedManifest(manifest!);
                 newModule = new SharpLinkDynamicModule(newAssembly, manifest!, codecRegistration);
                 var candidate = BuildRegistrationCandidate(
-                    manifest!, newModule, retainedProxies, currentModules, retainedCodecs, out var error);
+                    manifest!, newModule, retainedProxies, retainedSourceOwners!, currentModules, retainedCodecs, preparation, out var error);
                 if (error is not null)
                 {
                     rollbackError = error;
                     return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(error));
                 }
 
-                var retry = false;
+                candidateSnapshot = candidate.Proxies;
+                using var codecPublication = _runtimeContext.PrepareGeneratedCodecPublication(
+                    candidate.Codecs, codecRegistration, adoptPendingRegistration: true, sourceSnapshot: codecSource);
                 lock (_gate)
                 {
-                    if (generation != _generation)
+                    if (generation != _generation || !_runtimeContext.IsCurrentGeneratedCodecPublication(codecPublication))
                     {
-                        retry = true;
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "Registry changed while the exact replacement was prepared; callbacks were not replayed.", newAssembly)));
                     }
                     else
                     {
@@ -338,25 +337,13 @@ internal sealed partial class ClientAssemblyRegistry
                                 newAssembly);
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
                         }
-                        var dependencyError = ValidateDependencies(
-                            manifest!,
-                            _dynamicModules.Values
-                                .Where(module => !ReferenceEquals(module, oldModule))
-                                .ToArray());
-                        if (dependencyError is not null)
-                        {
-                            rollbackError = dependencyError;
-                            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(dependencyError));
-                        }
-
                         drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
                             TaskCreationOptions.RunContinuationsAsynchronously);
                         drainOperation = drainCompletion.Task;
                         retiredControls = CaptureLocalControlsLocked(oldModule);
-                        _runtimeContext.PublishGeneratedCodecs(candidate.Codecs, codecRegistration);
+                        _runtimeContext.CommitGeneratedCodecPublication(codecPublication);
                         _dynamicModules.Add(newAssembly, newModule);
                         _unregisterOperations.Add(oldAssembly, drainOperation);
-                        _runtimeContext.AdoptGeneratedManifest(codecRegistration);
                         RetireLocalControls(retiredControls);
                         oldModule.TryBeginDraining();
                         _proxyLookup.Publish(candidate.Proxies);
@@ -365,28 +352,24 @@ internal sealed partial class ClientAssemblyRegistry
                         break;
                     }
                 }
-                if (retry)
-                {
-                    var abandonedRegistration = codecRegistration;
-                    codecRegistration = null;
-                    newModule = null;
-                    abandonedRegistration.Dispose();
-                }
+
             }
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
             rollbackException = exception;
             rollbackError = CreateError(
-                SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                exception is ColdMetadataException cold ? cold.Code : SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                 $"Assembly replacement failed transactionally: {exception.GetType().Name}: {exception.Message}",
                 newAssembly);
             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
         }
         finally
         {
+            retainedSourceOwners?.Dispose();
             if (!published)
             {
+                candidateSnapshot?.Dispose();
                 try
                 {
                     codecRegistration?.Dispose();
@@ -445,6 +428,7 @@ internal sealed partial class ClientAssemblyRegistry
 
     internal async ValueTask<Exception[]> DrainForShutdownAsync()
     {
+        await _metadataPreparationsJoined.ConfigureAwait(false);
         var dynamicAssemblies = GetDynamicAssembliesForShutdown();
         List<Exception>? failures = null;
         for (var index = 0; index < dynamicAssemblies.Length; index++)
@@ -461,18 +445,33 @@ internal sealed partial class ClientAssemblyRegistry
         return failures?.ToArray() ?? [];
     }
 
+    // Called only after Client framework/physical cleanup has joined. No published map
+    // or static-manifest root remains when Runtime releases its retained metadata bundle.
+    internal void ReleaseMetadataAfterDrain()
+    {
+        lock (_gate)
+        {
+            _proxyLookup.Clear();
+            _staticManifests = [];
+        }
+    }
+
     internal bool IsDynamicAssemblyRegistered(Assembly assembly)
     {
         lock (_gate)
             return _dynamicModules.ContainsKey(assembly);
     }
 
-    internal static FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> BuildStaticProxySnapshot(
+    internal static ClientProxySnapshot BuildStaticProxySnapshot(
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
         SharpLinkRuntimeContext runtimeContext)
     {
-        var registrations = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>();
-        var contractIds = new Dictionary<long, ISharpLinkGeneratedAssemblyManifest>();
+        using var preparation = runtimeContext.Domain.BeginPreparation();
+        var count = 0;
+        foreach (var manifest in manifests) count = checked(count + manifest.Contracts.Count);
+        for (var copy = 0; copy < 3; copy++) preparation.ReserveCollection(count);
+        var registrations = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>(count);
+        var contractIds = new Dictionary<long, ISharpLinkGeneratedAssemblyManifest>(count);
         for (var manifestIndex = 0; manifestIndex < manifests.Count; manifestIndex++)
         {
             var manifest = manifests[manifestIndex];
@@ -496,7 +495,7 @@ internal sealed partial class ClientAssemblyRegistry
                     RpcGeneratedCodecResolver.GetProvider(runtimeContext, contract.ContractType)));
             }
         }
-        return registrations.ToFrozenDictionary();
+        return ClientProxySnapshot.Create(registrations.ToFrozenDictionary(), preparation, staticManifests: manifests);
     }
 
     internal static void ValidateStaticManifestCompatibility(
@@ -563,6 +562,9 @@ internal sealed partial class ClientAssemblyRegistry
         TimeSpan gracefulTimeout,
         TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
     {
+        // Unregister publishes its tracker under the registry gate; disposal callbacks
+        // and cleanup-map preparation must begin only after that caller leaves the gate.
+        await Task.Yield();
         try
         {
             completion.TrySetResult(await UnregisterCoreAsync(
@@ -588,40 +590,58 @@ internal sealed partial class ClientAssemblyRegistry
     private void ReleaseModule(Assembly assembly, SharpLinkDynamicModule module)
     {
         RpcGeneratedManifestRegistration codecRegistration;
-        lock (_gate)
+        while (true)
         {
-            if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
-                return;
-            var nextProxies = _proxyLookup.Capture()
-                .Where(pair => !ReferenceEquals(pair.Value.Module, module))
-                .ToDictionary(static pair => pair.Key, static pair => pair.Value)
-                .ToFrozenDictionary();
-            var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
-            codecRegistration = module.CodecRegistration;
-            var codecTypes = codecRegistration.Codecs.Keys.ToArray();
-            var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-            for (var index = 0; index < codecTypes.Length; index++)
+            // Retained cleanup storage is not management admission and remains usable after seal.
+            using var storage = _runtimeContext.CreateMetadataStorage();
+            using var codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
+            ClientProxySnapshot? nextSnapshot = null;
+            var published = false;
+            try
             {
-                var codecType = codecTypes[index];
-                var replacement = FindReplacementCodec(codecType, module);
-                if (replacement is null)
-                    nextFactories.Remove(codecType);
-                else
-                    nextFactories[codecType] = replacement;
+                long generation;
+                Dictionary<Type, RpcGeneratedCodecRegistration> nextFactories;
+                lock (_gate)
+                {
+                    if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
+                        return;
+                    generation = _generation;
+                    var currentSnapshot = _proxyLookup.Current;
+                    storage.ReserveCollection(currentSnapshot.Map.Count);
+                    storage.ReserveCollection(currentSnapshot.Map.Count);
+                    var nextProxies = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>(currentSnapshot.Map.Count);
+                    foreach (var pair in currentSnapshot.Map)
+                        if (!ReferenceEquals(pair.Value.Module, module)) nextProxies.Add(pair.Key, pair.Value);
+                    nextSnapshot = ClientProxySnapshot.Create(nextProxies.ToFrozenDictionary(), storage, currentSnapshot);
+                    var factories = codecSource.Registrations;
+                    storage.ReserveCollection(factories.Count);
+                    nextFactories = new Dictionary<Type, RpcGeneratedCodecRegistration>(factories.Count);
+                    foreach (var pair in factories) nextFactories.Add(pair.Key, pair.Value);
+                    codecRegistration = module.CodecRegistration;
+                    foreach (var codecType in codecRegistration.Codecs.Keys)
+                    {
+                        var replacement = FindReplacementCodec(codecType, module);
+                        if (replacement is null) nextFactories.Remove(codecType);
+                        else nextFactories[codecType] = replacement;
+                    }
+                }
+                using var publication = _runtimeContext.PrepareGeneratedCodecPublication(nextFactories, sourceSnapshot: codecSource);
+                lock (_gate)
+                {
+                    if (generation != _generation || !_runtimeContext.IsCurrentGeneratedCodecPublication(publication))
+                        continue; // Rebuild only host maps; never reload a manifest or replay a factory.
+                    _runtimeContext.CommitGeneratedCodecPublication(publication);
+                    _proxyLookup.Publish(nextSnapshot);
+                    _dynamicModules.Remove(assembly);
+                    _generation++;
+                    published = true;
+                    break;
+                }
             }
-            _runtimeContext.PublishGeneratedCodecs(nextFactories);
-            _proxyLookup.Publish(nextProxies);
-            _dynamicModules.Remove(assembly);
-            _generation++;
+            finally { if (!published) nextSnapshot?.Dispose(); }
         }
-        try
-        {
-            _runtimeContext.ReleaseGeneratedManifest(codecRegistration);
-        }
-        finally
-        {
-            module.MarkReleased();
-        }
+        try { _runtimeContext.ReleaseGeneratedManifest(codecRegistration); }
+        finally { module.MarkReleased(); }
     }
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(

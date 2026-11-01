@@ -164,11 +164,12 @@ internal sealed class ClientRuntimeResources
     }
 }
 
-/// <summary>Frozen client construction inputs. It owns no cleanup behavior and is materialized once.</summary>
+/// <summary>Frozen construction inputs owning one pending Runtime metadata plan until transfer or discard.</summary>
 internal sealed class ClientBuildPlan
 {
     private readonly ISharpLinkClientInterceptor[] _interceptors;
     private int _materializationState;
+    private SharpLinkRuntimeContextBuildPlan? _runtimeContext;
 
     internal ClientBuildPlan(
         ClientTopologyPlan topology,
@@ -197,7 +198,7 @@ internal sealed class ClientBuildPlan
     {
         Topology = topology ?? throw new ArgumentNullException(nameof(topology));
         Resources = resources ?? throw new ArgumentNullException(nameof(resources));
-        RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
+        _runtimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
         RequestCompressionPolicy = requestCompressionPolicy ?? throw new ArgumentNullException(nameof(requestCompressionPolicy));
         _ = CompressionSendPolicySnapshot.CreateValidated(RequestCompressionPolicy);
         BeforeReadyPublicationTestHook = beforeReadyPublicationTestHook;
@@ -236,7 +237,12 @@ internal sealed class ClientBuildPlan
 
     internal ClientTopologyPlan Topology { get; }
     internal ClientRuntimeResources Resources { get; }
-    internal SharpLinkRuntimeContextBuildPlan RuntimeContext { get; }
+    internal SharpLinkRuntimeContextBuildPlan RuntimeContext => Volatile.Read(ref _runtimeContext) ??
+        throw new InvalidOperationException("Runtime metadata ownership has left this Client plan.");
+
+    internal SharpLinkRuntimeContextBuildPlan TakeRuntimePlan()
+        => Interlocked.Exchange(ref _runtimeContext, null) ??
+            throw new InvalidOperationException("Runtime metadata ownership has already transferred.");
     internal SharpLinkCompressionSendPolicy RequestCompressionPolicy { get; }
     internal Func<CancellationToken, ValueTask>? BeforeReadyPublicationTestHook { get; }
     internal TimeSpan HeartbeatInterval { get; }
@@ -280,10 +286,11 @@ internal sealed class ClientBuildPlan
             throw new InvalidOperationException("This Client build plan has already been materialized or discarded.");
     }
 
-    internal void MarkDiscarded()
+    internal SharpLinkRuntimeContextBuildPlan MarkDiscarded()
     {
         if (Interlocked.CompareExchange(ref _materializationState, 2, 0) != 0)
             throw new InvalidOperationException("This Client build plan has already been materialized or discarded.");
+        return TakeRuntimePlan();
     }
 }
 

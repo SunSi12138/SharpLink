@@ -211,7 +211,7 @@ internal sealed partial class SharpLinkClient
             var state = connection.State;
             var canAcceptCalls = connection.CanAcceptCalls;
             var connectionActiveCalls = connection.ActiveCallCount;
-            var pending = connection.PendingCalls.ActiveCount;
+            var pending = connection.PendingCalls.Count;
             var session = connection.Session.CaptureSupportSnapshot();
             if (canAcceptCalls)
                 readyConnections++;

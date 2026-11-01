@@ -44,7 +44,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         var registry = (ServerServiceModuleRegistry)typeof(SharpLinkServer).GetField(
             "_serviceModuleRegistry", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
         var registration = registry.ServicesStorage.Values.Single(item => item.ContractType == plugin.ContractType);
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(plugin.ContractAssembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(plugin.ContractAssembly, preparation, out var manifest);
         Ensure(result.Succeeded && manifest is not null, "current generated plugin manifest loads");
         var contract = manifest!.Contracts.Single(item => item.ContractType == plugin.ContractType);
         var facts = new RpcMethodFacts[contract.Methods.Count];

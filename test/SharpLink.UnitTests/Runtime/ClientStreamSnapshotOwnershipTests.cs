@@ -65,6 +65,9 @@ public class ClientStreamSnapshotOwnershipTests
         RpcSessionTestFixture.CompleteHandshake(session, ProtocolV2Capabilities.FlowControl,
             streamReceiveWindowBytes: 16, connectionReceiveWindowBytes: 64);
         var controller = GetFlowController(session);
+        var publication = new TestRpcStreamPublication(session, 71);
+        publication.SendHead();
+        await session.FlushSendQueueAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
         Exception? serializationFailure = serializeThrows
             ? cancelDuringSerialization
                 ? new OperationCanceledException("original serializer cancellation", cancellation.Token)
@@ -83,7 +86,7 @@ public class ClientStreamSnapshotOwnershipTests
             try
             {
                 await session.SendClientStreamChunkAsync(71, 1, 7, codec, codec,
-                    default, TimeProvider.System, cancellation.Token)
+                    default, TimeProvider.System, cancellation.Token, publication)
                     .AsTask().WaitAsync(TimeSpan.FromSeconds(2));
             }
             catch (Exception exception) when (exception is not TimeoutException)

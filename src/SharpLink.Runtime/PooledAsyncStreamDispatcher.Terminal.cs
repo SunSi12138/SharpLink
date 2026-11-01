@@ -24,8 +24,20 @@ internal sealed partial class PooledAsyncStreamDispatcher<T>
 
     private void CompleteCore(Exception? exception, int terminal)
     {
+        var disposition = StreamSinkPublicationDisposition.NotPublished;
+        CompleteCore(exception, terminal, ref disposition);
+    }
+
+    private void CompleteCore(
+        Exception? exception,
+        int terminal,
+        ref StreamSinkPublicationDisposition disposition)
+    {
         if (Interlocked.CompareExchange(ref _consumerTerminal, terminal, 0) != 0)
+        {
+            ReadExistingSinkPublication(exception, terminal, ref disposition);
             return;
+        }
 
         // The no-state path is the regular server-stream lifecycle. Keep it free of locks and
         // allocations; a consumer that catches the narrow terminal-publication race joins through
@@ -33,12 +45,14 @@ internal sealed partial class PooledAsyncStreamDispatcher<T>
         Volatile.Write(ref _terminalPublicationState, 1);
         _error = exception;
         Volatile.Write(ref _completed, true);
+        // Caller-owned receipt commits at the actual terminal store, before any notification.
+        disposition = StreamSinkPublicationDisposition.Published;
         try
         {
             var dispatchState = Volatile.Read(ref _dispatchState);
             if (dispatchState is null)
             {
-                Signal();
+                SignalTerminalPublication();
                 return;
             }
 
@@ -46,7 +60,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T>
             {
                 if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
                     CloseFirstTerminalDispatchState(boundDispatchState);
-                Signal();
+                SignalTerminalPublication();
             }
         }
         finally
@@ -67,6 +81,81 @@ internal sealed partial class PooledAsyncStreamDispatcher<T>
             // writes nothing, so it cannot observe the field before the state store commits.
             Interlocked.CompareExchange(ref _terminalPublication, null, null)?.TrySetResult();
         }
+    }
+
+    bool IStreamSinkPublicationReceipt.TryRetainSinkPublication(long expectedLease, out long retainedLease)
+        => TryRetainSinkPublication(expectedLease, out retainedLease);
+
+    private bool TryRetainSinkPublication(long expectedLease, out long retainedLease)
+    {
+        retainedLease = 0;
+        var current = Volatile.Read(ref _leaseState);
+        if (GetLeaseStatus(expectedLease) != LeaseActive ||
+            !IsSameLeaseGeneration(current, expectedLease) ||
+            GetLeaseStatus(current) is not (LeaseActive or LeaseDisposing))
+            return false;
+
+        // Match the existing acquire/return handshake, but admit this original generation's
+        // Disposing state so its consumer-abandonment callback can obtain an exact receipt.
+        InvokeTestHook(4);
+        Interlocked.Increment(ref _producerOperations);
+        current = Volatile.Read(ref _leaseState);
+        if (IsSameLeaseGeneration(current, expectedLease) &&
+            GetLeaseStatus(current) is LeaseActive or LeaseDisposing)
+        {
+            retainedLease = expectedLease;
+            return true;
+        }
+
+        if (Interlocked.Decrement(ref _producerOperations) < 0)
+            throw new InvalidOperationException("Stream dispatcher producer lease underflowed.");
+        TryReturnToPool();
+        return false;
+    }
+
+    void IStreamSinkPublicationReceipt.ReleaseSinkPublication(long retainedLease)
+        => ReleaseDispatch(retainedLease);
+
+    void IStreamSinkPublicationReceipt.PublishSinkTerminal(
+        Exception? error,
+        bool localAbort,
+        long expectedLease,
+        ref StreamSinkPublicationDisposition disposition)
+    {
+        disposition = StreamSinkPublicationDisposition.NotPublished;
+        var current = Volatile.Read(ref _leaseState);
+        // The caller must hold the exact retention returned above until this method exits.
+        if (GetLeaseStatus(expectedLease) != LeaseActive ||
+            !IsSameLeaseGeneration(current, expectedLease) ||
+            GetLeaseStatus(current) is not (LeaseActive or LeaseDisposing))
+            return;
+
+        if (localAbort)
+            CompleteLocalAbortCore(error, expectedLease, ref disposition);
+        else
+            CompleteCore(error, ConsumerTerminalRemoteComplete, ref disposition);
+    }
+
+    private void ReadExistingSinkPublication(
+        Exception? error,
+        int requestedTerminal,
+        ref StreamSinkPublicationDisposition disposition)
+    {
+        // Acquire the completed store before inspecting its primary. A selected but unfinished
+        // publisher is not proof of delivery. The receipt caller's lease prevents pooled reuse.
+        if (!Volatile.Read(ref _completed))
+            return;
+        var terminal = Volatile.Read(ref _consumerTerminal);
+        if (terminal == ConsumerTerminalAbandoned)
+            disposition = StreamSinkPublicationDisposition.PublishedConsumerAbandonment;
+        else if (terminal == requestedTerminal && ReferenceEquals(_error, error))
+            disposition = StreamSinkPublicationDisposition.Published;
+    }
+
+    private void SignalTerminalPublication()
+    {
+        InvokeTestHook(9);
+        Signal();
     }
 
     private async ValueTask AwaitTerminalPublicationAndFinishDisposeAsync(

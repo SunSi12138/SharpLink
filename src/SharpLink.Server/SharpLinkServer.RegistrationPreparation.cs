@@ -39,16 +39,25 @@ internal sealed partial class SharpLinkServer
             if (_registrationPreparations == 0)
                 _registrationPreparationsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
             _registrationPreparations++;
-            try
-            {
-                owner = new RegistrationPreparation(this, CurrentRegistrationPreparation.Value);
-            }
-            catch
-            {
+        }
+        try
+        {
+            // Slot is already admitted, but neither quota operations nor constructors run
+            // under the publication gate. Stop joins this slot through its original fence.
+            owner = new RegistrationPreparation(this, CurrentRegistrationPreparation.Value);
+        }
+        catch (Exception exception)
+        {
+            lock (_registryGate)
                 if (--_registrationPreparations == 0)
                     _registrationPreparationsDrained!.TrySetResult();
-                throw;
+            if (exception is ColdMetadataException metadata)
+            {
+                owner = null;
+                error = new(metadata.Code, metadata.Message);
+                return false;
             }
+            throw;
         }
         CurrentRegistrationPreparation.Value = owner;
         error = null;
@@ -68,23 +77,119 @@ internal sealed partial class SharpLinkServer
     {
         internal SharpLinkServer Server { get; }
         internal RegistrationPreparation? Previous { get; }
-        private readonly List<SharpLinkDynamicModule> _dependencies = [];
+        private readonly List<SharpLinkDynamicModule> _dependencies;
+        private readonly ColdMetadataReservation _dependenciesCharge;
+        private HashSet<System.Reflection.Assembly>? _selectedDependencies;
+        private ColdMetadataReservation? _selectedDependenciesCharge;
         private int _disposed;
         internal bool IsActive => Volatile.Read(ref _disposed) == 0;
+        internal ColdMetadataPreparation Metadata { get; }
+        private readonly ServerMetadataWorkspace _snapshotWorkspace;
+        private ColdMetadataReservation? _moduleSnapshotCharge;
+        private ColdMetadataReservation? _serviceSnapshotCharge;
+        private ColdMetadataReservation? _detachedServicesCharge;
+        private ColdMetadataReservation? _retainedServiceMapCharge;
+        private SnapshotRoot? _snapshotRoots;
+        private ServerServiceSnapshot.Lease? _serviceSnapshot;
+        private int _moduleSnapshotCapacity;
+        private int _serviceSnapshotCapacity;
 
         internal RegistrationPreparation(SharpLinkServer server, RegistrationPreparation? previous)
         {
             Server = server;
             Previous = previous;
+            // Header admission precedes loader construction and every metadata getter.
+            Metadata = server._runtimeContext.Domain.BeginPreparation();
+            try
+            {
+                _dependenciesCharge = Metadata.ReserveCollection(0);
+                _dependencies = [];
+                _snapshotWorkspace = new(Metadata);
+            }
+            catch { Metadata.Dispose(); throw; }
+        }
+
+        internal void ReserveRegistrySnapshots(bool replacement = false)
+        {
+            int modules, services;
+            lock (Server._registryGate)
+            {
+                modules = Server._dynamicModules.Count;
+                services = Server._services.Count;
+            }
+            _moduleSnapshotCharge ??= _snapshotWorkspace.Reserve(0);
+            _serviceSnapshotCharge ??= _snapshotWorkspace.Reserve(0);
+            _moduleSnapshotCharge.GrowTo(modules);
+            _serviceSnapshotCharge.GrowTo(services);
+            if (replacement)
+            {
+                _detachedServicesCharge ??= Metadata.ReserveCollection(0);
+                _retainedServiceMapCharge ??= _snapshotWorkspace.Reserve(0);
+                _detachedServicesCharge.GrowTo(services);
+                _retainedServiceMapCharge.GrowTo(services);
+            }
+            _moduleSnapshotCapacity = Math.Max(_moduleSnapshotCapacity, modules);
+            _serviceSnapshotCapacity = Math.Max(_serviceSnapshotCapacity, services);
+        }
+        internal ServerDetachedServices TransferDetachedSnapshot(ServiceRegistration[] services)
+        {
+            var charge = _detachedServicesCharge ?? throw new InvalidOperationException("Detached array must be reserved first.");
+            var owner = new ServerDetachedServices(services, Metadata, charge);
+            _detachedServicesCharge = null;
+            return owner;
+        }
+
+        internal FrozenDictionary<long, ServiceRegistration> CaptureServicesLocked()
+        {
+            if (_serviceSnapshot is not null) throw new InvalidOperationException("Service snapshot capture cannot replay.");
+            _serviceSnapshot = Server._serviceModuleRegistry.CaptureServices();
+            return _serviceSnapshot.Services;
+        }
+
+        internal T[] TrackSnapshot<T>(T[] snapshot)
+        {
+            _snapshotRoots = new SnapshotRoot(snapshot, _snapshotRoots);
+            return snapshot;
+        }
+        private sealed record SnapshotRoot(Array Value, SnapshotRoot? Next);
+
+        internal bool SnapshotCapacityIsCurrentLocked()
+            => Server._dynamicModules.Count <= _moduleSnapshotCapacity &&
+               Server._services.Count <= _serviceSnapshotCapacity;
+
+        // Frozen metadata traversal/reflection remains outside the registry gate. Only
+        // exact required Assembly identities are pinned, not every unrelated live module.
+        internal void SelectDependencies(PreparedGeneratedManifest manifest)
+        {
+            if (_selectedDependencies is not null)
+                throw new InvalidOperationException("Dependency selection cannot replay.");
+            _selectedDependenciesCharge = Metadata.ReserveCollection(0, manifest.RegistrationScope);
+            _selectedDependencies = new(ReferenceEqualityComparer.Instance);
+            void Add(System.Reflection.Assembly? assembly)
+            {
+                if (assembly is null || ReferenceEquals(assembly, manifest.OwnerAssembly) ||
+                    _selectedDependencies.Contains(assembly)) return;
+                _selectedDependenciesCharge.GrowTo(checked(_selectedDependencies.Count + 1));
+                _selectedDependencies.Add(assembly);
+            }
+            foreach (var identity in EnumerateManifestDependencies(manifest))
+                Add(SharpLinkGeneratedDependencyBinding.Resolve(manifest.OwnerAssembly, identity));
+            foreach (var service in manifest.Services) Add(service.ContractType.Assembly);
+            if (manifest is ISharpLinkReferencedCodecDependencyManifest referenced)
+                foreach (var dependency in referenced.ReferencedCodecDependencies) Add(dependency.TargetType.Assembly);
+            _dependenciesCharge.GrowTo(_selectedDependencies.Count);
+            _dependencies.EnsureCapacity(_selectedDependencies.Count);
         }
 
         // The caller holds Server._registryGate. No generated/user callbacks occur here.
-        internal bool TryPinDependencies(SharpLinkDynamicModule[] modules)
+        internal bool TryPinDependencies(IEnumerable<SharpLinkDynamicModule> modules)
         {
             if (_dependencies.Count != 0)
                 throw new InvalidOperationException("A preparation cannot silently replay dependency capture.");
             foreach (var module in modules)
             {
+                if (_selectedDependencies is null || !_selectedDependencies.Contains(module.Assembly))
+                    continue;
                 if (!module.TryAcquirePreparation())
                     return false;
                 try { _dependencies.Add(module); }
@@ -95,6 +200,8 @@ internal sealed partial class SharpLinkServer
 
         internal bool DependenciesAreRunning()
         {
+            if (_serviceSnapshot is not null && !Server._serviceModuleRegistry.IsCurrentServices(_serviceSnapshot))
+                return false;
             foreach (var module in _dependencies)
                 if (module.State != SharpLinkDynamicModuleState.Running)
                     return false;
@@ -116,6 +223,19 @@ internal sealed partial class SharpLinkServer
                     catch (Exception exception) { (failures ??= []).Add(exception); }
                 }
                 _dependencies.Clear();
+                _selectedDependencies?.Clear();
+                _selectedDependencies = null;
+                _selectedDependenciesCharge?.Dispose();
+                _dependenciesCharge.Dispose();
+                var root = _snapshotRoots;
+                _snapshotRoots = null;
+                while (root is not null) { Array.Clear(root.Value); root = root.Next; }
+                _snapshotWorkspace.Dispose();
+                _detachedServicesCharge?.Dispose();
+                _serviceSnapshot?.Dispose();
+                _serviceSnapshot = null;
+                try { Metadata.Dispose(); }
+                catch (Exception exception) { (failures ??= []).Add(exception); }
             }
             finally
             {

@@ -7,6 +7,7 @@ internal sealed class ClientBindingSession
     private readonly ClientBindingBudget _budget;
     private readonly Action _onIdentityExhausted;
     private readonly Action _operationOwnerReleased;
+    private readonly Action? _controlOwnerReleased;
     private int _activeOperationOwners;
     private readonly int _trackingSlots;
     private readonly Lock _gate = new();
@@ -16,14 +17,30 @@ internal sealed class ClientBindingSession
     private bool _closed;
     private bool _admissionClosed;
     private int _queuedControlFrames;
+    private bool _trackingSlotsReleased;
     private Task _publicationTail = Task.CompletedTask;
+    private readonly CandidateRecord?[] _candidates;
+    private readonly List<CleanupOwner> _cleanupOwners;
+    private readonly LinkedListNode<ClientBindingSession> _trackingNode;
+    private readonly TaskCompletionSource _trackingDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _candidateCount;
+    private Task? _terminalDrainTask;
+    private bool _terminalDrained;
+    private Exception? _terminalFailure;
 
-    internal ClientBindingSession(RpcSession session, ClientBindingBudget budget, Action onIdentityExhausted)
+    internal int TrackingCapacity => _trackingSlots;
+    internal Task TrackingDrained => _trackingDrained.Task;
+    internal int CandidateCount { get { lock (_gate) return _candidateCount; } }
+    internal int CleanupOwnerCount { get { lock (_gate) return _cleanupOwners.Count; } }
+
+    internal ClientBindingSession(RpcSession session, ClientBindingBudget budget, Action onIdentityExhausted,
+        Action? controlOwnerReleased = null)
     {
         ArgumentNullException.ThrowIfNull(onIdentityExhausted);
         _session = session;
         _onIdentityExhausted = onIdentityExhausted;
-        _operationOwnerReleased = () => Interlocked.Decrement(ref _activeOperationOwners);
+        _operationOwnerReleased = ReleaseOperationOwner;
+        _controlOwnerReleased = controlOwnerReleased;
         var authority = session.BindingAuthority;
         if (!Protocol3BindingLimitsCodec.IsValid(authority.Limits))
             throw new ArgumentException("Session has no negotiated binding limits.", nameof(session));
@@ -37,12 +54,28 @@ internal sealed class ClientBindingSession
         {
             _operations = new Operation[authority.Limits.Operations];
             Publication = new ClientBindingPublication(authority.Limits.Slots);
+            _candidates = new CandidateRecord[_trackingSlots];
+            _cleanupOwners = new List<CleanupOwner>(authority.Limits.Operations);
+            _trackingNode = budget.RegisterSession(this);
         }
         catch { budget.ReleaseTrackingSlots(_trackingSlots); throw; }
     }
 
     internal ClientBindingPublication Publication { get; }
     internal int ActiveOperationCount => Volatile.Read(ref _activeOperationOwners);
+    internal bool IsCurrentCandidateForTesting(RpcBindingPublication target)
+    {
+        lock (_gate) return ReferenceEquals(_candidates[Protocol3BindingToken.Slot(target.Token)]?.Target, target);
+    }
+    internal void ForgetCandidateSiteForTesting(RpcBindingPublication target)
+    {
+        lock (_gate)
+        {
+            var record = _candidates[Protocol3BindingToken.Slot(target.Token)];
+            if (!ReferenceEquals(record?.Target, target)) throw new InvalidOperationException("Not the current candidate.");
+            record!.Site.SetTarget(null!); // Deterministic orphan observation control; no GC timing assertion.
+        }
+    }
     internal Func<Task>? BeforePublicationConfirmationForTesting { get; set; }
     internal Action? EarlyResultObservedForTesting { get; set; }
     internal Action<long>? PublicationWaitStartedForTesting { get; set; }
@@ -59,9 +92,10 @@ internal sealed class ClientBindingSession
         if (enqueueBudget <= TimeSpan.Zero)
         {
             var expired = new TimeoutException("Binding control deadline expired before enqueue.");
-            _session.NotifyDisconnected(expired);
-            Close(expired);
-            operation.ReleaseBudget();
+            // Close can throw while registering its terminal task. The helper independently
+            // joins that already-created physical drain and retains observer/drain failures.
+            try { await CloseAndJoinTerminal(expired).ConfigureAwait(false); }
+            finally { operation.ReleaseBudget(); }
             throw expired;
         }
         try
@@ -113,9 +147,8 @@ internal sealed class ClientBindingSession
         {
             // Cancellation of enqueue does not prove bytes never escaped. Close this exact Session;
             // physical send owners still finish through its normal terminal cleanup, with no ID reuse.
-            _session.NotifyDisconnected(exception);
-            Close(exception);
-            operation.ReleaseBudget();
+            try { await CloseAndJoinTerminal(exception).ConfigureAwait(false); }
+            finally { operation.ReleaseBudget(); }
             throw;
         }
     }
@@ -135,7 +168,8 @@ internal sealed class ClientBindingSession
             if (_closed || _admissionClosed || !_session.CanAcceptCalls)
                 throw new SharpLinkException(SharpLinkErrorCode.Unavailable,
                     SharpLinkErrorDetails.Unavailable.SessionBindingDraining, "Session is not accepting binding demands.");
-            if (_ids.LastIssued - _retiredPrefix >= _operations.Length)
+            if (_activeOperationOwners >= _operations.Length ||
+                _ids.LastIssued - _retiredPrefix >= _operations.Length)
                 throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
                     SharpLinkErrorDetails.ResourceExhausted.BindingOperations, "Session binding operation window is full.");
             if (!_budget.TryReserveOperation())
@@ -222,51 +256,300 @@ internal sealed class ClientBindingSession
         Publication.Invalidate(invalidated.Token);
     }
 
-    internal async ValueTask ReleaseAsync(ulong token)
+    private void ReserveCleanupOperation()
     {
-        Publication.Invalidate(token);
-        try
+        lock (_gate)
         {
-            using var timeout = new CancellationTokenSource(
-                TimeSpan.FromMilliseconds(_session.BindingAuthority.Limits.OperationDeadlineMs),
-                _session.RuntimeContext.TimeProvider);
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, _session.LifetimeToken);
-            await SendReleaseAsync(token, linked.Token).ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            // A cancelled enqueue may already be visible. Closing the exact Session releases
-            // its server slots without pretending that local cancellation retracts wire bytes.
-            _session.NotifyDisconnected(exception);
-            Close(exception);
-            throw;
+            if (_closed)
+                throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed,
+                    "The exact binding Session is already closed.");
+            if (_activeOperationOwners >= _operations.Length || !_budget.TryReserveOperation())
+                throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
+                    SharpLinkErrorDetails.ResourceExhausted.BindingOperations,
+                    "The shared Bind/cleanup operation capacity is unavailable.");
+            Interlocked.Increment(ref _activeOperationOwners);
         }
     }
 
-    private ValueTask SendReleaseAsync(ulong token, CancellationToken cancellationToken)
-        => SendControlFrameAsync(ProtocolV2FrameType.ReleaseBinding, 0, default, token, cancellationToken);
+    private void ReleaseOperationOwner()
+    {
+        lock (_gate)
+        {
+            if (Interlocked.Decrement(ref _activeOperationOwners) < 0)
+                throw new InvalidOperationException("Binding operation ownership was released twice.");
+            TryReleaseTrackingSlotsLocked();
+        }
+    }
+
+    private void TryReleaseTrackingSlotsLocked()
+    {
+        if (!_closed || !_terminalDrained || _trackingSlotsReleased || _activeOperationOwners != 0 ||
+            _candidateCount != 0 || _cleanupOwners.Count != 0 || Volatile.Read(ref _queuedControlFrames) != 0)
+            return;
+        _trackingSlotsReleased = true;
+        _budget.UnregisterSession(_trackingNode);
+        _budget.ReleaseTrackingSlots(_trackingSlots);
+        if (_terminalFailure is { } failure) _trackingDrained.TrySetException(failure);
+        else _trackingDrained.TrySetResult();
+    }
+
+    private ValueTask SendReleaseAsync(ulong token, CancellationToken cancellationToken, RpcBindingPublication? publication)
+        => SendControlFrameAsync(ProtocolV2FrameType.ReleaseBinding, 0, default, token, cancellationToken, publication);
 
     private ValueTask SendCancelAsync(long operationId, CancellationToken cancellationToken)
         => SendControlFrameAsync(ProtocolV2FrameType.CancelBind, operationId, default, 0, cancellationToken);
 
     internal void Close(Exception exception)
     {
+        Task? terminal = null;
         lock (_gate)
         {
-            if (_closed)
-                return;
+            if (_closed) return;
             _closed = true;
             Publication.Close();
             foreach (var operation in _operations)
             {
                 if (operation is null) continue;
                 operation.Completion.TrySetException(exception);
-                operation.PublicationConfirmed.TrySetResult(); // wake ordered publishers into the terminal Session
-                operation.ReleaseBudget();
+                operation.PublicationConfirmed.TrySetResult();
+                // Actual Bind/result owners release only after their physical send cleanup.
             }
-            _budget.ReleaseTrackingSlots(_trackingSlots);
             Array.Clear(_operations);
+            // Starts with Yield: no disconnect/transport callback can run under the cold gate.
+            terminal = _terminalDrainTask = DrainTerminalCandidatesAsync(exception);
         }
+        _budget.Observe(terminal, "BindingTerminalDrain");
+    }
+
+    private async Task DrainTerminalCandidatesAsync(Exception exception)
+    {
+        await Task.Yield();
+        Exception? failure = null;
+        try { await _session.CloseAndDrainOutboundAsync(exception).ConfigureAwait(false); }
+        catch (Exception cleanup) { failure = cleanup; }
+        // The exact Runtime drain attempts every physical obligation before reporting cleanup
+        // failures. Both success and reported post-drain failure therefore end these slot owners.
+        lock (_gate)
+        {
+            for (var slot = 0; slot < _candidates.Length; slot++)
+            {
+                var record = _candidates[slot];
+                if (record is null) continue;
+                _candidates[slot] = null;
+                _candidateCount--;
+                _budget.RemoveCandidateRecord();
+                if (record.Cleanup is null) record.Clear();
+            }
+            _terminalFailure = failure;
+            _terminalDrained = true;
+            TryReleaseTrackingSlotsLocked();
+        }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private async Task CloseAndJoinTerminal(Exception exception)
+    {
+        Exception? failure = null;
+        try { Close(exception); }
+        catch (Exception closeFailure) { failure = closeFailure; }
+        Task terminal;
+        lock (_gate) terminal = _terminalDrainTask!;
+        // Supervision/callback failure cannot skip the already-created exact physical drain.
+        try { await terminal.ConfigureAwait(false); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(
+                RpcPublicationErrors.Combine(exception, failure)!).Throw();
+    }
+
+    // Called before PublishIfEligible, never from its publication/site-gated callback.
+    internal async Task TrackCandidateAsync(SharpLinkClient.ContractCallSite site, RpcBindingPublication target)
+    {
+        if (!ReferenceEquals(target.Session, _session))
+            throw new InvalidOperationException("A binding candidate cannot cross physical Sessions.");
+        CleanupOwner? transferred = null;
+        try
+        {
+            var slot = Protocol3BindingToken.Slot(target.Token);
+            if (slot >= _candidates.Length) throw new ArgumentOutOfRangeException(nameof(target));
+            var incoming = new CandidateRecord(site, target);
+            lock (_gate)
+            {
+                if (_closed || _budget.TrackingSealed)
+                    throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "Binding tracking is sealed.");
+                var previous = _candidates[slot];
+                if (ReferenceEquals(previous?.Target, target)) return;
+                if (previous is not null && previous.Target!.Token == target.Token)
+                    throw Protocol3BindingValidation.State("Duplicate exact token has a different publication control.");
+                if (previous is not null && previous.Target!.Token > target.Token)
+                {
+                    // A delayed, correlated success is legitimate. Its cleanup-only owner must
+                    // reserve the shared allowance without changing the newer current slot.
+                    transferred = CreateCleanupOwnerLocked(incoming);
+                }
+                else
+                {
+                    if (previous is not null)
+                    {
+                        // Reserve the SAME Bind/cleanup allowance BEFORE replacing the slot reference.
+                        if (previous.Cleanup is null) transferred = CreateCleanupOwnerLocked(previous);
+                    }
+                    else
+                    {
+                        _candidateCount++;
+                        _budget.AddCandidateRecord();
+                    }
+                    _candidates[slot] = incoming;
+                }
+            }
+            if (transferred is not null) _budget.Observe(transferred.Task, "BindingIncarnationCleanup");
+        }
+        catch (Exception exception)
+        {
+            await CloseAndJoinTerminal(exception).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    internal Task RetireCandidateAsync(RpcBindingPublication target)
+    {
+        if (!ReferenceEquals(target.Session, _session))
+            throw new InvalidOperationException("A binding retirement cannot cross physical Sessions.");
+        Publication.Invalidate(target.Token); // Never nest publication -> Session gates.
+        CleanupOwner? created = null;
+        Task result;
+        try
+        {
+            lock (_gate)
+            {
+                if (_closed) return _terminalDrainTask!;
+                var record = _candidates[Protocol3BindingToken.Slot(target.Token)];
+                if (!ReferenceEquals(record?.Target, target))
+                {
+                    // A superseded incarnation already belongs to its bounded cleanup owner.
+                    foreach (var owner in _cleanupOwners)
+                        if (ReferenceEquals(owner.Record.Target, target)) return owner.Task;
+                    // Completed retirement is idempotent. No second Release marker is published.
+                    return Task.CompletedTask;
+                }
+                if (record!.Cleanup is { } existing) return existing.Task;
+                created = CreateCleanupOwnerLocked(record);
+                result = created.Task;
+            }
+        }
+        catch (Exception exception)
+        {
+            var fallback = CloseAndJoinTerminal(exception);
+            _budget.Observe(fallback, "BindingCleanupTerminalFallback");
+            return fallback;
+        }
+        _budget.Observe(result, "BindingCandidateCleanup");
+        return result;
+    }
+
+    internal void ExamineCandidate(int slot)
+    {
+        RpcBindingPublication? orphan = null;
+        lock (_gate)
+        {
+            var record = _candidates[slot];
+            if (!_closed && record is not null && record.Cleanup is null &&
+                (!record.Site.TryGetTarget(out var site) || site.LocalControl.IsRetired ||
+                 !Publication.IsEligible(record.Target!.Token)))
+                orphan = record.Target;
+        }
+        if (orphan is not null) _ = RetireCandidateAsync(orphan);
+    }
+
+    private CleanupOwner CreateCleanupOwnerLocked(CandidateRecord record)
+    {
+        ReserveCleanupOperation(); // Reentrant cold gate; no Bind ID is issued.
+        CleanupOwner? owner = null;
+        try
+        {
+            owner = new CleanupOwner(record, _session.RuntimeContext.TimeProvider.GetTimestamp());
+            _cleanupOwners.Add(owner); // Preallocated to the negotiated shared operation allowance.
+            record.Cleanup = owner;
+            owner.Task = RunCandidateCleanupAsync(owner); // Starts with Yield, no I/O under the gate.
+            return owner;
+        }
+        catch
+        {
+            if (owner is not null) _cleanupOwners.Remove(owner);
+            record.Cleanup = null;
+            _budget.ReleaseOperation();
+            ReleaseOperationOwner();
+            throw;
+        }
+    }
+
+    private async Task RunCandidateCleanupAsync(CleanupOwner owner)
+    {
+        await Task.Yield();
+        RpcBindingPublication? target = owner.Record.Target!;
+        Exception? failure = null;
+        try
+        {
+            Publication.Invalidate(target.Token);
+            var remaining = TimeSpan.FromMilliseconds(_session.BindingAuthority.Limits.OperationDeadlineMs) -
+                _session.RuntimeContext.TimeProvider.GetElapsedTime(owner.Started);
+            if (remaining <= TimeSpan.Zero) throw new TimeoutException("Binding cleanup expired before enqueue.");
+            using var timeout = new CancellationTokenSource(remaining, _session.RuntimeContext.TimeProvider);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, _session.LifetimeToken);
+            await SendReleaseAsync(target.Token, linked.Token, target).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+            try { await CloseAndJoinTerminal(exception).ConfigureAwait(false); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        }
+        finally
+        {
+            target = null; // Clear the async state's exact target before returning its cold permit.
+            lock (_gate)
+            {
+                var record = owner.Record;
+                var slot = Protocol3BindingToken.Slot(record.Target!.Token);
+                if (ReferenceEquals(_candidates[slot], record))
+                {
+                    _candidates[slot] = null;
+                    _candidateCount--;
+                    _budget.RemoveCandidateRecord();
+                }
+                // Clear exact references BEFORE returning the control allowance; an old worker
+                // can never clear a newer slot incarnation, nor free quota while retaining it.
+                record.Clear();
+                _cleanupOwners.Remove(owner);
+                _budget.ReleaseOperation();
+                ReleaseOperationOwner();
+            }
+        }
+        // The last cold owner can make a locally Draining Connection idle. Pool/cluster
+        // callbacks run only after exact record/frame ownership and both allowances are returned.
+        try { _controlOwnerReleased?.Invoke(); }
+        catch (Exception callback) { failure = RpcPublicationErrors.Combine(failure, callback); }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private sealed class CandidateRecord(SharpLinkClient.ContractCallSite site, RpcBindingPublication target)
+    {
+        internal readonly WeakReference<SharpLinkClient.ContractCallSite> Site = new(site);
+        internal RpcBindingPublication? Target = target;
+        internal CleanupOwner? Cleanup;
+        internal void Clear()
+        {
+            Target = null;
+            Site.SetTarget(null!);
+            Cleanup = null;
+        }
+    }
+
+    private sealed class CleanupOwner(CandidateRecord record, long started)
+    {
+        internal CandidateRecord Record { get; } = record;
+        internal long Started { get; } = started;
+        internal Task Task { get; set; } = Task.CompletedTask;
     }
 
     private ValueTask SendBindAsync(Operation operation, CancellationToken cancellationToken)
@@ -274,7 +557,8 @@ internal sealed class ClientBindingSession
             operation.Request, 0, cancellationToken);
 
     private async ValueTask SendControlFrameAsync(ProtocolV2FrameType type, long operationId,
-        Protocol3BindRequest request, ulong token, CancellationToken cancellationToken)
+        Protocol3BindRequest request, ulong token, CancellationToken cancellationToken,
+        RpcBindingPublication? publication = null)
     {
         ReserveControlFrame();
         try
@@ -306,7 +590,9 @@ internal sealed class ClientBindingSession
                 }
                 writer.EndPacket(packet);
                 owns = false;
-                await _session.SendPacketAndFlushAsync(writer, CancellationToken.None).ConfigureAwait(false);
+                await _session.SendPacketAndFlushAsync(writer, CancellationToken.None,
+                    publication: publication,
+                    publicationRole: publication is null ? RpcFramePublicationRole.None : RpcFramePublicationRole.ReleaseBinding).ConfigureAwait(false);
             }
             finally
             {
@@ -316,6 +602,7 @@ internal sealed class ClientBindingSession
         finally
         {
             Interlocked.Decrement(ref _queuedControlFrames);
+            lock (_gate) TryReleaseTrackingSlotsLocked();
         }
     }
 

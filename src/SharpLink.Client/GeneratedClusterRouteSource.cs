@@ -31,14 +31,7 @@ internal sealed class FixedGeneratedClusterRouteSource : IGeneratedClusterRouteS
         IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> manifests)
     {
         ArgumentNullException.ThrowIfNull(manifests);
-        var snapshot = new ISharpLinkGeneratedClusterRouteManifest[manifests.Count];
-        for (var index = 0; index < snapshot.Length; index++)
-        {
-            snapshot[index] = manifests[index] ?? throw new ArgumentException(
-                "Generated cluster route snapshots cannot contain null.",
-                nameof(manifests));
-        }
-        _manifests = Array.AsReadOnly(snapshot);
+        _manifests = manifests;
     }
 
     internal static FixedGeneratedClusterRouteSource Empty { get; } = new([]);
@@ -53,42 +46,53 @@ internal sealed class GeneratedClusterRouteSnapshot
 {
     private readonly IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> _routes;
 
-    private GeneratedClusterRouteSnapshot(
-        IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> manifests)
-    {
-        var routes = new List<SharpLinkGeneratedClusterAssemblyRoute>();
-        for (var manifestIndex = 0; manifestIndex < manifests.Count; manifestIndex++)
-        {
-            var manifest = manifests[manifestIndex] ?? throw new ArgumentException(
-                "Generated cluster route snapshots cannot contain null.",
-                nameof(manifests));
-            var manifestRoutes = manifest.Routes ?? throw new InvalidOperationException(
-                "A generated cluster route manifest returned a null route list.");
-            for (var routeIndex = 0; routeIndex < manifestRoutes.Count; routeIndex++)
-            {
-                var route = manifestRoutes[routeIndex] ?? throw new InvalidOperationException(
-                    "A generated cluster route manifest returned a null route.");
-                if (!SharpLinkClusterKey.IsValid(route.Cluster.Value))
-                    throw new InvalidOperationException("A generated cluster route contains an invalid cluster key.");
-                ArgumentNullException.ThrowIfNull(route.ContractAssembly);
-                ArgumentException.ThrowIfNullOrWhiteSpace(route.ContractAssemblyIdentity);
-                routes.Add(route);
-            }
-        }
-        _routes = Array.AsReadOnly(routes.ToArray());
-    }
+    private GeneratedClusterRouteSnapshot(IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> routes)
+        => _routes = routes;
 
     internal IReadOnlyList<SharpLinkGeneratedClusterAssemblyRoute> Routes => _routes;
 
     internal static GeneratedClusterRouteSnapshot Empty { get; } = new([]);
 
-    internal static GeneratedClusterRouteSnapshot Capture(IGeneratedClusterRouteSource source)
+    internal static GeneratedClusterRouteSnapshot Capture(
+        IGeneratedClusterRouteSource source, ColdMetadataPreparation preparation)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var manifests = source.CreateSnapshot() ?? throw new InvalidOperationException(
-            "A generated cluster RouteSource returned a null snapshot.");
-        return new GeneratedClusterRouteSnapshot(manifests);
+        ArgumentNullException.ThrowIfNull(preparation);
+        // Reserve the result header before invoking even the source's first callback.
+        var workingCharge = preparation.ReserveCollection(0);
+        IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> manifests;
+        using (preparation.EnterCallback())
+            manifests = ReferenceEquals(source, GlobalCatalogClusterRouteSource.Instance)
+                ? ColdMetadataCatalog.CaptureRoutes(preparation)
+                : source.CreateSnapshot() ?? throw new InvalidOperationException(
+                    "A generated cluster RouteSource returned a null snapshot.");
+        var routes = new List<SharpLinkGeneratedClusterAssemblyRoute>();
+        using (preparation.EnterCallback())
+        {
+            var manifestCount = manifests.Count;
+            for (var manifestIndex = 0; manifestIndex < manifestCount; manifestIndex++)
+            {
+                var manifest = manifests[manifestIndex] ?? throw new InvalidOperationException(
+                    "Generated cluster route snapshots cannot contain null.");
+                var manifestRoutes = manifest.Routes ?? throw new InvalidOperationException(
+                    "A generated cluster route manifest returned a null route list.");
+                var routeCount = manifestRoutes.Count;
+                for (var routeIndex = 0; routeIndex < routeCount; routeIndex++)
+                {
+                    var route = manifestRoutes[routeIndex] ?? throw new InvalidOperationException(
+                        "A generated cluster route manifest returned a null route.");
+                    if (!SharpLinkClusterKey.IsValid(route.Cluster.Value))
+                        throw new InvalidOperationException("A generated cluster route contains an invalid cluster key.");
+                    ArgumentNullException.ThrowIfNull(route.ContractAssembly);
+                    ArgumentException.ThrowIfNullOrWhiteSpace(route.ContractAssemblyIdentity);
+                    var capacity = checked(routes.Count + 1);
+                    workingCharge.GrowTo(capacity);
+                    routes.Capacity = capacity;
+                    routes.Add(route);
+                }
+            }
+        }
+        preparation.ReserveCollection(routes.Count);
+        return new GeneratedClusterRouteSnapshot(Array.AsReadOnly(routes.ToArray()));
     }
-
-
 }

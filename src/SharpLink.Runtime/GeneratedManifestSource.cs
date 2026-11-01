@@ -35,14 +35,7 @@ internal sealed class FixedGeneratedManifestSource : IGeneratedManifestSource
     internal FixedGeneratedManifestSource(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
     {
         ArgumentNullException.ThrowIfNull(manifests);
-        var snapshot = new ISharpLinkGeneratedAssemblyManifest[manifests.Count];
-        for (var index = 0; index < snapshot.Length; index++)
-        {
-            snapshot[index] = manifests[index] ?? throw new ArgumentException(
-                "Generated manifest snapshots cannot contain null.",
-                nameof(manifests));
-        }
-        _manifests = Array.AsReadOnly(snapshot);
+        _manifests = manifests; // External input until one bounded Capture; no eager framework copy.
     }
 
     internal static FixedGeneratedManifestSource Empty { get; } = new([]);
@@ -57,41 +50,28 @@ internal sealed class FixedGeneratedManifestSource : IGeneratedManifestSource
 internal sealed class GeneratedManifestSnapshot
 {
     private readonly IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _manifests;
-
     private GeneratedManifestSnapshot(IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests)
-    {
-        var snapshot = new ISharpLinkGeneratedAssemblyManifest[manifests.Count];
-        for (var index = 0; index < snapshot.Length; index++)
-        {
-            snapshot[index] = manifests[index] ?? throw new ArgumentException(
-                "Generated manifest snapshots cannot contain null.",
-                nameof(manifests));
-        }
-        _manifests = Array.AsReadOnly(snapshot);
-    }
-
+        => _manifests = manifests;
     internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> Manifests => _manifests;
 
-    internal static GeneratedManifestSnapshot Empty { get; } = new([]);
-
-    /// <summary>Calls the source exactly once, then immediately severs the plan from it.</summary>
-    internal static GeneratedManifestSnapshot Capture(IGeneratedManifestSource source)
+    internal static GeneratedManifestSnapshot Capture(IGeneratedManifestSource source, ColdMetadataPreparation preparation)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var manifests = source.CreateSnapshot() ?? throw new InvalidOperationException(
-            "A generated ManifestSource returned a null snapshot.");
-        return new GeneratedManifestSnapshot(manifests);
+        ArgumentNullException.ThrowIfNull(preparation);
+        using var callback = preparation.EnterCallback();
+        var manifests = ReferenceEquals(source, GlobalCatalogManifestSource.Instance)
+            ? ColdMetadataCatalog.CaptureManifests(preparation)
+            : source.CreateSnapshot() ?? throw ColdMetadataException.Invalid("Manifest source returned a null snapshot.");
+        var captured = ColdMetadataCollections.Copy(manifests, preparation, transform:
+            manifest => PreparedGeneratedManifest.Capture(manifest, preparation));
+        return new GeneratedManifestSnapshot(captured);
     }
 
-
-
-    /// <summary>
-    /// Performs pure API/Protocol, descriptor-shape, and ownership validation without creating
-    /// Codec or adapter resources.
-    /// </summary>
     internal void ValidateForPlanCompilation()
     {
-        for (var index = 0; index < _manifests.Count; index++)
-            SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(_manifests[index]);
+        // Capture returns only fully validated immutable manifests; there is no raw-list path.
+        foreach (var manifest in _manifests)
+            if (manifest is not PreparedGeneratedManifest)
+                throw new InvalidOperationException("A Runtime plan requires prepared metadata.");
     }
 }

@@ -12,14 +12,17 @@ internal interface IRequestEmissionFailureObserver
 /// </summary>
 internal readonly struct OwnedFrame
 {
-    private readonly object? _completionState;
+    private readonly TaskCompletionSource<bool>? _flushCompletion;
+    private readonly IRequestEmissionFailureObserver? _failureObserver;
 
     internal OwnedFrame(
         IRpcByteBufferWriter owner,
         bool forceFlush,
         TaskCompletionSource<bool>? flushCompletion,
         bool isProtocolProgress,
-        IRequestEmissionFailureObserver? failureObserver = null)
+        IRequestEmissionFailureObserver? failureObserver = null,
+        RpcFramePublication? publication = null,
+        RpcFramePublicationRole publicationRole = RpcFramePublicationRole.None)
     {
         Owner = owner;
         Memory = owner.WrittenMemory;
@@ -27,7 +30,15 @@ internal readonly struct OwnedFrame
         ForceFlush = forceFlush;
         IsProtocolProgress = isProtocolProgress;
 
-        _completionState = (object?)flushCompletion ?? failureObserver;
+        _flushCompletion = flushCompletion;
+        _failureObserver = failureObserver;
+        Publication = publication;
+        PublicationRole = publicationRole;
+        // Captured before the pump can return the writer; never parse a released buffer
+        // from producer-side post-transfer notification.
+        StreamId = publicationRole is RpcFramePublicationRole.StreamData or RpcFramePublicationRole.StreamTerminal
+            ? BinaryPrimitives.ReadUInt16LittleEndian(Memory.Span.Slice(ProtocolV2Constants.HeaderBytes, sizeof(ushort)))
+            : (ushort)0;
     }
 
     public IRpcByteBufferWriter Owner { get; }
@@ -47,8 +58,12 @@ internal readonly struct OwnedFrame
     public bool IsProtocolProgress { get; }
 
     public TaskCompletionSource<bool>? FlushCompletion
-        => _completionState as TaskCompletionSource<bool>;
+        => _flushCompletion;
 
     public IRequestEmissionFailureObserver? FailureObserver
-        => _completionState as IRequestEmissionFailureObserver;
+        => _failureObserver;
+
+    internal RpcFramePublication? Publication { get; }
+    internal RpcFramePublicationRole PublicationRole { get; }
+    internal ushort StreamId { get; }
 }

@@ -71,6 +71,23 @@ internal sealed class ManualTimeProvider : TimeProvider
         }
     }
 
+    // Read-only failure diagnostics: capture count and owner labels under the same clock gate.
+    // Infinite/disarmed timers remain owned until Dispose and are deliberately included.
+    internal (int Count, string Owners) CaptureActiveTimerDiagnostics()
+    {
+        lock (_gate)
+        {
+            var owners = new List<string>(_timers.Count);
+            foreach (var timer in _timers)
+            {
+                owners.Add($"StateType={timer.State?.GetType().FullName ?? "<null>"}, " +
+                    $"CallbackType={timer.Callback.Method.DeclaringType?.FullName ?? "<null>"}, " +
+                    $"NextTimestamp={timer.NextTimestamp}, Disposed={timer.IsDisposed}");
+            }
+            return (_timers.Count, string.Join("; ", owners));
+        }
+    }
+
     internal long EarliestTimerTimestamp
     {
         get

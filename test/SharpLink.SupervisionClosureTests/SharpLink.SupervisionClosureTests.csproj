@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <RootNamespace>SharpLink.UnitTests</RootNamespace>
+    <AssemblyTitle>SharpLink.SupervisionClosureTests v4 original-Duplex-pin ownership compiler subset</AssemblyTitle>
+    <Description>Finite reviewed original Duplex pin ownership candidate plus retained-route TCP fixture; no runtime selection or prior-result transfer.</Description>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/obj/$(Configuration)/$(TargetFramework)/supervision-closure-v4-generated</CompilerGeneratedFilesOutputPath>
+    <UseTestingPlatformProtocol>false</UseTestingPlatformProtocol>
+    <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="SharpLink.TestSubset" Value="SupervisionClosure-v4" />
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../SharpLink.DynamicServices/SharpLink.DynamicServices.csproj" ReferenceOutputAssembly="false" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="SharpPack" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+  <ItemGroup>
+    <TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" />
+    <TestingPlatformBuilderHook Remove="83B7B6C3-DC9C-4F30-8323-A3E1EBA7F65B" />
+    <TestingPlatformBuilderHook Remove="2006B3F7-93D2-4D9C-9C69-F41A1F21C9C7" />
+  </ItemGroup>
+  <Target Name="CopySupervisionClosureGeneratedPayloads" AfterTargets="Build">
+    <Copy SourceFiles="../SharpLink.DynamicServices/bin/$(Configuration)/$(TargetFramework)/SharpLink.DynamicPlugin.Contracts.dll;../SharpLink.DynamicServices/bin/$(Configuration)/$(TargetFramework)/SharpLink.DynamicPlugin.Services.dll" DestinationFolder="$(OutDir)type22-type23-payloads" />
+  </Target>
+  <ItemGroup>
+    <Compile Include="../SharpLink.IntegrationTests/GlobalUsings.cs" Link="Shared/GlobalUsings.cs" />
+    <Compile Include="../SharpLink.IntegrationTests/ServerLifecycleTestExtensions.cs" Link="Shared/ServerLifecycleTestExtensions.cs" />
+    <Compile Include="../SharpLink.UnitTests/TestGeneratedIdentity.cs" Link="Shared/TestGeneratedIdentity.cs" />
+    <Compile Include="../SharpLink.UnitTests/RpcSessionTestFixture.cs" Link="Shared/RpcSessionTestFixture.cs" />
+    <Compile Include="../SharpLink.UnitTests/TestClientTransportFactory.cs" Link="Shared/TestClientTransportFactory.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientBuilderTestHelper.cs" Link="Shared/ClientBuilderTestHelper.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="Shared/ManualTimeProvider.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/TestRpcPublications.cs" Link="Shared/TestRpcPublications.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/PendingRequestTableTestFixture.cs" Link="Shared/PendingRequestTableTestFixture.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/PreparedFrameEnqueueTests.cs" Link="Runtime/PreparedFrameEnqueueTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/StreamTerminalPublicationTests.cs" Link="Runtime/StreamTerminalPublicationTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/DeclaredStreamReservationTests.cs" Link="Runtime/DeclaredStreamReservationTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/SharpLinkTimerCleanupOwnershipTests.cs" Link="Runtime/SharpLinkTimerCleanupOwnershipTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/InboundChildPhysicalCleanupTests.cs" Link="Runtime/InboundChildPhysicalCleanupTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/PeerTerminalCleanupFailureTests.cs" Link="Runtime/PeerTerminalCleanupFailureTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/MailboxBufferedCleanupOwnershipTests.cs" Link="Runtime/MailboxBufferedCleanupOwnershipTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientType22AcceptanceTests.cs" Link="Client/ClientType22AcceptanceTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientType22ClockReentryTests.cs" Link="Client/ClientType22ClockReentryTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientStreamPublicationGroupTests.cs" Link="Client/ClientStreamPublicationGroupTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientStreamLocalReceiveFailureTests.cs" Link="Client/ClientStreamLocalReceiveFailureTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Server/ServerRequestAcceptanceTests.cs" Link="Server/ServerRequestAcceptanceTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Server/ServerInboundPhysicalCleanupTests.cs" Link="Server/ServerInboundPhysicalCleanupTests.cs" />
+    <Compile Include="../SharpLink.Type22Type23TcpTests/TcpAcceptanceContract.cs" Link="Tcp/TcpAcceptanceContract.cs" />
+    <Compile Include="../SharpLink.Type22Type23TcpTests/TcpAcceptanceTests.cs" Link="Tcp/TcpAcceptanceTests.cs" />
+    <Compile Include="../SharpLink.Type22Type23TcpTests/TcpAcceptanceTests.Support.cs" Link="Tcp/TcpAcceptanceTests.Support.cs" />
+    <Compile Include="../SharpLink.Type22Type23TcpTests/TcpAcceptanceTests.PersistedLoader.cs" Link="Tcp/TcpAcceptanceTests.PersistedLoader.cs" />
+    <Compile Include="../SharpLink.Type22Type23TcpTests/TcpAcceptanceTests.OmittedStreams.cs" Link="Tcp/TcpAcceptanceTests.OmittedStreams.cs" />
+    <Compile Include="../SharpLink.Type22Type23TcpTests/TcpAcceptanceTests.GeneratedDuplexPhysicalCleanup.cs" Link="Tcp/TcpAcceptanceTests.GeneratedDuplexPhysicalCleanup.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientPhysicalOutcomeReceiptTests.cs" Link="Client/ClientPhysicalOutcomeReceiptTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/GeneratedOperationOutcomeOwnershipTests.cs" Link="Runtime/GeneratedOperationOutcomeOwnershipTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/GeneratedPhysicalTailSupervisionTests.cs" Link="Runtime/GeneratedPhysicalTailSupervisionTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/PooledAsyncStreamDispatcherPublicationReceiptTests.cs" Link="Runtime/PooledAsyncStreamDispatcherPublicationReceiptTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/StrictPhysicalTaskSupervisorTests.cs" Link="Runtime/StrictPhysicalTaskSupervisorTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/GeneratedServerPhysicalTailTests.cs" Link="Runtime/GeneratedServerPhysicalTailTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Server/ServerRequestPermitTests.cs" Link="Server/ServerRequestPermitTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Server/ServerRequestPermitPhysicalFailureTests.cs" Link="Server/ServerRequestPermitPhysicalFailureTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Server/StrictPhysicalLifecycleTests.cs" Link="Server/StrictPhysicalLifecycleTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientStreamSupervisionAnchorTests.cs" Link="Client/ClientStreamSupervisionAnchorTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientDuplexSinkRetentionOwnershipTests.cs" Link="Client/ClientDuplexSinkRetentionOwnershipTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/PrecreatedPublicationAnchorTests.cs" Link="Runtime/PrecreatedPublicationAnchorTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/StreamManagerPhysicalDrainFailureTests.cs" Link="Runtime/StreamManagerPhysicalDrainFailureTests.cs" />
+  </ItemGroup>
+</Project>

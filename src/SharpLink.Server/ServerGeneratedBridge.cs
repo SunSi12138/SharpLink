@@ -91,6 +91,12 @@ internal sealed class ServerGeneratedBridge(
                 method,
                 cancellationToken).ConfigureAwait(false);
         }
+        catch (PhysicalTaskFailureException)
+        {
+            // Physical residuals are not a second business terminal, and must not be erased
+            // by a previously selected wire deadline/cancellation.
+            throw;
+        }
         catch (Exception exception) when (
             exception is not OutOfMemoryException and not StackOverflowException)
         {

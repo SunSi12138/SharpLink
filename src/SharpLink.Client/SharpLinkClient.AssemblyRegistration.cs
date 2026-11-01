@@ -2,8 +2,18 @@ using System.Reflection;
 
 namespace SharpLink.Client;
 
-internal sealed partial class SharpLinkClient
+internal sealed partial class SharpLinkClient : ISharpLinkPreparedAssemblyClient
 {
+    SharpLinkAssemblyRegistrationResult ISharpLinkPreparedAssemblyClient.RegisterPreparedAssembly(
+        PreparedGeneratedManifest manifest,
+        Func<Func<SharpLinkAssemblyRegistrationResult>, SharpLinkAssemblyRegistrationResult>? publication)
+        => _assemblyRegistry.RegisterPreparedAssembly(manifest, publication);
+
+    ValueTask<SharpLinkAssemblyReplacementResult> ISharpLinkPreparedAssemblyClient.ReplacePreparedAssemblyAsync(
+        Assembly oldAssembly, PreparedGeneratedManifest manifest, TimeSpan gracefulTimeout)
+        => _assemblyRegistry.ReplaceAssemblyAsync(oldAssembly, manifest.OwnerAssembly, gracefulTimeout,
+            preparedManifest: manifest);
+
     public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
         => _assemblyRegistry.RegisterAssembly(assembly);
 
@@ -18,7 +28,7 @@ internal sealed partial class SharpLinkClient
             gracefulTimeout,
             cancellationToken);
 
-    internal static FrozenDictionary<Type, ClientProxyRegistration> BuildStaticProxySnapshot(
+    internal static ClientProxySnapshot BuildStaticProxySnapshot(
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> manifests,
         SharpLinkRuntimeContext runtimeContext)
         => ClientAssemblyRegistry.BuildStaticProxySnapshot(manifests, runtimeContext);
@@ -54,4 +64,14 @@ internal sealed partial class SharpLinkClient
 
         internal ClientLocalContractControl LocalControl { get; set; } = null!;
     }
+}
+
+// Internal injected child implementations must participate in the same prepared transaction.
+// The public builders always materialize SharpLinkClient; this is not a public capability fallback.
+internal interface ISharpLinkPreparedAssemblyClient
+{
+    SharpLinkAssemblyRegistrationResult RegisterPreparedAssembly(PreparedGeneratedManifest manifest,
+        Func<Func<SharpLinkAssemblyRegistrationResult>, SharpLinkAssemblyRegistrationResult>? publication = null);
+    ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
+        Assembly oldAssembly, PreparedGeneratedManifest manifest, TimeSpan gracefulTimeout);
 }

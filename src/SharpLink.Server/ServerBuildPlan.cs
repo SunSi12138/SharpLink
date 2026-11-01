@@ -16,11 +16,13 @@ internal sealed class ServerRuntimeResources
 {
     private int _state;
     private readonly ServerStaticFactsPreparation? _factsPreparation;
+    private readonly SharpLinkRuntimeContextBuildPlan? _runtimePlan;
 
-    internal ServerRuntimeResources(IServerTransportListener transport, ServerStaticFactsPreparation? factsPreparation = null)
+    internal ServerRuntimeResources(IServerTransportListener transport, ServerStaticFactsPreparation? factsPreparation = null, SharpLinkRuntimeContextBuildPlan? runtimePlan = null)
     {
         Transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _factsPreparation = factsPreparation;
+        _runtimePlan = runtimePlan;
     }
 
     /// <summary>Framework-owned by the completed Server; rollback disposes this listener.</summary>
@@ -30,6 +32,9 @@ internal sealed class ServerRuntimeResources
     {
         ArgumentNullException.ThrowIfNull(transaction);
         EnsurePending();
+        if (_runtimePlan is not null)
+            transaction.Own(_runtimePlan, static plan => plan.Dispose(),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Server pending Runtime metadata plan"));
         if (_factsPreparation is not null)
             transaction.Own(_factsPreparation, static owner => owner.Dispose(),
                 SynchronousBuildResourceMetadata.FrameworkOwned("Server static facts preparation"));
@@ -57,6 +62,9 @@ internal sealed class ServerRuntimeResources
             return;
 
         using var transaction = new SynchronousBuildTransaction();
+        if (_runtimePlan is not null)
+            transaction.Own(_runtimePlan, static plan => plan.Dispose(),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Server pending Runtime metadata plan"));
         if (_factsPreparation is not null)
             transaction.Own(_factsPreparation, static owner => owner.Dispose(),
                 SynchronousBuildResourceMetadata.FrameworkOwned("Unmaterialized Server static facts preparation"));
@@ -77,7 +85,8 @@ internal sealed class ServerRuntimeResources
 /// <summary>Immutable description of one generated Server registration before runtime codecs materialize.</summary>
 internal sealed class ServerServiceRegistrationPlan
 {
-    private readonly Type[] _dependencies;
+    private Type[] _dependencies;
+    private readonly ColdMetadataReservation _dependenciesCharge;
 
     internal ServerServiceRegistrationPlan(
         Type contractType,
@@ -87,7 +96,9 @@ internal sealed class ServerServiceRegistrationPlan
         Func<IServiceProvider, object>? factory,
         object? instance,
         bool callerOwned,
-        IReadOnlyList<Type> dependencies)
+        IReadOnlyList<Type> dependencies,
+        ColdMetadataPreparation preparation,
+        ColdMetadataScope scope)
     {
         ContractType = contractType ?? throw new ArgumentNullException(nameof(contractType));
         ImplementationName = implementationName ?? throw new ArgumentNullException(nameof(implementationName));
@@ -97,9 +108,17 @@ internal sealed class ServerServiceRegistrationPlan
         Instance = instance;
         CallerOwned = callerOwned;
         ArgumentNullException.ThrowIfNull(dependencies);
-        _dependencies = new Type[dependencies.Count];
+        var count = dependencies.Count;
+        _dependenciesCharge = preparation.ReserveCollection(count, scope);
+        _dependencies = new Type[count];
         for (var index = 0; index < _dependencies.Length; index++)
             _dependencies[index] = dependencies[index] ?? throw new ArgumentException("Service dependencies cannot contain null.", nameof(dependencies));
+    }
+
+    internal void ClearPlanningRoots()
+    {
+        _dependencies = [];
+        _dependenciesCharge.Dispose();
     }
 
     internal Type ContractType { get; }
@@ -143,11 +162,12 @@ internal readonly record struct ServerServiceRegistrationPlanEntry(
     long ContractId,
     ServerServiceRegistrationPlan Registration);
 
-/// <summary>Immutable Server build input. It has no disposal behavior and is materialized once.</summary>
+/// <summary>One-shot Server build owner. Pending disposal abandons Runtime metadata and transport.</summary>
 internal sealed class ServerBuildPlan : IDisposable
 {
     private readonly ISharpLinkServerInterceptor[] _interceptors;
-    private readonly ServerServiceRegistrationPlanEntry[] _services;
+    private ServerServiceRegistrationPlanEntry[] _services;
+    private readonly ColdMetadataReservation _servicesCharge;
     private int _materializationState;
 
     internal ServerBuildPlan(
@@ -172,7 +192,8 @@ internal sealed class ServerBuildPlan : IDisposable
         RuntimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
         FactsPreparation = factsPreparation ?? throw new ArgumentNullException(nameof(factsPreparation));
         ArgumentNullException.ThrowIfNull(services);
-        _services = [.. services];
+        _servicesCharge = factsPreparation.TakeServicePlansCharge();
+        _services = services; // Exact private array ownership transfers; no hidden duplicate.
         ResponseCompressionPolicy = responseCompressionPolicy ?? throw new ArgumentNullException(nameof(responseCompressionPolicy));
         _ = CompressionSendPolicySnapshot.CreateValidated(ResponseCompressionPolicy);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(heartbeatCheckInterval, TimeSpan.Zero);
@@ -215,8 +236,12 @@ internal sealed class ServerBuildPlan : IDisposable
     internal ISharpLinkServerInterceptor[] CreateInterceptorSnapshot()
         => _interceptors.Length == 0 ? [] : [.. _interceptors];
 
-    internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> CreateStaticManifestSnapshot()
-        => RuntimeContext.GeneratedManifests;
+    internal void ClearPlanningRoots()
+    {
+        foreach (var entry in _services) entry.Registration.ClearPlanningRoots();
+        _services = [];
+        _servicesCharge.Dispose();
+    }
 
     internal void BeginMaterialization()
     {
@@ -229,6 +254,9 @@ internal sealed class ServerBuildPlan : IDisposable
         // An unpublished abandoned plan has no service callbacks in flight. Materialization
         // owns its separate transaction and must never be torn down by a concurrent Dispose.
         if (Interlocked.CompareExchange(ref _materializationState, 2, 0) == 0)
+        {
+            ClearPlanningRoots();
             Resources.DisposeUnmaterialized();
+        }
     }
 }

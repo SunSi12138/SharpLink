@@ -47,8 +47,8 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
 
     // Keep the established partial-file transaction shape while the mutable registry state itself
     // is owned by the focused collaborator. These are non-owning aliases, not Server fields.
-    private ref FrozenDictionary<long, ServiceRegistration> _services
-        => ref _serviceModuleRegistry.ServicesStorage;
+    private FrozenDictionary<long, ServiceRegistration> _services
+        => _serviceModuleRegistry.ServicesStorage;
     private Lock _registryGate => _serviceModuleRegistry.Gate;
     private ServerServiceModuleRegistry.DynamicModuleTable _dynamicModules
         => _serviceModuleRegistry.DynamicModules;
@@ -70,7 +70,7 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
     {
         ArgumentNullException.ThrowIfNull(composition);
         _transportListener = composition.TransportListener;
-        _serviceModuleRegistry = new ServerServiceModuleRegistry(composition.Services);
+        _serviceModuleRegistry = new ServerServiceModuleRegistry(composition.ServiceSnapshot);
         _declaredFactsQuota = composition.DeclaredFactsQuota;
         _heartbeatCheckInterval = composition.HeartbeatCheckInterval;
         _heartbeatTimeout = composition.HeartbeatTimeout;
@@ -188,15 +188,6 @@ internal sealed partial class SharpLinkServer : ISharpLinkServer
             return connection.GetCallContextSnapshot(deadline, metadata);
 
         var method = resolved.Method;
-        if (method.Kind != RpcMethodKind.OneWay)
-        {
-            ReservePreInvocationRequestStreams(
-                session,
-                method.ClientStreamCount,
-                requestId,
-                cancellationToken);
-        }
-
         return CreateServerInvocationContext(
             session,
             method,

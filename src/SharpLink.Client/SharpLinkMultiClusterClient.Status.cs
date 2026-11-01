@@ -13,7 +13,7 @@ internal sealed partial class SharpLinkMultiClusterClient
                 nameof(cluster));
         }
 
-        var snapshot = Volatile.Read(ref _snapshot);
+        using var snapshot = AcquireSnapshot();
         if (!snapshot.Clusters.TryGetValue(cluster, out var slot))
         {
             status = default;

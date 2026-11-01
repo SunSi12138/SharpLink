@@ -7,7 +7,13 @@ internal static class SharpLinkGeneratedManifestStructureValidator
     internal static void Validate(ISharpLinkGeneratedAssemblyManifest manifest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
+        if (manifest is PreparedGeneratedManifest prepared) { ValidatePrepared(prepared); return; }
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        ValidatePrepared(PreparedGeneratedManifest.Capture(manifest, preparation));
+    }
 
+    internal static void ValidatePrepared(PreparedGeneratedManifest manifest)
+    {
         var ownerAssembly = manifest.OwnerAssembly ??
             throw new InvalidOperationException("Generated manifest has no owner assembly.");
         if (manifest.RpcAssemblyHash.IsEmpty)
@@ -26,7 +32,7 @@ internal static class SharpLinkGeneratedManifestStructureValidator
         var contractDependencies = manifest.ContractDependencies ??
             throw new InvalidOperationException($"Generated manifest '{ownerAssembly.FullName}' has a null Contract dependency table.");
 
-        var ownedContracts = new HashSet<Type>();
+        using var ownedContracts = new ColdMetadataSet<Type>(contracts.Count, manifest.Preparation, manifest.RegistrationScope);
         for (var index = 0; index < contracts.Count; index++)
         {
             var contract = contracts[index] ??
@@ -45,18 +51,19 @@ internal static class SharpLinkGeneratedManifestStructureValidator
             }
         }
 
-        ValidateFactories(ownerAssembly, "global", codecs);
-        ValidateFactories(ownerAssembly, "Contract assembly", contractCodecs);
-        ValidateDependencies(ownerAssembly, "global", dependencies);
-        ValidateDependencies(ownerAssembly, "Contract assembly", contractDependencies);
+        ValidateFactories(manifest, ownerAssembly, "global", codecs);
+        ValidateFactories(manifest, ownerAssembly, "Contract assembly", contractCodecs);
+        ValidateDependencies(manifest, ownerAssembly, "global", dependencies);
+        ValidateDependencies(manifest, ownerAssembly, "Contract assembly", contractDependencies);
     }
 
     private static void ValidateFactories(
+        PreparedGeneratedManifest manifest,
         Assembly ownerAssembly,
         string scope,
         IReadOnlyList<IRpcGeneratedCodecFactory> factories)
     {
-        var targets = new HashSet<Type>();
+        using var targets = new ColdMetadataSet<Type>(factories.Count, manifest.Preparation, manifest.RegistrationScope);
         for (var index = 0; index < factories.Count; index++)
         {
             var factory = factories[index] ??
@@ -88,11 +95,12 @@ internal static class SharpLinkGeneratedManifestStructureValidator
     }
 
     private static void ValidateDependencies(
+        PreparedGeneratedManifest manifest,
         Assembly ownerAssembly,
         string scope,
         IReadOnlyList<string> dependencies)
     {
-        var identities = new HashSet<string>(StringComparer.Ordinal);
+        using var identities = new ColdMetadataSet<string>(dependencies.Count, manifest.Preparation, manifest.RegistrationScope, StringComparer.Ordinal);
         for (var index = 0; index < dependencies.Count; index++)
         {
             var dependency = dependencies[index];

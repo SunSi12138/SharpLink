@@ -3,8 +3,10 @@ namespace SharpLink.Server;
 /// <summary>Exact declared scalar facts, prepared once outside publication locks.</summary>
 internal sealed class ServerDeclaredMethodFacts : IDisposable
 {
-    private readonly Entry[] _entries;
+    private Entry[] _entries;
     private readonly ServerDeclaredMethodFactsReservation _reservation;
+    private int _owners = 1; // Service owner plus cold bound-entry owners; never per invocation.
+    private int _serviceOwnerReleased;
 
     private ServerDeclaredMethodFacts(Entry[] entries, ServerDeclaredMethodFactsReservation reservation)
     {
@@ -13,16 +15,18 @@ internal sealed class ServerDeclaredMethodFacts : IDisposable
     }
 
     internal int Count => _entries.Length;
-    internal ServerDeclaredMethodFactsGroupReservation Group => _reservation.Group;
+    internal int OwnerCountForTesting => Volatile.Read(ref _owners);
+    internal ServerDeclaredMethodFactsQuota Quota => _reservation.Quota;
 
     internal RpcMethodFacts Resolve(long methodId)
     {
+        var entries = Volatile.Read(ref _entries);
         var low = 0;
-        var high = _entries.Length - 1;
+        var high = entries.Length - 1;
         while (low <= high)
         {
             var middle = low + ((high - low) >> 1);
-            ref readonly var entry = ref _entries[middle];
+            ref readonly var entry = ref entries[middle];
             if (entry.MethodId == methodId)
                 return entry.Facts;
             if (entry.MethodId < methodId)
@@ -44,6 +48,7 @@ internal sealed class ServerDeclaredMethodFacts : IDisposable
         ArgumentNullException.ThrowIfNull(reservation);
         reservation.Group.BeginPreparation(reservation);
         long? currentMethod = null;
+        SharpLinkGeneratedMethodDescriptor[]? declared = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -53,7 +58,7 @@ internal sealed class ServerDeclaredMethodFacts : IDisposable
                 throw Invalid(contract.ContractId, null, "Declared count changed after reservation.");
 
             // All count/byte reservations are complete before either count-sized allocation.
-            var declared = new SharpLinkGeneratedMethodDescriptor[count];
+            declared = new SharpLinkGeneratedMethodDescriptor[count];
             var entries = new Entry[count];
             var index = 0;
             foreach (var method in methods)
@@ -111,6 +116,12 @@ internal sealed class ServerDeclaredMethodFacts : IDisposable
                 $"Declared facts preparation failed: {exception.GetType().Name}: {exception.Message}",
                 contract.ContractId, currentMethod, exception);
         }
+        finally
+        {
+            if (declared is not null) Array.Clear(declared);
+            reservation.SnapshotCharge?.Dispose();
+            reservation.SnapshotCharge = null;
+        }
     }
 
     private static void VerifySnapshot(IReadOnlyList<SharpLinkGeneratedMethodDescriptor> methods,
@@ -156,7 +167,39 @@ internal sealed class ServerDeclaredMethodFacts : IDisposable
 
     // Scalar lookups already in flight remain valid; disposal never mutates the immutable array.
     // Publication/retirement owners detach table roots separately before releasing their charge.
-    public void Dispose() => _reservation.Group.ReleaseTable(_reservation);
+    internal BindingOwner RetainForBinding()
+    {
+        // Called at cold Bind selection under the existing registry owner. Retirement
+        // cannot release the service owner before this ownership transfer completes.
+        var current = Volatile.Read(ref _owners);
+        while (current != 0)
+        {
+            var owner = new BindingOwner(this);
+            var observed = Interlocked.CompareExchange(ref _owners, checked(current + 1), current);
+            if (observed == current) return owner;
+            current = observed;
+        }
+        throw new ObjectDisposedException(nameof(ServerDeclaredMethodFacts));
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _serviceOwnerReleased, 1) == 0) ReleaseOwner();
+    }
+    private void ReleaseOwner()
+    {
+        if (Interlocked.Decrement(ref _owners) != 0) return;
+        Interlocked.Exchange(ref _entries, []);
+        _reservation.Release();
+    }
+
+    internal sealed class BindingOwner(ServerDeclaredMethodFacts table) : IDisposable
+    {
+        private ServerDeclaredMethodFacts? _table = table;
+        internal RpcMethodFacts Resolve(long methodId)
+            => (_table ?? throw new ObjectDisposedException(nameof(BindingOwner))).Resolve(methodId);
+        public void Dispose() => Interlocked.Exchange(ref _table, null)?.ReleaseOwner();
+    }
 
     private readonly record struct Entry(long MethodId, RpcMethodFacts Facts);
 }

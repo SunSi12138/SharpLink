@@ -31,6 +31,7 @@ internal sealed class ServerBindingTable
             Array.Fill(_incarnations, initialIncarnation);
     }
 
+    internal Action? BeforeFactsResolveForTesting { get; set; }
     internal int SlotCount => _entries.Length;
     internal bool IsClosed => Volatile.Read(ref _closed) != 0;
 
@@ -85,8 +86,19 @@ internal sealed class ServerBindingTable
             var incarnation = _incarnations[slot] + 1;
             try
             {
-                entry = new ServerBindingEntry(this, (incarnation << 16) | (uint)slot,
-                    creatorOperationId, registration);
+                var facts = registration.Facts;
+                if (facts is null)
+                {
+                    _quota.Release(1);
+                    return Protocol3BindStatus.RegistrationRetiring;
+                }
+                var factsOwner = facts.RetainForBinding();
+                try
+                {
+                    entry = new ServerBindingEntry(this, (incarnation << 16) | (uint)slot,
+                        creatorOperationId, registration, factsOwner);
+                }
+                catch { factsOwner.Dispose(); throw; }
             }
             catch
             {
@@ -123,14 +135,16 @@ internal sealed class ServerBindingTable
     {
         if (!Protocol3BindingToken.IsValid(token, (uint)_entries.Length))
             throw Protocol3BindingValidation.Malformed("Release token is outside the Session slot domain.");
+        ServerBindingEntry entry;
         lock (_gate)
         {
             var slot = Protocol3BindingToken.Slot(token);
-            var entry = _entries[slot];
+            entry = _entries[slot]!;
             if (entry is null || entry.Token != token)
                 return false;
             Volatile.Write(ref _entries[slot], null);
         }
+        entry.ReleaseFacts();
         _quota.Release(1);
         return true;
     }
@@ -148,27 +162,31 @@ internal sealed class ServerBindingTable
         }
     }
 
-    // Bounded maintenance scan; only scalar full tokens escape the table. Retirement is
-    // authoritative even if every best-effort notification is dropped by the caller.
-    internal int TakeRetiredTokens(Span<ulong> tokens, ref int cursor, int scanLimit = 256)
+    // Sole intake consumer only, after its synchronous facts lookup has returned.
+    // External retirement workers request this safe point; they never detach entries.
+    internal int DetachRetiredAtIntakeSafePoint(Span<ulong> tokens, ref int cursor, int scanLimit = 256)
     {
         if (cursor < 0 || cursor > _entries.Length || scanLimit <= 0 || tokens.IsEmpty)
             throw new ArgumentOutOfRangeException(nameof(cursor));
         var count = 0;
-        lock (_gate)
+        var end = (int)Math.Min(_entries.Length, (long)cursor + scanLimit);
+        while (cursor < end && count < tokens.Length)
         {
-            var end = (int)Math.Min(_entries.Length, (long)cursor + scanLimit);
-            while (cursor < end && count < tokens.Length)
+            ServerBindingEntry? retired = null;
+            lock (_gate)
             {
                 var slot = cursor++;
-                if (_entries[slot] is not { } entry || !entry.Registration.IsRetired)
-                    continue;
-                tokens[count++] = entry.Token;
-                Volatile.Write(ref _entries[slot], null);
+                if (_entries[slot] is { } entry && entry.Registration.IsRetired)
+                {
+                    retired = entry;
+                    Volatile.Write(ref _entries[slot], null);
+                }
             }
+            if (retired is null) continue;
+            tokens[count++] = retired.Token;
+            retired.ReleaseFacts();
+            _quota.Release(1);
         }
-        if (count != 0)
-            _quota.Release(count);
         return count;
     }
 
@@ -177,7 +195,7 @@ internal sealed class ServerBindingTable
     internal bool Cancel(ulong creatorOperationId)
     {
         Protocol3BindingValidation.ValidateOperationId(creatorOperationId);
-        var removed = false;
+        ServerBindingEntry? removed = null;
         lock (_gate)
         {
             if (creatorOperationId > _highestBindId)
@@ -190,33 +208,37 @@ internal sealed class ServerBindingTable
                 if (_entries[slot] is not { } entry || entry.CreatorOperationId != creatorOperationId)
                     continue;
                 Volatile.Write(ref _entries[slot], null);
-                removed = true;
+                removed = entry;
                 break;
             }
         }
-        if (removed)
+        if (removed is not null)
+        {
+            removed.ReleaseFacts();
             _quota.Release(1);
-        return removed;
+        }
+        return removed is not null;
     }
 
-    internal void Close()
+    // Logical terminal cut only. The physical intake owner acknowledges at its finally,
+    // or the connection's atomic no-loop path transfers that responsibility explicitly.
+    internal void Close() => Interlocked.Exchange(ref _closed, 1);
+
+    internal void AcknowledgeClosedIntake()
     {
-        var removed = 0;
-        lock (_gate)
+        if (!IsClosed) throw new InvalidOperationException("Intake can detach a terminal table only after Close.");
+        for (var slot = 0; slot < _entries.Length; slot++)
         {
-            // Mark terminal before detaching slots; captured entries see this same cut.
-            if (Interlocked.Exchange(ref _closed, 1) != 0)
-                return;
-            for (var slot = 0; slot < _entries.Length; slot++)
+            ServerBindingEntry? entry;
+            lock (_gate)
             {
-                if (_entries[slot] is null)
-                    continue;
+                entry = _entries[slot];
                 Volatile.Write(ref _entries[slot], null);
-                removed++;
             }
+            if (entry is null) continue;
+            entry.ReleaseFacts();
+            _quota.Release(1);
         }
-        if (removed != 0)
-            _quota.Release(removed);
     }
 
     private int FindEmptySlot()
@@ -234,13 +256,23 @@ internal sealed class ServerBindingTable
 internal sealed class ServerBindingEntry
 {
     internal ServerBindingEntry(ServerBindingTable owner, ulong token, ulong creatorOperationId,
-        ServerBindingRegistration registration)
+        ServerBindingRegistration registration, ServerDeclaredMethodFacts.BindingOwner factsOwner)
     {
+        _factsOwner = factsOwner;
         Owner = owner;
         Token = token;
         CreatorOperationId = creatorOperationId;
         Registration = registration;
     }
+
+    private ServerDeclaredMethodFacts.BindingOwner? _factsOwner;
+    internal RpcMethodFacts ResolveMethod(long methodId)
+    {
+        var facts = _factsOwner ?? throw new ObjectDisposedException(nameof(ServerBindingEntry));
+        Owner.BeforeFactsResolveForTesting?.Invoke();
+        return facts.Resolve(methodId);
+    }
+    internal void ReleaseFacts() => Interlocked.Exchange(ref _factsOwner, null)?.Dispose();
 
     internal ServerBindingTable Owner { get; }
     internal ulong Token { get; }

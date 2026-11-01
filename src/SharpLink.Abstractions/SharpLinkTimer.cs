@@ -98,6 +98,7 @@ internal static class SharpLinkTimer
         // the timer disarmed first prevents that arm latency from being added to a stale remaining
         // duration. AbsoluteDeadlineSignal then re-samples the deadline and programs the owned timer.
         using var deadlineSignal = new AbsoluteDeadlineSignal(deadline, timeProvider);
+        deadlineSignal.ArmFromAbsoluteDeadline();
         if (deadlineSignal.IsCompleted)
             return false;
 
@@ -143,18 +144,173 @@ internal static class SharpLinkTimer
         }
     }
 
-    private sealed class AbsoluteDeadlineSignal : IDisposable
+    // Source-result ownership is deliberately separate from wait arbitration. A successful
+    // return means only that the source is terminal and every owned wait cleanup has finished;
+    // the caller must then claim and await the ORIGINAL source exactly once for its outcome.
+    // Legacy WaitAsync above continues to consume/forward the source outcome unchanged.
+    internal static async ValueTask<bool> WaitForCompletionAsync(
+        Task task, RpcDeadline deadline, TimeProvider timeProvider,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        // Preserve the absolute deadline's priority, even over an already-faulted source.
+        if (deadline.IsExpired(timeProvider)) return false;
+        if (task.IsCompleted) return true;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        AbsoluteDeadlineSignal? signal = null;
+        CancellationTokenSource? waiterCancellation = null;
+        Exception? failure = null;
+        var sourceReady = false;
+        try
+        {
+            signal = new AbsoluteDeadlineSignal(deadline, timeProvider, captureCallbackFailures: true);
+            signal.ArmFromAbsoluteDeadline();
+            if (!signal.IsCompleted)
+            {
+                waiterCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var waiter = task.WaitAsync(waiterCancellation.Token);
+                var completed = await Task.WhenAny(waiter, signal.Completion).ConfigureAwait(false);
+                if (ReferenceEquals(completed, signal.Completion) && !task.IsCompleted)
+                    waiterCancellation.Cancel();
+                // Observe the waiter's forwarding container, never consume the source outcome.
+                await waiter.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                if (signal.CallbackFailure is null)
+                {
+                    if (task.IsCompleted)
+                        sourceReady = !deadline.IsExpired(timeProvider);
+                    else if (!deadline.IsExpired(timeProvider))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        throw new InvalidOperationException("A completion waiter ended without source completion, deadline or caller cancellation.");
+                    }
+                }
+            }
+        }
+        catch (Exception error) { failure = error; }
+        finally
+        {
+            try { waiterCancellation?.Dispose(); }
+            catch (Exception cleanup) { failure = CombineFailures(failure, cleanup); }
+            if (signal is not null)
+            {
+                try { await signal.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception cleanup) { failure = CombineFailures(failure, cleanup); }
+                if (signal.CallbackFailure is { } callbackFailure)
+                    failure = CombineFailures(failure, callbackFailure);
+            }
+        }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        // Physical timer teardown can itself outlive the original deadline. Ownership has
+        // not transferred yet: revalidate that SAME deadline only after all cleanup finished.
+        // A provider failure here also leaves the source with the caller's physical owner.
+        return sourceReady && !deadline.IsExpired(timeProvider);
+    }
+
+    // This watchdog owns only the deadline signal, never the source operation. The caller must
+    // retain and independently join that operation after initiating exact-Session close on failure.
+    // Call outside call/group gates: providers, onUnsuccessful and asynchronous disposal can run code.
+    internal static async ValueTask<bool> WaitForCleanupAsync(
+        Task task,
+        RpcDeadline deadline,
+        TimeProvider timeProvider,
+        Action onUnsuccessful)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentNullException.ThrowIfNull(onUnsuccessful);
+
+        AbsoluteDeadlineSignal? signal = null;
+        Exception? failure = null;
+        var succeeded = false;
+        Exception? observedCallbackFailure = null;
+        try
+        {
+            if (!deadline.HasValue)
+                throw new ArgumentException("Cleanup requires a finite deadline.", nameof(deadline));
+
+            if (!deadline.IsExpired(timeProvider))
+            {
+                if (!task.IsCompleted)
+                {
+                    // Publish ownership before Change: a provider may throw while arming an
+                    // already-created timer. That failure must still pass through DisposeAsync.
+                    signal = new AbsoluteDeadlineSignal(deadline, timeProvider, captureCallbackFailures: true);
+                    signal.ArmFromAbsoluteDeadline();
+                    if (!signal.IsCompleted)
+                        await Task.WhenAny(task, signal.Completion).ConfigureAwait(false);
+                    if (signal.CallbackFailure is { } callbackFailure)
+                    {
+                        observedCallbackFailure = callbackFailure;
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(callbackFailure);
+                    }
+                }
+
+                if (task.IsCompleted)
+                    succeeded = await ClaimTaskCompletionAsync(task, deadline, timeProvider).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+
+        // Close promptly before joining a callback that may still be in flight. This notification
+        // runs on the coordinator, NOT inside the timer callback. It must start, not await, drain.
+        if (!succeeded)
+        {
+            try { onUnsuccessful(); }
+            catch (Exception exception) { failure = CombineFailures(failure, exception); }
+        }
+
+        if (signal is not null)
+        {
+            try { await signal.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception exception)
+            {
+                failure = CombineFailures(failure, exception);
+            }
+
+            // A different callback can signal expiry before an overlapping callback faults.
+            // The wake-up task cannot represent both outcomes. Its independent first-failure
+            // slot remains authoritative after DisposeAsync joins every in-flight callback.
+            if (signal.CallbackFailure is { } callbackFailure &&
+                !ReferenceEquals(observedCallbackFailure, callbackFailure))
+                failure = CombineFailures(failure, callbackFailure);
+        }
+
+        if (succeeded && failure is not null)
+        {
+            try { onUnsuccessful(); }
+            catch (Exception exception) { failure = CombineFailures(failure, exception); }
+        }
+
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(failure);
+        return succeeded;
+    }
+
+    private static Exception CombineFailures(Exception? first, Exception next)
+        => first is null ? next : new AggregateException(first, next);
+
+    private sealed class AbsoluteDeadlineSignal : IDisposable, IAsyncDisposable
     {
         private readonly RpcDeadline _deadline;
         private readonly TimeProvider _timeProvider;
         private readonly TaskCompletionSource _completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly ITimer _timer;
+        private readonly bool _captureCallbackFailures;
+        private Exception? _callbackFailure;
 
-        internal AbsoluteDeadlineSignal(RpcDeadline deadline, TimeProvider timeProvider)
+        internal AbsoluteDeadlineSignal(
+            RpcDeadline deadline, TimeProvider timeProvider, bool captureCallbackFailures = false)
         {
             _deadline = deadline;
             _timeProvider = timeProvider;
+            _captureCallbackFailures = captureCallbackFailures;
 
             // Create the timer without a due time so timer ownership is established before the
             // absolute deadline is projected into a relative delay.
@@ -163,25 +319,36 @@ internal static class SharpLinkTimer
                 this,
                 Timeout.InfiniteTimeSpan,
                 Timeout.InfiniteTimeSpan);
-            ArmFromAbsoluteDeadline();
         }
 
         internal Task Completion => _completion.Task;
 
         internal bool IsCompleted => _completion.Task.IsCompleted;
 
+        internal Exception? CallbackFailure => Volatile.Read(ref _callbackFailure);
+
         private void OnTimer()
         {
-            if (_deadline.IsExpired(_timeProvider))
+            try
             {
-                _completion.TrySetResult();
-                return;
-            }
+                if (_deadline.IsExpired(_timeProvider))
+                {
+                    _completion.TrySetResult();
+                    return;
+                }
 
-            ArmFromAbsoluteDeadline();
+                ArmFromAbsoluteDeadline();
+            }
+            catch (Exception exception) when (_captureCallbackFailures)
+            {
+                // Capture independently: another callback may already have signaled expiry.
+                // Retain only the first failure; the completion source is merely a wake-up.
+                Interlocked.CompareExchange(ref _callbackFailure, exception, null);
+                _completion.TrySetResult();
+            }
         }
 
-        private void ArmFromAbsoluteDeadline()
+        internal void ArmFromAbsoluteDeadline()
         {
             var remaining = _deadline.GetRemaining(_timeProvider);
             if (remaining == TimeSpan.Zero)
@@ -201,6 +368,8 @@ internal static class SharpLinkTimer
         }
 
         public void Dispose() => _timer.Dispose();
+
+        public ValueTask DisposeAsync() => _timer.DisposeAsync();
     }
 
     private static async ValueTask<bool> ClaimTaskCompletionAsync(

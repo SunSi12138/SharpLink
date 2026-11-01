@@ -87,20 +87,27 @@ public class ServerRegistryTests
     public void ServiceModuleRegistryShouldSnapshotAndReleaseCorrelatedOwnership()
     {
         var services = FrozenDictionary<long, ServiceRegistration>.Empty;
-        var registry = new ServerServiceModuleRegistry(services);
+        using var metadata = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var snapshotCharge = metadata.ReserveCollection(0);
+        using var serviceSnapshot = new ServerServiceSnapshot(services, metadata, snapshotCharge);
+        var registry = new ServerServiceModuleRegistry(serviceSnapshot);
         using var runtime = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new EmptyManifest(typeof(ServerRegistryTests).Assembly);
-        using var codecRegistration = runtime.PrepareGeneratedManifest(manifest);
-        var module = new SharpLinkDynamicModule(manifest.OwnerAssembly, manifest, codecRegistration);
+        using var preparation = runtime.Domain.BeginPreparation();
+        var prepared = PreparedGeneratedManifest.Capture(manifest, preparation);
+        using var codecRegistration = runtime.PrepareGeneratedManifest(prepared);
+        var module = new SharpLinkDynamicModule(manifest.OwnerAssembly, prepared, codecRegistration);
         var unregisterOperation = Task.FromResult(new SharpLinkAssemblyUnregisterResult
         {
             ReferencesReleased = false
         });
 
+        var detachedCharge = metadata.ReserveCollection(0);
+        var detachedOwner = new ServerDetachedServices([], metadata, detachedCharge);
         lock (registry.Gate)
         {
             registry.DynamicModules.Add(manifest.OwnerAssembly, module);
-            registry.DetachedModuleServices.Add(module, []);
+            registry.DetachedModuleServices.Add(module, detachedOwner);
             registry.UnregisterOperations.Add(manifest.OwnerAssembly, unregisterOperation);
             registry.GenerationStorage++;
         }
@@ -123,7 +130,7 @@ public class ServerRegistryTests
 
         lock (registry.Gate)
         {
-            Ensure(registry.DetachedModuleServices.Remove(module, out var detached) && detached.Length == 0,
+            Ensure(registry.DetachedModuleServices.Remove(module, out var detached) && detached.Services.Length == 0,
                 "detached service ownership must transfer exactly once to cleanup");
             Ensure(!registry.DetachedModuleServices.Remove(module, out _),
                 "detached service cleanup must not be observable twice");
@@ -134,6 +141,7 @@ public class ServerRegistryTests
             registry.GenerationStorage++;
         }
 
+        detachedOwner.Dispose(); // Transferred cleanup ownership, never disposed under Gate.
         lock (registry.Gate)
         {
             Ensure(registry.GenerationStorage == 2 &&

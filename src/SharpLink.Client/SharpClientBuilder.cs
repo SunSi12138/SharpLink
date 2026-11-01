@@ -444,8 +444,10 @@ public sealed partial class SharpClientBuilder
 
     // Multi-cluster callers compile once, use this exact plan for budget validation, then materialize it.
     internal ClientBuildPlan CompileForMultiCluster(
-        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests)
-        => CompileForBuild(new FixedGeneratedManifestSource(staticManifests));
+        IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,
+        ColdMetadataDomain? domain = null)
+        => CompileForBuildCore(() => _runtimeContextBuilder.Compile(new FixedGeneratedManifestSource(staticManifests),
+            domain ?? new ColdMetadataAuthority().CreateDomain()));
 
     internal ISharpLinkClient MaterializeCompiledPlan(ClientBuildPlan plan)
     {
@@ -456,8 +458,18 @@ public sealed partial class SharpClientBuilder
     internal void DiscardCompiledPlan(ClientBuildPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        plan.MarkDiscarded();
-        DisposeUnbuiltResources();
+        var runtimePlan = plan.MarkDiscarded();
+        Exception? resourceFailure = null;
+        try { DisposeUnbuiltResources(); }
+        catch (Exception exception) { resourceFailure = exception; }
+        try { runtimePlan.Dispose(); }
+        catch (Exception metadataFailure)
+        {
+            if (resourceFailure is not null) throw new AggregateException(resourceFailure, metadataFailure);
+            throw;
+        }
+        if (resourceFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(resourceFailure).Throw();
     }
 
     internal void DisposeUnbuiltResources()
@@ -527,36 +539,50 @@ public sealed partial class SharpClientBuilder
         var draft = _topology ?? throw new InvalidOperationException(
             "Transport, endpoint(s), or an endpoint resolver must be set before building the client.");
         var runtimeContext = compileRuntimeContext();
-        var resources = CreateRuntimeResources(draft);
-        var topology = CompileTopology(draft, runtimeContext, out var connectionPool, out var cluster);
-        var retry = CreateRetryPlan();
-        var circuitBreaker = CreateCircuitBreakerPlan();
-        var reconnectPolicy = _reconnectPolicy ?? CreateLegacyReconnectPolicy(topology);
+        try
+        {
+            var resources = CreateRuntimeResources(draft);
+            lock (_configurationGate) _pendingResources = resources;
+            var topology = CompileTopology(draft, runtimeContext, out var connectionPool, out var cluster);
+            var retry = CreateRetryPlan();
+            var circuitBreaker = CreateCircuitBreakerPlan();
+            var reconnectPolicy = _reconnectPolicy ?? CreateLegacyReconnectPolicy(topology);
 
-        return new ClientBuildPlan(
-            topology,
-            resources,
-            runtimeContext,
-            _requestCompressionPolicy,
-            _beforeReadyPublicationTestHook,
-            _heartbeatInterval,
-            _heartbeatTimeout,
-            requestTimeoutPolicy.TimeoutOrNull,
-            requestTimeoutPolicy.Source,
-            _rpcSessionFlushOptions,
-            connectionPool,
-            cluster,
-            _loadBalancingStrategy,
-            _endpointSelector,
-            retry,
-            _retryPolicy,
-            circuitBreaker,
-            _endpointAdmissionPolicy,
-            _authenticator,
-            _loggerFactory ?? NullLoggerFactory.Instance,
-            [.. _interceptors],
-            reconnectPolicy,
-            _reconnectJitter);
+            return new ClientBuildPlan(
+                topology,
+                resources,
+                runtimeContext,
+                _requestCompressionPolicy,
+                _beforeReadyPublicationTestHook,
+                _heartbeatInterval,
+                _heartbeatTimeout,
+                requestTimeoutPolicy.TimeoutOrNull,
+                requestTimeoutPolicy.Source,
+                _rpcSessionFlushOptions,
+                connectionPool,
+                cluster,
+                _loadBalancingStrategy,
+                _endpointSelector,
+                retry,
+                _retryPolicy,
+                circuitBreaker,
+                _endpointAdmissionPolicy,
+                _authenticator,
+                _loggerFactory ?? NullLoggerFactory.Instance,
+                [.. _interceptors],
+                reconnectPolicy,
+                _reconnectJitter);
+        }
+        catch (Exception compilationFailure)
+        {
+            Exception failure = compilationFailure;
+            try { DisposeUnbuiltResources(); }
+            catch (Exception cleanupFailure) { failure = new AggregateException(failure, cleanupFailure); }
+            try { runtimeContext.Dispose(); }
+            catch (Exception metadataFailure) { failure = new AggregateException(failure, metadataFailure); }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            throw new UnreachableException();
+        }
     }
 
     private static SharpLinkReconnectPolicy CreateLegacyReconnectPolicy(ClientTopologyPlan topology)

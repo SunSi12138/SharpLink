@@ -16,11 +16,12 @@ internal sealed partial class SharpLinkMultiClusterClient
     public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
     {
         options?.Validate();
+        using var snapshot = AcquireSnapshot();
         SharpLinkClusterRouteRegistration route;
         lock (_gate)
         {
             ValidateContractFactoryStateLocked();
-            if (!_snapshot.Routes.TryGetValue(typeof(TContract), out route!))
+            if (!snapshot.Routes.TryGetValue(typeof(TContract), out route!))
                 throw ClientLocalContractControl.Unavailable();
         }
         var frozenOptions = CaptureContractOptions(route.Slot.Key, options);
@@ -34,7 +35,8 @@ internal sealed partial class SharpLinkMultiClusterClient
         ArgumentNullException.ThrowIfNull(registeredAssembly);
         if (contractId == 0)
             throw new ArgumentOutOfRangeException(nameof(contractId));
-        var slot = CaptureContractFactorySlot(cluster);
+        using var snapshot = AcquireSnapshot();
+        var slot = CaptureContractFactorySlot(cluster, snapshot);
         var local = slot.Client.GetLocalContract(registeredAssembly, contractId);
         ValidateContractFactoryPublication(slot, null);
         return local;
@@ -47,17 +49,19 @@ internal sealed partial class SharpLinkMultiClusterClient
         ArgumentNullException.ThrowIfNull(local);
         options?.ValidateFor(local);
         var frozenOptions = CaptureContractOptions(cluster, options);
-        var slot = CaptureContractFactorySlot(cluster);
+        using var snapshot = AcquireSnapshot();
+        var slot = CaptureContractFactorySlot(cluster, snapshot);
         return GetContractFactoryTransaction(slot).CreateContractChannelTransactional(
             local, frozenOptions, () => ValidateContractFactoryPublication(slot, null));
     }
 
-    private SharpLinkClusterSlot CaptureContractFactorySlot(SharpLinkClusterKey cluster)
+    private SharpLinkClusterSlot CaptureContractFactorySlot(SharpLinkClusterKey cluster, MultiClusterSnapshot snapshot)
     {
         lock (_gate)
         {
             ValidateContractFactoryStateLocked();
-            return GetSlot(cluster);
+            return snapshot.Clusters.TryGetValue(cluster, out var slot) ? slot :
+                throw ClientLocalContractControl.Unavailable();
         }
     }
 

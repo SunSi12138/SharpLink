@@ -10,7 +10,6 @@ internal enum ClientConnectionState : byte
 /// <summary>Owns all mutable call state associated with one physical RPC session.</summary>
 internal sealed class ClientConnection :
     IPendingCallOwner,
-    IRpcClientStreamSink,
     IStreamConsumerDeliveryGate,
     IAsyncDisposable
 {
@@ -50,7 +49,8 @@ internal sealed class ClientConnection :
         _timeProvider = runtimeContext.TimeProvider;
         _lateResponseLogLimiter = new LateResponseLogLimiter(_timeProvider.TimestampFrequency);
         _consumerAbandonedCallback = OnConsumerAbandonedAsync;
-        Binding = new ClientBindingSession(session, client.BindingBudget, OnProtocolIdentityExhausted);
+        Binding = new ClientBindingSession(session, client.BindingBudget, OnProtocolIdentityExhausted,
+            controlOwnerReleased: () => _client.NotifyBindingControlOwnerReleased(this));
         try
         {
             PendingCalls = new PendingRequestTable(
@@ -262,9 +262,9 @@ internal sealed class ClientConnection :
     }
 
     /// <summary>
-    /// Releases one anonymous selection reservation if present. Pending-call registration invokes
-    /// this as a transfer into pending capacity; test-only direct table registrations therefore
-    /// remain valid when no selection reservation exists.
+    /// Releases one original selection reservation if present. Non-producing invocation sites
+    /// transfer it after successful pending registration; outgoing producer groups retain it
+    /// through every physical producer and their final fence. Direct table rentals own none.
     /// </summary>
     internal void ReleaseCallAdmissionReservation()
     {
@@ -402,88 +402,96 @@ internal sealed class ClientConnection :
 
     public void EndUntrackedCall() => ReleaseAuxiliaryActiveCall();
 
-    public async Task SendClientStreamAsync<T>(
-        long requestId,
-        ushort streamId,
-        IAsyncEnumerable<T> stream,
-        IRpcCodec<T> codec,
-        CancellationToken cancellationToken = default)
+    internal async Task SendClientStreamCoreAsync<T>(
+        ClientStreamPublicationGroup group, ushort streamId, IAsyncEnumerable<T> stream,
+        IRpcCodec<T> codec, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(stream);
-        ArgumentNullException.ThrowIfNull(codec);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!PendingCalls.TryGetProducerDeadline(requestId, out var deadline))
-            throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
-
+        var requestId = group.RequestId;
+        RpcDeadline deadline = default;
+        IAsyncEnumerator<T>? enumerator = null;
+        Exception? business = null;
+        Exception? independent = null;
+        var publishingTerminal = false;
         try
         {
+            group.ValidateProducer(Session, requestId);
+            ArgumentNullException.ThrowIfNull(stream);
+            ArgumentNullException.ThrowIfNull(codec);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!PendingCalls.TryGetProducerDeadline(requestId, out deadline))
+                throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed, "The owning RPC call is no longer active.");
             var exactSizeCodec = codec as IRpcSizedCodec<T>;
-            if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize)
-                exactSizeCodec = null;
-
-            await using var enumerator = stream.GetAsyncEnumerator(cancellationToken);
+            if (exactSizeCodec is not null && !exactSizeCodec.CanExactSize) exactSizeCodec = null;
+            enumerator = stream.GetAsyncEnumerator(cancellationToken);
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!PendingCalls.TryAcceptProducerProgress(requestId, deadline))
-                    throw new SharpLinkException(
-                        SharpLinkErrorCode.DeadlineExceeded,
-                        "RPC deadline exceeded during client stream production.");
-
-                if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
-                    break;
-
-                await Session.SendClientStreamChunkAsync(
-                    requestId,
-                    streamId,
-                    enumerator.Current,
-                    codec,
-                    exactSizeCodec,
-                    deadline,
-                    _timeProvider,
-                    cancellationToken).ConfigureAwait(false);
+                    throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "RPC deadline exceeded during client stream production.");
+                if (!await enumerator.MoveNextAsync().ConfigureAwait(false)) break;
+                await Session.SendClientStreamChunkAsync(requestId, streamId, enumerator.Current, codec,
+                    exactSizeCodec, deadline, _timeProvider, cancellationToken, group).ConfigureAwait(false);
             }
-
             cancellationToken.ThrowIfCancellationRequested();
             if (!PendingCalls.TryAcceptProducerProgress(requestId, deadline))
-                throw new SharpLinkException(
-                    SharpLinkErrorCode.DeadlineExceeded,
-                    "RPC deadline exceeded before client stream completion.");
-            Session.SendClientStreamComplete(
-                requestId,
-                streamId,
-                deadline,
-                _timeProvider,
-                cancellationToken);
+                throw new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "RPC deadline exceeded before client stream completion.");
+            publishingTerminal = true;
+            Session.SendClientStreamComplete(requestId, streamId, deadline, _timeProvider, cancellationToken, group);
         }
-        catch (Exception exception)
+        catch (Exception error)
         {
-            try
-            {
-                var protocolError = exception as SharpLinkException ?? new SharpLinkException(
-                    SharpLinkErrorCode.Internal,
-                    "Internal client stream error.",
-                    exception);
-                Session.SendClientStreamError(
-                    requestId,
-                    streamId,
-                    protocolError,
-                    deadline,
-                    _timeProvider,
-                    cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-            }
-            catch (SharpLinkException sendException) when (sendException.Code is
-                SharpLinkErrorCode.DeadlineExceeded or
-                SharpLinkErrorCode.ConnectionClosed or
-                SharpLinkErrorCode.ResourceExhausted or
-                SharpLinkErrorCode.Unavailable)
-            {
-            }
-            throw;
+            if (publishingTerminal) independent = error; else business = error;
+            independent = PublishProducerError(group, streamId, error, independent, deadline, cancellationToken);
+            try { PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, error); }
+            catch (Exception cleanup) { independent = ClientStreamPublicationGroup.AddPhysical(independent, cleanup); }
         }
+        finally
+        {
+            if (enumerator is not null)
+            {
+                try { await enumerator.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception cleanup)
+                {
+                    // Cleanup provenance is independent even when the exact same object/token
+                    // was also the logical primary. Never infer stage ownership from exception trees.
+                    independent = ClientStreamPublicationGroup.AddPhysical(independent, cleanup);
+                    independent = PublishProducerError(group, streamId, cleanup, independent, deadline, cancellationToken);
+                    try { PendingCalls.TryComplete(requestId, PendingCallCompletionReason.SendFailure, cleanup); }
+                    catch (Exception terminalFailure) { independent = ClientStreamPublicationGroup.AddPhysical(independent, terminalFailure); }
+                }
+            }
+        }
+        // Raw outcomes precede async OCE conversion. The same Task is returned to writer/group;
+        // its canceled status never substitutes for this fixed-slot physical provenance.
+        try { group.ReportProducerOutcome(streamId, business, independent); }
+        catch (Exception reportingFailure)
+        {
+            var unreported = ClientStreamPublicationGroup.AddPhysical(
+                ClientStreamPublicationGroup.AddPhysical(business, independent), reportingFailure);
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(unreported!).Throw();
+        }
+        // The writer observes the business boundary when one exists. Independent cleanup is
+        // already owned by the exact slot; wrapping both here would destroy that provenance
+        // when an ordinary writer simply awaits this same Task.
+        var failure = business ?? independent;
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private Exception? PublishProducerError(ClientStreamPublicationGroup group, ushort streamId,
+        Exception error, Exception? independent, RpcDeadline deadline, CancellationToken cancellationToken)
+    {
+        // Once logical terminal won, bounded host cleanup owns terminal publication. Do not
+        // manufacture a second independent failure merely by attempting with its canceled token.
+        if (cancellationToken.IsCancellationRequested || !PendingCalls.Contains(group.RequestId)) return independent;
+        try
+        {
+            var protocolError = error as SharpLinkException ?? new SharpLinkException(
+                SharpLinkErrorCode.Internal, "Internal client stream error.", error);
+            Session.SendClientStreamError(group.RequestId, streamId, protocolError, deadline,
+                _timeProvider, cancellationToken, group);
+        }
+        catch (Exception sendError) { independent = ClientStreamPublicationGroup.AddPhysical(independent, sendError); }
+        return independent;
     }
 
     public ValueTask OnConsumerAbandonedAsync(
@@ -505,11 +513,6 @@ internal sealed class ClientConnection :
             return ValueTask.CompletedTask;
 
         return AwaitRemoteCompletionAndSendCancelAsync(requestId, dispatchState);
-    }
-
-    void IPendingCallOwner.OnPendingCallRegistered()
-    {
-        ReleaseCallAdmissionReservation();
     }
 
     void IPendingCallOwner.OnPendingCallCompleted(in PendingCallCompletion completion)
@@ -590,6 +593,178 @@ internal sealed class ClientConnection :
 
         if (shouldNotifyPeer)
             TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason));
+    }
+
+    void IPendingCallOwner.OnPendingCallCompleted(in PendingCallCompletion completion,
+        ref StreamSinkPublicationDisposition disposition, long dispatcherLease, ClientStreamPublicationGroup? group)
+    {
+        if (completion.Kind != PendingCallKind.DuplexStreaming)
+        {
+            ((IPendingCallOwner)this).OnPendingCallCompleted(in completion);
+            return;
+        }
+        var cancel = completion.Reason is PendingCallCompletionReason.UserCancellation or
+            PendingCallCompletionReason.DeadlineExceeded or PendingCallCompletionReason.ConsumerAbandoned;
+        var receipt = completion.Dispatcher as IStreamSinkPublicationReceipt;
+        var exactRetentionFailed = receipt is not null && dispatcherLease == 0;
+        // A failed exact lease is NOT a custom/unknown dispatcher. Never mutate or retire the
+        // captured pooled object without its original generation proof. The exact full-ID route
+        // still owns its independent manager cleanup; a live attached route prevents pool reuse.
+        var localAbort = exactRetentionFailed ? null : completion.Dispatcher as IStreamLocalAbortDispatcher;
+        Exception? failure = exactRetentionFailed
+            ? new InvalidOperationException("The original Duplex sink publication lease could not be retained.") : null;
+        // The caller already retained the exact dispatcher lease before observers. Publication
+        // records the receipt BEFORE arbitrary signal/credit callbacks; route cleanup is separate.
+        try
+        {
+            if (receipt is not null && dispatcherLease != 0)
+                receipt.PublishSinkTerminal(completion.Exception,
+                    cancel && completion.Reason != PendingCallCompletionReason.ConsumerAbandoned,
+                    dispatcherLease, ref disposition);
+            else if (!exactRetentionFailed)
+            {
+                if (cancel && completion.Reason != PendingCallCompletionReason.ConsumerAbandoned)
+                    localAbort?.CompleteLocalAbort(completion.Exception);
+                else completion.Dispatcher?.Complete(completion.Exception);
+            }
+        }
+        catch (Exception error) { failure = error; }
+        if (group?.HasSupervisionAnchor == true)
+        {
+            // Every producing Duplex terminal owns the exact route decision. Synchronous
+            // settled/drained success does NOT gain an auxiliary counter or Task allocation.
+            // Only cancellation terminals have a peer cancel reason. Resolve this callback-free
+            // scalar before claiming a cleanup branch/charge; ordinary EOF/close needs none.
+            var cancelReason = cancel ? GetCancelReason(completion.Reason) : default;
+            var publication = group.WaitForResponseRoutePublication();
+            ValueTask drain = default;
+            var waitingForPublication = !publication.IsCompleted;
+            if (!waitingForPublication)
+            {
+                try { drain = Session.StreamManager.CompleteStreamAfterDispatchesAsync(completion.RequestId, 0, completion.Exception); }
+                catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+            }
+            if (waitingForPublication || !drain.IsCompletedSuccessfully)
+            {
+                group.ClaimResponseDrain();
+                Interlocked.Increment(ref _auxiliaryActiveCallCount);
+                var cleanup = FinishAnchoredDuplexRouteAsync(waitingForPublication ? publication : null, drain,
+                    completion.RequestId, completion.Exception, cancel,
+                    completion.Reason != PendingCallCompletionReason.ConsumerAbandoned ? localAbort : null,
+                    cancelReason, cancel && completion.RequestPublished);
+                group.AttachResponseDrain(cleanup);
+                if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                return;
+            }
+            if (cancel && completion.Reason != PendingCallCompletionReason.ConsumerAbandoned)
+            {
+                try { localAbort?.RetireLocalAbortBuffer(); }
+                catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+            }
+            if (cancel && completion.RequestPublished)
+            {
+                try { TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason)); }
+                catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+            }
+            if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            return;
+        }
+        if (cancel && completion.Reason != PendingCallCompletionReason.ConsumerAbandoned)
+        {
+            ValueTask drain = default;
+            var hasDrain = false;
+            try
+            {
+                drain = Session.StreamManager.CompleteStreamAfterDispatchesAsync(completion.RequestId, 0, completion.Exception);
+                hasDrain = true;
+            }
+            catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+            if (hasDrain && !drain.IsCompletedSuccessfully)
+            {
+                Interlocked.Increment(ref _auxiliaryActiveCallCount);
+                var cleanup = FinishProducingCancellationAfterDispatchesAsync(drain, completion.RequestId,
+                    GetCancelReason(completion.Reason), completion.RequestPublished, localAbort);
+                try
+                {
+                    _client.TrackFrameworkTask(cleanup, "CancellationDispatchCleanup");
+                }
+                catch (Exception error)
+                {
+                    failure = ClientStreamPublicationGroup.AddPhysical(failure,
+                        error is PhysicalTaskFailureException physical ? physical.RawException : error);
+                }
+                // Cleanup owns retirement, Cancel and the original auxiliary charge even if tracking fails.
+                if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                return;
+            }
+            try { localAbort?.RetireLocalAbortBuffer(); }
+            catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        }
+        else
+        {
+            try
+            {
+                if (completion.Reason == PendingCallCompletionReason.ConsumerAbandoned)
+                    Session.StreamManager.Unregister(completion.RequestId, 0);
+                else Session.StreamManager.CompleteStream(completion.RequestId, 0, completion.Exception);
+            }
+            catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        }
+        if (cancel && completion.RequestPublished)
+        {
+            try { TrySendCancel(completion.RequestId, GetCancelReason(completion.Reason)); }
+            catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        }
+        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private async Task FinishAnchoredDuplexRouteAsync(Task? routePublication, ValueTask drain, long requestId,
+        Exception? terminal, bool cancel, IStreamLocalAbortDispatcher? localAbort,
+        ProtocolV2CancelReason cancelReason, bool notifyPeer)
+    {
+        Exception? failure = null;
+        if (routePublication is not null)
+        {
+            try { await routePublication.ConfigureAwait(false); }
+            catch (Exception error) { failure = PhysicalTaskFailureException.GetRaw(error); }
+            try { drain = Session.StreamManager.CompleteStreamAfterDispatchesAsync(requestId, 0, terminal); }
+            catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        }
+        // Runtime's exact removed-entry result owns all acquired dispatches even when Complete
+        // throws. Its failure is delivered only after real drain/finalization, never a proxy.
+        try { await drain.ConfigureAwait(false); }
+        catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, PhysicalTaskFailureException.GetRaw(error)); }
+        if (cancel)
+        {
+            try { localAbort?.RetireLocalAbortBuffer(); }
+            catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        }
+        if (notifyPeer)
+        {
+            try { TrySendCancel(requestId, cancelReason); }
+            catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        }
+        try { ReleaseAuxiliaryActiveCall(); }
+        catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        if (failure is not null) throw PhysicalTaskFailureException.From(failure);
+    }
+
+    private async Task FinishProducingCancellationAfterDispatchesAsync(ValueTask drain, long requestId,
+        ProtocolV2CancelReason reason, bool notifyPeer, IStreamLocalAbortDispatcher? localAbort)
+    {
+        Exception? failure = null;
+        try { await drain.ConfigureAwait(false); }
+        catch (Exception error) { failure = PhysicalTaskFailureException.GetRaw(error); }
+        try { localAbort?.RetireLocalAbortBuffer(); }
+        catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        if (notifyPeer)
+        {
+            try { TrySendCancel(requestId, reason); }
+            catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        }
+        try { ReleaseAuxiliaryActiveCall(); }
+        catch (Exception error) { failure = ClientStreamPublicationGroup.AddPhysical(failure, error); }
+        if (failure is not null) throw PhysicalTaskFailureException.From(failure);
     }
 
     void IPendingCallOwner.OnProducerCancellationCallbackFailed(Exception exception)

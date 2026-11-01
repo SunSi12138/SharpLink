@@ -544,6 +544,9 @@ internal sealed partial class SharpLinkClient
                     {
                         switch (header.Type)
                         {
+                            case ProtocolV2FrameType.RequestAccepted:
+                                connection.PendingCalls.ReceiveRequestAccepted(header.RequestId);
+                                break;
                             case ProtocolV2FrameType.BindResult:
                                 connection.Binding.ReceiveResult(header.RequestId, payload);
                                 PulseContractBindingWaiters();

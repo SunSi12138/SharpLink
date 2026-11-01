@@ -15,6 +15,32 @@ internal static class SharpLinkGeneratedManifestCompatibility
         ArgumentNullException.ThrowIfNull(manifest);
         try
         {
+            if (manifest is PreparedGeneratedManifest)
+                return null;
+            using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+            _ = PreparedGeneratedManifest.Capture(manifest, preparation, expectedOwner);
+            return null;
+        }
+        catch (ColdMetadataException exception)
+        {
+            return Error(exception.Code, exception.Message, expectedOwner ?? manifest.GetType().Assembly, "Manifest");
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            return Error(SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                $"The generated manifest could not be captured: {exception.GetType().Name}: {exception.Message}",
+                expectedOwner ?? manifest.GetType().Assembly, "Manifest");
+        }
+    }
+
+    internal static SharpLinkAssemblyRegistrationError? ValidatePreparedVersion(
+        PreparedGeneratedManifest manifest, Assembly? expectedOwner) => ValidateVersion(manifest, expectedOwner);
+
+    internal static SharpLinkAssemblyRegistrationError? ValidatePrepared(
+        PreparedGeneratedManifest manifest, Assembly? expectedOwner)
+    {
+        try
+        {
             var versionError = ValidateVersion(manifest, expectedOwner);
             if (versionError is not null)
                 return versionError;
@@ -24,6 +50,10 @@ internal static class SharpLinkGeneratedManifestCompatibility
                 return shapeError;
 
             return ValidateOwnership(manifest, expectedOwner);
+        }
+        catch (ColdMetadataException exception)
+        {
+            return Error(exception.Code, exception.Message, expectedOwner ?? manifest.OwnerAssembly, "Manifest");
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
@@ -137,7 +167,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
            "with the SharpLink SDK version that matches the current Runtime.";
 
     private static SharpLinkAssemblyRegistrationError? ValidateShape(
-        ISharpLinkGeneratedAssemblyManifest manifest,
+        PreparedGeneratedManifest manifest,
         Assembly diagnosticAssembly)
     {
         if (string.IsNullOrWhiteSpace(manifest.GeneratorVersion) ||
@@ -152,7 +182,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
                 "Manifest");
         }
 
-        var contractIds = new HashSet<long>();
+        using var contractIds = new ColdMetadataSet<long>(manifest.Contracts.Count, manifest.Preparation, manifest.RegistrationScope);
         for (var contractIndex = 0; contractIndex < manifest.Contracts.Count; contractIndex++)
         {
             var contract = manifest.Contracts[contractIndex];
@@ -182,7 +212,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
                     incomingFingerprint: contract.Fingerprint);
             }
 
-            var methodIds = new HashSet<long>();
+            using var methodIds = new ColdMetadataSet<long>(contract.Methods.Count, manifest.Preparation, manifest.GetContractScope(contract.ContractId));
             for (var methodIndex = 0; methodIndex < contract.Methods.Count; methodIndex++)
             {
                 var method = contract.Methods[methodIndex];
@@ -218,7 +248,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
             }
         }
 
-        var serviceContracts = new HashSet<long>();
+        using var serviceContracts = new ColdMetadataSet<long>(manifest.Services.Count, manifest.Preparation, manifest.RegistrationScope);
         for (var serviceIndex = 0; serviceIndex < manifest.Services.Count; serviceIndex++)
         {
             var service = manifest.Services[serviceIndex];
@@ -267,7 +297,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
             }
         }
 
-        var codecTypes = new HashSet<Type>();
+        using var codecTypes = new ColdMetadataSet<Type>(manifest.Codecs.Count, manifest.Preparation, manifest.RegistrationScope);
         for (var codecIndex = 0; codecIndex < manifest.Codecs.Count; codecIndex++)
         {
             var codec = manifest.Codecs[codecIndex];
@@ -290,7 +320,7 @@ internal static class SharpLinkGeneratedManifestCompatibility
             }
         }
 
-        var dependencies = new HashSet<string>(StringComparer.Ordinal);
+        using var dependencies = new ColdMetadataSet<string>(manifest.Dependencies.Count, manifest.Preparation, manifest.RegistrationScope, StringComparer.Ordinal);
         for (var dependencyIndex = 0; dependencyIndex < manifest.Dependencies.Count; dependencyIndex++)
         {
             var dependency = manifest.Dependencies[dependencyIndex];

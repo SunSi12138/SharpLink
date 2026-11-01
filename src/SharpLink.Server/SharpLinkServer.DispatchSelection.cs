@@ -53,15 +53,14 @@ internal sealed partial class SharpLinkServer
         }
     }
 
-    private static bool TrySelectBoundMethod(ServerBindingTable table, ulong token, long methodId,
+    internal static bool TrySelectBoundMethod(ServerBindingTable table, ulong token, long methodId,
         out SelectedMethodCall selected)
     {
         selected = default;
         var entry = table.Capture(token);
-        var facts = entry?.Registration.Facts;
-        if (entry is null || facts is null || !table.CanUseCaptured(entry))
+        if (entry is null || !table.CanUseCaptured(entry))
             return false;
-        selected = new SelectedMethodCall(new QueuedServiceSelection(entry.Registration), facts.Resolve(methodId));
+        selected = new SelectedMethodCall(new QueuedServiceSelection(entry.Registration), entry.ResolveMethod(methodId));
         return true;
     }
 

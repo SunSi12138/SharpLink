@@ -206,6 +206,11 @@ internal sealed partial class SharpLinkServer
             }
             var serviceInfo = resolved.Registration;
 
+            var acceptanceFailure = PrepareRequestAccepted(connection, requestId, in request,
+                in resolved, requestCancellationMap, serverLoopToken, ref admittedCallState);
+            if (acceptanceFailure is not null)
+                return RejectRequestAcceptanceAsync(connection, requestId, acceptanceFailure,
+                    admittedCallState, requestCancellationMap, requestOwner, retainedAdmissionPayload);
 
             if (isCompressed && ShouldUsePersistentDecode(flags, serviceInfo, request, payload))
             {
@@ -248,7 +253,7 @@ internal sealed partial class SharpLinkServer
                         retainedAdmissionPayload?.Dispose();
                         var rejection = resourceRejection ?? throw new InvalidOperationException(
                             "Compressed request decode resource rejection is missing its error.");
-                        CompleteFailedRequestStreams(session, requestId, rejection);
+                        CompleteFailedRequestStreams(session, requestId, rejection, admittedCallState, requestOwner);
                         var responseSend = session.SendRpcErrorWithBackpressureAsync(
                             requestId, rejection, connection.ConnectionToken);
                         return ReleaseDispatchResourcesAfterResponseAsync(
@@ -300,7 +305,7 @@ internal sealed partial class SharpLinkServer
                 retainedAdmissionPayload?.Dispose();
                 session.ReturnDecodedPayload(decodedRequestOwner);
                 decodedRequestOwner = null;
-                CompleteFailedRequestStreams(session, requestId, exception);
+                CompleteFailedRequestStreams(session, requestId, exception, admittedCallState, requestOwner);
                 var responseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId, exception, connection.ConnectionToken);
                 return ReleaseDispatchResourcesAfterResponseAsync(
@@ -316,7 +321,7 @@ internal sealed partial class SharpLinkServer
                 retainedAdmissionPayload?.Dispose();
                 session.ReturnDecodedPayload(decodedRequestOwner);
                 decodedRequestOwner = null;
-                CompleteFailedRequestStreams(session, requestId, exception);
+                CompleteFailedRequestStreams(session, requestId, exception, admittedCallState, requestOwner);
                 var responseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
                     MapServerCancellationException(admittedCallState, request.RpcDeadline),
@@ -333,7 +338,7 @@ internal sealed partial class SharpLinkServer
             {
                 retainedAdmissionPayload?.Dispose();
                 session.ReturnDecodedPayload(decodedRequestOwner);
-                CompleteFailedRequestStreams(session, requestId, exception);
+                CompleteFailedRequestStreams(session, requestId, exception, admittedCallState, requestOwner);
                 ReleaseDispatchResources(
                     admittedCallState,
                     requestId,
@@ -398,7 +403,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (OperationCanceledException exception)
         {
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestPermit);
             if (TryClaimCallCompletion(callState))
             {
                 await session.SendRpcErrorWithBackpressureAsync(
@@ -414,7 +419,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception e)
         {
-            CompleteFailedRequestStreams(session, requestId, e);
+            CompleteFailedRequestStreams(session, requestId, e, callState, requestPermit);
             if (TryClaimCallCompletion(callState))
             {
                 await session.SendRpcErrorWithBackpressureAsync(
@@ -484,7 +489,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (OperationCanceledException exception)
         {
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestPermit);
             if (!ownsWriter)
                 throw;
 
@@ -504,7 +509,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception e)
         {
-            CompleteFailedRequestStreams(session, requestId, e);
+            CompleteFailedRequestStreams(session, requestId, e, callState, requestPermit);
             if (!ownsWriter)
             {
                 if (e is SharpLinkCompressionProviderException compressionException)
@@ -556,18 +561,46 @@ internal sealed partial class SharpLinkServer
         ServerConnectionState connection,
         ServerRequestPermit requestPermit)
     {
-        _ = connection;
+        Exception? failure = null;
+        if (callState is { AcceptedClientStreamCount: > 0 } && !requestPermit.OwnsInboundStreamCleanup)
+        {
+            try
+            {
+                connection.Session.StreamManager.AbandonExistingRequestStreams(
+                    requestId, callState.AcceptedClientStreamCount);
+            }
+            catch (Exception cleanup)
+            {
+                failure = cleanup;
+                // A failed retained-route cleanup cannot leave a healthy peer sending forever.
+                try { connection.Session.NotifyDisconnected(cleanup); }
+                catch (Exception closeFailure) { failure = RpcPublicationErrors.Combine(failure, closeFailure); }
+            }
+        }
         if (requestPermit.IsReserved)
-            requestPermit.ReleaseDecodeResources();
+        {
+            try { requestPermit.ReleaseDecodeResources(); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        }
         if (callState is not null)
         {
-            if (requestPermit.IsActive)
-                requestPermit.TransferDecodedBytesTo(callState);
-            requestPermit.PreserveCallStateForPhysicalCompletion(callState, requestId);
-            requestCancellationMap.TryRemove(requestId, callState);
-            callState.Dispose();
+            try
+            {
+                if (requestPermit.IsActive)
+                    requestPermit.TransferDecodedBytesTo(callState);
+            }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            try { requestPermit.PreserveCallStateForPhysicalCompletion(callState, requestId); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            try { requestCancellationMap.TryRemove(requestId, callState); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            try { callState.Dispose(); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
         }
-        requestPermit.Dispose();
+        try { requestPermit.Dispose(); }
+        catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private ValueTask ReleaseDispatchResourcesAfterResponseAsync(

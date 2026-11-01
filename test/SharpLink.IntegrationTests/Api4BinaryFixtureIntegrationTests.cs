@@ -38,7 +38,8 @@ public sealed class Api4BinaryFixtureIntegrationTests
         using var assemblyStream = new MemoryStream(ReadFixtureAssembly(), writable: false);
         var assembly = loadContext.LoadFromStream(assemblyStream);
 
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
+        using var preparation = new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(assembly, preparation, out var manifest);
         Ensure(!result.Succeeded && manifest is null,
             "the pre-#287 development API4 binary must not be positively identified as the current generated ABI");
         Ensure(result.Error?.Code == SharpLinkAssemblyRegistrationErrorCode.IncompatibleManifest,

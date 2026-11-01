@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Explicit new SUBSET identity. The binary simple name reuses existing friend access;
+         this is not the full Unit project and must never be reported as its result. -->
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <RootNamespace>SharpLink.UnitTests</RootNamespace>
+    <AssemblyTitle>SharpLink.RetirementClosureTests v3 selected-source subset</AssemblyTitle>
+    <Description>Finite retirement physical-ownership source closure, not the full SharpLink.UnitTests suite.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="SharpLink.TestSubset" Value="RetirementClosure-v3" />
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../SharpLink.UnitTests/GlobalUsings.cs" Link="Shared/GlobalUsings.cs" />
+    <Compile Include="../SharpLink.UnitTests/RpcSessionTestFixture.cs" Link="Shared/RpcSessionTestFixture.cs" />
+    <Compile Include="../SharpLink.UnitTests/TestClientTransportFactory.cs" Link="Shared/TestClientTransportFactory.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientBuilderTestHelper.cs" Link="Shared/ClientBuilderTestHelper.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="Shared/ManualTimeProvider.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/TestRpcPublications.cs" Link="Shared/TestRpcPublications.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/PendingRequestTableTestFixture.cs" Link="Shared/PendingRequestTableTestFixture.cs" />
+    <Compile Include="../SharpLink.UnitTests/TestGeneratedIdentity.cs" Link="Shared/TestGeneratedIdentity.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/SharpLinkClientLifecycleCommonSupport.cs" Link="Shared/SharpLinkClientLifecycleCommonSupport.cs" />
+
+    <Compile Include="../SharpLink.UnitTests/Runtime/RpcPublicationRetirementTests.cs" Link="Runtime/RpcPublicationRetirementTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/WakeupSignalCleanupTests.cs" Link="Runtime/WakeupSignalCleanupTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/PendingProducerLifetimeTests.cs" Link="Runtime/PendingProducerLifetimeTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/PendingProducerCapacityTests.cs" Link="Runtime/PendingProducerCapacityTests.cs" />
+    <!-- Actual source dependency for its nested GatePipeWriter, NOT copied transport code.
+         Its discovered tests are unselected until separate exact UID authorization. -->
+    <Compile Include="../SharpLink.UnitTests/Runtime/BackpressuredSendOwnershipTests.cs" Link="Dependencies/BackpressuredSendOwnershipTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientStreamCorePhysicalOwnershipTests.cs" Link="Client/ClientStreamCorePhysicalOwnershipTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ClientStreamPublicationGroupTests.cs" Link="Client/ClientStreamPublicationGroupTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/DynamicProducerLifetimeTests.cs" Link="Client/DynamicProducerLifetimeTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/BindingCandidateMaintenanceOwnershipTests.cs" Link="Client/BindingCandidateMaintenanceOwnershipTests.cs" />
+
+    <!-- Exact partial-class helper dependencies. Base tests are discovered, not silently selected. -->
+    <Compile Include="../SharpLink.UnitTests/Server/ServerBindingTableTests.cs" Link="Dependencies/ServerBindingTableTests.cs" />
+    <Compile Include="../SharpLink.UnitTests/Server/ServerBindingTableTests.IntakeOwnership.cs" Link="Server/ServerBindingTableTests.IntakeOwnership.cs" />
+    <Compile Include="../SharpLink.UnitTests/Server/ServerBindingTableTests.InvalidationPhysicalTail.cs" Link="Server/ServerBindingTableTests.InvalidationPhysicalTail.cs" />
+    <!-- Required unconditionally: missing fairness source must fail, never silently shrink scope. -->
+    <Compile Include="../SharpLink.UnitTests/Server/ServerBindingTableTests.IntakeFairness.cs" Link="Server/ServerBindingTableTests.IntakeFairness.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Matches the existing Unit project's pinned TUnit platform hook selection. -->
+    <TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" />
+  </ItemGroup>
+</Project>

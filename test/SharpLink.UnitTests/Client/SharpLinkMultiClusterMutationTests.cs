@@ -196,9 +196,9 @@ public sealed class SharpLinkMultiClusterMutationTests : SharpLinkMultiClusterCl
 
         Ensure(replacementTransport.DisposeCount == 0,
             "successful replacement preparation must transfer its child instead of cleaning it");
-        await prepared.Slot.Client.DisposeAsync();
+        await prepared.DisposeAsync();
         Ensure(replacementTransport.DisposeCount == 1,
-            "the prepared replacement caller must own and dispose the transferred child");
+            "the prepared replacement owner must dispose its unpublished child and metadata bundle");
     }
 
     [Test]

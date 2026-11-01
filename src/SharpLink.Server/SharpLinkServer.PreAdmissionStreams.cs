@@ -129,88 +129,66 @@ internal sealed partial class SharpLinkServer
     }
 
     private void ReservePreInvocationRequestStreams(
-        RpcSession session,
-        int clientStreamCount,
-        long requestId,
-        CancellationToken cancellationToken,
-        bool retainUntilLocalCompletion = false)
+        RpcSession session, int clientStreamCount, long requestId,
+        CancellationToken cancellationToken, bool retainUntilLocalCompletion = false)
     {
-        if (clientStreamCount == 0)
-            return;
-
-        // Keep captured callback state inside the streaming-only method. A lambda in
-        // this scope would allocate its display class before the no-stream return.
-        ReservePreInvocationRequestStreamsCore(
-            session, clientStreamCount, requestId, cancellationToken, retainUntilLocalCompletion);
+        if (!TryReservePreInvocationRequestStreams(session, clientStreamCount, requestId,
+                cancellationToken, retainUntilLocalCompletion))
+            throw new SharpLinkException(SharpLinkErrorCode.ConnectionClosed,
+                "The complete declared inbound stream route set could not be reserved.");
     }
 
-    private void ReservePreInvocationRequestStreamsCore(
-        RpcSession session,
-        int clientStreamCount,
-        long requestId,
-        CancellationToken cancellationToken,
-        bool retainUntilLocalCompletion)
+    private bool TryReservePreInvocationRequestStreams(
+        RpcSession session, int clientStreamCount, long requestId,
+        CancellationToken cancellationToken, bool retainUntilLocalCompletion = false)
     {
-        var streamManager = session.StreamManager;
+        if (clientStreamCount == 0)
+            return true;
+        return TryReservePreInvocationRequestStreamsCore(session, clientStreamCount, requestId,
+            cancellationToken, retainUntilLocalCompletion);
+    }
+
+    private bool TryReservePreInvocationRequestStreamsCore(
+        RpcSession session, int clientStreamCount, long requestId,
+        CancellationToken cancellationToken, bool retainUntilLocalCompletion)
+    {
+        // Only producer shapes allocate these callbacks. Reservation is independent of
+        // interceptors and must succeed for the WHOLE declared set before RequestAccepted.
         Func<ReadOnlySequence<byte>, PreAdmissionDecodedPayload> decodeCompressed = compressedPayload =>
         {
             var decodedPayload = session.DecodeInboundPayload(
-                ProtocolV2FrameType.StreamData,
-                ProtocolV2FrameFlags.Compressed,
-                compressedPayload,
-                cancellationToken,
-                out var decodedOwner);
-            return new PreAdmissionDecodedPayload(
-                decodedPayload.Slice(sizeof(ushort)),
+                ProtocolV2FrameType.StreamData, ProtocolV2FrameFlags.Compressed,
+                compressedPayload, cancellationToken, out var decodedOwner);
+            return new PreAdmissionDecodedPayload(decodedPayload.Slice(sizeof(ushort)),
                 decodedOwner ?? throw new InvalidOperationException(
-                    "Compressed stream decoding did not return an owner."),
-                _runtimeContext.Buffers);
+                    "Compressed stream decoding did not return an owner."), _runtimeContext.Buffers);
         };
-
-        if (session.HasStreamFlowControl)
+        var maxRetainedBytes = session.HasStreamFlowControl ? int.MaxValue : Math.Max(
+            _runtimeContext.FlowControl.StreamReceiveWindowBytes, session.NegotiatedMaxFramePayloadBytes);
+        try
         {
-            // Negotiated receive credit is the byte bound. Reconfiguration changes only future
-            // external accounting/decoder state; already-buffered owners keep their original
-            // admission release callback until replay/discard releases them.
-            streamManager.ReservePreAdmissionStreams(
-                requestId,
-                clientStreamCount,
-                _runtimeContext.Buffers,
-                static _ => true,
-                static _ => { },
-                static () => { },
-                decodeCompressed,
-                retainUntilLocalCompletion);
-            return;
+            var reserved = session.StreamManager.TryReservePreAdmissionStreams(
+                requestId, clientStreamCount, _runtimeContext.Buffers,
+                static _ => true, static _ => { }, static () => { },
+                decodeCompressed, retainUntilLocalCompletion, maxRetainedBytes,
+                streamCapacityExceeded: session.HasStreamFlowControl ? null : streamId =>
+                    session.StreamManager.CompleteStream(requestId, streamId,
+                        new SharpLinkException(SharpLinkErrorCode.ResourceExhausted,
+                            $"Deferred client-stream retention exceeded the {maxRetainedBytes}-byte limit without negotiated flow control.")));
+            if (reserved)
+                return true;
         }
-
-        // Without negotiated receive credit, the stable mailbox itself owns the active byte cap.
-        // Existing admission-buffered bytes are already included in that mailbox count, so moving
-        // into invocation does not re-reserve/rewrite their resource owner. If they already exceed
-        // the active cap, reconfiguration marks the mailbox terminal and releases them exactly once.
-        var maxRetainedBytes = Math.Max(
-            _runtimeContext.FlowControl.StreamReceiveWindowBytes,
-            session.NegotiatedMaxFramePayloadBytes);
-        for (var index = 1; index <= clientStreamCount; index++)
+        catch (Exception failure)
         {
-            var streamId = checked((ushort)index);
-            streamManager.Register(
-                requestId,
-                streamId,
-                new PreAdmissionStreamDispatcher(
-                    _runtimeContext.Buffers,
-                    static _ => true,
-                    static _ => { },
-                    () => streamManager.CompleteStream(
-                        requestId,
-                        streamId,
-                        new SharpLinkException(
-                            SharpLinkErrorCode.ResourceExhausted,
-                            $"Deferred client-stream retention exceeded the {maxRetainedBytes}-byte limit without negotiated flow control.")),
-                    decodeCompressed,
-                    retainUntilLocalCompletion,
-                    maxRetainedBytes));
+            // Partial reconfiguration of an existing mailbox cannot be rolled back by
+            // pretending no route was installed. Seal the exact Session outside all gates.
+            try { session.NotifyDisconnected(failure); }
+            catch (Exception cleanup) { throw RpcPublicationErrors.Combine(failure, cleanup)!; }
+            throw;
         }
+        session.NotifyDisconnected(new SharpLinkException(SharpLinkErrorCode.ConnectionClosed,
+            "Inbound stream route reservation lost its exact Session owner."));
+        return false;
     }
 
     private static void DrainRejectedOneWayStreams(
@@ -254,8 +232,19 @@ internal sealed partial class SharpLinkServer
     private static void CompleteFailedRequestStreams(
         RpcSession session,
         long requestId,
-        Exception exception)
+        Exception exception,
+        ServerCallCancellationState? callState = null,
+        ServerRequestPermit? requestOwner = null)
     {
+        if (requestOwner?.OwnsInboundStreamCleanup == true)
+            return; // Exact captured operation owns typed-child cleanup and delayed abandon.
+        if (callState is { AcceptedClientStreamCount: > 0 })
+        {
+            // ACK may already have started a producer. Keep the retained mailbox's discard
+            // and credit owner until the peer's real terminal, never remove then recreate it.
+            session.StreamManager.AbandonExistingRequestStreams(requestId, callState.AcceptedClientStreamCount);
+            return;
+        }
         session.StreamManager.CompleteRequestStreams(requestId, exception);
     }
 

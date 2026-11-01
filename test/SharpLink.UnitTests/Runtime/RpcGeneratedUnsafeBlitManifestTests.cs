@@ -12,8 +12,10 @@ public partial class RpcManifestCodecProviderTests
     [Test]
     public void CompiledGeneratedManifestShouldAdmitExactRawFactoryAndRoundTrip()
     {
+        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
+        using var preparation = context.Domain.BeginPreparation();
         var assembly = typeof(IGeneratedRawOwnerContract).Assembly;
-        var result = SharpLinkAssemblyManifestLoader.TryLoad(assembly, out var manifest);
+        var result = SharpLinkAssemblyManifestLoader.TryLoad(assembly, preparation, out var manifest);
         Ensure(result.Succeeded && manifest is not null, $"compiled generated manifest must load: {result.Error}");
         var factory = manifest!.Codecs.Single(item => item.TargetType == typeof(GeneratedOwnerRawPayload));
         Ensure(factory is IRpcGeneratedUnsafeBlitCodecFactory,
@@ -23,10 +25,21 @@ public partial class RpcManifestCodecProviderTests
         Ensure(!identity.CodecHash.IsEmpty && factory.CodecHash == identity.CodecHash,
             "direct raw registration must retain the exact finalized CodecHash published to consumers");
 
-        using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var registration = context.PrepareGeneratedManifest(manifest);
         context.PublishGeneratedCodecs(registration.Codecs, registration);
         context.AdoptGeneratedManifest(registration);
+        Ensure(factory is PreparedCodecFactory captured && ReferenceEquals(
+            registration.Codecs[typeof(GeneratedOwnerRawPayload)].FactoryIdentity, captured.Original),
+            "the metadata wrapper must preserve the exact original generated factory identity");
+        var scoped = (IRpcGeneratedUnsafeBlitCodecProvider)RpcGeneratedCodecResolver.GetProvider(registration);
+        var rejectedWrapper = false;
+        try
+        {
+            var wrapped = (IRpcGeneratedUnsafeBlitCodecFactory)factory;
+            _ = scoped.GetGeneratedUnsafeBlitCodec<GeneratedOwnerRawPayload>(wrapped, wrapped.Requirement);
+        }
+        catch (PlatformNotSupportedException) { rejectedWrapper = true; }
+        Ensure(rejectedWrapper, "a metadata wrapper is not the admitted generated caller identity");
         RoundTripGeneratedRaw(context.Codecs.GetCodec<GeneratedOwnerRawPayload>());
         RoundTripGeneratedRaw(RpcGeneratedCodecResolver.GetProvider(registration).GetCodec<GeneratedOwnerRawPayload>());
     }

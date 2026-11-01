@@ -30,7 +30,7 @@ internal sealed partial class SharpLinkServer
             var exception = new SharpLinkException(
                 SharpLinkErrorCode.DeadlineExceeded,
                 "Request deadline exceeded before dispatch.");
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId, exception, connection.ConnectionToken);
             return ReleaseDispatchResourcesAfterResponseAsync(
@@ -49,7 +49,7 @@ internal sealed partial class SharpLinkServer
             var exception = new SharpLinkException(
                 SharpLinkErrorCode.ConnectionClosed,
                 "Connection closed before dispatch.");
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
             ReleaseDispatchResources(
                 callState,
                 requestId,
@@ -70,7 +70,7 @@ internal sealed partial class SharpLinkServer
                 session.ReturnDecodedPayload(decodedRequestOwner);
                 decodedRequestOwner = null;
                 var exception = MapServerCancellationException(callState, request.RpcDeadline);
-                CompleteFailedRequestStreams(session, requestId, exception);
+                CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
                 _ = TryClaimCallCompletion(callState);
                 var responseSend = callState.Reason == ServerCallCancellationReason.ModuleDraining
                     ? TrySendModuleDrainError(
@@ -176,7 +176,7 @@ internal sealed partial class SharpLinkServer
             }
             catch (OperationCanceledException exception)
             {
-                CompleteFailedRequestStreams(session, requestId, exception);
+                CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
                 var responseSend = ValueTask.CompletedTask;
                 if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
@@ -200,7 +200,7 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception)
             {
-                CompleteFailedRequestStreams(session, requestId, exception);
+                CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
                 var responseSend = ValueTask.CompletedTask;
                 if (TryClaimCallCompletion(callState, request.RpcDeadline, serverLoopToken))
                 {
@@ -296,7 +296,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (OperationCanceledException exception)
         {
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
             if (!ownsWriter)
                 throw;
 
@@ -324,7 +324,7 @@ internal sealed partial class SharpLinkServer
         }
         catch (Exception exception)
         {
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
             if (!ownsWriter)
             {
                 if (exception is SharpLinkCompressionProviderException compressionException)

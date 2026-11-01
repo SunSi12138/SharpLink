@@ -307,6 +307,7 @@ public sealed class GeneratedServerPhysicalTailTests
             time.Advance(TimeSpan.FromSeconds(1));
             Ensure(await CaptureFailureAsync(pump) is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
                 "logical failure is visible before physical producer completion");
+            Ensure(owner.BeginPhysicalServiceCleanup(), "existing retained tail transfers to explicit service cleanup phase");
             cleanup = DisposeServiceAfterTailAsync(owner, lease);
             owner.AttachPhysicalServiceCleanup(cleanup);
             owner.Dispose(); // Actual logical release must defer the same request/module owner.
@@ -337,7 +338,12 @@ public sealed class GeneratedServerPhysicalTailTests
             stream.AllowDispose.TrySetResult();
             service.AllowDispose.TrySetResult();
             if (cleanup is not null) await cleanup.WaitAsync(TestTimeout);
-            else if (permit is not null) await permit.JoinPhysicalTailsAsync().AsTask().WaitAsync(TestTimeout);
+            else if (permit is not null)
+            {
+                var ownsCleanup = permit.BeginPhysicalServiceCleanup();
+                try { await permit.JoinPhysicalTailsAsync().AsTask().WaitAsync(TestTimeout); }
+                finally { if (ownsCleanup) permit.FinishPhysicalServiceCleanup(); }
+            }
             permit?.Dispose();
             await registration.DisposeAsync();
             await connection.CloseAsync();
@@ -351,8 +357,14 @@ public sealed class GeneratedServerPhysicalTailTests
     // composing their cleanup handoff. It is not a generated TCP-dispatch integration proof.
     private static async Task DisposeServiceAfterTailAsync(ServerRequestPermit owner, ServiceLease lease)
     {
-        await owner.JoinPhysicalTailsAsync();
-        await lease.DisposeAsync();
+        Exception? failure = null;
+        try { await owner.JoinPhysicalTailsAsync(); }
+        catch (Exception error) { failure = error; }
+        try { await lease.DisposeAsync(); }
+        catch (Exception error) { failure = PhysicalTaskFailureException.CombineRaw(failure, error); }
+        try { owner.FinishPhysicalServiceCleanup(); }
+        catch (Exception error) { failure = PhysicalTaskFailureException.CombineRaw(failure, error); }
+        if (failure is not null) throw PhysicalTaskFailureException.From(failure);
     }
 
     private static async Task<Exception> CaptureFailureAsync(Task task)
@@ -372,6 +384,15 @@ public sealed class GeneratedServerPhysicalTailTests
     {
         private int _retains;
         private int _releases;
+        private readonly FrameworkTaskSupervisor _supervisor = new();
+        private readonly List<(GeneratedPhysicalFailureStage Stage, Exception Failure)> _failures = [];
+        public void ReportPhysicalFailure(GeneratedPhysicalFailureStage stage, Exception failure, ref bool accepted)
+        {
+            lock (_failures) _failures.Add((stage, failure));
+            accepted = true;
+        }
+        public void TrackPhysicalTail(Task task, ref FrameworkTaskRegistration? registration)
+            => _supervisor.TrackStrictPhysical(task, "fixture-generated-tail", ref registration);
         internal int Retains => Volatile.Read(ref _retains);
         internal int Releases => Volatile.Read(ref _releases);
         internal TaskCompletionSource Released { get; } = NewSignal();

@@ -29,7 +29,7 @@ internal sealed partial class SharpLinkServer
             {
                 retainedPayload?.Dispose();
                 var rejection = CreateDecodeQueueResourceExhaustion();
-                CompleteFailedRequestStreams(session, requestId, rejection);
+                CompleteFailedRequestStreams(session, requestId, rejection, callState, requestOwner);
                 var responseSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
                     rejection,
@@ -53,7 +53,7 @@ internal sealed partial class SharpLinkServer
                     reservedQueuePermit.Dispose();
                     queuePermit = null;
                     var rejection = CreateRetainedCompressedResourceExhaustion();
-                    CompleteFailedRequestStreams(session, requestId, rejection);
+                    CompleteFailedRequestStreams(session, requestId, rejection, callState, requestOwner);
                     var responseSend = session.SendRpcErrorWithBackpressureAsync(
                         requestId,
                         rejection,
@@ -201,7 +201,7 @@ internal sealed partial class SharpLinkServer
             {
                 session.ReturnDecodedPayload(result.Owner);
                 result.Owner = null;
-                CompleteFailedRequestStreams(session, requestId, resourceRejection);
+                CompleteFailedRequestStreams(session, requestId, resourceRejection, callState, requestOwner);
                 var rejectionSend = session.SendRpcErrorWithBackpressureAsync(
                     requestId,
                     resourceRejection,
@@ -226,7 +226,7 @@ internal sealed partial class SharpLinkServer
             var exception = new SharpLinkException(
                 SharpLinkErrorCode.Unavailable,
                 "Server is draining.");
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId,
                 exception,
@@ -246,7 +246,7 @@ internal sealed partial class SharpLinkServer
             ReconcileRetainedPayloadUse(result, retainedPayload, ref retainedUseOwned);
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId,
                 exception,
@@ -265,7 +265,7 @@ internal sealed partial class SharpLinkServer
             ReconcileRetainedPayloadUse(result, retainedPayload, ref retainedUseOwned);
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
             var responseSend = session.SendRpcErrorWithBackpressureAsync(
                 requestId,
                 MapServerCancellationException(callState, request.RpcDeadline),
@@ -284,7 +284,7 @@ internal sealed partial class SharpLinkServer
             ReconcileRetainedPayloadUse(result, retainedPayload, ref retainedUseOwned);
             session.ReturnDecodedPayload(result.Owner);
             result.Owner = null;
-            CompleteFailedRequestStreams(session, requestId, exception);
+            CompleteFailedRequestStreams(session, requestId, exception, callState, requestOwner);
             ReleaseDispatchResources(
                 callState,
                 requestId,

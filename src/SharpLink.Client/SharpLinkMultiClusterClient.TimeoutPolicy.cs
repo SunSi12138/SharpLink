@@ -11,14 +11,20 @@ internal sealed partial class SharpLinkMultiClusterClient
         IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> routeManifestSnapshot,
         int configuredConnectionBudget,
         ILoggerFactory? loggerFactory,
-        ClientRequestTimeoutPolicy requestTimeoutPolicy)
+        ClientRequestTimeoutPolicy requestTimeoutPolicy,
+        ColdMetadataDomain? metadataDomain = null,
+        IDisposable? metadataOwner = null,
+        ColdMetadataPreparation? metadataPreparation = null)
         : this(
             options,
             clusters,
             routes,
             routeManifestSnapshot,
             configuredConnectionBudget,
-            loggerFactory)
+            loggerFactory,
+            metadataDomain,
+            metadataOwner,
+            metadataPreparation)
         => _requestTimeoutPolicy = requestTimeoutPolicy;
 
     void ISharpLinkMultiClusterLifecycleControl.ConfigureChildBuilder(SharpClientBuilder builder)

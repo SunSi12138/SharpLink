@@ -9,9 +9,15 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     private readonly ConcurrentDictionary<Type, ResolvedCodec> _resolvedCodecs = new();
     private GeneratedRegistrationSnapshot _generatedRegistrationSnapshot;
     private int _disposed;
+    private readonly ColdMetadataPreparation _metadata;
+    private readonly bool _ownsMetadata;
 
-    internal RpcCodecProvider()
+    internal RpcCodecProvider(ColdMetadataPreparation? preparation = null)
     {
+        _ownsMetadata = preparation is null;
+        _metadata = preparation ?? new ColdMetadataAuthority().CreateDomain().BeginPreparation();
+        if (_ownsMetadata) _metadata.Complete();
+        _metadata.ReserveCollection(0);
         _generatedRegistrationSnapshot = new GeneratedRegistrationSnapshot(
             new Dictionary<Type, RpcGeneratedCodecRegistration>());
     }
@@ -160,6 +166,9 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedRegistrationSnapshot()
         => Volatile.Read(ref _generatedRegistrationSnapshot).Registrations;
 
+    internal GeneratedRegistrationSnapshot CaptureGeneratedRegistrationState()
+        => Volatile.Read(ref _generatedRegistrationSnapshot);
+
     internal void PublishGeneratedRegistrations(
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
         => CommitGeneratedRegistrations(PrepareGeneratedRegistrations(registrations));
@@ -172,9 +181,32 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
         var expected = Volatile.Read(ref _generatedRegistrationSnapshot);
         // Caller-owned dictionaries never become the live lookup map. Enumerate/copy only here,
         // before the Runtime/Server publication lock; commit sees a framework-owned frozen map.
-        return new PreparedGeneratedRegistrations(this, expected,
-            new GeneratedRegistrationSnapshot(registrations.ToFrozenDictionary()));
+        var count = registrations.Count;
+        if (count < 0) throw ColdMetadataException.Invalid("Codec map count is negative.");
+        using var temporary = _metadata.ReserveCollection(count);
+        var copy = new Dictionary<Type, RpcGeneratedCodecRegistration>(count, ReferenceEqualityComparer.Instance);
+        try
+        {
+            foreach (var pair in registrations)
+            {
+                if (copy.Count >= count || pair.Key is null || pair.Value is null || !copy.TryAdd(pair.Key, pair.Value))
+                    throw ColdMetadataException.Invalid("Codec map enumeration is inconsistent or duplicated.");
+            }
+            if (copy.Count != count || registrations.Count != count)
+                throw ColdMetadataException.Invalid("Codec map count changed during capture.");
+            // SOURCE GATE: retired provider maps still lack exact reader ownership. This charge
+            // conservatively survives to provider/root disposal; it is NOT accepted v2 reclamation.
+            // Do not add per-RPC refcounting to GetCodec as a shortcut.
+            _metadata.ReserveCollection(count);
+            return new PreparedGeneratedRegistrations(this, expected,
+                new GeneratedRegistrationSnapshot(copy.ToFrozenDictionary<Type, RpcGeneratedCodecRegistration>(ReferenceEqualityComparer.Instance)));
+        }
+        finally { copy.Clear(); }
     }
+
+    internal bool IsCurrentGeneratedRegistrations(PreparedGeneratedRegistrations publication)
+        => Volatile.Read(ref _disposed) == 0 && ReferenceEquals(publication.Owner, this) &&
+           ReferenceEquals(Volatile.Read(ref _generatedRegistrationSnapshot), publication.Expected);
 
     internal void CommitGeneratedRegistrations(PreparedGeneratedRegistrations publication)
     {
@@ -215,9 +247,9 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
             return;
         Volatile.Write(
             ref _generatedRegistrationSnapshot,
-            new GeneratedRegistrationSnapshot(
-                new Dictionary<Type, RpcGeneratedCodecRegistration>()));
+            GeneratedRegistrationSnapshot.Empty);
         _resolvedCodecs.Clear();
+        if (_ownsMetadata) _metadata.Dispose();
     }
 
     private sealed class ResolvedCodec(
@@ -245,15 +277,17 @@ internal sealed class RpcCodecProvider : IRpcCodecProvider, IDisposable
     internal sealed class GeneratedRegistrationSnapshot(
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations)
     {
+        internal static GeneratedRegistrationSnapshot Empty { get; } = new(FrozenDictionary<Type, RpcGeneratedCodecRegistration>.Empty);
         internal object Identity { get; } = new();
-        internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Registrations { get; } =
-            registrations;
+        internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Registrations { get; } = registrations;
     }
 }
 
 internal sealed class RpcGeneratedManifestRegistration : IDisposable
 {
     private readonly IRpcCodecAdapterScope[] _scopes;
+    private IDisposable? _metadataLease;
+    private readonly ColdMetadataPreparation _callbackOwner;
     private IRpcCodecProvider? _contractCodecProvider;
     private int _disposed;
 
@@ -262,8 +296,12 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> contractCodecs,
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs,
         IRpcCodecProvider baseProvider,
-        IRpcCodecAdapterScope[] scopes)
+        IRpcCodecAdapterScope[] scopes,
+        IDisposable metadataLease,
+        ColdMetadataPreparation callbackOwner)
     {
+        _metadataLease = metadataLease;
+        _callbackOwner = callbackOwner;
         Manifest = manifest;
         OwnerAssembly = manifest.OwnerAssembly ?? throw new InvalidOperationException("Generated manifest owner is missing.");
         ContractCodecs = contractCodecs;
@@ -306,19 +344,33 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
         => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
     internal static RpcGeneratedManifestRegistration Create(
-        ISharpLinkGeneratedAssemblyManifest manifest,
-        IRpcCodecProvider provider)
+        PreparedGeneratedManifest manifest,
+        IRpcCodecProvider provider,
+        ColdMetadataPreparation callbackOwner)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(provider);
 
-        var scopes = new List<IRpcCodecAdapterScope>();
+        var preparation = manifest.Preparation;
+        var budget = manifest.RegistrationScope;
+        var count = checked(manifest.Codecs.Count + manifest.ContractCodecs.Count);
+        using var scopesCharge = preparation.ReserveCollection(count, budget);
+        using var adapterMapCharge = preparation.ReserveCollection(count, budget);
+        using var combinedCharge = preparation.ReserveCollection(count, budget);
+        var scopes = new List<IRpcCodecAdapterScope>(count);
+        IDisposable? metadataLease = preparation.Retain();
+        var scopeByAdapterId = new Dictionary<string, AdapterScopeRegistration>(StringComparer.Ordinal);
+        var allFactories = new IRpcGeneratedCodecFactory[count];
         try
         {
-            var scopeByAdapterId = new Dictionary<string, AdapterScopeRegistration>(StringComparer.Ordinal);
-            var allFactories = manifest.Codecs.Concat(manifest.ContractCodecs).ToArray();
-            foreach (var factory in allFactories.OrderBy(static factory => factory.AdapterId, StringComparer.Ordinal)
-                         .ThenBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
+            for (var index = 0; index < manifest.Codecs.Count; index++) allFactories[index] = manifest.Codecs[index];
+            for (var index = 0; index < manifest.ContractCodecs.Count; index++) allFactories[manifest.Codecs.Count + index] = manifest.ContractCodecs[index];
+            Array.Sort(allFactories, static (left, right) =>
+            {
+                var order = StringComparer.Ordinal.Compare(left.AdapterId, right.AdapterId);
+                return order != 0 ? order : StringComparer.Ordinal.Compare(left.TargetType.FullName, right.TargetType.FullName);
+            });
+            foreach (var factory in allFactories)
             {
                 ValidateFactory(factory);
                 if (factory.AdapterId is null)
@@ -350,12 +402,13 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             var contractCodecs = CreateRegistrations(
                 manifest.ContractCodecs,
                 RpcGeneratedCodecResolutionScope.Contract);
+            preparation.ReserveCollection(scopes.Count, budget);
             var registration = new RpcGeneratedManifestRegistration(
                 manifest,
                 contractCodecs,
                 publishedCodecs,
                 provider,
-                [.. scopes]);
+                [.. scopes], metadataLease!, callbackOwner);
             ownerBox.Value = registration;
 
             foreach (var codecRegistration in publishedCodecs.Values)
@@ -363,33 +416,43 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
             foreach (var codecRegistration in contractCodecs.Values)
                 codecRegistration.PrepareAdapterCodec();
 
+            metadataLease = null;
             return registration;
 
             Dictionary<Type, RpcGeneratedCodecRegistration> CreateRegistrations(
                 IReadOnlyList<IRpcGeneratedCodecFactory> factories,
                 RpcGeneratedCodecResolutionScope resolutionScope)
             {
-                var registrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
-                foreach (var factory in factories.OrderBy(static factory => factory.TargetType.FullName, StringComparer.Ordinal))
+                preparation.ReserveCollection(factories.Count, budget);
+                using var sortedCharge = preparation.ReserveCollection(factories.Count, budget);
+                var registrations = new Dictionary<Type, RpcGeneratedCodecRegistration>(ReferenceEqualityComparer.Instance);
+                var ordered = new IRpcGeneratedCodecFactory[factories.Count];
+                try
                 {
-                    var adapterScope = factory.AdapterId is null
-                        ? null
-                        : scopeByAdapterId[factory.AdapterId].Scope;
-                    var targetType = factory.TargetType;
-                    if (!registrations.TryAdd(
-                            targetType,
-                            new RpcGeneratedCodecRegistration(
-                                ownerBox,
-                                factory,
-                                targetType,
-                                adapterScope,
-                                resolutionScope)))
+                    for (var index = 0; index < ordered.Length; index++) ordered[index] = factories[index];
+                    Array.Sort(ordered, static (left, right) => StringComparer.Ordinal.Compare(left.TargetType.FullName, right.TargetType.FullName));
+                    foreach (var factory in ordered)
                     {
-                        throw new InvalidOperationException(
-                            $"Manifest '{manifest.OwnerAssembly.FullName}' contains duplicate Codec target '{factory.TargetType.FullName}' in one binding scope.");
+                        var adapterScope = factory.AdapterId is null
+                            ? null
+                            : scopeByAdapterId[factory.AdapterId].Scope;
+                        var targetType = factory.TargetType;
+                        if (!registrations.TryAdd(
+                                targetType,
+                                new RpcGeneratedCodecRegistration(
+                                    ownerBox,
+                                    factory,
+                                    targetType,
+                                    adapterScope,
+                                    resolutionScope)))
+                        {
+                            throw new InvalidOperationException(
+                                $"Manifest '{manifest.OwnerAssembly.FullName}' contains duplicate Codec target '{factory.TargetType.FullName}' in one binding scope.");
+                        }
                     }
+                    return registrations;
                 }
-                return registrations;
+                finally { Array.Clear(ordered); }
             }
         }
         catch (Exception preparationException)
@@ -406,10 +469,18 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                     (cleanupFailures ??= []).Add(cleanupException);
                 }
             }
+            scopes.Clear();
+            metadataLease?.Dispose();
             if (cleanupFailures is null)
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(preparationException).Throw();
             cleanupFailures!.Insert(0, preparationException);
             throw new AggregateException(cleanupFailures);
+        }
+        finally
+        {
+            Array.Clear(allFactories);
+            scopeByAdapterId.Clear();
+            scopes.Clear();
         }
     }
 
@@ -435,7 +506,8 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
 
     private static void ValidateAdapter(IRpcGeneratedCodecFactory factory, IRpcCodecAdapter adapter)
     {
-        if (!string.Equals(adapter.AdapterId, factory.AdapterId, StringComparison.Ordinal))
+        var actualId = factory is PreparedCodecFactory prepared ? prepared.CapturedAdapterId : adapter.AdapterId;
+        if (!string.Equals(actualId, factory.AdapterId, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 $"Codec adapter '{adapter.GetType().FullName}' lifecycle identity does not match its generated registration metadata.");
@@ -448,6 +520,7 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
+        using var callback = _callbackOwner.EnterCallback();
         List<Exception>? failures = null;
         for (var index = _scopes.Length - 1; index >= 0; index--)
         {
@@ -460,6 +533,8 @@ internal sealed class RpcGeneratedManifestRegistration : IDisposable
                 (failures ??= []).Add(exception);
             }
         }
+        Array.Clear(_scopes);
+        Interlocked.Exchange(ref _metadataLease, null)?.Dispose();
         if (failures is { Count: 1 })
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
         if (failures is not null)
@@ -500,6 +575,7 @@ internal sealed class RpcGeneratedCodecRegistration
 
     internal RpcGeneratedManifestRegistration Owner => _owner.Value;
     internal IRpcGeneratedCodecFactory Factory { get; }
+    internal IRpcGeneratedCodecFactory FactoryIdentity => Factory is PreparedCodecFactory prepared ? prepared.Original : Factory;
     internal Type TargetType { get; }
     internal SharpLinkGeneratedUnsafeBlitRequirement? UnsafeBlitRequirement { get; }
 

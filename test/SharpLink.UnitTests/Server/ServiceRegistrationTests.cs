@@ -534,15 +534,19 @@ public partial class ServiceRegistrationTests
             ]));
         var manifest = new EmptyManifest(assembly);
         var runtime = (SharpLinkRuntimeContext)GetPrivateField(server, "_runtimeContext");
-        var codecRegistration = runtime.PrepareGeneratedManifest(manifest);
+        using var preparation = runtime.Domain.BeginPreparation();
+        var prepared = PreparedGeneratedManifest.Capture(manifest, preparation);
+        var codecRegistration = runtime.PrepareGeneratedManifest(prepared);
         runtime.AdoptGeneratedManifest(codecRegistration);
-        var module = new SharpLinkDynamicModule(assembly, manifest, codecRegistration);
+        var module = new SharpLinkDynamicModule(assembly, prepared, codecRegistration);
+        var detachedCharge = preparation.ReserveCollection(registrations.Length);
+        var detachedOwner = new ServerDetachedServices(registrations, preparation, detachedCharge);
 
         var registry = (ServerServiceModuleRegistry)GetPrivateField(server, "_serviceModuleRegistry");
         lock (registry.Gate)
         {
             registry.DynamicModules.Add(assembly, module);
-            registry.DetachedModuleServices.Add(module, registrations);
+            registry.DetachedModuleServices.Add(module, detachedOwner);
         }
         return module;
     }

@@ -15,8 +15,10 @@ internal static class SharpLinkAssemblyManifestLoader
 {
     internal static SharpLinkAssemblyRegistrationResult TryLoad(
         Assembly? assembly,
-        out ISharpLinkGeneratedAssemblyManifest? manifest)
+        ColdMetadataPreparation preparation,
+        out PreparedGeneratedManifest? manifest)
     {
+        ArgumentNullException.ThrowIfNull(preparation);
         manifest = null;
         if (assembly is null)
         {
@@ -133,6 +135,7 @@ internal static class SharpLinkAssemblyManifestLoader
                     "The SharpLink manifest locator does not match the trusted locator attribute.",
                     assembly);
             }
+            using var callback = preparation.EnterCallback();
             if (Activator.CreateInstance(typedLocator.ManifestType) is not ISharpLinkGeneratedAssemblyManifest generated)
             {
                 return Failure(
@@ -140,21 +143,22 @@ internal static class SharpLinkAssemblyManifestLoader
                     $"Manifest type '{manifestType.FullName}' does not implement ISharpLinkGeneratedAssemblyManifest.",
                     assembly);
             }
-            if (generated.ApiVersion != apiVersion ||
-                generated.ProtocolVersion != protocolVersion ||
-                !string.Equals(generated.GeneratorVersion, generatorVersion, StringComparison.Ordinal))
+            var header = new PreparedManifestHeader(generated.ApiVersion, generated.ProtocolVersion, generated.GeneratorVersion);
+            if (header.ApiVersion != apiVersion ||
+                header.ProtocolVersion != protocolVersion ||
+                !string.Equals(header.GeneratorVersion, generatorVersion, StringComparison.Ordinal))
             {
                 return Failure(
                     SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
                     "The materialized manifest metadata does not match its self-describing locator.",
                     assembly);
             }
-            var validationError = SharpLinkGeneratedManifestCompatibility.Validate(generated, assembly);
-            if (validationError is not null)
-                return SharpLinkAssemblyRegistrationResult.Failure(validationError);
-
-            manifest = generated;
+            manifest = PreparedGeneratedManifest.Capture(generated, preparation, assembly, header);
             return SharpLinkAssemblyRegistrationResult.Success();
+        }
+        catch (ColdMetadataException exception)
+        {
+            return Failure(exception.Code, exception.Message, assembly);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {

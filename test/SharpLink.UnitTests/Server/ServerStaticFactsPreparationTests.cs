@@ -16,8 +16,11 @@ public sealed class ServerStaticFactsPreparationTests
         var builder = Builder(manifest, listener);
         using var plan = Compile(builder);
         Ensure(manifest.Factories == 0 && manifest.Stub.Resolutions == 0);
-        Ensure(plan.DeclaredFactsQuota.Methods == 1 && plan.DeclaredFactsQuota.Bytes == 384);
-        manifest.OnFactory = () => Ensure(plan.DeclaredFactsQuota.Bytes == 384);
+        var authority = plan.RuntimeContext.Authority;
+        var scope = ((PreparedGeneratedManifest)plan.RuntimeContext.GeneratedManifests[0]).GetContractScope(8);
+        Ensure(ReferenceEquals(plan.DeclaredFactsQuota.Authority, authority));
+        Ensure(plan.DeclaredFactsQuota.Methods == 1 && scope.Bytes == 3 * 384UL);
+        manifest.OnFactory = () => Ensure(scope.Bytes == 3 * 384UL);
         var server = Materialize(builder, plan);
         try
         {
@@ -25,7 +28,7 @@ public sealed class ServerStaticFactsPreparationTests
                 .GetValue(server);
             Ensure(ReferenceEquals(quota, plan.DeclaredFactsQuota));
             Ensure(manifest.Factories == 1 && manifest.Stub.Resolutions == 1 && manifest.Stub.Reads == 1);
-            Ensure(plan.DeclaredFactsQuota.Bytes == 384);
+            Ensure(scope.Bytes == 2 * 384UL);
         }
         finally { await server.DisposeAsync(); }
         Ensure(plan.DeclaredFactsQuota.Bytes == 0 && listener.Disposals == 1);
@@ -38,7 +41,8 @@ public sealed class ServerStaticFactsPreparationTests
         var listener = new Listener();
         var builder = Builder(manifest, listener);
         var plan = Compile(builder);
-        Ensure(plan.DeclaredFactsQuota.Bytes == 384);
+        var scope = ((PreparedGeneratedManifest)plan.RuntimeContext.GeneratedManifests[0]).GetContractScope(8);
+        Ensure(scope.Bytes == 3 * 384UL);
         plan.Dispose();
         plan.Dispose();
         Ensure(plan.DeclaredFactsQuota.Bytes == 0 && listener.Disposals == 1 && manifest.Factories == 0);
@@ -55,8 +59,9 @@ public sealed class ServerStaticFactsPreparationTests
         using var plan = Compile(builder);
         var failure = new InvalidOperationException("inline facts failure");
         manifest.Stub.Failure = failure;
+        var scope = ((PreparedGeneratedManifest)plan.RuntimeContext.GeneratedManifests[0]).GetContractScope(8);
         var chargedDuringRollback = false;
-        listener.OnDispose = () => chargedDuringRollback = plan.DeclaredFactsQuota.Bytes == 384;
+        listener.OnDispose = () => chargedDuringRollback = scope.Bytes == 2 * 384UL;
         var error = Expect<ServerDeclaredMethodFactsException>(() => Materialize(builder, plan));
         Ensure(ReferenceEquals(error.InnerException, failure) && chargedDuringRollback);
         Ensure(plan.DeclaredFactsQuota.Bytes == 0 && manifest.Factories == 1 && listener.Disposals == 1);
@@ -65,14 +70,30 @@ public sealed class ServerStaticFactsPreparationTests
     }
 
     [Test]
-    public void UnservedContractsReleaseOnlyTheirDiscardedHeaderStaging()
+    public void UnservedContractsRetainTheirRuntimeMetadataButNotUnusedFactsArrays()
     {
         var manifest = new Manifest(includeService: false);
         var listener = new Listener();
         var builder = Builder(manifest, listener);
         using var plan = Compile(builder);
-        Ensure(plan.ServiceCount == 0 && plan.DeclaredFactsQuota.Bytes == 0);
+        var scope = ((PreparedGeneratedManifest)plan.RuntimeContext.GeneratedManifests[0]).GetContractScope(8);
+        Ensure(plan.ServiceCount == 0 && scope.Bytes == 384 && scope.Methods == 1);
         Ensure(plan.FactsPreparation.ContractCount == 0 && manifest.Factories == 0 && manifest.Stub.Resolutions == 0);
+    }
+
+    [Test]
+    public async Task PoisonedOriginalManifestCannotChangeTheCompiledFactsDomain()
+    {
+        var manifest = new Manifest();
+        var builder = Builder(manifest, new Listener());
+        using var plan = Compile(builder);
+        var captured = (PreparedGeneratedManifest)plan.RuntimeContext.GeneratedManifests[0];
+        manifest.Poison();
+        Ensure(captured.Contracts[0].Methods[0].MethodId == 1);
+        var server = Materialize(builder, plan);
+        try { Ensure(manifest.Factories == 1 && manifest.Stub.Resolutions == 1); }
+        finally { await server.DisposeAsync(); }
+        Ensure(plan.DeclaredFactsQuota.Bytes == 0);
     }
 
     private static SharpLinkServerBuilder Builder(Manifest manifest, Listener listener)
@@ -133,8 +154,13 @@ public sealed class ServerStaticFactsPreparationTests
         public Assembly OwnerAssembly => typeof(ServerStaticFactsPreparationTests).Assembly;
         public RpcHash128 RpcAssemblyHash => new(1, 2);
         public string CompileTimeDescriptor => "static-facts-source-test";
-        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; }
-        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; }
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; private set; }
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services { get; private set; }
+        internal void Poison()
+        {
+            Contracts = [];
+            Services = [];
+        }
         public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
         public IReadOnlyList<string> Dependencies => [];
     }

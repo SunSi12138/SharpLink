@@ -183,7 +183,9 @@ internal sealed partial class RpcSession
 
     internal void SendPacket(
         IRpcByteBufferWriter packet,
-        IRequestEmissionFailureObserver? failureObserver = null)
+        IRequestEmissionFailureObserver? failureObserver = null,
+        RpcFramePublication? publication = null,
+        RpcFramePublicationRole publicationRole = RpcFramePublicationRole.None)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -204,7 +206,7 @@ internal sealed partial class RpcSession
         ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
         var result = GetOrCreatePumpOrReturn(packet)
-            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null, failureObserver));
+            .TryEnqueue(CreateFrame(packet, forceFlush: false, flushCompletion: null, failureObserver, publication, publicationRole));
         if (result == SendEnqueueResult.Full)
         {
             throw SharpLinkResourceExhaustion.Create(
@@ -217,8 +219,11 @@ internal sealed partial class RpcSession
 
     internal async ValueTask SendPacketAndFlushAsync(
         IRpcByteBufferWriter packet,
-        CancellationToken ct = default)
-        => await SendPacketAsync(packet, waitForCapacity: true, forceFlush: true, ct).ConfigureAwait(false);
+        CancellationToken ct = default,
+        RpcFramePublication? publication = null,
+        RpcFramePublicationRole publicationRole = RpcFramePublicationRole.None)
+        => await SendPacketAsync(packet, waitForCapacity: true, forceFlush: true, ct,
+            publication: publication, publicationRole: publicationRole).ConfigureAwait(false);
 
     internal async ValueTask FlushSendQueueAsync(CancellationToken ct = default)
     {
@@ -232,7 +237,9 @@ internal sealed partial class RpcSession
         bool waitForCapacity,
         bool forceFlush,
         CancellationToken ct = default,
-        bool allowEmpty = false)
+        bool allowEmpty = false,
+        RpcFramePublication? publication = null,
+        RpcFramePublicationRole publicationRole = RpcFramePublicationRole.None)
     {
         ArgumentNullException.ThrowIfNull(packet);
         if (Volatile.Read(ref _terminal) is { } terminal)
@@ -258,7 +265,7 @@ internal sealed partial class RpcSession
         var completion = forceFlush
             ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
             : null;
-        var frame = CreateFrame(packet, forceFlush, completion);
+        var frame = CreateFrame(packet, forceFlush, completion, publication: publication, publicationRole: publicationRole);
         var pump = GetOrCreatePumpOrReturn(packet);
         var result = waitForCapacity
             ? await pump.EnqueueAsync(frame, ct).ConfigureAwait(false)
@@ -293,7 +300,9 @@ internal sealed partial class RpcSession
 
     internal ValueTask SendPacketWithBackpressureAsync(
         IRpcByteBufferWriter packet,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RpcFramePublication? publication = null,
+        RpcFramePublicationRole publicationRole = RpcFramePublicationRole.None)
     {
         try
         {
@@ -315,7 +324,8 @@ internal sealed partial class RpcSession
             }
             ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
 
-            var frame = CreateFrame(packet, forceFlush: false, flushCompletion: null);
+            var frame = CreateFrame(packet, forceFlush: false, flushCompletion: null,
+                publication: publication, publicationRole: publicationRole);
             var pump = GetOrCreatePumpOrReturn(packet);
             var result = pump.TryEnqueueForBackpressure(frame);
             if (result == SendEnqueueResult.Accepted)
@@ -349,17 +359,85 @@ internal sealed partial class RpcSession
     internal Task CaptureBackpressuredSendDrain()
         => Volatile.Read(ref _pump)?.CaptureBackpressuredSendDrain() ?? Task.CompletedTask;
 
-    private static OwnedFrame CreateFrame(
+    private OwnedFrame CreateFrame(
         IRpcByteBufferWriter packet,
         bool forceFlush,
         TaskCompletionSource<bool>? flushCompletion,
-        IRequestEmissionFailureObserver? failureObserver = null)
-        => new(
-            packet,
-            forceFlush,
-            flushCompletion,
-            IsProtocolProgressFrame(packet.WrittenSpan),
-            failureObserver);
+        IRequestEmissionFailureObserver? failureObserver = null,
+        RpcFramePublication? publication = null,
+        RpcFramePublicationRole publicationRole = RpcFramePublicationRole.None)
+    {
+        try
+        {
+            ValidateFramePublication(packet.WrittenSpan, publication, publicationRole);
+            return new OwnedFrame(packet, forceFlush, flushCompletion,
+                IsProtocolProgressFrame(packet.WrittenSpan), failureObserver, publication, publicationRole);
+        }
+        catch (Exception exception)
+        {
+            Exception? failure = exception;
+            try { RuntimeContext.Buffers.Return(packet); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            try { Fault(exception); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure!).Throw();
+            throw new UnreachableException();
+        }
+    }
+
+    private void ValidateFramePublication(ReadOnlySpan<byte> packet,
+        RpcFramePublication? publication, RpcFramePublicationRole role)
+    {
+        if (publication is null)
+        {
+            if (role != RpcFramePublicationRole.None)
+                throw new InvalidOperationException("A publication role requires its exact control.");
+            return;
+        }
+        if (!ReferenceEquals(publication.Session, this) || role == RpcFramePublicationRole.None || IsProtocolProgressFrame(packet))
+            throw new InvalidOperationException("A publication control must belong to this Session's normal queue.");
+        if (role is RpcFramePublicationRole.StreamFence or RpcFramePublicationRole.StreamCleanupFence)
+        {
+            if (publication is not RpcStreamPublication || packet.Length != 0)
+                throw new InvalidOperationException("Only an exact stream group may own a zero-wire fence.");
+            return;
+        }
+        if (packet.Length < ProtocolV2Constants.HeaderBytes)
+            throw new InvalidOperationException("Publication frame is missing its full header.");
+        var type = (ProtocolV2FrameType)packet[5];
+        var requestId = BinaryPrimitives.ReadInt64LittleEndian(packet.Slice(7, sizeof(long)));
+        if (publication is RpcStreamPublication stream)
+            stream.ValidateProducer(this, requestId);
+        switch (role)
+        {
+            case RpcFramePublicationRole.RequestHead:
+                if (type is not (ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayStreamRequest) || requestId <= 0)
+                    throw new InvalidOperationException("Request-head control attached to an invalid request frame.");
+                var requestBinding = publication is RpcStreamPublication requestGroup
+                    ? requestGroup.Binding : publication as RpcBindingPublication;
+                if (requestBinding is null || packet.Length < ProtocolV2Constants.HeaderBytes + 16 ||
+                    BinaryPrimitives.ReadUInt64LittleEndian(packet[ProtocolV2Constants.HeaderBytes..]) != requestBinding.Token ||
+                    (type == ProtocolV2FrameType.OneWayStreamRequest && publication is not RpcStreamPublication))
+                    throw new InvalidOperationException("Request head does not match its exact binding control.");
+                break;
+            case RpcFramePublicationRole.StreamData:
+            case RpcFramePublicationRole.StreamTerminal:
+                if (publication is not RpcStreamPublication streamGroup ||
+                    type != (role == RpcFramePublicationRole.StreamData ? ProtocolV2FrameType.StreamData : ProtocolV2FrameType.StreamComplete) ||
+                    packet.Length < ProtocolV2Constants.HeaderBytes + sizeof(ushort))
+                    throw new InvalidOperationException("Stream emission requires its exact group and matching data/terminal role.");
+                streamGroup.ValidateStreamId(BinaryPrimitives.ReadUInt16LittleEndian(packet[ProtocolV2Constants.HeaderBytes..]));
+                break;
+            case RpcFramePublicationRole.ReleaseBinding:
+                if (publication is not RpcBindingPublication binding || type != ProtocolV2FrameType.ReleaseBinding ||
+                    packet.Length != ProtocolV2Constants.HeaderBytes + sizeof(ulong) ||
+                    BinaryPrimitives.ReadUInt64LittleEndian(packet[ProtocolV2Constants.HeaderBytes..]) != binding.Token)
+                    throw new InvalidOperationException("Release marker does not match its exact binding control.");
+                break;
+            default:
+                throw new InvalidOperationException("Unknown publication role.");
+        }
+    }
 
     private static void ObserveAbandonedFlushCompletion(Task flushCompletion)
         => _ = ObserveAbandonedFlushCompletionAsync(flushCompletion);
@@ -437,10 +515,12 @@ internal sealed partial class RpcSession
             if (encodedPayloadLength != payloadLength)
                 throw new InvalidOperationException("Outbound frame payload length does not match its header.");
         }
-        catch
+        catch (Exception failure)
         {
-            RuntimeContext.Buffers.Return(packet);
-            throw;
+            try { RuntimeContext.Buffers.Return(packet); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            throw new UnreachableException();
         }
     }
 

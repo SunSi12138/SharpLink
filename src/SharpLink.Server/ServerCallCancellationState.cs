@@ -64,6 +64,7 @@ internal sealed class ServerCallCancellationState : IDisposable
     private int _reason;
     private int _abandonedRecorded;
     private int _moduleDrainResponseClaimed;
+    private int _acceptedClientStreamCount;
     private bool _disposeRequested;
     private int _externalUsers;
     private long _leaseGeneration;
@@ -135,6 +136,7 @@ internal sealed class ServerCallCancellationState : IDisposable
         state._reason = (int)ServerCallCancellationReason.None;
         state._abandonedRecorded = 0;
         state._moduleDrainResponseClaimed = 0;
+        state._acceptedClientStreamCount = 0;
         state._admissionProgramUse = null;
         state._admissionLease = null;
         state._payloadPool = null;
@@ -274,6 +276,50 @@ internal sealed class ServerCallCancellationState : IDisposable
     /// </summary>
     internal bool TryAcceptStreamDataDeferredCancellation(out bool cancellationNotificationRequired)
         => TryClaimStreamProgress(signalCancellation: false, out cancellationNotificationRequired);
+
+    internal int AcceptedClientStreamCount => Volatile.Read(ref _acceptedClientStreamCount);
+
+    // Route reservation and frame preparation precede this gate. Only the callback-free
+    // queue transfer runs here; deferred cleanup/wake and cancellation notification do not.
+    internal bool TryPublishRequestAccepted(
+        RpcSession session,
+        ref RpcSession.PreparedFrameEnqueue admission,
+        int clientStreamCount,
+        out bool cancellationNotificationRequired)
+    {
+        if (clientStreamCount is < 1 or > RpcMethodFacts.MaxClientStreamCount)
+            throw new ArgumentOutOfRangeException(nameof(clientStreamCount));
+        cancellationNotificationRequired = false;
+        // The owning dispatch pins this pooled generation until its release path. Capture the
+        // original deadline/provider once; virtual clock callbacks are outside arbitration.
+        var requestId = RequestId;
+        var generation = Volatile.Read(ref _leaseGeneration);
+        var deadline = Deadline;
+        var timeProvider = _timeProvider ?? throw new InvalidOperationException(
+            "Server call state has no time provider.");
+        var observedTimestamp = deadline.HasValue ? timeProvider.GetTimestamp() : 0;
+        lock (_terminalGate)
+        {
+            if (_acceptedClientStreamCount != 0)
+                return false; // No second acceptance or exception factory under arbitration.
+            if (RequestId != requestId || _leaseGeneration != generation ||
+                Reason != ServerCallCancellationReason.None)
+                return false;
+            // Expiry is observed at the immediately preceding original-clock sample, not a
+            // new budget and not a claim about time elapsed while descheduled before this gate.
+            if (deadline.IsExpired(observedTimestamp))
+            {
+                Volatile.Write(ref _reason, (int)ServerCallCancellationReason.DeadlineExceeded);
+                cancellationNotificationRequired = _invocationCancellation is not null;
+                return false;
+            }
+            if (!session.TryTransferPreparedFrame(ref admission))
+                return false;
+            // Definitive queue ownership is committed before wake/failure callbacks can run.
+            Volatile.Write(ref _acceptedClientStreamCount, clientStreamCount);
+            return true;
+        }
+    }
 
     public bool TryClaimResponse()
         => TryClaimTerminal(

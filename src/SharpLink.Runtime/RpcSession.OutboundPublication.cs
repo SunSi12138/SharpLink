@@ -29,10 +29,12 @@ internal sealed partial class RpcSession
         {
             packet = PrepareOutboundPacket(packet, cancellationToken);
         }
-        catch
+        catch (Exception failure)
         {
-            RuntimeContext.Buffers.Return(packet);
-            throw;
+            try { RuntimeContext.Buffers.Return(packet); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            throw new UnreachableException();
         }
 
         // Validation returns the packet itself through this helper when it rejects the frame.
@@ -40,66 +42,145 @@ internal sealed partial class RpcSession
         return packet;
     }
 
-    /// <summary>
-    /// Attempts the synchronous half of a send: admission of one prepared frame into the send queue.
-    /// </summary>
-    /// <remarks>
-    /// This is the linearization point that a caller runs under its own completion gate, so it never
-    /// awaits and never invokes user code. The frame owns the packet on entry, so every rejected
-    /// result has already returned it through the pump. Only an accepted frame produces an
-    /// <paramref name="emission"/> waiter.
-    /// </remarks>
-    /// <param name="packet">A frame that <see cref="PrepareOutboundFrame"/> already accepted.</param>
-    /// <param name="observeEmission">Whether the caller needs a waiter for the transport write.</param>
-    /// <param name="cancellationToken">Caller cancellation observed while waiting for emission.</param>
-    /// <param name="failureObserver">Observer notified when the queued frame fails in the transport.</param>
-    /// <param name="emission">
-    /// The emission waiter for an accepted frame, or <c>default</c> for every other outcome.
-    /// </param>
-    /// <param name="rejection">
-    /// Set when the frame never reached the queue. The packet has already been returned to the pool
-    /// on that path, so the caller must not return it again.
-    /// </param>
-    /// <returns><c>true</c> when the frame is in the send queue.</returns>
+    // Stack-owned transaction. Never copy after preparation: only the original caller may
+    // transfer/finalize it. Accepted is irrevocable even when deferred notification fails.
+    internal struct PreparedFrameEnqueue
+    {
+        internal SendPump? Pump;
+        internal RpcSession? Session;
+        internal OwnedFrame Frame;
+        internal ProtocolV2FrameType FrameType;
+        internal bool Reserved;
+        internal bool TransferAttempted;
+        internal bool Finished;
+        internal SendEnqueueResult Result;
+        internal TaskCompletionSource<bool>? Completion;
+        internal CancellationToken CancellationToken;
+        internal Exception? Refusal;
+        internal bool PhaseRefused;
+        internal RpcSessionProtocolPhase RefusedPhase;
+        internal bool Accepted => TransferAttempted && Result == SendEnqueueResult.Accepted;
+
+        // Caller-selected terminal errors are created outside its arbitration gate.
+        internal void Reject(Exception reason)
+        {
+            if (Accepted || Finished) throw new InvalidOperationException("Enqueue ownership is already final.");
+            Refusal = reason ?? throw new ArgumentNullException(nameof(reason));
+        }
+    }
+
+    /// <summary>Takes the prepared writer; reserve/telemetry/pump creation run OUTSIDE call gates.</summary>
+    internal PreparedFrameEnqueue PrepareFrameEnqueue(
+        IRpcByteBufferWriter packet,
+        bool observeEmission,
+        CancellationToken cancellationToken,
+        IRequestEmissionFailureObserver? failureObserver,
+        RpcFramePublication? publication = null,
+        RpcFramePublicationRole publicationRole = RpcFramePublicationRole.None)
+    {
+        ArgumentNullException.ThrowIfNull(packet);
+        TaskCompletionSource<bool>? completion;
+        try
+        {
+            completion = observeEmission
+                ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously) : null;
+        }
+        catch (Exception failure)
+        {
+            try { RuntimeContext.Buffers.Return(packet); }
+            catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup)!; }
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            throw new UnreachableException();
+        }
+        // Even ACK callers that construct an already-final packet must validate outside
+        // arbitration; a previously prepared Request repeats only scalar wire checks.
+        ValidateOutboundPacketOrReturn(packet, allowEmpty: false);
+        // Each helper owns/returns the writer on failure; no duplicate catch return.
+        var pump = GetOrCreatePumpOrReturn(packet);
+        var frame = CreateFrame(packet, forceFlush: false, completion,
+            failureObserver, publication, publicationRole);
+        var admission = pump.PrepareEnqueue(frame);
+        admission.Session = this;
+        admission.FrameType = (ProtocolV2FrameType)frame.Memory.Span[5];
+        admission.Completion = completion;
+        admission.CancellationToken = cancellationToken;
+        return admission;
+    }
+
+    /// <summary>Only scalar checks and Channel.TryWrite. No cleanup, wake, callback or error factory.</summary>
+    internal bool TryTransferPreparedFrame(ref PreparedFrameEnqueue admission)
+    {
+        if (admission.TransferAttempted || admission.Finished || admission.Pump is null)
+            return false;
+        admission.TransferAttempted = true;
+        var phase = Volatile.Read(ref _protocolState).Phase;
+        var frameType = admission.FrameType;
+        var peerRole = Role == RpcSessionRole.Client ? RpcSessionRole.Server : RpcSessionRole.Client;
+        if (!ReferenceEquals(admission.Session, this) || Volatile.Read(ref _terminal) is not null || admission.Refusal is not null)
+        {
+            admission.Result = SendEnqueueResult.Closed;
+            return false;
+        }
+        if (!RpcSessionProtocolRules.IsFrameAllowed(phase, frameType) ||
+            !RpcSessionProtocolRules.IsInboundDirectionAllowed(peerRole, frameType) ||
+            (phase == RpcSessionProtocolPhase.Draining && frameType is
+                ProtocolV2FrameType.Request or ProtocolV2FrameType.OneWayStreamRequest or ProtocolV2FrameType.BindContract))
+        {
+            admission.PhaseRefused = true;
+            admission.RefusedPhase = phase;
+            admission.Result = SendEnqueueResult.Closed;
+            return false;
+        }
+        return admission.Pump.TryTransferPrepared(ref admission);
+    }
+
+    /// <summary>Unconditional OUTSIDE-gate finalization, including paths that never attempted transfer.</summary>
+    internal void FinishPreparedFrameEnqueue(
+        ref PreparedFrameEnqueue admission, out ValueTask emission, out Exception? rejection)
+    {
+        emission = default;
+        rejection = null;
+        if (admission.Finished || admission.Pump is null) return;
+        admission.Finished = true;
+        if (admission.Accepted)
+        {
+            // Do not read the frame/buffer here: the consumer may already have returned it.
+            admission.Pump!.FinishAcceptedPublication();
+            if (admission.Completion is not null)
+                emission = AwaitEmissionAsync(admission.Completion, admission.CancellationToken);
+            return;
+        }
+        rejection = admission.Refusal ?? (admission.PhaseRefused
+            ? new SharpLinkException(admission.RefusedPhase == RpcSessionProtocolPhase.Draining
+                    ? SharpLinkErrorCode.Unavailable : SharpLinkErrorCode.ProtocolViolation,
+                $"Frame {admission.FrameType} lost outbound eligibility while the Session is {admission.RefusedPhase}.")
+            : CreateSendEnqueueFailure(admission.Result == SendEnqueueResult.Full
+                ? SendEnqueueResult.Full : SendEnqueueResult.Closed));
+        try { admission.Pump!.FinishRejectedPrepared(ref admission, rejection); }
+        finally
+        {
+            if (admission.Completion is not null)
+                ObserveAbandonedFlushCompletion(admission.Completion.Task);
+        }
+    }
+
+    // Non-gated callers use the same transaction, not an ACK-only alternative behavior.
     internal bool TryEnqueuePreparedFrame(
         IRpcByteBufferWriter packet,
         bool observeEmission,
         CancellationToken cancellationToken,
         IRequestEmissionFailureObserver? failureObserver,
         out ValueTask emission,
-        out Exception? rejection)
+        out Exception? rejection,
+        RpcFramePublication? publication = null,
+        RpcFramePublicationRole publicationRole = RpcFramePublicationRole.None)
     {
         emission = default;
         rejection = null;
-        SendPump pump;
-        try
-        {
-            pump = GetOrCreatePumpOrReturn(packet);
-        }
-        catch (Exception exception)
-        {
-            // The pump helper returns the packet on every failure path, including a terminal race.
-            rejection = exception;
-            return false;
-        }
-
-        var completion = observeEmission
-            ? new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
-            : null;
-        var result = pump.TryEnqueue(CreateFrame(
-            packet,
-            forceFlush: false,
-            flushCompletion: completion,
-            failureObserver));
-        if (result != SendEnqueueResult.Accepted)
-        {
-            rejection = CreateSendEnqueueFailure(result);
-            return false;
-        }
-
-        if (completion is not null)
-            emission = AwaitEmissionAsync(completion, cancellationToken);
-        return true;
+        var admission = PrepareFrameEnqueue(packet, observeEmission, cancellationToken,
+            failureObserver, publication, publicationRole);
+        try { return TryTransferPreparedFrame(ref admission); }
+        finally { FinishPreparedFrameEnqueue(ref admission, out emission, out rejection); }
     }
 
     /// <summary>Maps a rejected admission result to the failure the caller has to observe.</summary>

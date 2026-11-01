@@ -24,6 +24,7 @@ public sealed class ServerDeclaredMethodFactsTests
         reservation.SetMethodCount(1);
         group.Seal();
         using var table = ServerDeclaredMethodFacts.Prepare(Contract([Method(long.MinValue, kind)]), stub, reservation);
+        group.PrepareCommit();
         group.Commit();
         group.Dispose();
         Ensure(quota.Methods == 1 && quota.Bytes == 384);
@@ -31,10 +32,11 @@ public sealed class ServerDeclaredMethodFactsTests
         Ensure(ReferenceEquals(table.Resolve(long.MinValue), facts));
         Ensure(ReferenceEquals(table.Resolve(long.MaxValue), RpcMethodFacts.UnknownMethod));
         Ensure(stub.Reads == 1 && stub.Resolutions == 1 && stub.BusinessCalls == 0);
+        var retainedScalar = table.Resolve(long.MinValue);
         table.Dispose();
         table.Dispose();
         Ensure(quota.Methods == 0 && quota.Bytes == 0);
-        Ensure(ReferenceEquals(table.Resolve(long.MinValue), facts)); // Disposal cannot mutate captured scalar readers.
+        Ensure(ReferenceEquals(retainedScalar, facts)); // Invocation retains the exact scalar, not the disposed table.
     }
 
     [Test]
@@ -139,7 +141,7 @@ public sealed class ServerDeclaredMethodFactsTests
             ServerDeclaredMethodFacts.Prepare(Contract([Method(1)]), new Stub(_ => throw original), reservation));
         Ensure(failure.Code == SharpLinkAssemblyRegistrationErrorCode.InvalidManifest &&
             failure.ContractId == 8 && failure.MethodId == 1 && ReferenceEquals(failure.InnerException, original));
-        Ensure(quota.Methods == 1 && quota.Bytes == 384);
+        Ensure(quota.Methods == 1 && quota.Bytes == 1024);
         Expect<InvalidOperationException>(() => group.Commit());
         group.Dispose();
         group.Dispose();
@@ -160,7 +162,7 @@ public sealed class ServerDeclaredMethodFactsTests
         cancellation.Cancel();
         Expect<OperationCanceledException>(() =>
             ServerDeclaredMethodFacts.Prepare(Contract([Method(1)]), stub, reservation, cancellation.Token));
-        Ensure(stub.Reads == 0 && stub.Resolutions == 0 && quota.Bytes == 384);
+        Ensure(stub.Reads == 0 && stub.Resolutions == 0 && quota.Bytes == 1024);
         group.Dispose();
         Ensure(quota.Bytes == 0);
     }

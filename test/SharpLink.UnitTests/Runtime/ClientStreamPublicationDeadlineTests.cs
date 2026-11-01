@@ -37,7 +37,7 @@ public class ClientStreamPublicationDeadlineTests
             0,
             deadline,
             timeProvider,
-            CancellationToken.None));
+            CancellationToken.None, new TestRpcStreamPublication(session, 91)));
         Ensure(cleanFailure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
             "clean client-stream EOF must be rejected at its enqueue boundary after expiry");
 
@@ -47,7 +47,7 @@ public class ClientStreamPublicationDeadlineTests
             new SharpLinkException(SharpLinkErrorCode.Internal, "producer"),
             deadline,
             timeProvider,
-            CancellationToken.None));
+            CancellationToken.None, new TestRpcStreamPublication(session, 92)));
         Ensure(errorFailure is SharpLinkException { Code: SharpLinkErrorCode.DeadlineExceeded },
             "error client-stream EOF must be rejected at its enqueue boundary after expiry");
 
@@ -92,7 +92,7 @@ public class ClientStreamPublicationDeadlineTests
                 exactSizeCodec,
                 deadline,
                 timeProvider,
-                CancellationToken.None);
+                CancellationToken.None, new TestRpcStreamPublication(session, 90));
         }
         catch (Exception exception)
         {

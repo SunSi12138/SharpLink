@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Friend access only; this is NOT the complete UnitTests assembly's suite. -->
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <RootNamespace>SharpLink.Type22Type23TcpTests</RootNamespace>
+    <AssemblyTitle>SharpLink.Type22Type23TcpTests source-review checkpoint 3</AssemblyTitle>
+    <Description>Explicit real TCP generated-five-family and manual type23 subset. Source review only.</Description>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/obj/$(Configuration)/$(TargetFramework)/type22-type23-generated</CompilerGeneratedFilesOutputPath>
+    <UseTestingPlatformProtocol>false</UseTestingPlatformProtocol>
+    <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="SharpLink.TestSubset" Value="Type22Type23Tcp-source-checkpoint3" />
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Generator/SharpLink.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../SharpLink.DynamicContracts/SharpLink.DynamicContracts.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../SharpLink.DynamicServices/SharpLink.DynamicServices.csproj" ReferenceOutputAssembly="false" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="SharpPack" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <Compile Include="../SharpLink.IntegrationTests/GlobalUsings.cs" Link="Shared/GlobalUsings.cs" />
+    <Compile Include="../SharpLink.IntegrationTests/ServerLifecycleTestExtensions.cs" Link="Shared/ServerLifecycleTestExtensions.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="Shared/ManualTimeProvider.cs" />
+    <Compile Include="TcpAcceptanceContract.cs" />
+    <Compile Include="TcpAcceptanceTests.cs" />
+    <Compile Include="TcpAcceptanceTests.Support.cs" />
+    <Compile Include="TcpAcceptanceTests.PersistedLoader.cs" />
+    <Compile Include="TcpAcceptanceTests.OmittedStreams.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <TestingPlatformBuilderHook Remove="98058041-B5B6-4A75-9834-58E6DF796A22" />
+    <TestingPlatformBuilderHook Remove="83B7B6C3-DC9C-4F30-8323-A3E1EBA7F65B" />
+    <TestingPlatformBuilderHook Remove="2006B3F7-93D2-4D9C-9C69-F41A1F21C9C7" />
+  </ItemGroup>
+  <!-- These are actual analyzer-produced payloads, never fabricated manifests. -->
+  <Target Name="CopyType22Type23GeneratedPayloads" AfterTargets="Build">
+    <Copy SourceFiles="../SharpLink.DynamicServices/bin/$(Configuration)/$(TargetFramework)/SharpLink.DynamicPlugin.Contracts.dll;../SharpLink.DynamicServices/bin/$(Configuration)/$(TargetFramework)/SharpLink.DynamicPlugin.Services.dll"
+          DestinationFolder="$(OutDir)type22-type23-payloads" />
+  </Target>
+</Project>

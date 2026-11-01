@@ -15,13 +15,20 @@ internal static class ClientRuntimeMaterializer
         {
             plan.BeginMaterialization();
             materializationStarted = true;
+            // Registered first: pending metadata is released last on reverse rollback.
+            var runtimePlan = plan.TakeRuntimePlan();
+            var metadataGuard = transaction.Own(runtimePlan.Preparation.Retain(), static value => value.Dispose(),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Client metadata rollback guard"));
+            transaction.Own(runtimePlan, static value => value.Dispose(),
+                SynchronousBuildResourceMetadata.FrameworkOwned("Client pending Runtime metadata"));
             plan.Resources.RegisterWith(transaction);
             var runtimeContext = transaction.Own(
-                plan.RuntimeContext.Materialize(),
+                runtimePlan.Materialize(),
                 static context => context.Dispose(),
                 SynchronousBuildResourceMetadata.FrameworkOwned("Client runtime context"));
             var client = MaterializeClient(plan, runtimeContext, transaction);
             transaction.Commit();
+            metadataGuard.Dispose();
             plan.Resources.MarkTransferred();
             return client;
         }
@@ -177,9 +184,12 @@ internal static class ClientRuntimeMaterializer
         ClientRuntimeTopologyComposition topology,
         SharpLinkConnectionPoolOptions connectionPool)
     {
-        var staticManifests = plan.CreateStaticManifestSnapshot();
+        var staticManifests = runtimeContext.GeneratedManifests;
         var requestTimeout = plan.RequestTimeout;
         var logger = plan.LoggerFactory.CreateLogger<SharpLinkClient>();
+        var proxies = SharpLinkClient.BuildStaticProxySnapshot(staticManifests, runtimeContext);
+        try
+        {
         var composition = new ClientRuntimeComposition(
             transport,
             topology,
@@ -188,7 +198,7 @@ internal static class ClientRuntimeMaterializer
             plan.RequestCompressionPolicy,
             plan.BeforeReadyPublicationTestHook,
             staticManifests,
-            SharpLinkClient.BuildStaticProxySnapshot(staticManifests, runtimeContext),
+            proxies,
             plan.HeartbeatInterval,
             plan.HeartbeatTimeout,
             requestTimeout.HasValue,
@@ -207,6 +217,8 @@ internal static class ClientRuntimeMaterializer
             logger,
             SharpLinkClient.CreateFrameworkTaskSupervisor(logger));
         return new SharpLinkClient(composition);
+        }
+        catch { proxies.Dispose(); throw; }
     }
 
     private static ClientReadinessConfiguration CreateReadinessConfiguration(ClientBuildPlan plan)

@@ -155,7 +155,7 @@ internal sealed class RpcManifestCodecProvider : IRpcCodecProvider, IRpcGenerate
         // factory here: its Create method is the caller, so either would permit a bypass or recurse.
         if (registration is null ||
             !ReferenceEquals(registration.Owner, _owner) ||
-            !ReferenceEquals(registration.Factory, factory) ||
+            !ReferenceEquals(registration.FactoryIdentity, factory) ||
             !ReferenceEquals(registration.TargetType, targetType) ||
             registration.UnsafeBlitRequirement is not { } admittedRequirement ||
             admittedRequirement != requirement)

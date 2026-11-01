@@ -7,6 +7,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
     IStreamConsumptionAwareDispatcher,
     IStreamDispatchLease,
     IStreamLocalAbortDispatcher,
+    IStreamSinkPublicationReceipt,
     IAsyncEnumerable<T>,
     IAsyncEnumerator<T>,
     IValueTaskSource<bool>
@@ -428,6 +429,10 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
 
     internal void SetAfterReturnTransitionForTests(Action? callback)
         => SetTestHook(8, callback);
+
+    internal void SetBeforeTerminalSignalForTests(Action? callback)
+        => SetTestHook(9, callback);
+
     private void SetTestHook(int index, Action? callback)
     {
         var hooks = Volatile.Read(ref _testHooks);
@@ -435,7 +440,7 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         {
             if (callback is null)
                 return;
-            var candidate = new Action?[9];
+            var candidate = new Action?[10];
             hooks = Interlocked.CompareExchange(ref _testHooks, candidate, null) ?? candidate;
         }
         Volatile.Write(ref hooks[index], callback);
@@ -483,45 +488,76 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
 
     void IStreamLocalAbortDispatcher.CompleteLocalAbort(Exception? exception)
     {
-        if (!TryAcquireDispatch(out var retentionLeaseState))
+        var disposition = StreamSinkPublicationDisposition.NotPublished;
+        CompleteLocalAbortCore(exception, expectedLease: 0, ref disposition);
+    }
+
+    private void CompleteLocalAbortCore(
+        Exception? exception,
+        long expectedLease,
+        ref StreamSinkPublicationDisposition disposition)
+    {
+        long retentionLeaseState;
+        if (!(expectedLease == 0
+                ? TryAcquireDispatch(out retentionLeaseState)
+                : TryRetainSinkPublication(expectedLease, out retentionLeaseState)))
             return;
 
-        // Snapshot receive-credit ownership before publishing the local terminal. A racing
-        // consumer DisposeAsync may participate in the one-shot retirement as soon as the
-        // terminal becomes visible, so it must never observe an uninitialized credit snapshot.
-        _localAbortBytesConsumed = _bytesConsumed;
-        _localAbortRequestId = _flowControlRequestId;
-        _localAbortStreamId = _flowControlStreamId;
-        if (!TryClaimLocalAbort(exception))
+        var retentionTransferred = false;
+        try
         {
-            _localAbortBytesConsumed = null;
-            _localAbortRequestId = 0;
-            _localAbortStreamId = 0;
-            ReleaseDispatch(retentionLeaseState);
-            return;
+            if (!TryClaimLocalAbort(exception, ref disposition))
+            {
+                ReadExistingSinkPublication(exception, ConsumerTerminalLocalAbort, ref disposition);
+                return;
+            }
+
+            // The buffer-retirement owner, not the publication caller, releases this retention.
+            Volatile.Write(ref _localAbortRetentionLeaseState, retentionLeaseState);
+            retentionTransferred = true;
+
+            var dispatchState = Volatile.Read(ref _dispatchState);
+            if (dispatchState is null)
+            {
+                SignalTerminalPublication();
+                return;
+            }
+
+            lock (_dispatchStateGate)
+            {
+                if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
+                    CloseFirstTerminalDispatchState(boundDispatchState);
+                SignalTerminalPublication();
+            }
         }
-
-        Volatile.Write(ref _localAbortRetentionLeaseState, retentionLeaseState);
-
-        var dispatchState = Volatile.Read(ref _dispatchState);
-        if (dispatchState is null)
+        finally
         {
-            Signal();
-            return;
-        }
-
-        lock (_dispatchStateGate)
-        {
-            if (Volatile.Read(ref _dispatchState) is { } boundDispatchState)
-                CloseFirstTerminalDispatchState(boundDispatchState);
-            Signal();
+            if (!retentionTransferred)
+                ReleaseDispatch(retentionLeaseState);
         }
     }
 
     void IStreamLocalAbortDispatcher.RetireLocalAbortBuffer()
     {
-        DrainLocalAbortBuffer();
-        ReleaseLocalAbortRetention();
+        Exception? failure = null;
+        try
+        {
+            DrainLocalAbortBuffer();
+        }
+        catch (Exception exception)
+        {
+            failure = exception;
+        }
+        try
+        {
+            ReleaseLocalAbortRetention();
+        }
+        catch (Exception exception)
+        {
+            failure = failure is null ? exception : new AggregateException(failure, exception);
+        }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private void DrainLocalAbortBuffer()
@@ -559,7 +595,9 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
             ReleaseDispatch(retentionLeaseState);
     }
 
-    private bool TryClaimLocalAbort(Exception? exception)
+    private bool TryClaimLocalAbort(
+        Exception? exception,
+        ref StreamSinkPublicationDisposition disposition)
     {
         // The local terminal and one user-visible buffered delivery arbitrate the same state.
         // If delivery already owns the boundary, let that single item finish publishing Current
@@ -584,6 +622,11 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
             }
         }
 
+        // Only the delivery-gate winner owns this snapshot. A duplicate local-abort caller
+        // must not overwrite or clear the first publisher's receive-credit ownership.
+        _localAbortBytesConsumed = _bytesConsumed;
+        _localAbortRequestId = _flowControlRequestId;
+        _localAbortStreamId = _flowControlStreamId;
         if (Interlocked.CompareExchange(
                 ref _consumerTerminal,
                 ConsumerTerminalLocalAbort,
@@ -591,9 +634,13 @@ internal sealed partial class PooledAsyncStreamDispatcher<T> :
         {
             _error = exception;
             Volatile.Write(ref _completed, true);
+            disposition = StreamSinkPublicationDisposition.Published;
             return true;
         }
 
+        _localAbortBytesConsumed = null;
+        _localAbortRequestId = 0;
+        _localAbortStreamId = 0;
         ClearLocalAbortClaim();
         return false;
     }

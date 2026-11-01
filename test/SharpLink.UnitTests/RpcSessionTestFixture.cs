@@ -54,13 +54,18 @@ internal static class RpcSessionTestFixture
         SharpLinkCompressionProviderBinding? compressionBinding = null)
     {
         var context = session.RuntimeContext;
+        // Current-host test setup, not a legacy handshake parser or capability downgrade.
+        // A successful Session keeps this exact authority in its immutable negotiated state.
+        var authority = session.NegotiatedOptions?.Authority ?? new Protocol3BindingAuthority(
+            Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default);
         var options = new NegotiatedSessionOptions(
             ProtocolV2Constants.MinorVersion,
-            capabilities,
+            capabilities | ProtocolV2Negotiator.MandatoryCapabilities,
             maxFramePayloadBytes ?? context.Protocol.MaxFramePayloadBytes,
             streamReceiveWindowBytes ?? context.FlowControl.StreamReceiveWindowBytes,
             connectionReceiveWindowBytes ?? context.FlowControl.ConnectionReceiveWindowBytes,
-            compressionBinding);
+            compressionBinding,
+            authority);
         if (!session.TryCompleteHandshake(options))
             throw new InvalidOperationException("The test Session handshake was already completed or terminated.");
         return session.NegotiatedOptions ??

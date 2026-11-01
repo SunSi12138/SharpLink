@@ -121,6 +121,15 @@ internal sealed partial class SharpLinkServer
 
             try
             {
+                ServerServiceSnapshot? serviceSnapshot;
+                lock (_server._registryGate)
+                    serviceSnapshot = _server._serviceModuleRegistry.DetachServices();
+                serviceSnapshot?.Dispose();
+            }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+
+            try
+            {
                 _server._runtimeContext.Dispose();
             }
             catch (Exception exception)
@@ -188,24 +197,50 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception)
             {
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, cleanupName, exception);
+                if (HasStrictPhysicalOwnership)
+                {
+                    Exception? retained = null;
+                    RetainStrictCleanupFailure(ref retained, cleanupName, exception);
+                    RetainDeferredStrictCleanupFailure(retained!);
+                }
+                else SharpLinkServer.LogDeferredCleanupFailed(_server._logger, cleanupName, exception);
             }
         }
 
         private async Task ObserveShutdownAndDisposeTokensAsync(Task shutdownTask)
         {
+            Exception? failure = null;
             try
             {
                 await shutdownTask.ConfigureAwait(false);
             }
             catch (Exception exception)
             {
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Framework", exception);
+                failure = shutdownTask.Exception ?? exception;
+                if (HasStrictPhysicalOwnership)
+                {
+                    try { SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Framework", failure); }
+                    catch (Exception diagnosticFailure)
+                    {
+                        failure = CombineStrictLifecycleFailures(failure, diagnosticFailure);
+                    }
+                }
+                else SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Framework", exception);
             }
             finally
             {
-                _acceptCts.Dispose();
-                _forceStopCts.Dispose();
+                // Recheck after the actual wait: a strict callback may have arrived
+                // after this existing observer started on a legacy shutdown path.
+                if (HasStrictPhysicalOwnership)
+                {
+                    DisposeStrictShutdownTokens(ref failure);
+                    if (failure is not null) RetainDeferredStrictCleanupFailure(failure);
+                }
+                else
+                {
+                    _acceptCts.Dispose();
+                    _forceStopCts.Dispose();
+                }
             }
         }
 
@@ -217,11 +252,17 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception)
             {
-                SharpLinkServer.LogDeferredCleanupFailed(_server._logger, cleanupName, exception);
+                if (HasStrictPhysicalOwnership)
+                {
+                    Exception? retained = null;
+                    RetainStrictCleanupFailure(ref retained, cleanupName, cleanupTask.Exception ?? exception);
+                    RetainDeferredStrictCleanupFailure(retained!);
+                }
+                else SharpLinkServer.LogDeferredCleanupFailed(_server._logger, cleanupName, exception);
             }
         }
 
-        private static void AddTaskFailures(
+        private void AddTaskFailures(
             ref List<Exception>? failures,
             Task task,
             Exception fallback)
@@ -232,7 +273,10 @@ internal sealed partial class SharpLinkServer
                 return;
             }
 
-            foreach (var exception in aggregate.Flatten().InnerExceptions)
+            // Strict physical outcomes may contain an opaque user AggregateException.
+            // Only legacy shutdown paths retain the previous flattening behavior.
+            var exceptions = HasStrictPhysicalOwnership ? aggregate.InnerExceptions : aggregate.Flatten().InnerExceptions;
+            foreach (var exception in exceptions)
                 (failures ??= []).Add(exception);
         }
 

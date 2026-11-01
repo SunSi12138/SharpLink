@@ -176,7 +176,8 @@ public static class SharpLinkGeneratedManifestVersions
 [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
 public static class SharpLinkGeneratedAssemblyCatalog
 {
-    private const int MaximumEntries = 16_384;
+    internal const int SnapshotCapacity = 16_384;
+    private const int MaximumEntries = SnapshotCapacity;
     private static readonly Lock Gate = new();
     private static readonly List<WeakReference<ISharpLinkGeneratedAssemblyManifest>> Entries = [];
 
@@ -184,6 +185,7 @@ public static class SharpLinkGeneratedAssemblyCatalog
     public static void Register(ISharpLinkGeneratedAssemblyManifest manifest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
+        var loadContext = AssemblyLoadContext.GetLoadContext(manifest.OwnerAssembly);
         lock (Gate)
         {
             for (var index = Entries.Count - 1; index >= 0; index--)
@@ -206,7 +208,6 @@ public static class SharpLinkGeneratedAssemblyCatalog
 
             var weakManifest = new WeakReference<ISharpLinkGeneratedAssemblyManifest>(manifest);
             Entries.Add(weakManifest);
-            var loadContext = AssemblyLoadContext.GetLoadContext(manifest.OwnerAssembly);
             if (loadContext?.IsCollectible == true)
                 loadContext.Unloading += _ => Remove(weakManifest);
         }
@@ -215,17 +216,33 @@ public static class SharpLinkGeneratedAssemblyCatalog
     /// <summary>Creates a strong, point-in-time snapshot for one client or server.</summary>
     public static IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> CreateSnapshot()
     {
+        // Application-directed utility; Runtime ingestion uses its separately reserved adapter.
+        var workspace = new ISharpLinkGeneratedAssemblyManifest[SnapshotCapacity];
+        try
+        {
+            var count = CopyLiveSnapshot(workspace);
+            var result = new ISharpLinkGeneratedAssemblyManifest[count];
+            Array.Copy(workspace, result, count);
+            return Array.AsReadOnly(result);
+        }
+        finally { Array.Clear(workspace); }
+    }
+
+    internal static int CopyLiveSnapshot(Span<ISharpLinkGeneratedAssemblyManifest> destination)
+    {
+        if (destination.Length < SnapshotCapacity)
+            throw new ArgumentException("Catalog snapshot destination is smaller than the fixed capacity.", nameof(destination));
         lock (Gate)
         {
-            var snapshot = new List<ISharpLinkGeneratedAssemblyManifest>(Entries.Count);
+            var count = 0;
             for (var index = Entries.Count - 1; index >= 0; index--)
             {
                 if (Entries[index].TryGetTarget(out var manifest))
-                    snapshot.Add(manifest);
+                    destination[count++] = manifest;
                 else
                     Entries.RemoveAt(index);
             }
-            return snapshot;
+            return count;
         }
     }
 

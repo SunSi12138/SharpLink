@@ -433,13 +433,16 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
             throw new InvalidOperationException("RequireAuthentication needs an ISharpLinkServerAuthenticator.");
         ValidateTransportSecurity(transport);
 
-        var runtimeContext = _runtimeContextBuilder.Compile();
+        // One authority exists before Runtime invokes any source/manifest callback.
+        var domain = new ColdMetadataAuthority().CreateDomain();
+        var runtimeContext = _runtimeContextBuilder.Compile(domain);
         var manifests = runtimeContext.GeneratedManifests;
         ServerStaticFactsPreparation? factsPreparation = null;
+        ServerServiceRegistrationPlanEntry[]? services = null;
         try
         {
-            factsPreparation = ServerStaticFactsPreparation.Capture(manifests);
-            var services = CompileServicePlan(
+            factsPreparation = ServerStaticFactsPreparation.Capture(manifests, runtimeContext.Preparation);
+            services = CompileServicePlan(
                 manifests,
                 factsPreparation,
                 _automaticServiceRegistration,
@@ -449,7 +452,7 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
             factsPreparation.SealForPlan(services);
 
             return new ServerBuildPlan(
-                new ServerRuntimeResources(transport, factsPreparation),
+                new ServerRuntimeResources(transport, factsPreparation, runtimeContext),
                 runtimeContext,
                 factsPreparation,
                 services,
@@ -470,12 +473,24 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
         catch (ServerDeclaredMethodFactsException exception) when (
             exception.Code == SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded)
         {
+            if (services is not null)
+            {
+                foreach (var entry in services) entry.Registration.ClearPlanningRoots();
+                Array.Clear(services);
+            }
             factsPreparation?.Dispose();
+            runtimeContext.Dispose();
             throw new SharpLinkException(SharpLinkErrorCode.ResourceExhausted, exception.Message, exception);
         }
         catch
         {
+            if (services is not null)
+            {
+                foreach (var entry in services) entry.Registration.ClearPlanningRoots();
+                Array.Clear(services);
+            }
             factsPreparation?.Dispose();
+            runtimeContext.Dispose();
             throw;
         }
     }
@@ -553,7 +568,7 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     metadata: SynchronousBuildResourceMetadata.CallerOwned("Server caller service provider"));
             }
 
-            var staticManifests = plan.CreateStaticManifestSnapshot();
+            var staticManifests = runtimeContext.GeneratedManifests;
             var admissionController = transaction.Own(
                 plan.AdmissionControlOptions is { } admissionOptions
                     ? SharpLinkAdmissionController.Create(
@@ -580,13 +595,18 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
             }
 
             var services = registrationsByContract.ToFrozenDictionary();
+            var serviceSnapshot = transaction.Own(new ServerServiceSnapshot(services,
+                    plan.FactsPreparation.Preparation, plan.FactsPreparation.TakeRuntimeServicesCharge()),
+                static owner => owner.Dispose(), SynchronousBuildResourceMetadata.FrameworkOwned("Server service metadata snapshot"));
+            registrationsByContract.Clear();
+            plan.FactsPreparation.ReleaseRuntimeServiceWorkspace();
             var logger = plan.LoggerFactory.CreateLogger<SharpLinkServer>();
             var connectionAdmission = new ServerConnectionAdmission(
                 plan.ConnectionAdmissionOptions.MaxConcurrentConnections,
                 plan.ConnectionAdmissionOptions.MaxConcurrentHandshakes);
             var composition = new ServerRuntimeComposition(
                 plan.Resources.Transport,
-                services,
+                serviceSnapshot,
                 plan.HeartbeatCheckInterval,
                 plan.HeartbeatTimeout,
                 logger,
@@ -608,6 +628,7 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                 SharpLinkServer.CreateFrameworkTaskSupervisor(logger));
             var server = new SharpLinkServer(composition);
             plan.FactsPreparation.Commit();
+            plan.ClearPlanningRoots();
             transaction.Commit();
             plan.Resources.MarkTransferred();
             CompleteBuild();
@@ -616,7 +637,10 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
         catch (Exception buildException)
         {
             if (materializationStarted)
+            {
+                plan.ClearPlanningRoots();
                 plan.Resources.MarkRolledBack();
+            }
             CompleteBuild();
             if (materializationStarted)
             {
@@ -637,17 +661,25 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
         FrozenSet<Type> excludedServices,
         IReadOnlyList<KeyValuePair<Type, ReplacementServiceDefinition>> replacementServices)
     {
+        using var workspace = new ServerMetadataWorkspace(factsPreparation.Preparation);
+        workspace.Reserve(replacementServices.Count);
         var replacementTypes = new HashSet<Type>(replacementServices.Count);
+        workspace.ClearBeforeRelease(replacementTypes.Clear);
         for (var replacementIndex = 0; replacementIndex < replacementServices.Count; replacementIndex++)
             replacementTypes.Add(replacementServices[replacementIndex].Key);
+        workspace.Reserve(factsPreparation.ContractCount);
         var contracts = new Dictionary<long, (SharpLinkGeneratedContractDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
+        workspace.ClearBeforeRelease(contracts.Clear);
+        workspace.Reserve(factsPreparation.ContractCount);
         var services = new Dictionary<long, (SharpLinkGeneratedServiceDescriptor Descriptor, ISharpLinkGeneratedAssemblyManifest Manifest)>();
+        workspace.ClearBeforeRelease(services.Clear);
         foreach (var captured in factsPreparation.Contracts)
             contracts.Add(captured.Contract!.ContractId, (captured.Contract, captured.Manifest!));
         for (var manifestIndex = 0; manifestIndex < manifests.Count; manifestIndex++)
         {
             var manifest = manifests[manifestIndex];
-            ValidateManifest(manifest);
+            if (manifest is not PreparedGeneratedManifest)
+                throw new InvalidOperationException("Server planning requires validated Runtime prepared metadata.");
             var declaredServices = manifest.Services;
             var serviceCount = declaredServices.Count;
             if (serviceCount < 0 || serviceCount > factsPreparation.ContractCount)
@@ -674,8 +706,13 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     "Static service enumeration changed during compilation.");
         }
 
-        var definitions = new List<ServerServiceRegistrationPlanEntry>(services.Count);
+        var maximumDefinitions = checked(services.Count + replacementServices.Count);
+        workspace.Reserve(maximumDefinitions);
+        var definitions = new List<ServerServiceRegistrationPlanEntry>(maximumDefinitions);
+        workspace.ClearBeforeRelease(definitions.Clear);
+        workspace.Reserve(maximumDefinitions);
         var foundEnabled = new HashSet<Type>();
+        workspace.ClearBeforeRelease(foundEnabled.Clear);
         foreach (var pair in services)
         {
             var service = pair.Value.Descriptor;
@@ -703,7 +740,9 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     service.Activator,
                     instance: null,
                     callerOwned: false,
-                    service.Dependencies)));
+                    service.Dependencies,
+                    factsPreparation.Preparation,
+                    ((PreparedGeneratedManifest)pair.Value.Manifest).RegistrationScope)));
         }
 
         for (var replacementIndex = 0; replacementIndex < replacementServices.Count; replacementIndex++)
@@ -727,7 +766,9 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     value.Factory,
                     value.Instance,
                     value.CallerOwned,
-                    [])));
+                    [],
+                    factsPreparation.Preparation,
+                    ((PreparedGeneratedManifest)contract.Manifest).RegistrationScope)));
             foundEnabled.Add(replacement.Key);
         }
 
@@ -739,7 +780,7 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
                     $"Generated service for required contract '{required.FullName}' was not found.");
             }
         }
-        return [.. definitions];
+        return factsPreparation.CaptureServicePlans(definitions);
     }
 
     private void DisposeUnbuiltResources()
@@ -792,9 +833,6 @@ public sealed partial class SharpLinkServerBuilder : ISharpLinkServerBuilder
         if (_state != BuilderState.Mutable)
             throw new InvalidOperationException(ConsumedBuilderMessage);
     }
-
-    private static void ValidateManifest(ISharpLinkGeneratedAssemblyManifest manifest)
-        => SharpLinkGeneratedManifestCompatibility.ThrowIfIncompatible(manifest);
 
     private static InvalidOperationException CreateBuildConflict(
         string kind,

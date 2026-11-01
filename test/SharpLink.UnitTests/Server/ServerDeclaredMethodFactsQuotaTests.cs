@@ -1,146 +1,179 @@
+using System.Reflection;
 using SharpLink.Server;
 
 namespace SharpLink.UnitTests.Server;
 
+// Current combined-staging ledger. Exact earlier facts-only oracles are preserved under
+// fixtures/pre-staging-facts-only; these do not claim the old 384-byte total is still valid.
 public sealed class ServerDeclaredMethodFactsQuotaTests
 {
     [Test]
-    public void OnlyHeaderOnlyUnstartedContractsMayBeDiscardedBeforeSealing()
+    public void LocalFactsReuseOnlyTheExactPreparedMethodDomainButChargeBothArrays()
+    {
+        var authority = new ColdMetadataAuthority();
+        using var preparation = authority.CreateDomain().BeginPreparation();
+        var manifest = PreparedGeneratedManifest.Capture(new Manifest(1), preparation);
+        var quota = new ServerDeclaredMethodFactsQuota(preparation.Domain);
+        var before = authority.Bytes;
+        using var group = quota.BeginGroup(manifest);
+        var reservation = group.ReserveContract(8);
+        reservation.SetMethodCount(1);
+        // group List header+slot, retained facts array, simultaneous descriptor workspace.
+        Ensure(authority.Bytes == before + 384 + 384 + 384);
+        Ensure(authority.Methods == 1 && manifest.GetContractScope(8).Methods == 1);
+        group.Dispose();
+        Ensure(authority.Bytes == before && authority.Methods == 1);
+        preparation.Dispose();
+        Ensure(authority.Bytes == 0 && authority.Methods == 0);
+    }
+
+    [Test]
+    public void CombinedContractBoundaryIncludesMetadataFactsAndTemporaryCopy()
+    {
+        const int boundary = (int)((ColdMetadataAuthority.ContractByteLimit - 3 * ColdMetadataAuthority.HeaderCharge) /
+            (3 * ColdMetadataAuthority.SlotCharge));
+        Verify(boundary, succeeds: true);
+        Verify(boundary + 1, succeeds: false);
+        static void Verify(int count, bool succeeds)
+        {
+            var authority = new ColdMetadataAuthority();
+            using var preparation = authority.CreateDomain().BeginPreparation();
+            var manifest = PreparedGeneratedManifest.Capture(new Manifest(count), preparation);
+            using var group = new ServerDeclaredMethodFactsQuota(preparation.Domain).BeginGroup(manifest);
+            var reservation = group.ReserveContract(8);
+            try
+            {
+                reservation.SetMethodCount(count);
+                Ensure(succeeds);
+                Ensure(manifest.GetContractScope(8).Bytes == 3 * (256UL + 128UL * (ulong)count));
+            }
+            catch (ColdMetadataException error)
+            { Ensure(!succeeds && error.Code == SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded); }
+            group.Dispose();
+            preparation.Dispose();
+            Ensure(authority.Methods == 0 && authority.Bytes == 0);
+        }
+    }
+
+    [Test]
+    public void ImportedFactsAndReplacementKeepIndependentMethodDomainsAndRollback()
+    {
+        var authority = new ColdMetadataAuthority();
+        var domain = authority.CreateDomain();
+        using var dependencyOwner = domain.BeginPreparation();
+        var dependency = PreparedGeneratedManifest.Capture(new Manifest(1), dependencyOwner);
+        using var incomingOwner = domain.BeginPreparation();
+        var incoming = PreparedGeneratedManifest.Capture(new Manifest(0, hasContract: false), incomingOwner);
+        using var group = new ServerDeclaredMethodFactsQuota(domain).BeginGroup(incoming);
+        group.ReserveContract(8).SetMethodCount(1);
+        Ensure(authority.Methods == 2 && dependency.GetContractScope(8).Methods == 1 && incoming.RegistrationScope.Methods == 1);
+        group.Dispose();
+        Ensure(authority.Methods == 1 && incoming.RegistrationScope.Methods == 0);
+        incomingOwner.Dispose();
+        dependencyOwner.Dispose();
+        Ensure(authority.Methods == 0 && authority.Bytes == 0);
+    }
+
+    [Test]
+    public void EmptyFactsStillChargeEveryLiveCollectionAndReleaseExactlyOnce()
     {
         var quota = new ServerDeclaredMethodFactsQuota();
         using var group = quota.BeginGroup();
         var unused = group.ReserveContract();
+        // preparation header256 + List(header256+slot128) + empty table256.
+        Ensure(quota.Bytes == 896 && quota.Methods == 0);
         group.DiscardContract(unused);
-        Ensure(quota.Bytes == 0);
-        var selected = group.ReserveContract();
-        selected.SetMethodCount(0);
-        try { group.DiscardContract(selected); }
-        catch (InvalidOperationException)
-        {
-            Ensure(quota.Bytes == 256);
-            group.Seal();
-            group.Dispose();
-            Ensure(quota.Bytes == 0);
-            return;
-        }
-        throw new Exception("Count-assigned reservations cannot be discarded as unused staging.");
-    }
-
-    [Test]
-    public void ServerCountLimitIncludesAllUnpublishedGroups()
-    {
-        var quota = new ServerDeclaredMethodFactsQuota();
-        var groups = new List<ServerDeclaredMethodFactsGroupReservation>();
-        try
-        {
-            for (var groupIndex = 0; groupIndex < 4; groupIndex++)
-            {
-                var group = quota.BeginGroup();
-                groups.Add(group);
-                for (var contract = 0; contract < 4; contract++)
-                    group.ReserveContract().SetMethodCount(ServerDeclaredMethodFactsQuota.ContractMethodLimit);
-            }
-            Ensure(quota.Methods == ServerDeclaredMethodFactsQuota.ServerMethodLimit);
-            using var extra = quota.BeginGroup();
-            var reservation = extra.ReserveContract();
-            ExpectCapacity(() => reservation.SetMethodCount(1));
-            Ensure(quota.Methods == ServerDeclaredMethodFactsQuota.ServerMethodLimit);
-        }
-        finally
-        {
-            foreach (var group in groups) group.Dispose();
-        }
-        Ensure(quota.Methods == 0 && quota.Bytes == 0);
-    }
-
-    [Test]
-    public void EmptyContractTraversalHitsRealGroupHeaderLimit()
-    {
-        var quota = new ServerDeclaredMethodFactsQuota();
-        using var group = quota.BeginGroup();
-        var tables = ServerDeclaredMethodFactsQuota.GroupByteLimit / ServerDeclaredMethodFactsQuota.TableCharge;
-        for (ulong index = 0; index < tables; index++)
-            group.ReserveContract().SetMethodCount(0);
-        Ensure(quota.Methods == 0 && quota.Bytes == ServerDeclaredMethodFactsQuota.GroupByteLimit);
-        ExpectCapacity(() => group.ReserveContract());
+        Ensure(quota.Bytes == 640); // List reserved capacity remains until owner disposal.
         group.Dispose();
-        Ensure(quota.Bytes == 0);
-    }
-
-    [Test]
-    public void ContractAndGroupCountLimitsAreCheckedBeforePreparation()
-    {
-        var quota = new ServerDeclaredMethodFactsQuota();
-        using var group = quota.BeginGroup();
-        for (var index = 0; index < 4; index++)
-            group.ReserveContract().SetMethodCount(ServerDeclaredMethodFactsQuota.ContractMethodLimit);
-        Ensure(quota.Methods == ServerDeclaredMethodFactsQuota.GroupMethodLimit);
-        var extra = group.ReserveContract();
-        ExpectCapacity(() => extra.SetMethodCount(1));
-        Ensure(quota.Methods == ServerDeclaredMethodFactsQuota.GroupMethodLimit);
         group.Dispose();
         Ensure(quota.Bytes == 0 && quota.Methods == 0);
-        using var another = quota.BeginGroup();
-        var contract = another.ReserveContract();
-        ExpectCapacity(() => contract.SetMethodCount(ServerDeclaredMethodFactsQuota.ContractMethodLimit + 1));
-        Ensure(quota.Methods == 0 && quota.Bytes == 256);
     }
 
     [Test]
-    public void EmptyTablesConsumeHeaderCapacityAndRollbackExactlyOnce()
+    public void BoundLocalFactsKeepOnlyTheirExactArrayAndSharedMethodTokenAfterMetadataCleanup()
     {
-        var quota = new ServerDeclaredMethodFactsQuota(methodLimit: 0, byteLimit: 512);
+        var authority = new ColdMetadataAuthority();
+        var preparation = authority.CreateDomain().BeginPreparation();
+        var manifest = PreparedGeneratedManifest.Capture(new Manifest(1), preparation);
+        var group = new ServerDeclaredMethodFactsQuota(preparation.Domain).BeginGroup(manifest);
+        var reservation = group.ReserveContract(8);
+        reservation.SetMethodCount(1);
+        group.Seal();
+        using var facts = ServerDeclaredMethodFacts.Prepare(manifest.Contracts[0], new FactsStub(), reservation);
+        group.PrepareCommit();
+        group.Commit();
+        group.Dispose();
+        using var bound = facts.RetainForBinding();
+        facts.Dispose(); // Actual service owner ends before its intake acknowledgment.
+        manifest = null!;
+        preparation.Dispose(); // Metadata's original shared count token ends, not the binding's.
+        Ensure(authority.Bytes == 384 && authority.Methods == 1);
+        Ensure(bound.Resolve(0).IsKnown);
+        bound.Dispose();
+        Ensure(authority.Bytes == 0 && authority.Methods == 0);
+        facts.Dispose();
+        Ensure(authority.Bytes == 0 && authority.Methods == 0);
+    }
+
+    [Test]
+    public void PartialPrepareCommitFailureReturnsAlreadyRetainedTokensOnRollback()
+    {
+        var quota = new ServerDeclaredMethodFactsQuota();
         using var group = quota.BeginGroup();
-        group.ReserveContract().SetMethodCount(0);
-        group.ReserveContract().SetMethodCount(0);
-        ExpectCapacity(() => group.ReserveContract());
-        Ensure(quota.Bytes == 512 && quota.Methods == 0);
-        group.Dispose();
-        group.Dispose();
-        Ensure(quota.Bytes == 0);
+        var first = group.ReserveContract(); first.SetMethodCount(1);
+        var second = group.ReserveContract(); second.SetMethodCount(1);
+        group.Seal();
+        var descriptor = new Manifest(1).Contracts[0];
+        using var firstFacts = ServerDeclaredMethodFacts.Prepare(descriptor, new FactsStub(), first);
+        using var secondFacts = ServerDeclaredMethodFacts.Prepare(descriptor, new FactsStub(), second);
+        // Exact internal failure control: second token is already final-refunded, so
+        // first table/count and second table retention must all unwind without Commit.
+        second.MethodCharge!.Dispose();
+        try { group.PrepareCommit(); throw new Exception("Expected failed token transfer."); }
+        catch (ObjectDisposedException) { }
+        firstFacts.Dispose(); secondFacts.Dispose(); group.Dispose();
+        Ensure(quota.Bytes == 0 && quota.Methods == 0);
     }
 
-    [Test]
-    public void OldAndUnpublishedReplacementChargesOverlap()
+    private sealed class FactsStub : IRpcStub
     {
-        var quota = new ServerDeclaredMethodFactsQuota(methodLimit: 1, byteLimit: 768);
-        using var old = quota.BeginGroup();
-        old.ReserveContract().SetMethodCount(1);
-        using var replacement = quota.BeginGroup();
-        var candidate = replacement.ReserveContract();
-        ExpectCapacity(() => candidate.SetMethodCount(1));
-        Ensure(quota.Methods == 1 && quota.Bytes == 640);
-        replacement.Dispose();
-        Ensure(quota.Methods == 1 && quota.Bytes == 384);
-        old.Dispose();
-        Ensure(quota.Methods == 0 && quota.Bytes == 0);
-    }
-
-    [Test]
-    public void ChargeArithmeticHasHonestByteBoundaryAndOverflowChecks()
-    {
-        Ensure(ServerDeclaredMethodFactsQuota.CalculateCharge(0) == 256);
-        Ensure(ServerDeclaredMethodFactsQuota.CalculateCharge(65_536) == 8UL * 1024 * 1024 + 256);
-        // Arithmetic boundary only: this N is deliberately outside the contract method limit.
-        var boundary = (ServerDeclaredMethodFactsQuota.ContractByteLimit - 256) / 128;
-        Ensure(ServerDeclaredMethodFactsQuota.CalculateCharge(boundary) == ServerDeclaredMethodFactsQuota.ContractByteLimit);
-        Ensure(ServerDeclaredMethodFactsQuota.CalculateCharge(boundary + 1) > ServerDeclaredMethodFactsQuota.ContractByteLimit);
-        try { _ = ServerDeclaredMethodFactsQuota.CalculateCharge(ulong.MaxValue); }
-        catch (OverflowException) { return; }
-        throw new Exception("Expected checked charge overflow.");
-    }
-
-    private static void ExpectCapacity(Action action)
-    {
-        try { action(); }
-        catch (ServerDeclaredMethodFactsException error)
-        {
-            Ensure(error.Code == SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded);
-            return;
-        }
-        throw new Exception("Expected facts capacity rejection.");
+        public long InterfaceHash => 8;
+        public RpcMethodFacts ResolveMethodFacts(long id) => new(8, id, RpcMethodKind.Unary, 0, true, true);
+        public ValueTask InvokeNoReturnAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method,
+            long requestId, ReadOnlySequence<byte> args) => throw new Exception("No business callback.");
+        public ValueTask InvokeNoReturnCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method,
+            long requestId, ReadOnlySequence<byte> args, CancellationToken cancellationToken) => throw new Exception("No business callback.");
+        public ValueTask InvokeAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output) => throw new Exception("No business callback.");
+        public ValueTask InvokeCancellableAsync(object service, IRpcGeneratedServerBridge bridge, RpcMethodFacts method,
+            long requestId, ReadOnlySequence<byte> args, IBufferWriter<byte> output, CancellationToken cancellationToken)
+            => throw new Exception("No business callback.");
     }
 
     private static void Ensure(bool condition)
-    { if (!condition) throw new Exception("Declared-method quota assertion failed."); }
+    { if (!condition) throw new Exception("Shared cold metadata ledger assertion failed."); }
+
+    private interface IContract : IService { }
+    private sealed class Manifest : ISharpLinkGeneratedAssemblyManifest
+    {
+        internal Manifest(int methods, bool hasContract = true)
+        {
+            var descriptors = new SharpLinkGeneratedMethodDescriptor[methods];
+            for (var index = 0; index < descriptors.Length; index++)
+                descriptors[index] = new("Method", index, RpcMethodKind.Unary, true, "request", "response", new string('a', 64));
+            Contracts = hasContract ? [new(typeof(IContract), "Contract", 8, new string('a', 64), descriptors,
+                static (_, _) => throw new Exception("No proxy callback during quota preflight."),
+                static _ => throw new Exception("No stub callback during quota preflight."))] : [];
+        }
+        public int ApiVersion => SharpLinkGeneratedManifestVersions.Api;
+        public int ProtocolVersion => SharpLinkGeneratedManifestVersions.Protocol;
+        public string GeneratorVersion => "cold-ledger-test";
+        public Assembly OwnerAssembly => typeof(Manifest).Assembly;
+        public RpcHash128 RpcAssemblyHash => new(1, 2);
+        public string CompileTimeDescriptor => "cold-ledger-test";
+        public IReadOnlyList<SharpLinkGeneratedContractDescriptor> Contracts { get; }
+        public IReadOnlyList<SharpLinkGeneratedServiceDescriptor> Services => [];
+        public IReadOnlyList<IRpcGeneratedCodecFactory> Codecs => [];
+        public IReadOnlyList<string> Dependencies => [];
+    }
 }

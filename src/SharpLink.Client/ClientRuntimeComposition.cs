@@ -189,7 +189,7 @@ internal sealed class ClientRuntimeComposition
         SharpLinkCompressionSendPolicy requestCompressionPolicy,
         Func<CancellationToken, ValueTask>? beforeReadyPublicationTestHook,
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,
-        FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> staticProxies,
+        ClientProxySnapshot staticProxies,
         TimeSpan heartbeatInterval,
         TimeSpan heartbeatTimeout,
         bool hasRequestTimeout,
@@ -271,7 +271,7 @@ internal sealed class ClientRuntimeComposition
 
     internal Func<CancellationToken, ValueTask>? BeforeReadyPublicationTestHook { get; }
 
-    internal FrozenDictionary<Type, SharpLinkClient.ClientProxyRegistration> StaticProxies { get; }
+    internal ClientProxySnapshot StaticProxies { get; }
 
     internal TimeSpan HeartbeatInterval { get; }
 

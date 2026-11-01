@@ -11,15 +11,15 @@ namespace SharpLink.Server;
 internal sealed class ServerServiceModuleRegistry
 {
     private readonly Lock _gate = new();
-    private FrozenDictionary<long, ServiceRegistration> _services;
+    private ServerServiceSnapshot? _services;
     private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
         new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<SharpLinkDynamicModule, ServiceRegistration[]> _detachedModuleServices = [];
+    private readonly Dictionary<SharpLinkDynamicModule, ServerDetachedServices> _detachedModuleServices = [];
     private long _generation;
 
-    internal ServerServiceModuleRegistry(FrozenDictionary<long, ServiceRegistration> services)
+    internal ServerServiceModuleRegistry(ServerServiceSnapshot services)
     {
         ArgumentNullException.ThrowIfNull(services);
         _services = services;
@@ -34,7 +34,17 @@ internal sealed class ServerServiceModuleRegistry
     /// </summary>
     internal Lock Gate => _gate;
 
-    internal ref FrozenDictionary<long, ServiceRegistration> ServicesStorage => ref _services;
+    internal FrozenDictionary<long, ServiceRegistration> ServicesStorage => _services!.Services;
+    // All callers hold Gate. Returned old ownership is released outside Gate.
+    internal ServerServiceSnapshot.Lease CaptureServices() => _services!.Retain();
+    internal bool IsCurrentServices(ServerServiceSnapshot.Lease snapshot) => ReferenceEquals(_services, snapshot.Owner);
+    internal ServerServiceSnapshot PublishServices(ServerServiceSnapshot next)
+    {
+        var previous = _services!;
+        _services = next;
+        return previous;
+    }
+    internal ServerServiceSnapshot? DetachServices() => Interlocked.Exchange(ref _services, null);
 
     internal ref long GenerationStorage => ref _generation;
 
@@ -123,18 +133,23 @@ internal sealed class ServerServiceModuleRegistry
 
         internal int Count => _owner._detachedModuleServices.Count;
 
-        internal IEnumerable<ServiceRegistration[]> Values => _owner._detachedModuleServices.Values;
+        internal IEnumerable<ServiceRegistration[]> Values => _owner._detachedModuleServices.Values.Select(static item => item.Services);
 
         internal bool TryGetValue(SharpLinkDynamicModule module, out ServiceRegistration[] services)
-            => _owner._detachedModuleServices.TryGetValue(module, out services!);
+        {
+            if (_owner._detachedModuleServices.TryGetValue(module, out var owner))
+            { services = owner.Services; return true; }
+            services = null!;
+            return false;
+        }
 
-        internal void Add(SharpLinkDynamicModule module, ServiceRegistration[] services)
+        internal void Add(SharpLinkDynamicModule module, ServerDetachedServices services)
             => _owner._detachedModuleServices.Add(module, services);
 
         /// <summary>
         /// Transfers detached service ownership exactly once to the module cleanup path.
         /// </summary>
-        internal bool Remove(SharpLinkDynamicModule module, out ServiceRegistration[] services)
+        internal bool Remove(SharpLinkDynamicModule module, out ServerDetachedServices services)
         {
             if (_owner._detachedModuleServices.Remove(module, out var removed))
             {

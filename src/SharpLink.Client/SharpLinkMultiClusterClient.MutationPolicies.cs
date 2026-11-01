@@ -303,11 +303,19 @@ internal sealed partial class SharpLinkMultiClusterClient
     private static bool TryMergeRoutes(
         FrozenDictionary<Type, SharpLinkClusterRouteRegistration> currentRoutes,
         FrozenDictionary<Type, SharpLinkClusterRouteRegistration> incomingRoutes,
+        ColdMetadataPreparation preparation,
         out FrozenDictionary<Type, SharpLinkClusterRouteRegistration> mergedRoutes,
         out MutationRejection rejection)
     {
-        var nextRoutes = currentRoutes.ToDictionary(static pair => pair.Key, static pair => pair.Value);
-        var contractIds = nextRoutes.Values.Select(static route => route.ContractId).ToHashSet();
+        var capacity = checked(currentRoutes.Count + incomingRoutes.Count);
+        for (var copy = 0; copy < 3; copy++) preparation.ReserveCollection(capacity);
+        var nextRoutes = new Dictionary<Type, SharpLinkClusterRouteRegistration>(capacity);
+        var contractIds = new HashSet<long>(capacity);
+        foreach (var pair in currentRoutes)
+        {
+            nextRoutes.Add(pair.Key, pair.Value);
+            contractIds.Add(pair.Value.ContractId);
+        }
         foreach (var pair in incomingRoutes)
         {
             if (nextRoutes.ContainsKey(pair.Key) || !contractIds.Add(pair.Value.ContractId))

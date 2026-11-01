@@ -2,12 +2,15 @@ namespace SharpLink.Runtime;
 
 internal sealed partial class RpcSession
 {
-    private sealed partial class SendPump
+    internal sealed partial class SendPump
     {
         // Immutable marker: it never owns nodes or a session. Its publication
         // makes a concurrent release/stop join the gate before the final recheck,
         // without allocating a queue for an operation that recovers immediately.
         private static readonly PendingEnqueueQueue RegistrationInProgress = new(Task.CompletedTask);
+        // Exceptional capacity-path cleanup only, protected by the existing cold gate.
+        // A removed node cannot make its physical cleanup error disappear before a stop join.
+        private Exception? _backpressureCleanupFailure;
 
         // Replaces the broadcast capacity signal with the pending operation's
         // own frame and completion. No second maintenance census is maintained.
@@ -16,45 +19,65 @@ internal sealed partial class RpcSession
             CancellationToken cancellationToken)
         {
             Exception? failure = null;
-            lock (_admissionGate)
+            PendingEnqueue? pending = null;
+            var reserved = false;
+            try
             {
-                var queue = _pumpLifetime as PendingEnqueueQueue;
-                // Publish before the final capacity AND stop rechecks. A pulse
-                // may skip this gate only while the capacity slot is null.
-                Volatile.Write(ref _capacityChanged, queue ?? RegistrationInProgress);
-                if (cancellationToken.IsCancellationRequested)
-                    failure = new OperationCanceledException(cancellationToken);
-                else if (Volatile.Read(ref _stopped) != 0)
-                    failure = CreateTransportClosedException();
-                else if (!TryReserve(frame.Length, frame.IsProtocolProgress))
+                lock (_admissionGate)
                 {
-                    if (queue is null)
+                    var queue = _pumpLifetime as PendingEnqueueQueue;
+                    // Publish before the final capacity AND stop rechecks. A pulse may
+                    // skip this gate only while the capacity slot is null.
+                    Volatile.Write(ref _capacityChanged, queue ?? RegistrationInProgress);
+                    if (cancellationToken.IsCancellationRequested)
+                        failure = new OperationCanceledException(cancellationToken);
+                    else if (Volatile.Read(ref _stopped) != 0)
+                        failure = CreateTransportClosedException();
+                    else if (!(reserved = TryReserve(frame.Length, frame.IsProtocolProgress)))
                     {
-                        queue = new PendingEnqueueQueue((Task)_pumpLifetime);
-                        Volatile.Write(ref _pumpLifetime, queue);
-                        _capacityChanged = queue;
+                        if (queue is null)
+                        {
+                            queue = new PendingEnqueueQueue((Task)_pumpLifetime);
+                            Volatile.Write(ref _pumpLifetime, queue);
+                            _capacityChanged = queue;
+                        }
+                        pending = new PendingEnqueue(this, queue, frame, cancellationToken);
+                        queue.Add(pending);
+                        try { pending.RegisterCancellation(); }
+                        catch (Exception exception)
+                        {
+                            pending.Failure = exception;
+                            queue.Retire(pending);
+                            failure = exception;
+                        }
                     }
-                    var pending = new PendingEnqueue(this, queue, frame, cancellationToken);
-                    queue.Add(pending);
-                    pending.RegisterCancellation();
-                    return new ValueTask<SendEnqueueResult>(pending.Task);
+                    // Synchronous metric callbacks can publish a new waiting queue.
+                    queue = _pumpLifetime as PendingEnqueueQueue;
+                    _capacityChanged = queue?.LastWaiting is null ? null : queue;
                 }
-                // A successful final reserve invokes telemetry synchronously;
-                // its listener can publish a new queue while this gate is held.
-                // Do not clear that queue's wake slot using the earlier snapshot.
-                queue = _pumpLifetime as PendingEnqueueQueue;
-                _capacityChanged = queue?.LastWaiting is null ? null : queue;
             }
-
+            catch (Exception exception) { failure = exception; }
+            if (pending is not null)
+            {
+                if (failure is not null)
+                    CompletePendingEnqueue(pending); // Outside the gate, node already owns frame.
+                return new ValueTask<SendEnqueueResult>(pending.Task);
+            }
             if (failure is not null)
             {
-                ReturnUnreserved(frame);
-                return ValueTask.FromException<SendEnqueueResult>(failure);
+                try
+                {
+                    if (reserved) CompleteReserved(frame, exception: null, completeFlushWaiter: false);
+                    else ReturnUnreserved(frame, failure);
+                }
+                catch (Exception cleanup) { failure = RpcPublicationErrors.Combine(failure, cleanup); }
+                return ValueTask.FromException<SendEnqueueResult>(failure!);
             }
             if (Volatile.Read(ref _stopped) == 0 &&
                 (frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
             {
-                _wakeup.Signal();
+                RecordTerminalQueueAcceptance(frame);
+                SignalAcceptedPublication();
                 return ValueTask.FromResult(SendEnqueueResult.Accepted);
             }
             CompleteReserved(frame, exception: null, completeFlushWaiter: false);
@@ -95,16 +118,19 @@ internal sealed partial class RpcSession
                         // and start a second cleanup owner. A failed reserve
                         // publishes nothing, so it can safely remain waiting.
                         pending.Completing = true;
-                        if (!TryReserve(frame.Length, frame.IsProtocolProgress))
+                        try { pending.Reserved = TryReserve(frame.Length, frame.IsProtocolProgress); }
+                        catch (Exception exception) { pending.Failure = exception; }
+                        if (!pending.Reserved && pending.Failure is null)
                         {
                             pending.Completing = false;
                             pending = next;
                             continue;
                         }
-                        pending.Reserved = true;
-                        if ((frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
+                        if (pending.Reserved && Volatile.Read(ref _stopped) == 0 &&
+                            (frame.IsProtocolProgress ? _progressQueue : _normalQueue).Writer.TryWrite(frame))
                         {
                             pending.Accepted = true;
+                            RecordTerminalQueueAcceptance(frame);
                             // Ownership is already in FIFO before the producer
                             // is made runnable. No reservation-to-enqueue gap.
                             pending.Frame = default;
@@ -136,7 +162,7 @@ internal sealed partial class RpcSession
                 if (pending.Accepted)
                 {
                     CompletePendingEnqueue(pending);
-                    _wakeup.Signal();
+                    SignalAcceptedPublication();
                 }
                 else
                 {
@@ -162,38 +188,30 @@ internal sealed partial class RpcSession
         private void CompletePendingEnqueue(PendingEnqueue pending)
         {
             var failure = pending.Failure;
-            try
-            {
-                pending.CancellationRegistration.Dispose();
-            }
-            catch (Exception exception)
-            {
-                failure = exception;
-            }
+            Exception? cleanupFailure = null;
+            var frame = pending.Frame;
+            pending.Frame = default; // Detach before unregistering or returning any owner.
+            try { pending.CancellationRegistration.Dispose(); }
+            catch (Exception exception) { cleanupFailure = exception; }
             try
             {
                 if (!pending.Accepted)
                 {
                     if (pending.Reserved)
-                        CompleteReserved(pending.Frame, exception: null, completeFlushWaiter: false);
+                        CompleteReserved(frame, exception: null, completeFlushWaiter: false);
                     else
-                        ReturnUnreserved(pending.Frame);
+                        ReturnUnreserved(frame, failure);
                 }
             }
-            catch (Exception exception)
+            catch (Exception exception) { cleanupFailure = RpcPublicationErrors.Combine(cleanupFailure, exception); }
+            lock (_admissionGate)
             {
-                failure = exception;
+                _backpressureCleanupFailure = RpcPublicationErrors.Combine(_backpressureCleanupFailure, cleanupFailure);
+                pending.Queue.Remove(pending);
+                if (pending.Queue.Head is null)
+                    Volatile.Write(ref _pumpLifetime, pending.Queue.PumpTask);
             }
-            finally
-            {
-                pending.Frame = default;
-                lock (_admissionGate)
-                {
-                    pending.Queue.Remove(pending);
-                    if (pending.Queue.Head is null)
-                        Volatile.Write(ref _pumpLifetime, pending.Queue.PumpTask);
-                }
-            }
+            failure = RpcPublicationErrors.Combine(failure, cleanupFailure);
             if (failure is OperationCanceledException && pending.CancellationToken.IsCancellationRequested)
                 pending.TrySetCanceled(pending.CancellationToken);
             else if (failure is not null)

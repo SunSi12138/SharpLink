@@ -26,7 +26,8 @@ internal sealed partial class SharpLinkMultiClusterClient
             if (LifecycleState != SharpLinkClientLifecycleState.Running)
                 return SharpLinkReadinessState.NotReady;
 
-            var slots = Volatile.Read(ref _snapshot).Slots;
+            using var snapshotLease = AcquireSnapshot();
+            var slots = snapshotLease.Slots;
             if (slots.Length == 0)
                 return SharpLinkReadinessState.Ready;
 
@@ -156,7 +157,8 @@ internal sealed partial class SharpLinkMultiClusterClient
         {
             await _mutationGate.WaitAsync(_shutdown.Token).ConfigureAwait(false);
             ownsMutationGate = true;
-            var slots = Volatile.Read(ref _snapshot).Slots;
+            using var snapshotLease = AcquireSnapshot();
+            var slots = snapshotLease.Slots;
             await Parallel.ForEachAsync(
                 slots,
                 new ParallelOptions
@@ -180,7 +182,8 @@ internal sealed partial class SharpLinkMultiClusterClient
         {
             Volatile.Write(ref _lifecycleState, (int)SharpLinkClientLifecycleState.Faulted);
             var failures = new List<Exception> { startException };
-            await StopSlotsAsync(Volatile.Read(ref _snapshot).Slots, failures).ConfigureAwait(false);
+            using var failedSnapshot = AcquireSnapshot();
+            await StopSlotsAsync(failedSnapshot.Slots, failures).ConfigureAwait(false);
             _ = Interlocked.CompareExchange(
                 ref _state,
                 (int)SharpLinkMultiClusterState.Faulted,
@@ -198,7 +201,8 @@ internal sealed partial class SharpLinkMultiClusterClient
 
     private async Task ConnectRunningClustersAsync()
     {
-        var slots = Volatile.Read(ref _snapshot).Slots;
+        using var snapshotLease = AcquireSnapshot();
+        var slots = snapshotLease.Slots;
         await Parallel.ForEachAsync(
             slots,
             new ParallelOptions
@@ -237,7 +241,7 @@ internal sealed partial class SharpLinkMultiClusterClient
             if (lifecycle == SharpLinkClientLifecycleState.Faulted)
                 throw new InvalidOperationException("The local multi-cluster coordinator is faulted.");
 
-            var snapshot = Volatile.Read(ref _snapshot);
+            using var snapshot = AcquireSnapshot();
             var slots = snapshot.Slots;
             if (slots.Length == 0)
                 return;

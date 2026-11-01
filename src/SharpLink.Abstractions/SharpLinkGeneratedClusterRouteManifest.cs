@@ -25,7 +25,8 @@ public interface ISharpLinkGeneratedClusterRouteManifest
 /// </summary>
 public static class SharpLinkGeneratedClusterRouteCatalog
 {
-    private const int MaximumEntries = 16_384;
+    internal const int SnapshotCapacity = 16_384;
+    private const int MaximumEntries = SnapshotCapacity;
     private static readonly Lock Gate = new();
     private static readonly List<WeakReference<ISharpLinkGeneratedClusterRouteManifest>> Entries = [];
 
@@ -33,6 +34,7 @@ public static class SharpLinkGeneratedClusterRouteCatalog
     public static void Register(ISharpLinkGeneratedClusterRouteManifest manifest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
+        var loadContext = AssemblyLoadContext.GetLoadContext(manifest.OwnerAssembly);
         lock (Gate)
         {
             for (var index = Entries.Count - 1; index >= 0; index--)
@@ -55,7 +57,6 @@ public static class SharpLinkGeneratedClusterRouteCatalog
 
             var weakManifest = new WeakReference<ISharpLinkGeneratedClusterRouteManifest>(manifest);
             Entries.Add(weakManifest);
-            var loadContext = AssemblyLoadContext.GetLoadContext(manifest.OwnerAssembly);
             if (loadContext?.IsCollectible == true)
                 loadContext.Unloading += _ => Remove(weakManifest);
         }
@@ -64,18 +65,33 @@ public static class SharpLinkGeneratedClusterRouteCatalog
     /// <summary>Creates a strong point-in-time route-manifest snapshot for one coordinator.</summary>
     public static IReadOnlyList<ISharpLinkGeneratedClusterRouteManifest> CreateSnapshot()
     {
+        // Application-directed utility; Runtime ingestion uses its separately reserved adapter.
+        var workspace = new ISharpLinkGeneratedClusterRouteManifest[SnapshotCapacity];
+        try
+        {
+            var count = CopyLiveSnapshot(workspace);
+            var result = new ISharpLinkGeneratedClusterRouteManifest[count];
+            Array.Copy(workspace, result, count);
+            return Array.AsReadOnly(result);
+        }
+        finally { Array.Clear(workspace); }
+    }
+
+    internal static int CopyLiveSnapshot(Span<ISharpLinkGeneratedClusterRouteManifest> destination)
+    {
+        if (destination.Length < SnapshotCapacity)
+            throw new ArgumentException("Catalog snapshot destination is smaller than the fixed capacity.", nameof(destination));
         lock (Gate)
         {
-            var snapshot = new List<ISharpLinkGeneratedClusterRouteManifest>(Entries.Count);
+            var count = 0;
             for (var index = Entries.Count - 1; index >= 0; index--)
             {
                 if (Entries[index].TryGetTarget(out var manifest))
-                    snapshot.Add(manifest);
+                    destination[count++] = manifest;
                 else
                     Entries.RemoveAt(index);
             }
-
-            return snapshot;
+            return count;
         }
     }
 

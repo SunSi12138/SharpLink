@@ -24,6 +24,20 @@ internal sealed class ServerConnectionState
     private readonly Lock _bindingsGate = new();
     private ServerBindingTable? _bindings;
     private bool _bindingsClosed;
+    // One atomic handoff gate: 0 no loop, 1 starting, 2 running, 3 physically exited.
+    private int _bindingIntakeState;
+    private int _bindingMaintenancePending;
+    // Only the physical intake consumer writes this resumable pass state. External
+    // retirement records a separate dirty bit and never resets an in-progress cursor.
+    private bool _bindingMaintenancePassActive;
+    private int _bindingMaintenanceCursor;
+    private ulong[]? _bindingMaintenanceTokens;
+    private ulong[]? _bindingInvalidationTokens;
+    private int _bindingInvalidationHead;
+    private int _bindingInvalidationCount;
+    internal Action? BindingIntakeStartingForTesting { get; set; }
+    internal Action? BindingMaintenanceScanCompletedForTesting { get; set; }
+    internal Action? BindingMaintenanceSliceCompletedForTesting { get; set; }
     private int _bindingOperations;
     private int _bindingControlFrames;
     private SharpLinkAuthenticationContext? _authenticationContext;
@@ -85,8 +99,12 @@ internal sealed class ServerConnectionState
                 LifecycleState is ServerConnectionLifecycleState.Handshaking or ServerConnectionLifecycleState.Closed)
                 throw new InvalidOperationException("Binding state requires an authenticated negotiated Session.");
             var table = new ServerBindingTable(options.Authority.Limits.Slots, quota);
+            _bindingInvalidationTokens = new ulong[options.Authority.Limits.QueuedControlFrames];
             if (_bindingsClosed || Volatile.Read(ref _closeStarted) != 0 || !Session.IsConnected)
+            {
                 table.Close();
+                if (_bindingIntakeState is 0 or 3) table.AcknowledgeClosedIntake();
+            }
             Volatile.Write(ref _bindings, table);
             return table;
         }
@@ -97,13 +115,153 @@ internal sealed class ServerConnectionState
     internal void ReleaseBindingOperation() => ReleaseBindingCount(ref _bindingOperations);
     internal void ReleaseBindingControlFrame() => ReleaseBindingCount(ref _bindingControlFrames);
 
-    internal void CloseBindings()
+    internal bool TryStartBindingIntake()
     {
         lock (_bindingsGate)
         {
-            _bindingsClosed = true;
-            _bindings?.Close();
+            if (_bindingIntakeState != 0)
+                return false;
+            if (_bindingsClosed)
+            { _bindingIntakeState = 3; return false; }
+            _bindingIntakeState = 1;
         }
+        try { BindingIntakeStartingForTesting?.Invoke(); }
+        catch { CompleteBindingIntake(); throw; }
+        ServerBindingTable? terminal = null;
+        lock (_bindingsGate)
+        {
+            if (_bindingsClosed)
+            { _bindingIntakeState = 3; terminal = _bindings; }
+            else _bindingIntakeState = 2;
+        }
+        terminal?.AcknowledgeClosedIntake();
+        return terminal is null && Volatile.Read(ref _bindingIntakeState) == 2;
+    }
+
+    internal void CompleteBindingIntake()
+    {
+        ServerBindingTable? table;
+        lock (_bindingsGate)
+        {
+            if (_bindingIntakeState == 3) return;
+            _bindingIntakeState = 3;
+            _bindingsClosed = true;
+            table = _bindings;
+            table?.Close();
+        }
+        // No synchronous Resolve or awaited stream callback can survive this physical
+        // finally. Only now may bound facts/domain owners and slot charges be returned.
+        table?.AcknowledgeClosedIntake();
+        DropBindingInvalidations();
+    }
+
+    internal void CloseBindings()
+    {
+        ServerBindingTable? noLoop = null;
+        lock (_bindingsGate)
+        {
+            _bindingsClosed = true;
+            _bindings?.Close(); // Eligibility cut, never a running-intake refund.
+            if (_bindingIntakeState is 0 or 3)
+            {
+                _bindingIntakeState = 3;
+                noLoop = _bindings;
+            }
+        }
+        noLoop?.AcknowledgeClosedIntake();
+        DropBindingInvalidations();
+        WakeBindingIntake();
+    }
+
+    internal void RequestBindingMaintenance()
+    {
+        if (_bindingsClosed) return;
+        Interlocked.Exchange(ref _bindingMaintenancePending, 1);
+        WakeBindingIntake();
+    }
+    internal bool HasBindingMaintenanceRequest => Volatile.Read(ref _bindingMaintenancePending) != 0;
+    internal bool ConsumeBindingMaintenanceRequest()
+        => Interlocked.Exchange(ref _bindingMaintenancePending, 0) != 0;
+    internal bool TryDetachBindingRetirementSlice(out ulong[] tokens, out int count)
+    {
+        tokens = null!;
+        count = 0;
+        if (!_bindingMaintenancePassActive && !HasBindingMaintenanceRequest) return false;
+        if (BindingTableOrNull is not { } table || table.IsClosed) return false;
+        if (!_bindingMaintenancePassActive)
+        {
+            if (!ConsumeBindingMaintenanceRequest()) return false;
+            _bindingMaintenanceCursor = 0;
+            _bindingMaintenancePassActive = true;
+        }
+        tokens = _bindingMaintenanceTokens ??= new ulong[256];
+        count = table.DetachRetiredAtIntakeSafePoint(tokens, ref _bindingMaintenanceCursor);
+        return true;
+    }
+
+    internal void CompleteBindingRetirementSlice()
+    {
+        if (BindingTableOrNull is not { } table || table.IsClosed) return;
+        BindingMaintenanceSliceCompletedForTesting?.Invoke();
+        if (_bindingMaintenanceCursor == table.SlotCount)
+        {
+            _bindingMaintenancePassActive = false;
+            BindingMaintenanceScanCompletedForTesting?.Invoke();
+        }
+        // Do not consume/reset dirty here: a concurrent retirement during the last
+        // slice or this check belongs to the NEXT pass after an actual Read turn.
+        // Its own signal covers the race after this load. Partial bytes are not consumed.
+        if (_bindingMaintenancePassActive || HasBindingMaintenanceRequest) WakeBindingIntake();
+    }
+
+    private void WakeBindingIntake()
+    {
+        try { Session.Input.CancelPendingRead(); }
+        catch (Exception error) when (error is ObjectDisposedException or InvalidOperationException) { }
+    }
+
+    internal bool QueueBindingInvalidation(ulong token)
+    {
+        var limit = Session.BindingAuthority.Limits.QueuedControlFrames;
+        if (!TryReserveBindingControlFrame(limit)) return false;
+        var queued = false;
+        lock (_bindingsGate)
+        {
+            if (!_bindingsClosed && _bindingInvalidationTokens is { Length: > 0 } tokens &&
+                _bindingInvalidationCount < tokens.Length)
+            {
+                tokens[(_bindingInvalidationHead + _bindingInvalidationCount) % tokens.Length] = token;
+                _bindingInvalidationCount++;
+                queued = true;
+            }
+        }
+        if (!queued) ReleaseBindingControlFrame();
+        return queued;
+    }
+    internal bool TryTakeBindingInvalidation(out ulong token)
+    {
+        lock (_bindingsGate)
+        {
+            if (_bindingInvalidationCount == 0) { token = 0; return false; }
+            var tokens = _bindingInvalidationTokens!;
+            token = tokens[_bindingInvalidationHead];
+            tokens[_bindingInvalidationHead] = 0;
+            _bindingInvalidationHead = (_bindingInvalidationHead + 1) % tokens.Length;
+            _bindingInvalidationCount--;
+            return true; // Existing control-frame reservation transfers to sender.
+        }
+    }
+    private void DropBindingInvalidations()
+    {
+        int count;
+        lock (_bindingsGate)
+        {
+            count = _bindingInvalidationCount;
+            _bindingInvalidationCount = 0;
+            _bindingInvalidationHead = 0;
+            if (_bindingInvalidationTokens is { } tokens) Array.Clear(tokens);
+        }
+        while (count-- != 0) ReleaseBindingControlFrame();
     }
 
     internal void FailBindingOperation(Exception exception)
