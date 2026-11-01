@@ -10,32 +10,45 @@ public class OneWayEarlyRejectionDrainIntegrationTests
     public async Task ImmediatelyRejectedOneWayClientStreamShouldDrainBeyondWindowAndKeepConnectionUsable()
     {
         OneWayInboundDrainService.Reset();
-        await using var harness = await Harness.CreateAsync(options =>
+        var harness = await Harness.CreateAsync(options =>
         {
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         }, dynamicRegistration: true);
-        var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
-        await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
-        var service = serviceProxy.Service;
-
-        var originalConnection = harness.SingleConnection;
-        harness.BeginDrain();
+        List<Exception> cleanupFailures = [];
+        Task? send = null;
+        Task<int>? probeTask = null;
+        try
         {
-            var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
-            await send.WaitAsync(PhaseTimeout);
+            var serviceProxy = harness.Client.CreateProxy<IOneWayInboundDrainService>();
+            await serviceProxy.PrepareAsync(TimeSpan.FromSeconds(5));
+            var service = serviceProxy.Service;
 
-            Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
-                "an immediately rejected OneWay request must not invoke the service method");
+            var originalConnection = harness.SingleConnection;
+            harness.BeginDrain();
+            {
+                send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
+                await send.WaitAsync(PhaseTimeout);
+
+                Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
+                    "an immediately rejected OneWay request must not invoke the service method");
+            }
+
+            await harness.ReleaseAndReregisterAsync();
+            await serviceProxy.PrepareAsync(PhaseTimeout);
+            probeTask = service.PingAsync(51).AsTask();
+            var probe = await probeTask.WaitAsync(PhaseTimeout);
+            Ensure(ReferenceEquals(originalConnection, harness.SingleConnection),
+                "the same physical server connection must survive rejection, drain and re-registration");
+            Ensure(probe == 52,
+                "a unary request on the same connection should succeed after the rejected client stream drains to peer terminal");
         }
-
-        await harness.ReleaseAndReregisterAsync();
-        await serviceProxy.PrepareAsync(PhaseTimeout);
-        var probe = await service.PingAsync(51).AsTask().WaitAsync(PhaseTimeout);
-        Ensure(ReferenceEquals(originalConnection, harness.SingleConnection),
-            "the same physical server connection must survive rejection, drain and re-registration");
-        Ensure(probe == 52,
-            "a unary request on the same connection should succeed after the rejected client stream drains to peer terminal");
+        catch (Exception primary) { cleanupFailures.Add(primary); }
+        try { await harness.DisposeAsync(); }
+        catch (Exception cleanup) { cleanupFailures.Add(cleanup); }
+        await JoinRetainedOperationAsync(cleanupFailures, send);
+        await JoinRetainedOperationAsync(cleanupFailures, probeTask);
+        ThrowFailures(cleanupFailures);
     }
 
     [Test]
@@ -43,23 +56,35 @@ public class OneWayEarlyRejectionDrainIntegrationTests
     public async Task UnknownOneWayMethodShapeShouldTerminateInsteadOfStallingOversizedStream()
     {
         OneWayInboundDrainService.Reset();
-        await using var harness = await Harness.CreateAsync(options =>
+        var harness = await Harness.CreateAsync(options =>
         {
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        var service = await harness.CreateUnknownOneWayMethodServiceAsync();
+        List<Exception> cleanupFailures = [];
+        Task? send = null;
+        (Task Operation, Exception Failure)? acceptedSendFailure = null;
+        try
         {
-            var send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
-            var failure = await CaptureFailureAsync(send);
+            var service = await harness.CreateUnknownOneWayMethodServiceAsync();
+            {
+                send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
+                var failure = await CaptureFailureAsync(send);
 
-            Ensure(failure is not null,
-                "an unresolved OneWay method shape should terminate the connection instead of completing successfully");
-            Ensure(failure is not TimeoutException,
-                "an unresolved OneWay method shape must not leave oversized client-stream data stalled behind receive flow control");
-            Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
-                "an unresolved OneWay method must not invoke the service method");
+                Ensure(failure is not null,
+                    "an unresolved OneWay method shape should terminate the connection instead of completing successfully");
+                Ensure(failure is not TimeoutException,
+                    "an unresolved OneWay method shape must not leave oversized client-stream data stalled behind receive flow control");
+                acceptedSendFailure = (send, failure!);
+                Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
+                    "an unresolved OneWay method must not invoke the service method");
+            }
         }
+        catch (Exception primary) { cleanupFailures.Add(primary); }
+        try { await harness.DisposeAsync(); }
+        catch (Exception cleanup) { cleanupFailures.Add(cleanup); }
+        await JoinRetainedOperationAsync(cleanupFailures, send, acceptedSendFailure);
+        ThrowFailures(cleanupFailures);
     }
 
     [Test]
@@ -68,31 +93,79 @@ public class OneWayEarlyRejectionDrainIntegrationTests
     {
         OneWayInboundDrainService.Reset();
         var compression = new CorruptingCompressionProvider();
-        await using var harness = await Harness.CreateAsync(options =>
+        var harness = await Harness.CreateAsync(options =>
         {
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
             options.Compression.Providers.Add(compression);
         });
-        var service = await harness.CreateUnknownOneWayMethodServiceAsync();
+        List<Exception> cleanupFailures = [];
+        Task? send = null;
+        (Task Operation, Exception Failure)? acceptedSendFailure = null;
+        try
         {
-            var requestPayload = Enumerable.Repeat((byte)0x67, 4096).ToArray();
-            var send = service.IgnoreCorruptiblePayloadAndStreamAsync(
-                requestPayload,
-                ManyPayloads(128, 32)).AsTask();
-            var failure = await CaptureFailureAsync(send);
+            var service = await harness.CreateUnknownOneWayMethodServiceAsync();
+            {
+                var requestPayload = Enumerable.Repeat((byte)0x67, 4096).ToArray();
+                send = service.IgnoreCorruptiblePayloadAndStreamAsync(
+                    requestPayload,
+                    ManyPayloads(128, 32)).AsTask();
+                var failure = await CaptureFailureAsync(send);
 
-            Ensure(Volatile.Read(ref compression.CompressCount) > 0,
-                "the large OneWay request payload must use the negotiated compression provider");
-            Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
-                "an unresolved OneWay method shape must terminate before invoking the request decompressor");
-            Ensure(failure is not null,
-                "an unresolved compressed OneWay shape should terminate the connection");
-            Ensure(failure is not TimeoutException,
-                "an unresolved compressed OneWay shape must not leave subsequent StreamData stalled behind receive flow control");
-            Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
-                "an unresolved compressed OneWay request must not invoke the service method");
+                Ensure(Volatile.Read(ref compression.CompressCount) > 0,
+                    "the large OneWay request payload must use the negotiated compression provider");
+                Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
+                    "an unresolved OneWay method shape must terminate before invoking the request decompressor");
+                Ensure(failure is not null,
+                    "an unresolved compressed OneWay shape should terminate the connection");
+                Ensure(failure is not TimeoutException,
+                    "an unresolved compressed OneWay shape must not leave subsequent StreamData stalled behind receive flow control");
+                acceptedSendFailure = (send, failure!);
+                Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
+                    "an unresolved compressed OneWay request must not invoke the service method");
+            }
         }
+        catch (Exception primary) { cleanupFailures.Add(primary); }
+        try { await harness.DisposeAsync(); }
+        catch (Exception cleanup) { cleanupFailures.Add(cleanup); }
+        await JoinRetainedOperationAsync(cleanupFailures, send, acceptedSendFailure);
+        ThrowFailures(cleanupFailures);
+    }
+
+    private static async Task JoinRetainedOperationAsync(
+        List<Exception> failures,
+        Task? operation,
+        (Task Operation, Exception Failure)? acceptedFailure = null)
+    {
+        if (operation is null) return;
+        bool IsAccepted(Exception error)
+            => acceptedFailure is { } accepted && ReferenceEquals(accepted.Operation, operation) &&
+               (ReferenceEquals(accepted.Failure, error) ||
+                (operation.IsCanceled && accepted.Failure is OperationCanceledException original &&
+                 error is OperationCanceledException repeated && original.CancellationToken == repeated.CancellationToken));
+        try { await operation.WaitAsync(PhaseTimeout); }
+        catch (Exception error)
+        {
+            // Only an outcome already accepted from this exact immutable task can be
+            // acknowledged twice. A timeout is never an accepted logical RPC failure.
+            if (error is TimeoutException)
+                failures.Add(error);
+            if (operation is { IsFaulted: true, Exception: { } aggregate })
+            {
+                foreach (var fault in aggregate.InnerExceptions)
+                    if (!IsAccepted(fault)) failures.Add(fault);
+            }
+            else if (error is not TimeoutException && !IsAccepted(error))
+                failures.Add(error);
+        }
+    }
+
+    private static void ThrowFailures(List<Exception> failures)
+    {
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count > 1)
+            throw new AggregateException("Body/setup and independent cleanup failures.", failures);
     }
 
     private static async Task<Exception?> CaptureFailureAsync(Task operation)
@@ -195,6 +268,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             ISharpLinkServer? server = null;
             ISharpLinkClient? client = null;
             Task? serverTask = null;
+            Task? connectTask = null;
             try
             {
                 var serverBuilder = SharpLinkServerBuilder.Create()
@@ -221,9 +295,11 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                     var serverRegistration = server.RegisterAssembly(assembly);
                     Ensure(serverRegistration.Succeeded, $"real server fixture registration: {serverRegistration.Error}");
                 }
+                var serverToken = cts.Token;
                 serverTask = Task.Run(
-                    () => server.RunUntilStoppedAsync(cts.Token).AsTask(), CancellationToken.None);
-                await client.ConnectAsync(cts.Token).AsTask().WaitAsync(PhaseTimeout);
+                    () => server.RunUntilStoppedAsync(serverToken).AsTask(), CancellationToken.None);
+                connectTask = client.ConnectAsync(cts.Token).AsTask();
+                await connectTask.WaitAsync(PhaseTimeout);
                 return new Harness(cts, serverTask, server, client);
             }
             catch (Exception primary)
@@ -232,7 +308,8 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                     () => client?.DisposeAsync() ?? ValueTask.CompletedTask,
                     () => new ValueTask(cts.CancelAsync()),
                     () => server?.DisposeAsync() ?? ValueTask.CompletedTask,
-                    () => ObserveServerAsync(serverTask, cts),
+                    () => connectTask is null ? ValueTask.CompletedTask : new ValueTask(connectTask),
+                    () => serverTask is null ? ValueTask.CompletedTask : new ValueTask(serverTask),
                     () => { cts.Dispose(); return ValueTask.CompletedTask; });
                 throw;
             }
@@ -280,24 +357,17 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 new UnknownOneWayMethodChannel(channel, absentMethod), provider);
         }
 
-        private bool _disposed;
-        public async ValueTask DisposeAsync()
+        private Task? _disposeTask;
+        public ValueTask DisposeAsync() => new(_disposeTask ??= DisposeCoreAsync());
+
+        private async Task DisposeCoreAsync()
         {
-            if (_disposed) return;
-            _disposed = true;
             await CleanupAsync(null,
                 () => Client.DisposeAsync(),
                 () => new ValueTask(_serverCts.CancelAsync()),
                 () => Server.DisposeAsync(),
-                () => ObserveServerAsync(_serverTask, _serverCts),
+                () => new ValueTask(_serverTask),
                 () => { _serverCts.Dispose(); return ValueTask.CompletedTask; });
-        }
-
-        private static async ValueTask ObserveServerAsync(Task? task, CancellationTokenSource cancellation)
-        {
-            if (task is null) return;
-            try { await task.WaitAsync(PhaseTimeout); }
-            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         }
 
         // Failure of one cleanup step must not skip cancellation, endpoint release or join;
@@ -307,10 +377,20 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             List<Exception>? failures = primary is null ? null : [primary];
             foreach (var step in steps)
             {
-                try { await step(); }
+                Task? operation = null;
+                try
+                {
+                    operation = step().AsTask();
+                    await operation.WaitAsync(PhaseTimeout);
+                }
                 catch (Exception error)
                 {
-                    (failures ??= []).Add(error);
+                    // A deadline is an incomplete physical join, not successful cleanup.
+                    // Preserve every actual task fault, including multi-fault tasks.
+                    if (error is TimeoutException || operation is not { IsFaulted: true })
+                        (failures ??= []).Add(error);
+                    if (operation is { IsFaulted: true, Exception: { } aggregate })
+                        (failures ??= []).AddRange(aggregate.InnerExceptions);
                 }
             }
             if (failures is { Count: 1 })

@@ -13,6 +13,7 @@ public partial class TransportConnectionIntegrationTests
         var server = serverBuilder.Build();
         var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
+        Exception? primary = null;
         try
         {
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -27,16 +28,7 @@ public partial class TransportConnectionIntegrationTests
                 ProtocolV2FrameFlags.None,
                 0);
             ProtocolV2PayloadCodec.WriteHandshakeRequest(
-                frames,
-                new ProtocolV2HandshakeRequest(
-                    ProtocolV2Constants.MinorVersion,
-                    ProtocolV2Capabilities.HealthCheck,
-                    ProtocolV2Capabilities.None,
-                    SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
-                    1024 * 1024,
-                    16 * 1024 * 1024,
-                    ReadOnlyMemory<byte>.Empty),
-                limits);
+                frames, CurrentProtocolFixtureOffer(ProtocolV2Capabilities.HealthCheck), limits);
             ProtocolV2FrameWriter.EndFrame(frames, handshakeToken);
             var healthToken = ProtocolV2FrameWriter.BeginFrame(
                 frames,
@@ -49,45 +41,30 @@ public partial class TransportConnectionIntegrationTests
             await stream.WriteAsync(frames.WrittenMemory);
             await stream.FlushAsync();
 
-            var received = new byte[4096];
-            var receivedCount = 0;
-            var consumedCount = 0;
-            var responseCount = 0;
             using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            while (responseCount < 2)
-            {
-                var bytesRead = await stream.ReadAsync(received.AsMemory(receivedCount), readCts.Token);
-                Ensure(bytesRead > 0, "server should return both coalesced-frame responses");
-                receivedCount += bytesRead;
-                var sequence = new ReadOnlySequence<byte>(
-                    received.AsMemory(consumedCount, receivedCount - consumedCount));
-                while (ProtocolV2FrameParser.TryReadFrame(
-                           ref sequence,
-                           limits,
-                           out var header,
-                           out var payload))
-                {
-                    if (responseCount == 0)
-                        Ensure(header.Type == ProtocolV2FrameType.HandshakeResponse, "handshake response order");
-                    else
-                    {
-                        Ensure(header.Type == ProtocolV2FrameType.HealthResponse, "coalesced health response type");
-                        Ensure(header.RequestId == 1, "coalesced health response request ID");
-                        Ensure(
-                            ProtocolV2PayloadCodec.ReadHealthResponse(payload).Status == SharpLinkHealthStatus.Ready,
-                            "coalesced health response status");
-                    }
-                    responseCount++;
-                }
-                consumedCount = receivedCount - checked((int)sequence.Length);
-            }
+            var handshake = await ReadProtocolFixtureFrameAsync(stream, limits, readCts.Token);
+            Ensure(handshake.Header.Type == ProtocolV2FrameType.HandshakeResponse &&
+                   handshake.Header.Flags == ProtocolV2FrameFlags.None && handshake.Header.RequestId == 0,
+                "successful handshake response order");
+            var response = ProtocolV2PayloadCodec.ReadHandshakeResponse(new(handshake.Payload), limits);
+            Ensure((response.NegotiatedCapabilities & ProtocolV2Capabilities.HealthCheck) != 0,
+                "health capability must be negotiated");
+            var manifest = await ReadProtocolFixtureFrameAsync(stream, limits, readCts.Token);
+            Ensure(manifest.Header.Type == ProtocolV2FrameType.ContractManifest && manifest.Header.RequestId == 0,
+                "the mandatory bootstrap manifest precedes coalesced health handling");
+            Ensure(ProtocolV2ContractManifestCodec.Read(new(manifest.Payload), limits).Generation == 1,
+                "initial nonempty registry generation");
+            var health = await ReadProtocolFixtureFrameAsync(stream, limits, readCts.Token);
+            Ensure(health.Header.Type == ProtocolV2FrameType.HealthResponse && health.Header.RequestId == 1,
+                "coalesced health response type and request ID");
+            Ensure(ProtocolV2PayloadCodec.ReadHealthResponse(new(health.Payload)).Status == SharpLinkHealthStatus.Ready,
+                "coalesced health response status");
         }
-        finally
-        {
-            await serverCts.CancelAsync();
-            await server.DisposeAsync();
-            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
-        }
+        catch (Exception error) { primary = error; }
+        await CleanupProtocolFixtureAsync(primary,
+            () => new ValueTask(serverCts.CancelAsync()),
+            () => server.DisposeAsync(),
+            () => new ValueTask(serverTask.WaitAsync(TimeSpan.FromSeconds(2))));
     }
 
     [Test]
@@ -105,19 +82,25 @@ public partial class TransportConnectionIntegrationTests
 
         try
         {
-            var contract = GlobalCatalogManifestSource.Instance.CreateSnapshot()
-                .SelectMany(static manifest => manifest.Contracts)
-                .Single(static descriptor => descriptor.ContractType == typeof(ILegacyHandshakeDispatchProbe));
-            // Prove that exactly this raw request is valid and executes on the current wire generation.
-            await SendCoalescedProbeAsync(ProtocolV2Constants.MinorVersion, reject: false, contract);
+            using var controlTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var request = await CreateActuallyBoundProbeRequestAsync(port, controlTimeout.Token);
             Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 1,
-                "the current-minor control must execute the probe exactly once");
+                "the current-revision bound control must execute the probe exactly once");
             LegacyHandshakeDispatchProbe.Reset();
 
-            await SendCoalescedProbeAsync(
-                checked((ushort)(ProtocolV2Constants.MinimumCompatibleMinorVersion - 1)), reject: true, contract);
+            // Exact historical revision-0 layout: 41 bytes, including preference fields,
+            // empty compression/auth lengths, and NO Protocol3 16-byte binding-limits field.
+            var legacy = new byte[41];
+            BinaryPrimitives.WriteUInt16LittleEndian(legacy, 0);
+            BinaryPrimitives.WriteInt32LittleEndian(legacy.AsSpan(18), SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes);
+            BinaryPrimitives.WriteInt32LittleEndian(legacy.AsSpan(22), 1024 * 1024);
+            BinaryPrimitives.WriteInt32LittleEndian(legacy.AsSpan(26), 16 * 1024 * 1024);
+            legacy[38] = 1; // historical allow-response-compression flag; count/auth remain zero
+            EnsureStrictHandshakePayloadRejected(legacy);
+            using var negativeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await SendRejectedHandshakeAndProbeAsync(port, legacy, request, negativeTimeout.Token);
             Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 0,
-                "a rejected handshake must not dispatch its coalesced RPC request");
+                "a rejected historical handshake must not dispatch its coalesced RPC bytes");
         }
         catch (Exception exception)
         {
@@ -148,80 +131,6 @@ public partial class TransportConnectionIntegrationTests
             }
         }
 
-        async Task SendCoalescedProbeAsync(
-            ushort minor, bool reject, SharpLinkGeneratedContractDescriptor contract)
-        {
-            var method = contract.Methods.Single();
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await socket.ConnectAsync(IPAddress.Loopback, port, timeout.Token);
-            await using var stream = new NetworkStream(socket, ownsSocket: false);
-            using var frames = new PooledByteBufferWriter();
-            var limits = new SharpLinkProtocolOptions();
-            var token = ProtocolV2FrameWriter.BeginFrame(
-                frames, ProtocolV2FrameType.HandshakeRequest, ProtocolV2FrameFlags.None, 0);
-            ProtocolV2PayloadCodec.WriteHandshakeRequest(
-                frames,
-                new ProtocolV2HandshakeRequest(
-                    minor, ProtocolV2Capabilities.None, ProtocolV2Capabilities.None,
-                    SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
-                    1024 * 1024, 16 * 1024 * 1024, ReadOnlyMemory<byte>.Empty),
-                limits);
-            ProtocolV2FrameWriter.EndFrame(frames, token);
-            var request = ProtocolV2FrameWriter.BeginFrame(
-                frames, ProtocolV2FrameType.Request, ProtocolV2FrameFlags.HasReturn, 1);
-            var prefix = new byte[ProtocolV2Constants.RequestPrefixBytes];
-            BinaryPrimitives.WriteInt64LittleEndian(prefix, contract.ContractId);
-            BinaryPrimitives.WriteInt64LittleEndian(prefix.AsSpan(sizeof(long)), method.MethodId);
-            frames.Write(prefix);
-            ProtocolV2FrameWriter.EndFrame(frames, request);
-
-            // Queue both frames together; correctness must not depend on TCP read boundaries.
-            await stream.WriteAsync(frames.WrittenMemory, timeout.Token);
-            await stream.FlushAsync(timeout.Token);
-            var handshake = await ReadFrameAsync();
-            Ensure(handshake.Header.Type == ProtocolV2FrameType.HandshakeResponse &&
-                   handshake.Header.RequestId == 0, "probe handshake response");
-            if (reject)
-            {
-                Ensure((handshake.Header.Flags & ProtocolV2FrameFlags.Error) != 0,
-                    "legacy handshake must be rejected");
-                var error = ProtocolV2PayloadCodec.ReadError(
-                    new ReadOnlySequence<byte>(handshake.Payload), handshake.Header.Flags,
-                    limits.MaxErrorMessageBytes);
-                Ensure(error.Code == SharpLinkErrorCode.Unimplemented,
-                    "previous wire generation must be rejected as incompatible");
-                var end = new byte[1];
-                Ensure(await stream.ReadAsync(end, timeout.Token) == 0,
-                    "rejected connection must terminate without an RPC response");
-            }
-            else
-            {
-                Ensure(handshake.Header.Flags == ProtocolV2FrameFlags.None,
-                    "current-minor control handshake must succeed");
-                var response = await ReadFrameAsync();
-                Ensure(response.Header.Type == ProtocolV2FrameType.Response &&
-                       response.Header.RequestId == 1 &&
-                       (response.Header.Flags & ProtocolV2FrameFlags.Error) == 0,
-                    "current-minor control must return a successful RPC response");
-            }
-
-            async Task<(ProtocolV2FrameHeader Header, byte[] Payload)> ReadFrameAsync()
-            {
-                var headerBytes = new byte[ProtocolV2Constants.HeaderBytes];
-                await stream.ReadExactlyAsync(headerBytes, timeout.Token);
-                var length = BinaryPrimitives.ReadInt32LittleEndian(headerBytes.AsSpan(1));
-                Ensure(length >= 0 && length <= limits.MaxFramePayloadBytes,
-                    "probe response length must be bounded");
-                var bytes = new byte[ProtocolV2Constants.HeaderBytes + length];
-                headerBytes.CopyTo(bytes, 0);
-                await stream.ReadExactlyAsync(bytes.AsMemory(ProtocolV2Constants.HeaderBytes), timeout.Token);
-                var sequence = new ReadOnlySequence<byte>(bytes);
-                Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, limits, out var header, out var payload) &&
-                       sequence.IsEmpty, "probe must read one complete valid response frame");
-                return (header, payload.ToArray());
-            }
-        }
     }
 
     [Test]
@@ -236,6 +145,7 @@ public partial class TransportConnectionIntegrationTests
         var server = serverBuilder.Build();
         var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
 
+        Exception? primary = null;
         try
         {
             using var frames = new PooledByteBufferWriter();
@@ -245,17 +155,7 @@ public partial class TransportConnectionIntegrationTests
                 ProtocolV2FrameType.HandshakeRequest,
                 ProtocolV2FrameFlags.None,
                 0);
-            ProtocolV2PayloadCodec.WriteHandshakeRequest(
-                frames,
-                new ProtocolV2HandshakeRequest(
-                    ProtocolV2Constants.MinorVersion,
-                    ProtocolV2Capabilities.None,
-                    ProtocolV2Capabilities.None,
-                    SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
-                    1024 * 1024,
-                    16 * 1024 * 1024,
-                    ReadOnlyMemory<byte>.Empty),
-                limits);
+            ProtocolV2PayloadCodec.WriteHandshakeRequest(frames, CurrentProtocolFixtureOffer(), limits);
             ProtocolV2FrameWriter.EndFrame(frames, handshake);
 
             var illegalResponse = ProtocolV2FrameWriter.BeginFrame(
@@ -270,13 +170,12 @@ public partial class TransportConnectionIntegrationTests
             Ensure(!connection.Reader.CompleteObservedOutstandingRead,
                 "terminal protocol teardown must AdvanceTo before awaiting reader completion");
         }
-        finally
-        {
-            connection.Reader.ReleaseCompletion();
-            await serverCts.CancelAsync();
-            await server.DisposeAsync();
-            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
-        }
+        catch (Exception error) { primary = error; }
+        await CleanupProtocolFixtureAsync(primary,
+            () => { connection.Reader.ReleaseCompletion(); return ValueTask.CompletedTask; },
+            () => new ValueTask(serverCts.CancelAsync()),
+            () => server.DisposeAsync(),
+            () => new ValueTask(serverTask.WaitAsync(TimeSpan.FromSeconds(2))));
     }
 
     [Test]
@@ -527,156 +426,326 @@ public partial class TransportConnectionIntegrationTests
     }
 
     [Test]
-    public async Task TcpUnsupportedRequiredCapabilityShouldReturnUnimplementedAndClose()
+    [NotInParallel]
+    public async Task TcpUnsupportedRequiredCapabilityShouldCloseWithoutResponseOrDispatch()
     {
+        LegacyHandshakeDispatchProbe.Reset();
         using var serverCts = new CancellationTokenSource();
-        var serverBuilder = SharpLinkServerBuilder.Create()
-            .UseTcp(0, IPAddress.Loopback)
-            ;
+        var serverBuilder = SharpLinkServerBuilder.Create().UseTcp(0, IPAddress.Loopback);
         var port = ((IPEndPoint)serverBuilder.Transport!.LocalEndPoint!).Port;
         var server = serverBuilder.Build();
         var serverTask = server.RunUntilStoppedAsync(serverCts.Token).AsTask();
-
+        Exception? primary = null;
         try
         {
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            await socket.ConnectAsync(IPAddress.Loopback, port);
-            await using var stream = new NetworkStream(socket, ownsSocket: false);
-
-            var requestWriter = new PooledByteBufferWriter();
-            var requestToken = ProtocolV2FrameWriter.BeginFrame(
-                requestWriter,
-                ProtocolV2FrameType.HandshakeRequest,
-                ProtocolV2FrameFlags.None,
-                0);
-            ProtocolV2PayloadCodec.WriteHandshakeRequest(
-                requestWriter,
-                new ProtocolV2HandshakeRequest(
-                    ProtocolV2Constants.MinorVersion,
-                    (ProtocolV2Capabilities)(1UL << 63),
-                    (ProtocolV2Capabilities)(1UL << 63),
-                    SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes,
-                    1024 * 1024,
-                    16 * 1024 * 1024,
-                    ReadOnlyMemory<byte>.Empty),
-                new SharpLinkProtocolOptions());
-            ProtocolV2FrameWriter.EndFrame(requestWriter, requestToken);
-            await stream.WriteAsync(requestWriter.WrittenMemory);
-            await stream.FlushAsync();
-
-            var received = new byte[1024];
-            var receivedCount = 0;
-            ProtocolV2FrameHeader responseHeader = default;
-            ReadOnlySequence<byte> responsePayload = default;
-            var parsed = false;
-            using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            while (!parsed)
-            {
-                var bytesRead = await stream.ReadAsync(received.AsMemory(receivedCount), readCts.Token);
-                Ensure(bytesRead > 0, "server should return a handshake error before closing");
-                receivedCount += bytesRead;
-                var sequence = new ReadOnlySequence<byte>(received.AsMemory(0, receivedCount));
-                parsed = ProtocolV2FrameParser.TryReadFrame(
-                    ref sequence,
-                    new SharpLinkProtocolOptions(),
-                    out responseHeader,
-                    out responsePayload);
-            }
-
-            Ensure(responseHeader.Type == ProtocolV2FrameType.HandshakeResponse, "handshake response type");
-            Ensure((responseHeader.Flags & ProtocolV2FrameFlags.Error) != 0, "handshake should fail");
-            var error = ProtocolV2PayloadCodec.ReadError(
-                responsePayload,
-                responseHeader.Flags,
-                SharpLinkProtocolOptions.DefaultMaxErrorMessageBytes);
-            Ensure(error.Code == SharpLinkErrorCode.Unimplemented, "required capability error code");
-            Ensure(await stream.ReadAsync(received, readCts.Token) == 0, "server should close rejected session");
+            using var controlTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var request = await CreateActuallyBoundProbeRequestAsync(port, controlTimeout.Token);
+            Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 1, "current bound control invokes once");
+            LegacyHandshakeDispatchProbe.Reset();
+            using var writer = new PooledByteBufferWriter();
+            // Unknown OPTIONAL support is structurally valid. Only the same bit in REQUIRED
+            // is mutated below, so all other current-layout bytes remain demonstrably valid.
+            const ulong unknown = 1UL << 63;
+            var offer = CurrentProtocolFixtureOffer((ProtocolV2Capabilities)unknown);
+            var limits = new SharpLinkProtocolOptions();
+            ProtocolV2PayloadCodec.WriteHandshakeRequest(writer, offer, limits);
+            var baseline = writer.WrittenMemory.ToArray();
+            var decoded = ProtocolV2PayloadCodec.ReadHandshakeRequest(new(baseline), limits);
+            Ensure(decoded.RequiredCapabilities == offer.RequiredCapabilities &&
+                   decoded.SupportedCapabilities == offer.SupportedCapabilities && decoded.BindingLimits == offer.BindingLimits,
+                "the unmutated current-layout offer must pass the strict parser");
+            var malformed = (byte[])baseline.Clone();
+            malformed[17] |= 0x80; // required-capabilities bytes10..17: ONLY unsupported bit63
+            Ensure(malformed.Where((value, index) => value != baseline[index]).Count() == 1,
+                "only the selected required-capability byte changes");
+            EnsureStrictHandshakePayloadRejected(malformed);
+            using var readTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await SendRejectedHandshakeAndProbeAsync(port, malformed, request, readTimeout.Token);
+            Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 0, "unknown required capabilities must not dispatch RPC");
         }
-        finally
-        {
-            await serverCts.CancelAsync();
-            if (server is IAsyncDisposable asyncServer)
-                await asyncServer.DisposeAsync();
-            await serverTask.WaitAsync(TimeSpan.FromSeconds(2));
-        }
+        catch (Exception error) { primary = error; }
+        await CleanupProtocolFixtureAsync(primary,
+            () => new ValueTask(serverCts.CancelAsync()),
+            () => server.DisposeAsync(),
+            () => new ValueTask(serverTask.WaitAsync(TimeSpan.FromSeconds(2))));
+        Ensure(LegacyHandshakeDispatchProbe.InvocationCount == 0,
+            "rejected RPC remains unexecuted after endpoint teardown");
     }
 
     [Test]
     public async Task TcpOversizedFrameShouldFailPendingUnaryAndStreamWithSameProtocolViolation()
     {
         const int maxFramePayloadBytes = SharpLinkProtocolOptions.MinMaxFramePayloadBytes;
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-
         var fakeServerTask = Task.Run(async () =>
         {
-            using var socket = await listener.AcceptSocketAsync();
+            using var socket = await listener.AcceptSocketAsync(budget.Token);
             await using var stream = new NetworkStream(socket, ownsSocket: true);
-
-            var handshake = new PooledByteBufferWriter();
+            var limits = new SharpLinkProtocolOptions { MaxFramePayloadBytes = maxFramePayloadBytes };
+            var request = await ReadProtocolFixtureFrameAsync(stream, limits, budget.Token);
+            Ensure(request.Header.Type == ProtocolV2FrameType.HandshakeRequest && request.Header.RequestId == 0,
+                "fake peer first observes the actual client handshake");
+            var offer = ProtocolV2PayloadCodec.ReadHandshakeRequest(new(request.Payload), limits);
+            var authority = new Protocol3BindingAuthority(Guid.NewGuid(), Guid.NewGuid(), offer.BindingLimits);
+            var localManifest = GlobalCatalogManifestSource.Instance.CreateSnapshot().Single(candidate =>
+                candidate.Contracts.Any(contract => contract.ContractType == typeof(ITestService)));
+            var contract = localManifest.Contracts.Single(candidate => candidate.ContractType == typeof(ITestService));
+            using var handshake = new PooledByteBufferWriter();
             var handshakeToken = ProtocolV2FrameWriter.BeginFrame(
-                handshake,
-                ProtocolV2FrameType.HandshakeResponse,
-                ProtocolV2FrameFlags.None,
-                0);
+                handshake, ProtocolV2FrameType.HandshakeResponse, ProtocolV2FrameFlags.None, 0);
             ProtocolV2PayloadCodec.WriteHandshakeResponse(handshake, new ProtocolV2HandshakeResponse(
-                ProtocolV2Constants.MinorVersion,
-                ProtocolV2Capabilities.ContractManifest,
-                maxFramePayloadBytes,
-                1024 * 1024,
-                16 * 1024 * 1024));
-            ContractManifestTestHelper.EndHandshakeAndWriteManifest(handshake, handshakeToken, typeof(ITestService));
-            await stream.WriteAsync(handshake.WrittenMemory);
-            await stream.FlushAsync();
+                ProtocolV2Constants.MinorVersion, ProtocolV2Negotiator.MandatoryCapabilities,
+                maxFramePayloadBytes, 1024 * 1024, 16 * 1024 * 1024, Authority: authority));
+            ProtocolV2FrameWriter.EndFrame(handshake, handshakeToken);
+            var manifestToken = ProtocolV2FrameWriter.BeginFrame(
+                handshake, ProtocolV2FrameType.ContractManifest, ProtocolV2FrameFlags.None, 0);
+            ProtocolV2ContractManifestCodec.Write(handshake, new ProtocolV2ContractManifest(
+                1, [KeyValuePair.Create(contract.ContractId, localManifest.RpcAssemblyHash)]), limits);
+            ProtocolV2FrameWriter.EndFrame(handshake, manifestToken);
+            await stream.WriteAsync(handshake.WrittenMemory, budget.Token);
+            await stream.FlushAsync(budget.Token);
 
-            await Task.Delay(150);
+            ulong boundToken = 0;
+            var requestIds = new HashSet<ulong>();
+            var expectedMethods = contract.Methods.Where(method =>
+                method.Name is nameof(ITestService.SlowAddAsync) or nameof(ITestService.SlowDownloadAsync))
+                .Select(method => method.MethodId).ToHashSet();
+            Ensure(expectedMethods.Count == 2, "both exact generated pending-call method IDs are declared");
+            // This is a simulated peer, not a production registry. It nevertheless correlates
+            // the actual Bind operation and exact generated identity before granting its token.
+            while (requestIds.Count != 2)
+            {
+                var frame = await ReadProtocolFixtureFrameAsync(stream, limits, budget.Token);
+                if (frame.Header.Type == ProtocolV2FrameType.Ping)
+                {
+                    await WriteProtocolFixtureFrameAsync(stream, ProtocolV2FrameType.Pong,
+                        frame.Header.RequestId, frame.Payload, budget.Token);
+                    continue;
+                }
+                if (frame.Header.Type == ProtocolV2FrameType.Pong) continue;
+                if (frame.Header.Type == ProtocolV2FrameType.BindContract)
+                {
+                    Ensure(boundToken == 0, "fixture expects one actual binding operation");
+                    var bind = Protocol3BindingControlCodec.ReadBindContract(new(frame.Payload));
+                    Ensure(bind.ContractId == contract.ContractId && bind.Hash == localManifest.RpcAssemblyHash &&
+                           bind.Requirement == Protocol3BindingRequirement.Compatible && bind.Receipt is null,
+                        "actual Bind must match the generated contract and compatible requirement");
+                    boundToken = Protocol3BindingToken.Create(0, 1, authority.Limits.Slots);
+                    using var result = new PooledByteBufferWriter();
+                    Protocol3BindingControlCodec.WriteBindResult(result, new Protocol3BindResult(
+                        Protocol3BindStatus.Success, boundToken, bind.ContractId, bind.Hash, 1, 1,
+                        authority.ServerInstanceId, authority.RegistryEpoch), authority.Limits.Slots);
+                    await WriteProtocolFixtureFrameAsync(stream, ProtocolV2FrameType.BindResult,
+                        frame.Header.RequestId, result.WrittenMemory, budget.Token);
+                    continue;
+                }
+                Ensure(frame.Header.Type == ProtocolV2FrameType.Request && boundToken != 0 &&
+                       frame.Payload.Length >= ProtocolV2Constants.RequestPrefixBytes &&
+                       (frame.Header.Flags & ProtocolV2FrameFlags.OneWay) == 0 &&
+                       (frame.Header.Flags & ProtocolV2FrameFlags.HasReturn) != 0,
+                    "both pending operations must be actual response-bearing bound requests");
+                Ensure(BinaryPrimitives.ReadUInt64LittleEndian(frame.Payload) == boundToken,
+                    "the request must carry the confirmed physical-session binding token");
+                var methodId = BinaryPrimitives.ReadInt64LittleEndian(frame.Payload.AsSpan(sizeof(long)));
+                Ensure(expectedMethods.Remove(methodId) && requestIds.Add(frame.Header.RequestId),
+                    "observe one distinct actual request for each generated pending method");
+            }
 
+            // Deliberate malformed header and first-failure oracle are unchanged; the gate
+            // above replaces the old time delay so BOTH actual operations are pending first.
             var maliciousHeader = new byte[ProtocolV2Constants.HeaderBytes];
             maliciousHeader[0] = ProtocolV2Constants.Magic;
             BinaryPrimitives.WriteInt32LittleEndian(
-                maliciousHeader.AsSpan(1, sizeof(int)),
-                maxFramePayloadBytes + 1);
+                maliciousHeader.AsSpan(1, sizeof(int)), maxFramePayloadBytes + 1);
             maliciousHeader[5] = (byte)ProtocolV2FrameType.Response;
             BinaryPrimitives.WriteUInt64LittleEndian(maliciousHeader.AsSpan(7, sizeof(ulong)), 1);
-            await stream.WriteAsync(maliciousHeader);
-            await stream.FlushAsync();
+            await stream.WriteAsync(maliciousHeader, budget.Token);
+            await stream.FlushAsync(budget.Token);
         });
 
-        var client = SharpClientBuilder.Create().DisableRequestTimeout()
-            .UseTcp(IPAddress.Loopback.ToString(), port)
-
-            .UseProtocol(static options => options.MaxFramePayloadBytes = maxFramePayloadBytes)
-            .UseHeartbeat(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30))
-            .Build();
-
+        ISharpLinkClient? client = null;
+        Task? unaryTask = null;
+        Task? streamTask = null;
+        SharpLinkException? unaryError = null;
+        SharpLinkException? streamError = null;
+        Exception? primary = null;
         try
         {
-            await client.ConnectAsync();
+            client = SharpClientBuilder.Create().DisableRequestTimeout()
+                .UseTcp(IPAddress.Loopback.ToString(), port)
+                .UseProtocol(static options => options.MaxFramePayloadBytes = maxFramePayloadBytes)
+                .UseHeartbeat(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30)).Build();
+            await client.ConnectAsync(budget.Token);
             Ensure(client.State == SharpLinkConnectionState.Ready, "fake server handshake");
             var svcProxy = client.CreateProxy<ITestService>();
             await svcProxy.PrepareAsync(TimeSpan.FromSeconds(5));
             var svc = svcProxy.Service;
-
-            var unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
-            var streamTask = CollectAsync(
-                svc.SlowDownloadAsync(100, 200, CancellationToken.None),
-                CancellationToken.None);
-
-            var unaryError = await CaptureSharpLinkException(unaryTask, "oversized frame unary");
-            var streamError = await CaptureSharpLinkException(streamTask, "oversized frame stream");
-
+            unaryTask = svc.SlowAddAsync(1, 2, CancellationToken.None).AsTask();
+            streamTask = CollectAsync(
+                svc.SlowDownloadAsync(100, 200, CancellationToken.None), CancellationToken.None);
+            unaryError = await CaptureSharpLinkException(unaryTask, "oversized frame unary");
+            streamError = await CaptureSharpLinkException(streamTask, "oversized frame stream");
+            await fakeServerTask;
             Ensure(unaryError.Code == SharpLinkErrorCode.ProtocolViolation, "unary protocol violation");
             Ensure(streamError.Code == SharpLinkErrorCode.ProtocolViolation, "stream protocol violation");
             Ensure(ReferenceEquals(unaryError, streamError), "pending operations should receive the first failure instance");
         }
-        finally
+        catch (Exception error) { primary = error; }
+        await CleanupProtocolFixtureAsync(primary,
+            () => client?.DisposeAsync() ?? ValueTask.CompletedTask,
+            () => new ValueTask(budget.CancelAsync()),
+            () => { listener.Stop(); return ValueTask.CompletedTask; },
+            async () =>
+            {
+                try { await fakeServerTask.WaitAsync(TimeSpan.FromSeconds(1)); }
+                catch (OperationCanceledException) when (budget.IsCancellationRequested) { }
+            },
+            () => JoinProtocolFixtureCallAsync(unaryTask, unaryError),
+            () => JoinProtocolFixtureCallAsync(streamTask, streamError));
+    }
+
+    private static ProtocolV2HandshakeRequest CurrentProtocolFixtureOffer(
+        ProtocolV2Capabilities optional = ProtocolV2Capabilities.None)
+        => new(ProtocolV2Constants.MinorVersion,
+            ProtocolV2Negotiator.MandatoryCapabilities | optional, ProtocolV2Negotiator.MandatoryCapabilities,
+            SharpLinkProtocolOptions.DefaultMaxFramePayloadBytes, 1024 * 1024, 16 * 1024 * 1024,
+            ReadOnlyMemory<byte>.Empty, BindingLimits: Protocol3BindingLimits.Default);
+
+    private static async Task<(ProtocolV2FrameHeader Header, byte[] Payload)> ReadProtocolFixtureFrameAsync(
+        NetworkStream stream, SharpLinkProtocolOptions limits, CancellationToken cancellationToken)
+    {
+        var headerBytes = new byte[ProtocolV2Constants.HeaderBytes];
+        await stream.ReadExactlyAsync(headerBytes, cancellationToken);
+        var length = BinaryPrimitives.ReadInt32LittleEndian(headerBytes.AsSpan(1));
+        Ensure(length >= 0 && length <= limits.MaxFramePayloadBytes, "fixture incoming frame length is bounded");
+        var bytes = new byte[ProtocolV2Constants.HeaderBytes + length];
+        headerBytes.CopyTo(bytes, 0);
+        await stream.ReadExactlyAsync(bytes.AsMemory(ProtocolV2Constants.HeaderBytes), cancellationToken);
+        var sequence = new ReadOnlySequence<byte>(bytes);
+        Ensure(ProtocolV2FrameParser.TryReadFrame(ref sequence, limits, out var header, out var payload) && sequence.IsEmpty,
+            "fixture reads one complete structurally valid frame");
+        return (header, payload.ToArray());
+    }
+
+    private static async Task WriteProtocolFixtureFrameAsync(NetworkStream stream,
+        ProtocolV2FrameType type, ulong requestId, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
+    {
+        using var writer = new PooledByteBufferWriter();
+        var token = ProtocolV2FrameWriter.BeginFrame(writer, type, ProtocolV2FrameFlags.None, requestId);
+        writer.Write(payload.Span);
+        ProtocolV2FrameWriter.EndFrame(writer, token);
+        await stream.WriteAsync(writer.WrittenMemory, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+    }
+
+    private static async Task<byte[]> CreateActuallyBoundProbeRequestAsync(int port, CancellationToken cancellationToken)
+    {
+        var manifest = GlobalCatalogManifestSource.Instance.CreateSnapshot().Single(candidate =>
+            candidate.Contracts.Any(contract => contract.ContractType == typeof(ILegacyHandshakeDispatchProbe)));
+        var contract = manifest.Contracts.Single(contract => contract.ContractType == typeof(ILegacyHandshakeDispatchProbe));
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        await socket.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+        await using var stream = new NetworkStream(socket, ownsSocket: false);
+        var limits = new SharpLinkProtocolOptions();
+        using var offerPayload = new PooledByteBufferWriter();
+        ProtocolV2PayloadCodec.WriteHandshakeRequest(offerPayload, CurrentProtocolFixtureOffer(), limits);
+        await WriteProtocolFixtureFrameAsync(stream, ProtocolV2FrameType.HandshakeRequest, 0,
+            offerPayload.WrittenMemory, cancellationToken);
+        var handshake = await ReadProtocolFixtureFrameAsync(stream, limits, cancellationToken);
+        Ensure(handshake.Header.Type == ProtocolV2FrameType.HandshakeResponse &&
+               handshake.Header.Flags == ProtocolV2FrameFlags.None && handshake.Header.RequestId == 0,
+            "current control handshake succeeds");
+        var negotiated = ProtocolV2PayloadCodec.ReadHandshakeResponse(new(handshake.Payload), limits);
+        var manifestFrame = await ReadProtocolFixtureFrameAsync(stream, limits, cancellationToken);
+        Ensure(manifestFrame.Header.Type == ProtocolV2FrameType.ContractManifest && manifestFrame.Header.RequestId == 0,
+            "current control receives mandatory bootstrap locator");
+        var locator = ProtocolV2ContractManifestCodec.Read(new(manifestFrame.Payload), limits);
+        Ensure(locator.Generation == 1 && locator.OrderedContracts.Any(pair =>
+            pair.Key == contract.ContractId && pair.Value == manifest.RpcAssemblyHash),
+            "current control locator names the exact actual generated contract at initial generation");
+        var bind = new Protocol3BindRequest(Protocol3BindingRequirement.Compatible, contract.ContractId, manifest.RpcAssemblyHash);
+        using var bindPayload = new PooledByteBufferWriter();
+        Protocol3BindingControlCodec.WriteBindContract(bindPayload, bind);
+        await WriteProtocolFixtureFrameAsync(stream, ProtocolV2FrameType.BindContract, 1,
+            bindPayload.WrittenMemory, cancellationToken);
+        var bound = await ReadProtocolFixtureFrameAsync(stream, limits, cancellationToken);
+        Ensure(bound.Header.Type == ProtocolV2FrameType.BindResult && bound.Header.RequestId == 1,
+            "actual Bind result is correlated to the current operation");
+        var result = Protocol3BindingControlCodec.ReadBindResult(new(bound.Payload), negotiated.Authority.Limits.Slots);
+        Protocol3BindingValidation.ValidateResultForRequest(result, bind, negotiated.Authority, negotiated.Authority.Limits.Slots);
+        Ensure(result.Status == Protocol3BindStatus.Success, "actual server must allocate a successful binding");
+        using var request = new PooledByteBufferWriter();
+        var requestToken = ProtocolV2FrameWriter.BeginFrame(request,
+            ProtocolV2FrameType.Request, ProtocolV2FrameFlags.HasReturn, 1);
+        var prefix = new byte[ProtocolV2Constants.RequestPrefixBytes];
+        BinaryPrimitives.WriteUInt64LittleEndian(prefix, result.Token);
+        BinaryPrimitives.WriteInt64LittleEndian(prefix.AsSpan(sizeof(long)), contract.Methods.Single().MethodId);
+        request.Write(prefix);
+        ProtocolV2FrameWriter.EndFrame(request, requestToken);
+        await stream.WriteAsync(request.WrittenMemory, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+        var response = await ReadProtocolFixtureFrameAsync(stream, limits, cancellationToken);
+        Ensure(response.Header.Type == ProtocolV2FrameType.Response && response.Header.RequestId == 1 &&
+               (response.Header.Flags & ProtocolV2FrameFlags.Error) == 0,
+            "actual bound current-revision RPC returns a successful response");
+        return request.WrittenMemory.ToArray();
+    }
+
+    private static void EnsureStrictHandshakePayloadRejected(byte[] payload)
+    {
+        try { ProtocolV2PayloadCodec.ReadHandshakeRequest(new(payload), new SharpLinkProtocolOptions()); }
+        catch (SharpLinkProtocolViolationException error) when (error.Reason == ProtocolViolationReason.MalformedFrame) { return; }
+        throw new Exception("The deliberately malformed wire payload must fail the strict current parser.");
+    }
+
+    private static async Task SendRejectedHandshakeAndProbeAsync(int port, byte[] handshake,
+        byte[] previouslyValidRequest, CancellationToken cancellationToken)
+    {
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        await socket.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+        await using var stream = new NetworkStream(socket, ownsSocket: false);
+        using var frames = new PooledByteBufferWriter();
+        var token = ProtocolV2FrameWriter.BeginFrame(frames,
+            ProtocolV2FrameType.HandshakeRequest, ProtocolV2FrameFlags.None, 0);
+        frames.Write(handshake);
+        ProtocolV2FrameWriter.EndFrame(frames, token);
+        // Same request bytes proved executable by the positive control. Its token belongs
+        // ONLY to that earlier physical session; rejection here must precede RPC admission.
+        frames.Write(previouslyValidRequest);
+        await stream.WriteAsync(frames.WrittenMemory, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+        Ensure(await stream.ReadAsync(new byte[1], cancellationToken) == 0,
+            "strict malformed-handshake rejection closes with EOF and sends no response bytes");
+    }
+
+    private static async ValueTask JoinProtocolFixtureCallAsync(Task? operation, SharpLinkException? observed)
+    {
+        if (operation is null) return;
+        try { await operation.WaitAsync(TimeSpan.FromSeconds(2)); }
+        catch (SharpLinkException error) when (observed is { Code: SharpLinkErrorCode.ProtocolViolation } &&
+                                               ReferenceEquals(error, observed))
         {
-            await client.DisposeAsync();
-            listener.Stop();
-            await Task.WhenAny(fakeServerTask, Task.Delay(1000, CancellationToken.None));
+            // This exact logical outcome was already captured by the test's code/identity
+            // oracle. Do not turn an expected failing RPC into a new teardown failure.
         }
     }
+
+    private static async ValueTask CleanupProtocolFixtureAsync(Exception? primary, params Func<ValueTask>[] stages)
+    {
+        List<Exception>? failures = primary is null ? null : [primary];
+        foreach (var stage in stages)
+        {
+            try { await stage().AsTask().WaitAsync(TimeSpan.FromSeconds(2)); }
+            catch (Exception error) { (failures ??= []).Add(error); }
+        }
+        if (failures is { Count: 1 })
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is not null) throw new AggregateException("Protocol fixture body/cleanup failures.", failures);
+    }
+
 }
 
 [RpcContract]
