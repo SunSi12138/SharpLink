@@ -108,7 +108,7 @@ public class ServerRegistryTests
         {
             registry.DynamicModules.Add(manifest.OwnerAssembly, module);
             registry.DetachedModuleServices.Add(module, detachedOwner);
-            registry.UnregisterOperations.Add(manifest.OwnerAssembly, unregisterOperation);
+            registry.UnregisterOperations.Add(manifest.OwnerAssembly, (unregisterOperation, module));
             registry.GenerationStorage++;
         }
 

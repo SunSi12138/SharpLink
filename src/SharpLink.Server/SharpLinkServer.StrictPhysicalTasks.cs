@@ -38,6 +38,13 @@ internal sealed partial class SharpLinkServer
             TaskScheduler.Default);
     }
 
+    private void TrackOwnedRetirementTask(Task task, SharpLinkDynamicModule module,
+        ref FrameworkTaskRegistration? receipt)
+    {
+        _lifecycle.MarkStrictPhysicalRegistration();
+        _frameworkTasks.TrackOwnedStrictPhysicalTail(task, "DynamicAssemblyPhysicalRetirement", module, ref receipt);
+    }
+
     internal void ReportStrictPhysicalRuntimeFailure(
         Exception rawFailure, FrameworkTaskRegistration? acceptedReceipt)
     {

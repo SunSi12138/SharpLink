@@ -79,24 +79,27 @@ internal sealed partial class SharpLinkServer
             }
             catch (Exception exception)
             {
+                if (HasStrictPhysicalOwnership) throw PhysicalTaskFailureException.From(exception);
                 SharpLinkServer.LogDeferredCleanupFailed(_server._logger, "Services", exception);
             }
         }
 
         private async Task DisposeRegisteredServicesAsync()
         {
+            try { await DisposeRegisteredServicesCoreAsync().ConfigureAwait(false); }
+            catch (Exception exception) when (HasStrictPhysicalOwnership)
+            { throw PhysicalTaskFailureException.From(exception); }
+        }
+
+        private async Task DisposeRegisteredServicesCoreAsync()
+        {
             // Inline preparation callbacks cannot be cancelled safely. The existing Stop budget
             // bounds its waiter, not the physical provider/codec ownership of these callbacks.
             await _server.CaptureRegistrationPreparationsDrain().ConfigureAwait(false);
-            List<Exception>? failures = null;
-            try
-            {
-                await _server.ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                (failures ??= []).Add(exception);
-            }
+            // A precommit retirement failure is fail-closed: do not dispose A dependencies,
+            // remaining services or Runtime. This actual task remains the lifecycle owner.
+            var dynamicFailure = await _server.ReleaseDrainedDynamicModulesAsync().ConfigureAwait(false);
+            List<Exception>? failures = dynamicFailure is null ? null : [dynamicFailure];
 
             try
             {
@@ -138,9 +141,16 @@ internal sealed partial class SharpLinkServer
             }
 
             if (failures is { Count: 1 })
+            {
+                if (HasStrictPhysicalOwnership) throw PhysicalTaskFailureException.From(failures[0]);
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            }
             if (failures is not null)
-                throw new AggregateException(failures);
+            {
+                var failure = new AggregateException(failures);
+                if (HasStrictPhysicalOwnership) throw PhysicalTaskFailureException.From(failure);
+                throw failure;
+            }
         }
 
         private Task<bool> WaitUntilWithRuntimeTimeAsync(Task task, long deadline)

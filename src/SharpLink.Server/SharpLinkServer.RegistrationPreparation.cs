@@ -11,6 +11,7 @@ internal sealed partial class SharpLinkServer
 
     private void ThrowIfRegistrationCallbackReentry()
     {
+        ColdMetadataPreparation.ThrowIfCallbackReentry(_runtimeContext.Domain);
         for (var current = CurrentRegistrationPreparation.Value; current is not null; current = current.Previous)
             if (current.IsActive && ReferenceEquals(current.Server, this))
                 throw new InvalidOperationException("A registration preparation callback cannot mutate or stop its own server.");
@@ -77,7 +78,7 @@ internal sealed partial class SharpLinkServer
     {
         internal SharpLinkServer Server { get; }
         internal RegistrationPreparation? Previous { get; }
-        private readonly List<SharpLinkDynamicModule> _dependencies;
+        private readonly List<(SharpLinkDynamicModule Module, RpcGeneratedManifestRegistration Registration)> _dependencies;
         private readonly ColdMetadataReservation _dependenciesCharge;
         private HashSet<System.Reflection.Assembly>? _selectedDependencies;
         private ColdMetadataReservation? _selectedDependenciesCharge;
@@ -161,6 +162,7 @@ internal sealed partial class SharpLinkServer
         // exact required Assembly identities are pinned, not every unrelated live module.
         internal void SelectDependencies(PreparedGeneratedManifest manifest)
         {
+            using var callback = Metadata.EnterCallback();
             if (_selectedDependencies is not null)
                 throw new InvalidOperationException("Dependency selection cannot replay.");
             _selectedDependenciesCharge = Metadata.ReserveCollection(0, manifest.RegistrationScope);
@@ -173,7 +175,7 @@ internal sealed partial class SharpLinkServer
                 _selectedDependencies.Add(assembly);
             }
             foreach (var identity in EnumerateManifestDependencies(manifest))
-                Add(SharpLinkGeneratedDependencyBinding.Resolve(manifest.OwnerAssembly, identity));
+                Add(SharpLinkGeneratedDependencyBinding.ResolveDeclared(manifest, identity));
             foreach (var service in manifest.Services) Add(service.ContractType.Assembly);
             if (manifest is ISharpLinkReferencedCodecDependencyManifest referenced)
                 foreach (var dependency in referenced.ReferencedCodecDependencies) Add(dependency.TargetType.Assembly);
@@ -192,7 +194,7 @@ internal sealed partial class SharpLinkServer
                     continue;
                 if (!module.TryAcquirePreparation())
                     return false;
-                try { _dependencies.Add(module); }
+                try { _dependencies.Add((module, module.CodecRegistration)); }
                 catch { module.ReleasePreparation(); throw; }
             }
             return true;
@@ -202,9 +204,14 @@ internal sealed partial class SharpLinkServer
         {
             if (_serviceSnapshot is not null && !Server._serviceModuleRegistry.IsCurrentServices(_serviceSnapshot))
                 return false;
-            foreach (var module in _dependencies)
-                if (module.State != SharpLinkDynamicModuleState.Running)
-                    return false;
+            foreach (var dependency in _dependencies)
+            {
+                var module = dependency.Module;
+                if (module.State != SharpLinkDynamicModuleState.Running ||
+                    !Server._dynamicModules.TryGetValue(module.Assembly, out var current) ||
+                    !ReferenceEquals(current, module) ||
+                    !ReferenceEquals(current.CodecRegistration, dependency.Registration)) return false;
+            }
             return true;
         }
 
@@ -217,9 +224,9 @@ internal sealed partial class SharpLinkServer
             List<Exception>? failures = null;
             try
             {
-                foreach (var module in _dependencies)
+                foreach (var dependency in _dependencies)
                 {
-                    try { module.ReleasePreparation(); }
+                    try { dependency.Module.ReleasePreparation(); }
                     catch (Exception exception) { (failures ??= []).Add(exception); }
                 }
                 _dependencies.Clear();

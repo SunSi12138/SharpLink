@@ -5,6 +5,11 @@ namespace SharpLink.Runtime;
 
 internal static class SharpLinkGeneratedDependencyBinding
 {
+    internal static Assembly? ResolveDeclared(ISharpLinkGeneratedAssemblyManifest manifest, string identity)
+        => manifest is PreparedGeneratedManifest prepared
+            ? prepared.ResolveDeclaredDependency(identity)
+            : Resolve(manifest.OwnerAssembly, identity);
+
     internal static Assembly? Resolve(Assembly ownerAssembly, string dependencyIdentity)
     {
         ArgumentNullException.ThrowIfNull(ownerAssembly);
@@ -91,6 +96,8 @@ internal static class SharpLinkGeneratedDependencyBinding
     {
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(ownerAssembly);
+        if (manifest is PreparedGeneratedManifest prepared)
+            return prepared.HasDeclaredDependency(ownerAssembly);
         foreach (var dependency in manifest.Dependencies)
         {
             if (Matches(manifest.OwnerAssembly, dependency, ownerAssembly))

@@ -121,8 +121,11 @@ internal sealed partial class ClientAssemblyRegistry
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
         SharpLinkRuntimeContext.CapturedGeneratedCodecs? codecSource = null;
+        Assembly[] dependencyAssemblies = [];
+        DependencyPreparationPin[] dependencyPins = [];
         try
         {
+            dependencyAssemblies = ResolveDependencyAssemblies(manifest, preparation);
             codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
             long generation;
             ClientProxySnapshot current;
@@ -135,12 +138,13 @@ internal sealed partial class ClientAssemblyRegistry
                 if (IsAssemblyRegistered(assembly))
                     return Failure(SharpLinkAssemblyRegistrationErrorCode.DuplicateAssembly,
                         "The same Assembly object is already registered on this client.", assembly);
-                if (_dynamicModules.Count >= MaximumDynamicModules)
+                if (SharpLinkModuleAdmissionCapacity.Count(_dynamicModules, _unregisterOperations) >= MaximumDynamicModules)
                     return Failure(SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
                         $"The client runtime module limit of {MaximumDynamicModules} has been reached.", assembly);
                 preparation.ReserveCollection(_dynamicModules.Count);
                 modules = [.. _dynamicModules.Values];
                 generation = _generation;
+                dependencyPins = AcquireDependencyPinsLocked(dependencyAssemblies, preparation);
                 current = _proxyLookup.Acquire();
             }
             using (current)
@@ -162,9 +166,14 @@ internal sealed partial class ClientAssemblyRegistry
                     lock (_gate)
                     {
                         if (generation != _generation || RejectMutationLocked(out _) || IsAssemblyRegistered(assembly) ||
+                            SharpLinkModuleAdmissionCapacity.Count(_dynamicModules, _unregisterOperations) >= MaximumDynamicModules ||
+                            !DependencyPinsRemainCurrent(dependencyPins) ||
                             !_runtimeContext.IsCurrentGeneratedCodecPublication(codecPublication))
-                            return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                        {
+                            rollbackError = CreateError(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                                 "The registry changed while this exact candidate was prepared; no callbacks were replayed.", assembly);
+                            return SharpLinkAssemblyRegistrationResult.Failure(rollbackError);
+                        }
                         _runtimeContext.CommitGeneratedCodecPublication(codecPublication);
                         _dynamicModules.Add(assembly, module);
                         _proxyLookup.Publish(candidateSnapshot);
@@ -186,17 +195,18 @@ internal sealed partial class ClientAssemblyRegistry
         }
         finally
         {
-            try
+            Exception? cleanupFailure = null;
+            if (!published)
             {
-                if (!published)
-                {
-                    candidateSnapshot?.Dispose();
-                    try { codecRegistration?.Dispose(); }
-                    catch (Exception cleanupException)
-                    { ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException); }
-                }
+                AttemptRetirementCleanup(candidateSnapshot, ref cleanupFailure);
+                AttemptRetirementCleanup(codecRegistration, ref cleanupFailure);
             }
-            finally { codecSource?.Dispose(); }
+            AttemptRetirementCleanup(codecSource, ref cleanupFailure);
+            // A rejected candidate may use dependencies in adapter rollback; release only now.
+            ReleaseDependencyPins(dependencyPins, ref cleanupFailure);
+            Array.Clear(dependencyAssemblies);
+            if (cleanupFailure is not null)
+                ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupFailure);
         }
     }
 
@@ -236,6 +246,8 @@ internal sealed partial class ClientAssemblyRegistry
         TaskCompletionSource<Exception?>? retirementReady = null;
         Task<Exception?>? retirementTracking = null;
         Exception? publicationFailure = null;
+        Assembly[] dependencyAssemblies = [];
+        DependencyPreparationPin[] dependencyPins = [];
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
         ClientProxySnapshot? candidateSnapshot = null;
@@ -246,6 +258,7 @@ internal sealed partial class ClientAssemblyRegistry
         var published = false;
         try
         {
+            dependencyAssemblies = ResolveDependencyAssemblies(manifest!, preparation);
             while (true)
             {
                 long generation;
@@ -277,7 +290,7 @@ internal sealed partial class ClientAssemblyRegistry
                             "The new Assembly object is already registered on this client.",
                             newAssembly)));
                     }
-                    if (_dynamicModules.Count >= MaximumDynamicModules)
+                    if (SharpLinkModuleAdmissionCapacity.Count(_dynamicModules, _unregisterOperations) >= MaximumDynamicModules)
                     {
                         return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
                             SharpLinkAssemblyRegistrationErrorCode.CapacityExceeded,
@@ -301,6 +314,7 @@ internal sealed partial class ClientAssemblyRegistry
                         .ToDictionary(static pair => pair.Key, static pair => pair.Value)
                         .ToFrozenDictionary();
                     retainedCodecs = CreateCodecSnapshotWithout(oldModule, codecSource, preparation);
+                    dependencyPins = AcquireDependencyPinsLocked(dependencyAssemblies, preparation, oldModule);
                 }
 
                 codecRegistration = _runtimeContext.PrepareGeneratedManifest(manifest!);
@@ -318,11 +332,13 @@ internal sealed partial class ClientAssemblyRegistry
                     candidate.Codecs, codecRegistration, adoptPendingRegistration: true, sourceSnapshot: codecSource);
                 lock (_gate)
                 {
-                    if (generation != _generation || !_runtimeContext.IsCurrentGeneratedCodecPublication(codecPublication))
+                    if (generation != _generation || !DependencyPinsRemainCurrent(dependencyPins) ||
+                        SharpLinkModuleAdmissionCapacity.Count(_dynamicModules, _unregisterOperations) >= MaximumDynamicModules ||
+                        !_runtimeContext.IsCurrentGeneratedCodecPublication(codecPublication))
                     {
-                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
-                            SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
-                            "Registry changed while the exact replacement was prepared; callbacks were not replayed.", newAssembly)));
+                        rollbackError = CreateError(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                            "Registry changed while the exact replacement was prepared; callbacks were not replayed.", newAssembly);
+                        return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
                     }
                     else
                     {
@@ -387,6 +403,8 @@ internal sealed partial class ClientAssemblyRegistry
                 // The outer using declarations are idempotent after explicit disposal here.
                 AttemptRetirementCleanup(retainedSourceOwners, ref publicationFailure);
                 AttemptRetirementCleanup(codecSource, ref publicationFailure);
+                ReleaseDependencyPins(dependencyPins, ref publicationFailure);
+                Array.Clear(dependencyAssemblies);
                 AttemptRetirementCleanup(preparation, ref publicationFailure);
                 try { NotifyLocalRetirement(retiredControls); }
                 catch (Exception exception) { AddRetirementFailure(ref publicationFailure, exception); }
@@ -399,6 +417,8 @@ internal sealed partial class ClientAssemblyRegistry
                 AttemptRetirementCleanup(candidateSnapshot, ref cleanupFailure);
                 AttemptRetirementCleanup(codecRegistration, ref cleanupFailure);
                 AttemptRetirementCleanup(codecSource, ref cleanupFailure);
+                ReleaseDependencyPins(dependencyPins, ref cleanupFailure);
+                Array.Clear(dependencyAssemblies);
                 AttemptRetirementCleanup(preparation, ref cleanupFailure);
                 if (cleanupFailure is not null)
                     ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupFailure);
@@ -666,7 +686,7 @@ internal sealed partial class ClientAssemblyRegistry
         finally
         {
             lock (_gate)
-                if (receipt is not null && failure is null &&
+                if (receipt is not null && failure is null && module.State == SharpLinkDynamicModuleState.Released &&
                     _unregisterOperations.TryGetValue(assembly, out var current) &&
                     ReferenceEquals(current.Task, operation) && ReferenceEquals(current.Module, module))
                     _unregisterOperations.Remove(assembly);

@@ -400,6 +400,7 @@ internal sealed partial class SharpLinkServer
                     // until the provisional local/global ownership transfer is fully resolved.
                     _deferredServiceCleanupTask ??=
                         DisposeServicesWhenDrainedAsync(_callsDrained.Task);
+                    _serviceCleanupObserver ??= ObserveCleanupFailureAsync(_deferredServiceCleanupTask, "Services");
                 }
 
                 CancelForShutdown(_forceStopCts, "CallCancellation");
@@ -474,7 +475,7 @@ internal sealed partial class SharpLinkServer
 
                 if (callsDrained)
                 {
-                    var serviceCleanupTask = DisposeRegisteredServicesAsync();
+                    var serviceCleanupTask = _deferredServiceCleanupTask ??= DisposeRegisteredServicesAsync();
                     try
                     {
                         if (!await WaitUntilWithRuntimeTimeAsync(
@@ -534,7 +535,9 @@ internal sealed partial class SharpLinkServer
             var terminalFailure = CreateTerminalFailure(faulted, stopFailures);
             lock (_stateGate)
             {
-                if ((_strictPhysicalState & StrictDrainRequested) != 0)
+                // A deferred dynamic cleanup observer may have completed BEFORE the logical
+                // Stop finishes. Its independent raw stage must not be overwritten here.
+                if ((_strictPhysicalState & (StrictDrainRequested | StrictTaskRegistered)) != 0)
                     terminalFailure = CombineStrictLifecycleFailures(_terminalFailure, terminalFailure);
                 _server.TransitionTo(terminalFailure is null ? ServerState.Stopped : ServerState.Faulted);
                 _terminalFailure = terminalFailure;
@@ -576,6 +579,7 @@ internal sealed partial class SharpLinkServer
 
                 _deferredServiceCleanupTask ??=
                     DisposeServicesWhenDrainedAsync(_callsDrained.Task);
+                _serviceCleanupObserver ??= ObserveCleanupFailureAsync(_deferredServiceCleanupTask, "Services");
             }
 
             var frameworkCleanupTask = Task.WhenAll(
@@ -628,7 +632,7 @@ internal sealed partial class SharpLinkServer
 
             if (callsDrained)
             {
-                var serviceCleanupTask = DisposeRegisteredServicesAsync();
+                var serviceCleanupTask = _deferredServiceCleanupTask ??= DisposeRegisteredServicesAsync();
                 try
                 {
                     if (!await WaitUntilWithRuntimeTimeAsync(

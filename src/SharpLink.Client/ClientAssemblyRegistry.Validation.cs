@@ -14,7 +14,8 @@ internal sealed partial class ClientAssemblyRegistry
         ColdMetadataPreparation preparation,
         out SharpLinkAssemblyRegistrationError? error)
     {
-        error = ValidateDependencies(incoming, currentModules, preparation);
+        using (preparation.EnterCallback())
+            error = ValidateDependencies(incoming, currentModules, preparation);
         if (error is not null)
             return default;
 
@@ -148,8 +149,8 @@ internal sealed partial class ClientAssemblyRegistry
         var self = incoming.OwnerAssembly.FullName;
         foreach (var dependency in EnumerateManifestDependencies(incoming).Distinct(StringComparer.Ordinal))
         {
-            var boundAssembly = SharpLinkGeneratedDependencyBinding.Resolve(
-                incoming.OwnerAssembly,
+            var boundAssembly = SharpLinkGeneratedDependencyBinding.ResolveDeclared(
+                incoming,
                 dependency);
             if (ReferenceEquals(boundAssembly, incoming.OwnerAssembly) ||
                 boundAssembly is not null && available.Contains(boundAssembly))
@@ -195,24 +196,54 @@ internal sealed partial class ClientAssemblyRegistry
     private KeyValuePair<Assembly, SharpLinkDynamicModule>[] GetDynamicModulesForShutdown(
         out (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module)[] terminal)
     {
-        lock (_gate)
+        terminal = [];
+        KeyValuePair<Assembly, SharpLinkDynamicModule>[] modules = [];
+        ISharpLinkGeneratedAssemblyManifest[] manifests = [];
+        IDisposable?[] leases = [];
+        KeyValuePair<Assembly, SharpLinkDynamicModule>[] ordered = [];
+        Exception? failure = null;
+        try
         {
-            // Capture removed-but-not-fully-published outcomes in the SAME gate cut as the
-            // dependency graph. Otherwise A could vanish between two independent snapshots.
-            foreach (var pair in _unregisterOperations)
-                if (_dynamicModules.TryGetValue(pair.Key, out var active) && !ReferenceEquals(active, pair.Value.Module))
-                    throw new InvalidOperationException("Retirement operation and active module generation disagree.");
-            terminal = _unregisterOperations.Where(pair => !_dynamicModules.ContainsKey(pair.Key))
-                .Select(static pair => pair.Value).ToArray();
-            // Ordering consumes immutable dependency metadata while MarkReleased is excluded.
-            // Only exact module/assembly pairs escape; no manifest property is read after the gate.
-            var modules = _dynamicModules.ToArray();
-            var manifests = modules.Select(static pair => pair.Value.Manifest).ToArray();
-            var order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
-            var ordered = new KeyValuePair<Assembly, SharpLinkDynamicModule>[order.Length];
+            lock (_gate)
+            {
+                // One exact cut includes both metadata and removed-but-unpublished outcomes.
+                foreach (var pair in _unregisterOperations)
+                    if (_dynamicModules.TryGetValue(pair.Key, out var active) && !ReferenceEquals(active, pair.Value.Module))
+                        throw new InvalidOperationException("Retirement operation and active module generation disagree.");
+                terminal = _unregisterOperations.Where(pair => !_dynamicModules.ContainsKey(pair.Key))
+                    .Select(static pair => pair.Value).ToArray();
+                modules = _dynamicModules.ToArray();
+                manifests = new ISharpLinkGeneratedAssemblyManifest[modules.Length];
+                leases = new IDisposable?[modules.Length];
+                for (var index = 0; index < modules.Length; index++)
+                {
+                    // Module properties refer to the already-frozen prepared manifest, not user getters.
+                    leases[index] = modules[index].Value.CodecRegistration.MetadataLifetime.Retain();
+                    manifests[index] = modules[index].Value.Manifest;
+                }
+            }
+            // Dependency binding can invoke ALC resolution. No host registry gate is held here.
+            int[] order;
+            using (_runtimeContext.EnterOwnedMetadataCallback())
+                order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
+            ordered = new KeyValuePair<Assembly, SharpLinkDynamicModule>[order.Length];
             for (var index = 0; index < order.Length; index++) ordered[index] = modules[order[index]];
-            return ordered;
         }
+        catch (Exception exception) { failure = exception; }
+        finally
+        {
+            Array.Clear(manifests);
+            Array.Clear(modules);
+            foreach (var lease in leases) AttemptRetirementCleanup(lease, ref failure);
+            Array.Clear(leases);
+        }
+        if (failure is not null)
+        {
+            Array.Clear(ordered);
+            Array.Clear(terminal);
+            ThrowRetirementFailure(failure);
+        }
+        return ordered;
     }
 
     private void EnsureNoDynamicDependants(SharpLinkDynamicModule module)

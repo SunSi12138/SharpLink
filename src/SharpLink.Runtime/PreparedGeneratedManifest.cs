@@ -6,6 +6,8 @@ namespace SharpLink.Runtime;
 // factory execution/identity; none of the table getters below delegate to the input manifest.
 internal sealed class PreparedGeneratedManifest : ISharpLinkGeneratedAssemblyManifest, ISharpLinkReferencedCodecDependencyManifest
 {
+    private Assembly?[] _dependencyAssemblies = [];
+    private Assembly?[] _contractDependencyAssemblies = [];
     private ColdMetadataScope[] _contractScopes = [];
     private ColdMetadataReservation[] _contractMethodReservations = [];
     private PreparedGeneratedManifest(ISharpLinkGeneratedAssemblyManifest original,
@@ -123,7 +125,66 @@ internal sealed class PreparedGeneratedManifest : ISharpLinkGeneratedAssemblyMan
             throw ColdMetadataException.Invalid("Manifest table identity changed during capture.");
         var error = SharpLinkGeneratedManifestCompatibility.ValidatePrepared(result, expectedOwner);
         if (error is not null) throw new ColdMetadataException(error.Code, error.Message);
+        // Resolve once while Capture's callback scope is active and before any host gate.
+        // Null is also a binding result: later registration must not silently retry an ALC lookup.
+        result._dependencyAssemblies = result.CaptureBindings(result.Dependencies, []);
+        result._contractDependencyAssemblies = result.CaptureBindings(result.ContractDependencies,
+            result._dependencyAssemblies);
         return result;
+    }
+
+    private Assembly?[] CaptureBindings(IReadOnlyList<string> identities, Assembly?[] prior)
+    {
+        if (identities.Count == 0) return [];
+        var reservation = Preparation.ReserveCollection(identities.Count, RegistrationScope);
+        Assembly?[]? bindings = null;
+        try
+        {
+            bindings = new Assembly?[identities.Count];
+            reservation.OwnDeclaredDependencyBindings(bindings);
+            for (var index = 0; index < identities.Count; index++)
+            {
+                var found = false;
+                for (var previous = 0; previous < prior.Length; previous++)
+                    if (string.Equals(Dependencies[previous], identities[index], StringComparison.Ordinal))
+                    { bindings[index] = prior[previous]; found = true; break; }
+                for (var previous = 0; !found && previous < index; previous++)
+                    if (string.Equals(identities[previous], identities[index], StringComparison.Ordinal))
+                    { bindings[index] = bindings[previous]; found = true; break; }
+                if (!found)
+                    bindings[index] = SharpLinkGeneratedDependencyBinding.Resolve(OwnerAssembly, identities[index]);
+            }
+            return bindings;
+        }
+        catch
+        {
+            // The array never escaped. Clear even if attaching it failed, then refund independently.
+            if (bindings is not null) Array.Clear(bindings);
+            reservation.Dispose();
+            throw;
+        }
+    }
+
+    internal Assembly? ResolveDeclaredDependency(string identity)
+    {
+        for (var index = 0; index < Dependencies.Count; index++)
+            if (string.Equals(Dependencies[index], identity, StringComparison.Ordinal))
+                return _dependencyAssemblies[index];
+        for (var index = 0; index < ContractDependencies.Count; index++)
+            if (string.Equals(ContractDependencies[index], identity, StringComparison.Ordinal))
+                return _contractDependencyAssemblies[index];
+        return null;
+    }
+
+    internal bool HasDeclaredDependency(Assembly assembly)
+    {
+        foreach (var dependency in _dependencyAssemblies)
+            if (ReferenceEquals(dependency, assembly)) return true;
+        foreach (var dependency in _contractDependencyAssemblies)
+            if (ReferenceEquals(dependency, assembly)) return true;
+        foreach (var dependency in ReferencedCodecDependencies)
+            if (ReferenceEquals(dependency.TargetType.Assembly, assembly)) return true;
+        return false;
     }
 
     internal PreparedGeneratedManifest ForDependencyOnly(ColdMetadataPreparation preparation)
@@ -134,7 +195,10 @@ internal sealed class PreparedGeneratedManifest : ISharpLinkGeneratedAssemblyMan
         {
             ApiVersion = ApiVersion, ProtocolVersion = ProtocolVersion, GeneratorVersion = GeneratorVersion,
             OwnerAssembly = OwnerAssembly, RpcAssemblyHash = RpcAssemblyHash, CompileTimeDescriptor = CompileTimeDescriptor,
-            Codecs = Codecs, Dependencies = Dependencies
+            Codecs = Codecs, Dependencies = Dependencies,
+            // The dependency-only plan deliberately drops contract/referenced-codec declarations.
+            // Share retains the original reservation until both preparations release it.
+            _dependencyAssemblies = _dependencyAssemblies
         };
     }
 }

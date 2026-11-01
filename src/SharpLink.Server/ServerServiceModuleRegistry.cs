@@ -14,7 +14,7 @@ internal sealed class ServerServiceModuleRegistry
     private ServerServiceSnapshot? _services;
     private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
         new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
+    private readonly Dictionary<Assembly, (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module)> _unregisterOperations =
         new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<SharpLinkDynamicModule, ServerDetachedServices> _detachedModuleServices = [];
     private long _generation;
@@ -47,6 +47,10 @@ internal sealed class ServerServiceModuleRegistry
     internal ServerServiceSnapshot? DetachServices() => Interlocked.Exchange(ref _services, null);
 
     internal ref long GenerationStorage => ref _generation;
+
+    // Caller holds Gate. Retiring and pending-outcome identities reserve the existing module
+    // capacity until their exact operation entry is removed; shared module/operation keys count once.
+    internal int ModuleAdmissionSlots => SharpLinkModuleAdmissionCapacity.Count(_dynamicModules, _unregisterOperations);
 
     internal DynamicModuleTable DynamicModules { get; }
 
@@ -101,12 +105,15 @@ internal sealed class ServerServiceModuleRegistry
 
         internal int Count => _owner._unregisterOperations.Count;
 
+        internal IEnumerable<KeyValuePair<Assembly, (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module)>> Entries
+            => _owner._unregisterOperations;
+
         internal bool ContainsKey(Assembly assembly)
             => _owner._unregisterOperations.ContainsKey(assembly);
 
         internal bool TryGetValue(
             Assembly assembly,
-            out Task<SharpLinkAssemblyUnregisterResult> operation)
+            out (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module) operation)
         {
             if (_owner._unregisterOperations.TryGetValue(assembly, out var current))
             {
@@ -114,11 +121,11 @@ internal sealed class ServerServiceModuleRegistry
                 return true;
             }
 
-            operation = null!;
+            operation = default;
             return false;
         }
 
-        internal void Add(Assembly assembly, Task<SharpLinkAssemblyUnregisterResult> operation)
+        internal void Add(Assembly assembly, (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module) operation)
             => _owner._unregisterOperations.Add(assembly, operation);
 
         internal bool Remove(Assembly assembly)

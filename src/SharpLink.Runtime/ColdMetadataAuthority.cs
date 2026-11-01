@@ -298,6 +298,8 @@ internal sealed class ColdMetadataReservation : IDisposable
     private int _capacity;
     private int _references = 1;
     private bool _originalDisposed;
+    // Only private, framework-created dependency copies; never a user cleanup callback.
+    private System.Reflection.Assembly?[]? _declaredDependencyBindings;
     internal ColdMetadataReservation(ColdMetadataPreparation owner, ColdMetadataScope? scope,
         ulong bytes, int methods, int capacity, ColdMetadataReservation? next)
     {
@@ -324,6 +326,18 @@ internal sealed class ColdMetadataReservation : IDisposable
             return lease;
         }
     }
+    internal void OwnDeclaredDependencyBindings(System.Reflection.Assembly?[] bindings)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        lock (_authority.Gate)
+        {
+            ObjectDisposedException.ThrowIf(_originalDisposed, this);
+            if (_declaredDependencyBindings is not null || bindings.Length != _capacity)
+                throw new InvalidOperationException("Dependency storage must attach once to its exact reservation.");
+            _declaredDependencyBindings = bindings;
+        }
+    }
+
     internal void GrowTo(int capacity)
     {
         if (capacity < 0) throw ColdMetadataException.Invalid("Metadata collection count overflowed.");
@@ -347,8 +361,8 @@ internal sealed class ColdMetadataReservation : IDisposable
             _originalDisposed = true;
             _owner!.Remove(this);
             _owner = null;
-            // Remove clears both neighbors. The retained token now reaches only the
-            // authority and scalar scope ancestry, not a preparation/domain/callback graph.
+            // Remove clears both neighbors. A retained token no longer reaches its preparation,
+            // domain, or siblings. An optional private dependency copy stays charged until last release.
             ReleaseReferenceLocked();
         }
     }
@@ -359,6 +373,9 @@ internal sealed class ColdMetadataReservation : IDisposable
     private void ReleaseReferenceLocked()
     {
         if (--_references != 0) return;
+        var bindings = _declaredDependencyBindings;
+        _declaredDependencyBindings = null;
+        if (bindings is not null) Array.Clear(bindings);
         _authority.Release(_bytes, _methods, _scope);
         _bytes = 0;
         _methods = 0;

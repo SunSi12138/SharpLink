@@ -19,6 +19,10 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     internal ColdMetadataDomain Domain { get; }
     internal ColdMetadataPreparation CreateMetadataStorage()
         => (_metadataOwner ?? throw new ObjectDisposedException(nameof(SharpLinkRuntimeContext))).ForkStorage();
+    // The existing physical host/Stop owner must keep this Runtime alive. This is only
+    // the preowned cold reentry marker: no admission, allocation, quota or codec-use lease.
+    internal ColdMetadataPreparation.CallbackScope EnterOwnedMetadataCallback()
+        => (_metadataOwner ?? throw new ObjectDisposedException(nameof(SharpLinkRuntimeContext))).EnterCallback();
     internal IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> GeneratedManifests
         => (_generatedManifests ?? throw new ObjectDisposedException(nameof(SharpLinkRuntimeContext))).Manifests;
 
