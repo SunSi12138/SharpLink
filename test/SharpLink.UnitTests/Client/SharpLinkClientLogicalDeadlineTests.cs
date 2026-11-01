@@ -6,6 +6,8 @@ namespace SharpLink.UnitTests.Client;
 
 public sealed class SharpLinkClientLogicalDeadlineTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.LogicalDeadline;
+
     [Test]
     public async Task LateInterceptorContinuationShouldNotEnterLaterUserCodeAfterDeadline()
     {
@@ -13,13 +15,13 @@ public sealed class SharpLinkClientLogicalDeadlineTests
         var delayed = new DelayedContinuationInterceptor();
         var later = new CountingInterceptor();
         await using var client = ClientBuilderTestHelper.Build(
-            new TestClientTransportFactory(),
+            Domain.CreateTransport(),
             builder =>
             {
                 builder.UseTimeProvider(timeProvider);
                 builder.AddInterceptor(delayed);
                 builder.AddInterceptor(later);
-            });
+            }, domain: Domain);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -29,7 +31,7 @@ public sealed class SharpLinkClientLogicalDeadlineTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             method,
@@ -63,12 +65,12 @@ public sealed class SharpLinkClientLogicalDeadlineTests
         var timeProvider = new ManualTimeProvider();
         var stream = new CountingStream();
         await using var client = ClientBuilderTestHelper.Build(
-            new TestClientTransportFactory(),
+            Domain.CreateTransport(),
             builder =>
             {
                 builder.UseTimeProvider(timeProvider);
                 builder.AddInterceptor(new ShortCircuitStreamInterceptor(stream));
-            });
+            }, domain: Domain);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -78,7 +80,7 @@ public sealed class SharpLinkClientLogicalDeadlineTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var enumerator = channel.InvokeServerStreamingAsync(
             method,

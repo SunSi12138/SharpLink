@@ -11,6 +11,8 @@ namespace SharpLink.UnitTests.Client;
 
 public class SharpLinkClientInterceptorDeadlineTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.InterceptorDeadline;
+
     private static readonly RpcMethodDescriptor SMethod = new(
         ContractId: 1,
         MethodId: 2872,
@@ -24,7 +26,7 @@ public class SharpLinkClientInterceptorDeadlineTests
     public async Task ShortCircuitShouldStillHonorFrozenLogicalInvocationDeadline()
     {
         var clock = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
@@ -32,7 +34,7 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.UseTimeProvider(clock);
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
                 builder.AddInterceptor(new AdvancingShortCircuitInterceptor(clock));
-            });
+            }, domain: Domain);
 
         var failure = await CaptureSharpLinkException(InvokeUnary(client).AsTask());
 
@@ -49,15 +51,16 @@ public class SharpLinkClientInterceptorDeadlineTests
     public async Task TelemetryStartShouldConsumeTheAlreadyFrozenLogicalDeadline()
     {
         var clock = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
             {
                 builder.UseTimeProvider(clock);
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
-            });
+            }, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var advanced = 0;
         var probeInvocation = new AsyncLocal<bool>();
@@ -98,16 +101,16 @@ public class SharpLinkClientInterceptorDeadlineTests
     public async Task ShortCircuitStreamPendingMoveNextShouldBeInterruptedAtFrozenDeadline()
     {
         var clock = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
             {
                 builder.UseTimeProvider(clock);
                 builder.AddInterceptor(new BlockingStreamShortCircuitInterceptor());
-            });
+            }, domain: Domain);
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -143,7 +146,7 @@ public class SharpLinkClientInterceptorDeadlineTests
     public async Task InterceptorDelayBeforeNextShouldReduceEmittedTimeBudget()
     {
         var clock = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
@@ -151,8 +154,9 @@ public class SharpLinkClientInterceptorDeadlineTests
                 builder.UseTimeProvider(clock);
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(5));
                 builder.AddInterceptor(new AdvanceThenNextInterceptor(clock));
-            });
+            }, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var invocation = InvokeUnary(client).AsTask();
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
@@ -167,7 +171,7 @@ public class SharpLinkClientInterceptorDeadlineTests
 
     private static ValueTask<int> InvokeUnary(SharpLinkClient client)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         return channel.InvokeUnaryAsync(
             SMethod,

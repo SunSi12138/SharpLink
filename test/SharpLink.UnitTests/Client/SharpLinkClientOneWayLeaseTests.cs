@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks.Sources;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
@@ -12,6 +13,8 @@ namespace SharpLink.UnitTests.Client;
 [NotInParallel]
 public sealed class SharpLinkClientOneWayLeaseTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.OneWayLease;
+
     [Test]
     [Arguments("cancel")]
     [Arguments("deadline")]
@@ -19,9 +22,10 @@ public sealed class SharpLinkClientOneWayLeaseTests
     public async Task TerminalDuringRegistrationShouldConsumeTheLeaseExactlyOnce(string terminal)
     {
         var clock = new RegistrationTimeProvider();
-        var transport = new TestClientTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
+        var transport = Domain.CreateTransport();
+        await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         var connection = GetConnection(client);
         await connection.Session.FlushSendQueueAsync();
         using var cancellation = new CancellationTokenSource();
@@ -46,7 +50,8 @@ public sealed class SharpLinkClientOneWayLeaseTests
         Ensure(operation is not null, "the registration boundary must have been exercised");
         AssertTerminal(terminal, failure, cancellation.Token, close);
         Ensure(producer.Calls == 0, "an already terminal registration must not start a producer");
-        operation!.AssertReturnedOnce();
+        await operation!.Group.SupervisionTaskForDiagnostics.WaitAsync(TimeSpan.FromSeconds(5));
+        operation.AssertReturnedOnce();
         AssertAdmissionReleased(connection);
     }
 
@@ -57,9 +62,10 @@ public sealed class SharpLinkClientOneWayLeaseTests
     public async Task TerminalDuringSuspendedEmissionShouldConsumeTheLeaseWithoutStartingProducer(string terminal)
     {
         var clock = new RegistrationTimeProvider();
-        var transport = new TestClientTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
+        var transport = Domain.CreateTransport();
+        await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         var connection = GetConnection(client);
         await connection.Session.FlushSendQueueAsync();
         using var cancellation = new CancellationTokenSource();
@@ -84,6 +90,14 @@ public sealed class SharpLinkClientOneWayLeaseTests
             AssertTerminal(terminal, failure, cancellation.Token, close);
             Ensure(producer.Calls == 0, "a terminal during emission must not start the producer");
             Ensure(operation.ProducerToken.IsCancellationRequested, "terminal completion must cancel the owned producer token");
+            // Logical terminal delivery cannot release the selection while the exact physical
+            // head is still in the transport. The former zero-before-exit assertion contradicted
+            // the selected physical-group lifetime; retain then release this original owner.
+            Ensure(connection.CallAdmissionReservationCount == 1 &&
+                   !operation.Group.SupervisionTaskForDiagnostics.IsCompleted,
+                "the original selection and supervision must survive the held head emission");
+            releaseEmission.Set();
+            await operation.Group.SupervisionTaskForDiagnostics.WaitAsync(TimeSpan.FromSeconds(5));
             operation.AssertReturnedOnce();
             AssertAdmissionReleased(connection);
         }
@@ -102,9 +116,10 @@ public sealed class SharpLinkClientOneWayLeaseTests
     public async Task ProducerTerminalShouldRetainItsWinnerAndReturnTheLeaseExactlyOnce(string terminal)
     {
         var clock = new RegistrationTimeProvider();
-        var transport = new TestClientTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock));
+        var transport = Domain.CreateTransport();
+        await using var client = ClientBuilderTestHelper.Build(transport, builder => builder.UseTimeProvider(clock), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         var connection = GetConnection(client);
         using var cancellation = new CancellationTokenSource();
         var producer = new ProducerProbe();
@@ -128,6 +143,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         else
             AssertTerminal(terminal, failure, cancellation.Token, close);
         Ensure(producer.Calls == 1, "a live call must run exactly one producer");
+        await operation.Group.SupervisionTaskForDiagnostics.WaitAsync(TimeSpan.FromSeconds(5));
         operation.AssertReturnedOnce();
         AssertAdmissionReleased(connection);
 
@@ -149,12 +165,12 @@ public sealed class SharpLinkClientOneWayLeaseTests
     private static Task Invoke(SharpLinkClient client, ProducerProbe producer, CancellationToken token)
     {
         var request = default(RpcEmptyRequest);
-        var streams = new GatedProducer(producer);
+        var streams = new GatedProducer(producer, client.RuntimeContext.Codecs.GetCodec<int>());
         var method = new RpcMethodDescriptor(
             ContractId: 1, MethodId: 297, Kind: RpcMethodKind.OneWay,
             HasResponsePayload: false, HasClientStreams: true,
             HasMethodTimeout: true, MethodTimeout: TimeSpan.FromSeconds(5), ClientStreamCount: 1);
-        return ((IRpcChannel)client).InvokeOneWayAsync(
+        return ClientInvokerTestHelper.CreateChannel(client).InvokeOneWayAsync(
             method, in request, RpcEmptyRequestCodec.Instance, in streams, metadata: null, token).AsTask();
     }
 
@@ -216,13 +232,15 @@ public sealed class SharpLinkClientOneWayLeaseTests
         }
     }
 
-    private sealed class OperationProbe(RpcRequestOperation<RpcEmptyRequest> operation, CancellationToken producerToken)
+    private sealed class OperationProbe(RpcRequestOperation<RpcEmptyRequest> operation, CancellationToken producerToken,
+        ClientStreamPublicationGroup group)
     {
         private static readonly FieldInfo Core = typeof(RpcRequestOperation<RpcEmptyRequest>).GetField(
             "_core", BindingFlags.Instance | BindingFlags.NonPublic)!;
         private readonly short _version = ReadVersion(operation);
         internal long Id { get; } = operation.Id;
         internal CancellationToken ProducerToken { get; } = producerToken;
+        internal ClientStreamPublicationGroup Group { get; } = group;
 
         internal static OperationProbe Capture(ClientConnection connection)
         {
@@ -230,7 +248,11 @@ public sealed class SharpLinkClientOneWayLeaseTests
                 "_slots", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection.PendingCalls)!;
             var call = slots.Cast<object?>().Single(static call => call is not null)!;
             var operation = (RpcRequestOperation<RpcEmptyRequest>)call.GetType().GetProperty("Operation")!.GetValue(call)!;
-            return new OperationProbe(operation, connection.PendingCalls.GetProducerCancellationToken(operation.Id));
+            var group = (ClientStreamPublicationGroup?)call.GetType().GetField(
+                "StreamGroup", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(call)
+                ?? throw new InvalidOperationException("The captured pending call must own its actual stream group.");
+            Ensure(ReferenceEquals(group.PreparedConnection, connection), "the captured group must own this exact connection");
+            return new OperationProbe(operation, connection.PendingCalls.GetProducerCancellationToken(operation.Id), group);
         }
 
         internal void AssertResetOnce()
@@ -289,7 +311,7 @@ public sealed class SharpLinkClientOneWayLeaseTests
         internal Exception Failure { get; } = new InvalidOperationException("oneway producer failed");
     }
 
-    private readonly struct GatedProducer(ProducerProbe probe) : IRpcClientStreamWriter
+    private readonly struct GatedProducer(ProducerProbe probe, IRpcCodec<int> codec) : IRpcClientStreamWriter
     {
         public async ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)
         {
@@ -297,12 +319,19 @@ public sealed class SharpLinkClientOneWayLeaseTests
             probe.Started.TrySetResult();
             try
             {
-                await probe.Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                await sink.SendClientStreamAsync(requestId, 1, Wait(probe, cancellationToken), codec, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
                 probe.Stopped.TrySetResult();
             }
+        }
+
+        private static async IAsyncEnumerable<int> Wait(ProducerProbe probe,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await probe.Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            yield break;
         }
     }
 

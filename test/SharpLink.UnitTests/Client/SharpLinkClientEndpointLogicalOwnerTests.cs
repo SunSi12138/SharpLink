@@ -6,6 +6,8 @@ namespace SharpLink.UnitTests.Client;
 
 public sealed class SharpLinkClientEndpointLogicalOwnerTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.EndpointLogicalOwner;
+
     [Test]
     [Arguments(RpcMethodKind.Unary)]
     [Arguments(RpcMethodKind.OneWay)]
@@ -15,7 +17,7 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
     public async Task DeadlineShouldWinWhenEndpointAdmissionCrossesBoundary(RpcMethodKind kind)
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         var policy = new DeadlineCrossingAdmissionPolicy(timeProvider);
         await using var client = ClientBuilderTestHelper.BuildEndpoint(
             FixedEndpoint,
@@ -24,8 +26,9 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
             {
                 builder.UseTimeProvider(timeProvider);
                 builder.UseEndpointAdmission(policy);
-            });
+            }, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var hasClientStreams = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
         var method = new RpcMethodDescriptor(
@@ -37,7 +40,7 @@ public sealed class SharpLinkClientEndpointLogicalOwnerTests
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 

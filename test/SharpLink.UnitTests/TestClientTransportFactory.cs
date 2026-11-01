@@ -25,10 +25,11 @@ internal sealed class TestClientTransportFactory : IClientTransportFactory
         ProtocolV2Capabilities negotiatedCapabilities = ProtocolV2Capabilities.None,
         IEnumerable<KeyValuePair<long, RpcHash128>>? contractManifest = null,
         string? compressionProfile = null,
-        bool acceptManualContractBindings = false)
+        bool acceptManualContractBindings = false,
+        ManualClientContractFixture.Domain? manualContractDomain = null)
     {
         if (acceptManualContractBindings)
-            Connection.EnableManualContractBindings();
+            Connection.EnableManualContractBindings(manualContractDomain?.AssemblyHash ?? ManualClientContractFixture.AssemblyHash);
         _negotiatedCapabilities = negotiatedCapabilities;
         _contractManifest = contractManifest?.ToArray() ?? DefaultContractManifest;
         _compressionProfile = compressionProfile;
@@ -73,11 +74,16 @@ internal sealed class TestTransportConnection : ITransportConnection
     internal Protocol3BindingAuthority Authority { get; } = new(
         Guid.NewGuid(), Guid.NewGuid(), Protocol3BindingLimits.Default);
     private bool _acceptManualContractBindings;
+    private RpcHash128 _manualContractHash;
     private ulong _manualBindingIncarnation;
 
     // Opt-in only. This controlled peer knows one explicitly registered fixture identity;
     // it is not a general server registry and never acknowledges request stream heads.
-    internal void EnableManualContractBindings() => _acceptManualContractBindings = true;
+    internal void EnableManualContractBindings(RpcHash128 hash)
+    {
+        _manualContractHash = hash;
+        _acceptManualContractBindings = true;
+    }
 
     public string Id { get; } = Guid.NewGuid().ToString("N");
     public PipeReader Input => _inbound.Reader;
@@ -295,7 +301,7 @@ internal sealed class TestTransportConnection : ITransportConnection
         Protocol3BindResult result;
         if (request.ContractId != ManualClientContractFixture.ContractId)
             result = Protocol3BindResult.Failure(Protocol3BindStatus.UnknownContract);
-        else if (request.Hash != ManualClientContractFixture.AssemblyHash)
+        else if (request.Hash != _manualContractHash)
             result = Protocol3BindResult.Failure(Protocol3BindStatus.HashMismatch);
         else if (request.Requirement != Protocol3BindingRequirement.Compatible || request.Receipt is not null)
             result = Protocol3BindResult.Failure(Protocol3BindStatus.ScopeDenied);

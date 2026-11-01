@@ -10,11 +10,13 @@ namespace SharpLink.UnitTests.Client;
 
 public class SharpLinkClientCallControlTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.CallOptions;
+
     [Test]
     public async Task WaitForReadyFalseShouldFailImmediatelyWhenDisconnected()
     {
-        var transport = new TestClientTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(transport);
+        var transport = Domain.CreateTransport();
+        await using var client = ClientBuilderTestHelper.Build(transport, domain: Domain);
 
         var exception = await CaptureSharpLinkException(ClientInvokerTestHelper.InvokeUnaryAsync(client));
         Ensure(exception.Code == SharpLinkErrorCode.Unavailable, "fail-fast error code");
@@ -23,11 +25,12 @@ public class SharpLinkClientCallControlTests
     [Test]
     public async Task MaximumPositiveDefaultTimeoutShouldSaturateAndSendTheRequest()
     {
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseRequestTimeout(TimeSpan.MaxValue));
+            builder => builder.UseRequestTimeout(TimeSpan.MaxValue), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var request = await transport.Connection
@@ -43,13 +46,14 @@ public class SharpLinkClientCallControlTests
     [Test]
     public async Task EndpointAdmissionShouldReportMalformedResponsesAsRemoteErrors()
     {
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         var policy = new RecordingAdmissionPolicy();
         await using var client = ClientBuilderTestHelper.BuildEndpoint(
             FixedEndpoint,
             transport,
-            builder => builder.UseEndpointAdmission(policy));
+            builder => builder.UseEndpointAdmission(policy), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var invocation = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var request = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
@@ -73,7 +77,7 @@ public class SharpLinkClientCallControlTests
     [Test]
     public async Task StreamRegistrationFailuresShouldReportAcquiredAdmissionLeases()
     {
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         var policy = new RecordingAdmissionPolicy();
         await using var client = ClientBuilderTestHelper.BuildEndpoint(
             FixedEndpoint,
@@ -82,12 +86,13 @@ public class SharpLinkClientCallControlTests
             {
                 builder.UseProtocol(options => options.MaxPendingRequestsPerConnection = 1);
                 builder.UseEndpointAdmission(policy);
-            });
+            }, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var occupied = ClientInvokerTestHelper.InvokeUnaryAsync(client).AsTask();
         var occupiedRequest = await transport.Connection.WaitForSentPacket(ProtocolV2FrameType.Request);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
         var oneWayFailure = await CaptureSharpLinkException(channel.InvokeOneWayAsync(
@@ -122,7 +127,8 @@ public class SharpLinkClientCallControlTests
         HasResponsePayload: false,
         HasClientStreams: true,
         HasMethodTimeout: false,
-        MethodTimeout: null);
+        MethodTimeout: null,
+        ClientStreamCount: 1);
 
     private static readonly RpcMethodDescriptor ServerStreamingMethod = new(
         1,

@@ -5,14 +5,17 @@ namespace SharpLink.UnitTests.Client;
 
 public sealed class SharpLinkClientOneWayShapeTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.OneWayShape;
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task DescriptorShapeShouldSelectProducerAndCancellationOwnership(bool hasClientStreams)
     {
-        var transport = new TestClientTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(transport);
+        var transport = Domain.CreateTransport();
+        await using var client = ClientBuilderTestHelper.Build(transport, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         var connections = (ClientConnection[])(typeof(SharpLinkClient).GetField(
             "_readyConnections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client)!);
         Ensure(connections.Length == 1, "expected one ready connection");
@@ -29,7 +32,7 @@ public sealed class SharpLinkClientOneWayShapeTests
             HasMethodTimeout: false,
             MethodTimeout: null,
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
 
         // Use the same concrete writer in both cases: the descriptor's method shape,
@@ -37,13 +40,16 @@ public sealed class SharpLinkClientOneWayShapeTests
         await channel.InvokeOneWayAsync(
             method, in request, RpcEmptyRequestCodec.Instance, in streams,
             metadata: null, cancellation.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
+        var sent = await transport.Connection.WaitForSentFrame(hasClientStreams
+            ? ProtocolV2FrameType.OneWayStreamRequest : ProtocolV2FrameType.Request);
 
         Ensure(probe.Calls == (hasClientStreams ? 1 : 0),
             "only the client-stream shape may invoke the producer");
         Ensure(sent.Header.Flags.HasFlag(ProtocolV2FrameFlags.OneWay), "expected OneWay request");
         Ensure(sent.Header.Flags.HasFlag(ProtocolV2FrameFlags.Cancellable) == hasClientStreams,
             "a caller token makes only the pending-owned client-stream shape wire-cancellable");
+        if (hasClientStreams)
+            await probe.Group!.SupervisionTaskForDiagnostics.WaitAsync(TimeSpan.FromSeconds(5));
         Ensure(connection.ActiveCallCount == 0, "completed OneWay must release active call ownership");
         Ensure(connection.CallAdmissionReservationCount == 0, "completed OneWay must release admission reservation");
         if (hasClientStreams)
@@ -65,6 +71,7 @@ public sealed class SharpLinkClientOneWayShapeTests
         internal bool OwnedWhileWriting;
         internal CancellationToken Token;
         internal ClientConnection? Connection;
+        internal ClientStreamPublicationGroup? Group;
     }
 
     private readonly struct RecordingWriter(ProducerProbe probe) : IRpcClientStreamWriter
@@ -74,10 +81,19 @@ public sealed class SharpLinkClientOneWayShapeTests
         {
             probe.Calls++;
             probe.RequestId = requestId;
-            probe.Connection = (ClientConnection)sink;
+            probe.Group = (ClientStreamPublicationGroup)sink;
+            probe.Connection = probe.Group.PreparedConnection
+                ?? throw new InvalidOperationException("The real stream group must own its registered connection.");
             probe.OwnedWhileWriting = probe.Connection.PendingCalls.Contains(requestId);
             probe.Token = cancellationToken;
-            return ValueTask.CompletedTask;
+            return new(sink.SendClientStreamAsync(requestId, 1, Empty(),
+                probe.Connection.Session.RuntimeContext.Codecs.GetCodec<int>(), cancellationToken));
+        }
+
+        private static async IAsyncEnumerable<int> Empty()
+        {
+            await Task.CompletedTask;
+            yield break;
         }
     }
 

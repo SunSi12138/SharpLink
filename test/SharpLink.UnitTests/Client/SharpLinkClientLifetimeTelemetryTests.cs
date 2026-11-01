@@ -9,6 +9,8 @@ namespace SharpLink.UnitTests.Client;
 
 public class SharpLinkClientLifetimeTelemetryTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.LifetimeTelemetry;
+
     private const string LifetimeSourceTag = "rpc.sharplink.lifetime_source";
 
     [Test]
@@ -90,10 +92,10 @@ public class SharpLinkClientLifetimeTelemetryTests
         };
         ActivitySource.AddActivityListener(listener);
 
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseRequestTimeout());
+            builder => builder.UseRequestTimeout(), domain: Domain);
 
         var provider = new ManualTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);
@@ -104,7 +106,7 @@ public class SharpLinkClientLifetimeTelemetryTests
             deadline,
             provider));
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         SharpLinkException? failure = null;
         try
@@ -146,11 +148,12 @@ public class SharpLinkClientLifetimeTelemetryTests
         ActivitySource.AddActivityListener(listener);
 
         using var parent = new Activity("ambient-parent").Start();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseRequestTimeout());
+            builder => builder.UseRequestTimeout(), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         await InvokeUnaryAsync(client, transport, Method(methodId: 905));
 
@@ -204,9 +207,10 @@ public class SharpLinkClientLifetimeTelemetryTests
         };
         ActivitySource.AddActivityListener(listener);
 
-        var transport = new TestClientTransportFactory();
-        await using var client = ClientBuilderTestHelper.Build(transport, configure);
+        var transport = Domain.CreateTransport();
+        await using var client = ClientBuilderTestHelper.Build(transport, configure, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         using var parent = pushParent?.Invoke();
 
         await InvokeUnaryAsync(client, transport, method);
@@ -218,7 +222,7 @@ public class SharpLinkClientLifetimeTelemetryTests
         TestClientTransportFactory transport,
         RpcMethodDescriptor method)
     {
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             method,

@@ -12,26 +12,28 @@ internal static class ClientBuilderTestHelper
 {
     internal static SharpLinkClient Build(
         IClientTransportFactory transport,
-        Action<SharpClientBuilder>? configure = null)
+        Action<SharpClientBuilder>? configure = null,
+        ManualClientContractFixture.Domain? domain = null)
     {
         ArgumentNullException.ThrowIfNull(transport);
         var builder = CreateDefaultBuilder();
         builder.UseTransport(transport);
         configure?.Invoke(builder);
-        return Materialize(builder);
+        return Materialize(builder, domain);
     }
 
     internal static SharpLinkClient BuildEndpoint(
         SharpLinkEndpoint endpoint,
         IClientTransportFactory transport,
-        Action<SharpClientBuilder>? configure = null)
+        Action<SharpClientBuilder>? configure = null,
+        ManualClientContractFixture.Domain? domain = null)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
         ArgumentNullException.ThrowIfNull(transport);
         var builder = CreateDefaultBuilder();
         builder.UseEndpoint(endpoint, _ => transport);
         configure?.Invoke(builder);
-        return Materialize(builder);
+        return Materialize(builder, domain);
     }
 
     internal static SharpLinkClient BuildStatic(
@@ -84,11 +86,11 @@ internal static class ClientBuilderTestHelper
         // opt in through UseRequestTimeout when that behavior is part of the scenario.
         => SharpClientBuilder.Create().DisableRequestTimeout();
 
-    private static SharpLinkClient Materialize(SharpClientBuilder builder)
+    private static SharpLinkClient Materialize(SharpClientBuilder builder, ManualClientContractFixture.Domain? domain = null)
     {
         // Freeze a real finite manual contract through the same compile/materialize transaction.
         // No process-global catalog mutation or default identity is used by raw-channel controls.
-        var plan = builder.CompileForMultiCluster([ManualClientContractFixture.Manifest]);
+        var plan = builder.CompileForMultiCluster([domain?.Manifest ?? ManualClientContractFixture.Manifest]);
         return builder.MaterializeCompiledPlan(plan) as SharpLinkClient ?? throw new InvalidOperationException(
             "The production Client Builder did not return its concrete runtime implementation.");
     }

@@ -8,14 +8,17 @@ namespace SharpLink.UnitTests.Client;
 
 public sealed class SharpLinkClientTimedUnaryEmissionTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.TimedUnaryEmission;
+
     [Test]
     public async Task TimedUnaryShouldEmitThroughTheSendPumpOwnerWithoutAPerCallTask()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
-            transport, builder => builder.UseTimeProvider(timeProvider));
+            transport, builder => builder.UseTimeProvider(timeProvider), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         var trackedBefore = client.FrameworkTaskSnapshotForDiagnostics.TotalTracked;
@@ -29,7 +32,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
                 throw new TimeoutException("test did not release request emission");
         });
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var method = new RpcMethodDescriptor(
             ContractId: 1, MethodId: 292, Kind: RpcMethodKind.Unary,
@@ -63,11 +66,12 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
     public async Task TimedUnaryShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        var transport = Domain.CreateTransport(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseTimeProvider(timeProvider));
+            builder => builder.UseTimeProvider(timeProvider), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -77,7 +81,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
 
         // Drain output already owned by ConnectAsync (notably the first heartbeat Ping) before
@@ -114,11 +118,12 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
     public async Task TimedUnaryStuckInTheTransportWriteQueueShouldStillFailAtItsDeadline()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        var transport = Domain.CreateTransport(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseTimeProvider(timeProvider));
+            builder => builder.UseTimeProvider(timeProvider), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
@@ -139,7 +144,7 @@ public sealed class SharpLinkClientTimedUnaryEmissionTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         try
         {

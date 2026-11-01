@@ -17,17 +17,19 @@ namespace SharpLink.UnitTests.Client;
 /// </remarks>
 public sealed class SharpLinkClientDeadlineClockReadTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.DeadlineClockRead;
+
     [Test]
     public async Task PlainTimedUnaryShouldSampleOnlyItsAuthoritativeBoundaries()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        var transport = Domain.CreateTransport(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
-            transport, builder => builder.UseTimeProvider(timeProvider));
+            transport, builder => builder.UseTimeProvider(timeProvider), domain: Domain);
         await PrepareAsync(client);
 
         var method = UnaryMethod(TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var before = timeProvider.TimestampReadCount;
 
@@ -53,6 +55,7 @@ public sealed class SharpLinkClientDeadlineClockReadTests
     private static async Task PrepareAsync(SharpLinkClient client)
     {
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         await GetOnlyReadyConnection(client).Session.FlushSendQueueAsync();
     }
 

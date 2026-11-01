@@ -187,10 +187,11 @@ public class DynamicModuleTests
         };
         ActivitySource.AddActivityListener(listener);
 
-        var transport = new TestClientTransportFactory();
+        var domain = ManualClientContractFixture.DynamicModuleDeadline;
+        var transport = domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseRequestTimeout());
+            builder => builder.UseRequestTimeout(), domain: domain);
         using var context = new SharpLinkRuntimeContextBuilder().Build(includeGeneratedAssemblyCatalog: false);
         var manifest = new EmptyManifest();
         using var registration = context.PrepareGeneratedManifest(manifest);
@@ -198,7 +199,8 @@ public class DynamicModuleTests
             typeof(DynamicModuleTests).Assembly,
             manifest,
             registration);
-        var channel = new SharpLinkModuleRpcChannel(new SharpLinkClient.ContractCallSite(client, 0), module);
+        var channel = new SharpLinkModuleRpcChannel((SharpLinkClient.ContractCallSite)client.CreateContractChannel(
+            client.GetLocalContract<ManualClientContractFixture.IContract>()), module);
 
         var provider = new ManualTimeProvider();
         var deadline = RpcDeadline.Create(TimeSpan.FromSeconds(1), provider);

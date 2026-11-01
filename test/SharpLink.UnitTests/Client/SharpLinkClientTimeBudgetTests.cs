@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using SharpLink.Client;
 using SharpLink.Runtime;
@@ -11,22 +12,25 @@ namespace SharpLink.UnitTests.Client;
 
 public class SharpLinkClientTimeBudgetTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.TimeBudget;
+
     [Test]
     public async Task ExplicitMethodTimeoutShouldOverrideClientDefaultTimeBudget()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
             {
                 builder.UseTimeProvider(timeProvider);
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
-            });
+            }, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var method = MethodWithTimeout(TimeSpan.FromSeconds(120));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
 
         var invocation = channel.InvokeUnaryAsync(
@@ -60,17 +64,18 @@ public class SharpLinkClientTimeBudgetTests
             parentDeadline,
             parentTimeProvider));
 
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
             {
                 builder.UseTimeProvider(childTimeProvider);
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
-            });
+            }, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
@@ -99,22 +104,23 @@ public class SharpLinkClientTimeBudgetTests
             parentDeadline,
             timeProvider));
 
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
             {
                 builder.UseTimeProvider(timeProvider);
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
-            });
+            }, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         // ResolveCallControl first samples the local-policy anchor, then observes the shared parent
         // boundary. Advance the one shared monotonic clock on that second read: the parent is now
         // at t=5 with one second left. Preserving the original parent RpcDeadline must retain its
         // t=6 boundary rather than anchoring the remaining second back at logical entry.
         timeProvider.AdvanceOnTimestampRead(2, TimeSpan.FromSeconds(3));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
@@ -143,22 +149,23 @@ public class SharpLinkClientTimeBudgetTests
             parentDeadline,
             timeProvider));
 
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder =>
             {
                 builder.UseTimeProvider(timeProvider);
                 builder.UseRequestTimeout(TimeSpan.FromSeconds(30));
-            });
+            }, domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         // The old projection sampled four seconds of parent lifetime at t=2 and could then be
         // descheduled before taking a fresh child anchor. Advancing on the third timestamp read
         // models that gap: re-anchoring four seconds at t=5 would incorrectly extend the parent
         // to t=9. A shared clock must preserve the original t=6 parent boundary and emit one second.
         timeProvider.AdvanceOnTimestampRead(3, TimeSpan.FromSeconds(3));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var invocation = channel.InvokeUnaryAsync(
             MethodWithTimeout(TimeSpan.FromSeconds(120)),
@@ -176,14 +183,17 @@ public class SharpLinkClientTimeBudgetTests
     }
 
     [Test]
-    public async Task TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task TimedClientStreamShouldPublishCreationTimeBudgetAndFailThroughPendingDeadline(bool expiresDuringEmission)
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        var transport = Domain.CreateTransport(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseTimeProvider(timeProvider));
+            builder => builder.UseTimeProvider(timeProvider), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -195,8 +205,8 @@ public class SharpLinkClientTimeBudgetTests
             MethodTimeout: TimeSpan.FromSeconds(5),
             ClientStreamCount: 1);
         var probe = new ProducerProbe();
-        var streams = new ProbeClientStreams(probe);
-        var channel = (IRpcChannel)client;
+        var streams = new ProbeClientStreams(probe, client.RuntimeContext.Codecs.GetCodec<int>());
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
 
         // Drain all output associated with ConnectAsync before arming the one-shot writer hook.
@@ -206,7 +216,7 @@ public class SharpLinkClientTimeBudgetTests
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
         transport.Connection.RunOnNextOutputBufferRequest(
-            () => timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(5)));
+            () => timeProvider.AdvanceWithoutRunningTimers(TimeSpan.FromSeconds(expiresDuringEmission ? 5 : 2)));
         var invocation = channel.InvokeClientStreamingAsync(
             method,
             in request,
@@ -219,26 +229,41 @@ public class SharpLinkClientTimeBudgetTests
         var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request);
         Ensure(ReadTimeBudget(sent) == TimeSpan.FromSeconds(5),
             "the wire TimeBudget must be the remaining sampled once when the frame is created");
-        await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Ensure(!invocation.IsCompleted,
-            "starting the client-stream producer must not complete the call on its own");
-
-        // The pending deadline owns the terminal decision now that the send pump publishes
-        // frames verbatim, so the elapsed budget fails the call and cancels the remote stream.
-        timeProvider.Advance(TimeSpan.Zero);
+        // Type22 is permission for this exact two-way head. At an elapsed sampled deadline
+        // it must terminalize without starting user code, even though no timer has run.
+        await transport.Connection.InjectPacketAsync(ProtocolV2FrameType.RequestAccepted,
+            ProtocolV2FrameFlags.None, unchecked((long)sent.Header.RequestId));
+        if (!expiresDuringEmission)
+        {
+            await probe.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await probe.MoveNextEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Ensure(probe.RequestId == sent.Header.RequestId,
+                "the producer must belong to the exact emitted head");
+            Ensure(!invocation.IsCompleted, "producer entry must not complete the pending call");
+            // Consume only the remaining three seconds; never restart the original budget.
+            timeProvider.Advance(TimeSpan.FromSeconds(3));
+        }
         var failure = await CaptureSharpLinkExceptionAsync(invocation);
         Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
             "an emitted client-stream Request whose budget elapsed must fail through its pending deadline");
+        if (expiresDuringEmission)
+            Ensure(!probe.Started.Task.IsCompleted, "an expired head must never enter the producer writer");
+        else
+        {
+            await probe.Stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await probe.Group!.SupervisionTaskForDiagnostics.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
     }
 
     [Test]
     public async Task DynamicModuleServerStreamDeadlineShouldWinBeforeDeferredModuleDrain()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseTimeProvider(timeProvider));
+            builder => builder.UseTimeProvider(timeProvider), domain: Domain);
 
         using var moduleContext = new SharpLinkRuntimeContextBuilder()
             .UseTimeProvider(timeProvider)
@@ -249,7 +274,8 @@ public class SharpLinkClientTimeBudgetTests
             typeof(SharpLinkClientTimeBudgetTests).Assembly,
             manifest,
             registration);
-        var channel = new SharpLinkModuleRpcChannel(new SharpLinkClient.ContractCallSite(client, 0), module);
+        var channel = new SharpLinkModuleRpcChannel((SharpLinkClient.ContractCallSite)client.CreateContractChannel(
+            client.GetLocalContract<ManualClientContractFixture.IContract>()), module);
         var method = new RpcMethodDescriptor(
             ContractId: 1,
             MethodId: 289,
@@ -290,23 +316,24 @@ public class SharpLinkClientTimeBudgetTests
     public async Task ClientDefaultTimeoutShouldReachOnlyTheShapesThatOptIn(RpcMethodKind kind)
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        var transport = Domain.CreateTransport(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder => builder
                 .UseTimeProvider(timeProvider)
-                .UseRequestTimeout(TimeSpan.FromSeconds(30)));
+                .UseRequestTimeout(TimeSpan.FromSeconds(30)), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         // The benchmark probe declares neither [Timeout] nor a per-call deadline for its one-way and
         // streaming methods while the client runs with a 30 s default. Only the unary entry point
         // resolves that default, so only it may put a budget on the wire.
         var method = MethodWithoutTimeout(kind, 320 + (long)kind);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var noStreams = default(RpcNoClientStreams);
         var probe = new ProducerProbe();
-        var producer = new ProbeClientStreams(probe);
+        var producer = new ProbeClientStreams(probe, client.RuntimeContext.Codecs.GetCodec<int>());
         using var cancellation = new CancellationTokenSource();
         var responseCodec = channel.RuntimeContext.Codecs.GetCodec<int>();
         var connection = GetOnlyReadyConnection(client);
@@ -404,16 +431,17 @@ public class SharpLinkClientTimeBudgetTests
     public async Task ClientDefaultTimeoutShouldNotEnforceAPlainOneWayDeadline()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory();
+        var transport = Domain.CreateTransport();
         await using var client = ClientBuilderTestHelper.Build(
             transport,
             builder => builder
                 .UseTimeProvider(timeProvider)
-                .UseRequestTimeout(TimeSpan.FromSeconds(30)));
+                .UseRequestTimeout(TimeSpan.FromSeconds(30)), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var method = MethodWithoutTimeout(RpcMethodKind.OneWay, 326);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var streams = default(RpcNoClientStreams);
 
@@ -641,19 +669,31 @@ public class SharpLinkClientTimeBudgetTests
         internal TaskCompletionSource Started { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        internal TaskCompletionSource MoveNextEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal ClientStreamPublicationGroup? Group;
+        internal TaskCompletionSource Stopped { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal ulong RequestId;
     }
 
-    private readonly struct ProbeClientStreams(ProducerProbe probe) : IRpcClientStreamWriter
+    private readonly struct ProbeClientStreams(ProducerProbe probe, IRpcCodec<int> codec) : IRpcClientStreamWriter
     {
-        public ValueTask WriteAsync(
-            IRpcClientStreamSink sink,
-            long requestId,
-            CancellationToken cancellationToken)
+        public async ValueTask WriteAsync(IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)
         {
+            probe.Group = (ClientStreamPublicationGroup)sink;
             probe.RequestId = unchecked((ulong)requestId);
             probe.Started.TrySetResult();
-            return ValueTask.CompletedTask;
+            try { await sink.SendClientStreamAsync(requestId, 1, Wait(probe, cancellationToken), codec, cancellationToken); }
+            finally { probe.Stopped.TrySetResult(); }
+        }
+
+        private static async IAsyncEnumerable<int> Wait(ProducerProbe probe,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            probe.MoveNextEntered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            yield break;
         }
     }
 

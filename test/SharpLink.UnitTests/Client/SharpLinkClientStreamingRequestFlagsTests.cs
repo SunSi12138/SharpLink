@@ -17,10 +17,12 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
         bool hasMethodTimeout,
         bool expectedCancellable)
     {
-        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        var domain = ManualClientContractFixture.StreamingFlags(kind);
+        var transport = domain.CreateTransport(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
-            transport, builder => builder.DisableRequestTimeout());
+            transport, builder => builder.DisableRequestTimeout(), domain: domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
         using var cancellation = new CancellationTokenSource();
         var token = hasCallerToken ? cancellation.Token : CancellationToken.None;
         var hasClientStreams = kind is RpcMethodKind.ClientStreaming or RpcMethodKind.DuplexStreaming;
@@ -35,10 +37,10 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
             HasMethodTimeout: hasMethodTimeout,
             MethodTimeout: hasMethodTimeout ? TimeSpan.FromMinutes(1) : null,
             ClientStreamCount: hasClientStreams ? 1 : 0);
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var codec = channel.RuntimeContext.Codecs.GetCodec<int>();
-        var streams = default(EmptyClientStreams);
+        var streams = new EmptyClientStreams(codec);
 
         if (kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
         {
@@ -72,6 +74,9 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
                     method, in request, RpcEmptyRequestCodec.Instance, codec, null, token);
             var sent = await transport.Connection.WaitForSentFrame(ProtocolV2FrameType.Request)
                 .WaitAsync(TimeSpan.FromSeconds(5));
+            if (kind == RpcMethodKind.ClientStreaming)
+                await transport.Connection.InjectPacketAsync(ProtocolV2FrameType.RequestAccepted,
+                    ProtocolV2FrameFlags.None, unchecked((long)sent.Header.RequestId));
             await transport.Connection.InjectInt32ResponseAsync(unchecked((long)sent.Header.RequestId), 42);
             Ensure(await response.AsTask().WaitAsync(TimeSpan.FromSeconds(5)) == 42,
                 "the request must still complete with its response");
@@ -91,11 +96,17 @@ public sealed class SharpLinkClientStreamingRequestFlagsTests
         Ensure(!flags.HasFlag(ProtocolV2FrameFlags.OneWay), "these calls must not become OneWay");
     }
 
-    private readonly struct EmptyClientStreams : IRpcClientStreamWriter
+    private readonly struct EmptyClientStreams(IRpcCodec<int> codec) : IRpcClientStreamWriter
     {
         public ValueTask WriteAsync(
             IRpcClientStreamSink sink, long requestId, CancellationToken cancellationToken)
-            => ValueTask.CompletedTask;
+            => new(sink.SendClientStreamAsync(requestId, 1, Empty(), codec, cancellationToken));
+
+        private static async IAsyncEnumerable<int> Empty()
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 
     private static void Ensure(bool condition, string message)

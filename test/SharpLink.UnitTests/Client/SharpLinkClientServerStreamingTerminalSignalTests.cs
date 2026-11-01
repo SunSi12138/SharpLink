@@ -7,15 +7,18 @@ namespace SharpLink.UnitTests.Client;
 
 public sealed class SharpLinkClientServerStreamingTerminalSignalTests
 {
+    private static readonly ManualClientContractFixture.Domain Domain = ManualClientContractFixture.ServerStreamingTerminalSignal;
+
     [Test]
     public async Task TimedServerStreamingShouldLeaveNoFrameworkTaskWhenDeadlineWinsAStalledWrite()
     {
         var timeProvider = new ManualTimeProvider();
-        var transport = new TestClientTransportFactory(ProtocolV2Capabilities.CancellationReason);
+        var transport = Domain.CreateTransport(ProtocolV2Capabilities.CancellationReason);
         await using var client = ClientBuilderTestHelper.Build(
             transport,
-            builder => builder.UseTimeProvider(timeProvider));
+            builder => builder.UseTimeProvider(timeProvider), domain: Domain);
         await client.ConnectAsync();
+        _ = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
 
         var method = new RpcMethodDescriptor(
             ContractId: 1,
@@ -25,7 +28,7 @@ public sealed class SharpLinkClientServerStreamingTerminalSignalTests
             HasClientStreams: false,
             HasMethodTimeout: true,
             MethodTimeout: TimeSpan.FromSeconds(5));
-        var channel = (IRpcChannel)client;
+        var channel = ClientInvokerTestHelper.CreateChannel(client);
         var request = default(RpcEmptyRequest);
         var connection = GetOnlyReadyConnection(client);
         await connection.Session.FlushSendQueueAsync();
