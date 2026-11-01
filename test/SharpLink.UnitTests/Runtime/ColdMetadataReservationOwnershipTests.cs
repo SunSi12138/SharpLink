@@ -1,3 +1,4 @@
+using SharpLink.Sdk;
 using System.Reflection;
 
 namespace SharpLink.UnitTests.Runtime;

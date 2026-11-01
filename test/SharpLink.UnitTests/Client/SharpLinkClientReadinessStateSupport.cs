@@ -164,10 +164,19 @@ internal static class SharpLinkClientReadinessStateSupport
             CancellationToken cancellationToken = default)
             => ValueTask.FromException<SharpLinkHealthCheckResult>(new NotSupportedException());
 
-        public TContract Get<TContract>() where TContract : IService
+        // This fixture exercises lifecycle/readiness only, never contract construction.
+        public IRpcRuntimeContext RuntimeContext => throw new NotSupportedException();
+
+        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null)
+            where TContract : IService => throw new NotSupportedException();
+
+        public RpcLocalContract GetLocalContract<TContract>() where TContract : IService
             => throw new NotSupportedException();
 
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+        public RpcLocalContract GetLocalContract(Assembly registeredAssembly, long contractId)
+            => throw new NotSupportedException();
+
+        public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
             => throw new NotSupportedException();
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

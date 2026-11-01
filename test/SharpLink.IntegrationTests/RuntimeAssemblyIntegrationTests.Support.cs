@@ -331,13 +331,19 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
 
-        public TContract Get<TContract>() where TContract : IService => throw new NotSupportedException();
+        // This fixture exercises lifecycle/readiness only, never contract construction.
+        public IRpcRuntimeContext RuntimeContext => throw new NotSupportedException();
 
+        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null)
+            where TContract : IService => throw new NotSupportedException();
 
+        public RpcLocalContract GetLocalContract<TContract>() where TContract : IService
+            => throw new NotSupportedException();
 
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
+        public RpcLocalContract GetLocalContract(Assembly registeredAssembly, long contractId)
+            => throw new NotSupportedException();
 
-
+        public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
             => throw new NotSupportedException();
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
