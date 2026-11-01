@@ -5,7 +5,7 @@ using SharpLink.UnitTests.Runtime;
 namespace SharpLink.UnitTests.Client;
 
 // Actual ClientConnection producer Task + PendingRequestTable + RpcSession controls.
-// These do not model the outer generated-writer group/module reservation or prove all families.
+// These use the actual physical group; they do not model generated-writer supervision or module ownership.
 public sealed class ClientStreamCorePhysicalOwnershipTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
@@ -15,16 +15,13 @@ public sealed class ClientStreamCorePhysicalOwnershipTests
     {
         await using var fixture = new Fixture();
         using var cancellation = new CancellationTokenSource();
-        var operation = fixture.Connection.PendingCalls.Rent(
-            fixture.Codec, PendingCallKind.ClientStreaming, default, cancellation.Token,
-            out var requestId, hasResponsePayload: true, responseNullable: false);
-        var response = operation.AsValueTask().AsTask();
-        var group = new TestRpcStreamPublication(fixture.Session, requestId);
-        group.SendHead();
-        await fixture.Session.FlushSendQueueAsync().AsTask().WaitAsync(Timeout);
+        // Host-only PipeSession component scope: no remote Bind success is claimed here.
+        await using var group = new DirectClientStreamTestGroup(fixture.Connection,
+            new TestRpcBindingPublication(fixture.Session), fixture.Codec, cancellationToken: cancellation.Token);
+        var response = group.Response;
+        await group.PublishHeadAsync();
         var stream = new HeldStream(holdMoveNext: true);
-        var producerToken = fixture.Connection.PendingCalls.GetProducerCancellationToken(requestId);
-        var core = fixture.Connection.SendClientStreamCoreAsync(group, 1, stream, fixture.Codec, producerToken);
+        var core = group.SendAsync(stream, fixture.Codec);
         try
         {
             await stream.MoveNextEntered.Task.WaitAsync(Timeout);
@@ -40,7 +37,7 @@ public sealed class ClientStreamCorePhysicalOwnershipTests
             stream.ReleaseDispose();
             Ensure(await Failure(core) is OperationCanceledException,
                 "the core reports cancellation only after actual enumerator disposal finishes");
-            await fixture.Session.CompleteStreamPublicationAsync(group).AsTask().WaitAsync(Timeout);
+            await group.FinishAsync().WaitAsync(Timeout);
             Ensure(fixture.Session.QueuedSendBytes == 0 && stream.MoveNextCalls == 1 && stream.DisposeCalls == 1,
                 "exact producer and frame owners settle once after both physical barriers");
         }
@@ -57,16 +54,13 @@ public sealed class ClientStreamCorePhysicalOwnershipTests
     {
         await using var fixture = new Fixture();
         using var cancellation = new CancellationTokenSource();
-        var operation = fixture.Connection.PendingCalls.Rent(
-            fixture.Codec, PendingCallKind.ClientStreaming, default, cancellation.Token,
-            out var requestId, hasResponsePayload: true, responseNullable: false);
-        var response = operation.AsValueTask().AsTask();
-        var group = new TestRpcStreamPublication(fixture.Session, requestId);
-        group.SendHead();
-        await fixture.Session.FlushSendQueueAsync().AsTask().WaitAsync(Timeout);
+        // Host-only PipeSession component scope: no remote Bind success is claimed here.
+        await using var group = new DirectClientStreamTestGroup(fixture.Connection,
+            new TestRpcBindingPublication(fixture.Session), fixture.Codec, cancellationToken: cancellation.Token);
+        var response = group.Response;
+        await group.PublishHeadAsync();
         var stream = new HeldStream(holdMoveNext: false);
-        var core = fixture.Connection.SendClientStreamCoreAsync(group, 1, stream, fixture.Codec,
-            fixture.Connection.PendingCalls.GetProducerCancellationToken(requestId));
+        var core = group.SendAsync(stream, fixture.Codec);
         try
         {
             await stream.DisposeEntered.Task.WaitAsync(Timeout);
@@ -77,7 +71,7 @@ public sealed class ClientStreamCorePhysicalOwnershipTests
             await core.WaitAsync(Timeout);
             // Preserve existing EOF ordering: the clean terminal was published before Dispose;
             // cancellation during successful Dispose does not invent a second terminal or recheck.
-            await fixture.Session.CompleteStreamPublicationAsync(group).AsTask().WaitAsync(Timeout);
+            await group.FinishAsync().WaitAsync(Timeout);
             Ensure(stream.DisposeCalls == 1 && fixture.Session.QueuedSendBytes == 0,
                 "the caller may fence only after core joins the one actual Dispose operation");
         }
@@ -144,14 +138,13 @@ public sealed class ClientStreamCorePhysicalOwnershipTests
             Session.NotifyConnected();
             Connection = new ClientConnection(_owner, Session, _connectionCancellation, 8, context);
             Codec = context.Codecs.GetCodec<int>();
-            Ensure(Connection.TryReserveExactCallAdmission(), "the test must use actual pending admission ownership");
+
         }
         public async ValueTask DisposeAsync()
         {
             Exception? failure = null;
-            // This direct core fixture owns the original reservation itself, through the
-            // awaited core and fence; the real generated caller transfers it to its group.
-            Connection.ReleaseCallAdmissionReservation();
+            // The actual group has already joined its core/fence and released its selection
+            // reservation and pending producer lease before the component Session is torn down.
             try { await Connection.DisposeAsync().AsTask().WaitAsync(Timeout); }
             catch (Exception cleanup) { failure = cleanup; }
             try { await _input.Writer.CompleteAsync(); }
