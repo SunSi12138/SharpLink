@@ -174,7 +174,7 @@ internal sealed partial class SharpLinkClient
             var connection = _owner.GetReadyConnection(method, retrySelection, outcome);
             foreach (var target in targets)
             {
-                if (ReferenceEquals(target.Connection, connection) && target.IsEligible && !LocalControl.IsRetired)
+                if (ReferenceEquals(target.Connection, connection) && target.IsValidForReservedCall && !LocalControl.IsRetired)
                 {
                     bindingId = target;
                     return connection;
@@ -214,7 +214,7 @@ internal sealed partial class SharpLinkClient
                     !target.Connection.TryReserveExactCallAdmission())
                     continue;
                 // Reservation and token were captured from the same immutable target. No redirect read.
-                if (!target.IsEligible || LocalControl.IsRetired)
+                if (!target.IsValidForReservedCall || LocalControl.IsRetired)
                 {
                     target.Connection.ReleaseCallAdmissionReservation();
                     continue;
@@ -244,6 +244,8 @@ internal sealed partial class SharpLinkClient
         {
             internal ClientConnection Connection { get; } = connection;
             internal bool IsEligible => Connection.CanAcceptCalls && Connection.Binding.Publication.IsEligible(Token);
+            internal bool IsValidForReservedCall => Connection.CanHonorReservedCallAdmission &&
+                Connection.Binding.Publication.IsEligible(Token);
         }
     }
 }

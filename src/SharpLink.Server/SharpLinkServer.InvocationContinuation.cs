@@ -59,6 +59,26 @@ internal sealed partial class SharpLinkServer
             return ValueTask.FromException(exception);
         }
 
+        var supportsCooperativeCancellation =
+            (isCancellable || resolved.IsDynamicModule) &&
+            resolved.Method.SupportsCancellation;
+        // Response streams require a physical owner even without cooperative wire cancellation.
+        // Rent may observe an already-terminal token/deadline, so create it before activation.
+        if (resolved.Method.Kind is RpcMethodKind.ServerStreaming or RpcMethodKind.DuplexStreaming)
+        {
+            callState ??= CreateTrackedCallState(
+                connection,
+                requestId,
+                request.RpcDeadline,
+                serverLoopToken,
+                resolved.ModuleCancellation,
+                supportsCooperativeCancellation,
+                requestCancellationMap);
+            callState = EnsureTrackedCallState(
+                connection, callState, requestId, request.RpcDeadline,
+                serverLoopToken, resolved.ModuleCancellation, requestCancellationMap);
+        }
+
         if (callState is not null)
         {
             // Cancellation and Reserved -> Active share one terminal gate. If cancellation wins
@@ -96,9 +116,6 @@ internal sealed partial class SharpLinkServer
             requestOwner.Activate();
         }
 
-        var supportsCooperativeCancellation =
-            (isCancellable || resolved.IsDynamicModule) &&
-            resolved.Method.SupportsCancellation;
         callState ??= CreateTrackedCallState(
             connection,
             requestId,

@@ -84,6 +84,14 @@ internal sealed class ClientConnection :
            State == ClientConnectionState.Ready &&
            Session.CanAcceptCalls;
 
+    // A successful selection already owns this physical connection. A planned refresh may
+    // close NEW admission without invalidating that reservation; fatal/drain/session gates remain.
+    internal bool CanHonorReservedCallAdmission
+        => Volatile.Read(ref _fatalFailureObservedForAdmission) == 0 &&
+           !RequiresCapacitySafeDrain &&
+           State == ClientConnectionState.Ready &&
+           Session.CanAcceptCalls;
+
     public int ActiveCallCount
         => PendingCalls.ActiveCount + Volatile.Read(ref _auxiliaryActiveCallCount);
 
