@@ -47,13 +47,18 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TResponse> responseCodec,
             ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, bool ownResponse,
+            out InterceptedAsyncEnumerable<TResponse>? responseLifetime)
         {
-            var state = new ServerStreamingInterceptorState<TRequest, TResponse>(
-                this, method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
-            return new InterceptedAsyncEnumerable<TResponse>(
-                state.InvokeAsync(), method.ResponseNullable, state.Deadline,
-                _owner._runtimeContext.TimeProvider, state.LogicalCall, state.InvocationCancellation);
+            var carrier = new InterceptedAsyncEnumerable<TResponse>(
+                _owner, method.ResponseNullable, control.Deadline,
+                _owner._runtimeContext.TimeProvider, control.LogicalCall, cancellationToken, ownResponse);
+            // Publish before constructor, interceptor, factory, terminal or telemetry callbacks.
+            responseLifetime = ownResponse ? carrier : null;
+            if (ownResponse) carrier.InitializeCancellation();
+            var state = new ServerStreamingInterceptorState<TRequest, TResponse>(this, method, request, requestCodec, responseCodec, interceptors, control, ownResponse ? carrier.ResponseCancellationToken : cancellationToken, ownResponse ? carrier : null);
+            carrier.SetInvocation(state.InvokeAsync());
+            return carrier;
         }
 
         private IAsyncEnumerable<TResponse> InvokeDuplexStreamingIntercepted<TRequest, TResponse, TStreams>(
@@ -64,14 +69,19 @@ internal sealed partial class SharpLinkClient
             TStreams streams,
             ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, bool ownResponse,
+            out InterceptedAsyncEnumerable<TResponse>? responseLifetime)
             where TStreams : struct, IRpcClientStreamWriter
         {
-            var state = new DuplexStreamingInterceptorState<TRequest, TResponse, TStreams>(
-                this, method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
-            return new InterceptedAsyncEnumerable<TResponse>(
-                state.InvokeAsync(), method.ResponseNullable, state.Deadline,
-                _owner._runtimeContext.TimeProvider, state.LogicalCall, state.InvocationCancellation);
+            var carrier = new InterceptedAsyncEnumerable<TResponse>(
+                _owner, method.ResponseNullable, control.Deadline,
+                _owner._runtimeContext.TimeProvider, control.LogicalCall, cancellationToken, ownResponse);
+            // Publish before constructor, interceptor, factory, terminal or telemetry callbacks.
+            responseLifetime = ownResponse ? carrier : null;
+            if (ownResponse) carrier.InitializeCancellation();
+            var state = new DuplexStreamingInterceptorState<TRequest, TResponse, TStreams>(this, method, request, requestCodec, responseCodec, streams, interceptors, control, ownResponse ? carrier.ResponseCancellationToken : cancellationToken, ownResponse ? carrier : null);
+            carrier.SetInvocation(state.InvokeAsync());
+            return carrier;
         }
 
         internal abstract class ClientInterceptorState
@@ -81,6 +91,7 @@ internal sealed partial class SharpLinkClient
             private readonly SharpLinkClientInvocationContext _context;
             private readonly ResolvedCallControl _control;
             private long _started;
+            private readonly IResponseInvocationLifetime? _responseLifetime;
 
             protected ClientInterceptorState(
                 ContractCallSite client,
@@ -88,9 +99,10 @@ internal sealed partial class SharpLinkClient
                 object? request,
                 ClientInterceptorGeneration interceptors,
                 ResolvedCallControl control,
-                CancellationToken cancellationToken)
+                CancellationToken cancellationToken, IResponseInvocationLifetime? responseLifetime = null)
             {
                 _client = client;
+                _responseLifetime = responseLifetime;
                 _interceptors = interceptors;
                 _control = control;
                 _context = new SharpLinkClientInvocationContext(
@@ -112,8 +124,10 @@ internal sealed partial class SharpLinkClient
                 _started = _client._owner._runtimeContext.TimeProvider.GetTimestamp();
                 try
                 {
-                    var result = await AwaitInvocationWithinFrozenDeadlineAsync(
-                        _interceptors.Entry(_context)).ConfigureAwait(false);
+                    var invocation = _interceptors.Entry(_context);
+                    var result = await (_responseLifetime is null
+                        ? AwaitInvocationWithinFrozenDeadlineAsync(invocation)
+                        : _responseLifetime.AwaitInvocationAsync(invocation)).ConfigureAwait(false);
                     ValidateResult(result);
                     MarkChainSucceeded(_context);
                     return result;
@@ -489,6 +503,7 @@ internal sealed partial class SharpLinkClient
             private readonly TRequest _request;
             private readonly IRpcCodec<TRequest> _requestCodec;
             private readonly IRpcCodec<TResponse> _responseCodec;
+            private readonly InterceptedAsyncEnumerable<TResponse>? _responseLifetime;
 
             public ServerStreamingInterceptorState(
                 ContractCallSite client,
@@ -498,13 +513,14 @@ internal sealed partial class SharpLinkClient
                 IRpcCodec<TResponse> responseCodec,
                 ClientInterceptorGeneration interceptors,
                 ResolvedCallControl control,
-                CancellationToken cancellationToken)
-                : base(client, method, request, interceptors, control, cancellationToken)
+                CancellationToken cancellationToken, InterceptedAsyncEnumerable<TResponse>? responseLifetime)
+                : base(client, method, request, interceptors, control, cancellationToken, responseLifetime)
             {
                 _method = method;
                 _request = request;
                 _requestCodec = requestCodec;
                 _responseCodec = responseCodec;
+                _responseLifetime = responseLifetime;
             }
 
             protected override ValueTask<SharpLinkClientInvocationResult> InvokeTerminalAsync(
@@ -514,7 +530,7 @@ internal sealed partial class SharpLinkClient
                 {
                     var stream = Client.InvokeServerStreamingCore(
                         _method, _request, _requestCodec, _responseCodec,
-                        GetTerminalControl(context), context.CancellationToken);
+                        GetTerminalControl(context), context.CancellationToken, _responseLifetime);
                     MarkTerminalSucceeded(context);
                     return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
                 }
@@ -543,6 +559,7 @@ internal sealed partial class SharpLinkClient
             private readonly TRequest _request;
             private readonly IRpcCodec<TRequest> _requestCodec;
             private readonly IRpcCodec<TResponse> _responseCodec;
+            private readonly InterceptedAsyncEnumerable<TResponse>? _responseLifetime;
             private readonly TStreams _streams;
 
             public DuplexStreamingInterceptorState(
@@ -554,13 +571,14 @@ internal sealed partial class SharpLinkClient
                 TStreams streams,
                 ClientInterceptorGeneration interceptors,
                 ResolvedCallControl control,
-                CancellationToken cancellationToken)
-                : base(client, method, request, interceptors, control, cancellationToken)
+                CancellationToken cancellationToken, InterceptedAsyncEnumerable<TResponse>? responseLifetime)
+                : base(client, method, request, interceptors, control, cancellationToken, responseLifetime)
             {
                 _method = method;
                 _request = request;
                 _requestCodec = requestCodec;
                 _responseCodec = responseCodec;
+                _responseLifetime = responseLifetime;
                 _streams = streams;
             }
 
@@ -571,7 +589,7 @@ internal sealed partial class SharpLinkClient
                 {
                     var stream = Client.InvokeDuplexStreamingCore(
                         _method, _request, _requestCodec, _responseCodec, _streams,
-                        GetTerminalControl(context), context.CancellationToken);
+                        GetTerminalControl(context), context.CancellationToken, _responseLifetime);
                     MarkTerminalSucceeded(context);
                     return ValueTask.FromResult(new SharpLinkClientInvocationResult(stream));
                 }
@@ -593,17 +611,34 @@ internal sealed partial class SharpLinkClient
             }
         }
 
-        private sealed class InterceptedAsyncEnumerable<T>(
-            ValueTask<SharpLinkClientInvocationResult> invocation,
-            bool responseNullable,
-            RpcDeadline deadline,
-            TimeProvider timeProvider,
-            ClientLogicalCallState? logicalCall,
-            CancellationToken invocationCancellation) : IAsyncEnumerable<T>
+        internal sealed partial class InterceptedAsyncEnumerable<T> : IAsyncEnumerable<T>, IResponseInvocationLifetime
         {
+            private ValueTask<SharpLinkClientInvocationResult> invocation;
+            private readonly bool responseNullable;
+            private readonly RpcDeadline deadline;
+            private readonly TimeProvider timeProvider;
+            private readonly ClientLogicalCallState? logicalCall;
+            private readonly CancellationToken invocationCancellation;
+            private readonly SharpLinkClient _client;
+            private readonly bool _moduleOwned;
+
+            internal InterceptedAsyncEnumerable(SharpLinkClient client, bool nullable, RpcDeadline capturedDeadline,
+                TimeProvider provider, ClientLogicalCallState? logical, CancellationToken cancellation, bool moduleOwned)
+            {
+                _client = client; responseNullable = nullable; deadline = capturedDeadline;
+                timeProvider = provider; logicalCall = logical; invocationCancellation = cancellation; _moduleOwned = moduleOwned;
+            }
+            internal void SetInvocation(ValueTask<SharpLinkClientInvocationResult> value)
+            {
+                invocation = value;
+                _chainAssigned = true;
+            }
+            public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+                => _moduleOwned ? GetOwnedEnumerator(cancellationToken) : GetLegacyEnumerator(cancellationToken);
+
             private int _enumerated;
 
-            public async IAsyncEnumerator<T> GetAsyncEnumerator(
+            private async IAsyncEnumerator<T> GetLegacyEnumerator(
                 CancellationToken cancellationToken = default)
             {
                 if (Interlocked.Exchange(ref _enumerated, 1) != 0)

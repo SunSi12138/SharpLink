@@ -157,7 +157,19 @@ internal sealed partial class SharpLinkClient
             ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
             CancellationToken cancellationToken = default)
+            => InvokeServerStreamingResolved(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken, false, out _);
+
+        internal IAsyncEnumerable<TResponse> InvokeServerStreamingResolved<TRequest, TResponse>(
+            RpcMethodDescriptor method,
+            in TRequest request,
+            IRpcCodec<TRequest> requestCodec,
+            IRpcCodec<TResponse> responseCodec,
+            ClientInterceptorGeneration interceptors,
+            ResolvedCallControl control,
+            CancellationToken cancellationToken, bool ownResponse,
+            out InterceptedAsyncEnumerable<TResponse>? responseLifetime)
         {
+            responseLifetime = null;
             ArgumentNullException.ThrowIfNull(requestCodec);
             ArgumentNullException.ThrowIfNull(responseCodec);
             ArgumentNullException.ThrowIfNull(interceptors);
@@ -168,9 +180,9 @@ internal sealed partial class SharpLinkClient
             {
                 IAsyncEnumerable<TResponse> invocation;
                 if (SharpLinkTelemetry.ClientCallsEnabled)
-                    invocation = InvokeServerStreamingWithTelemetry(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
+                    invocation = InvokeServerStreamingWithTelemetry(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken, ownResponse, out responseLifetime);
                 else if (interceptors.Count != 0)
-                    invocation = InvokeServerStreamingIntercepted(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken);
+                    invocation = InvokeServerStreamingIntercepted(method, request, requestCodec, responseCodec, interceptors, control, cancellationToken, ownResponse, out responseLifetime);
                 else
                     invocation = InvokeServerStreamingCore(method, request, requestCodec, responseCodec, control, cancellationToken);
                 return CompleteLogicalInvocation(invocation);
@@ -188,12 +200,20 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TRequest> requestCodec,
             IRpcCodec<TResponse> responseCodec,
             ResolvedCallControl control,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, InterceptedAsyncEnumerable<TResponse>? responseLifetime = null)
         {
             var dispatcher = PooledAsyncStreamDispatcher<TResponse>.Rent(cancellationToken, responseCodec, method.ResponseNullable);
-            _owner.TrackFrameworkTask(
-                StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken),
-                "ServerStreamingInvoker");
+            responseLifetime?.CaptureCore(dispatcher);
+            var origin = StartServerStreamingInvokerAsync(dispatcher, method, request, requestCodec, control, cancellationToken);
+            responseLifetime?.CaptureOrigin(origin, supervised: false);
+            FrameworkTaskRegistration? receipt = null;
+            try { _owner.TrackFrameworkTask(origin, "ServerStreamingInvoker", ref receipt); }
+            catch
+            {
+                if (receipt is not null) responseLifetime?.MarkOriginSupervised(receipt);
+                throw;
+            }
+            if (receipt is not null) responseLifetime?.MarkOriginSupervised();
             return dispatcher;
         }
 
@@ -224,7 +244,21 @@ internal sealed partial class SharpLinkClient
             ResolvedCallControl control,
             CancellationToken cancellationToken = default)
             where TStreams : struct, IRpcClientStreamWriter
+            => InvokeDuplexStreamingResolved(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken, false, out _);
+
+        internal IAsyncEnumerable<TResponse> InvokeDuplexStreamingResolved<TRequest, TResponse, TStreams>(
+            RpcMethodDescriptor method,
+            in TRequest request,
+            IRpcCodec<TRequest> requestCodec,
+            IRpcCodec<TResponse> responseCodec,
+            in TStreams streams,
+            ClientInterceptorGeneration interceptors,
+            ResolvedCallControl control,
+            CancellationToken cancellationToken, bool ownResponse,
+            out InterceptedAsyncEnumerable<TResponse>? responseLifetime)
+            where TStreams : struct, IRpcClientStreamWriter
         {
+            responseLifetime = null;
             ArgumentNullException.ThrowIfNull(requestCodec);
             ArgumentNullException.ThrowIfNull(responseCodec);
             ArgumentNullException.ThrowIfNull(interceptors);
@@ -235,9 +269,9 @@ internal sealed partial class SharpLinkClient
             {
                 IAsyncEnumerable<TResponse> invocation;
                 if (SharpLinkTelemetry.ClientCallsEnabled)
-                    invocation = InvokeDuplexStreamingWithTelemetry(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
+                    invocation = InvokeDuplexStreamingWithTelemetry(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken, ownResponse, out responseLifetime);
                 else if (interceptors.Count != 0)
-                    invocation = InvokeDuplexStreamingIntercepted(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken);
+                    invocation = InvokeDuplexStreamingIntercepted(method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken, ownResponse, out responseLifetime);
                 else
                     invocation = InvokeDuplexStreamingCore(method, request, requestCodec, responseCodec, streams, control, cancellationToken);
                 return CompleteLogicalInvocation(invocation);
@@ -383,7 +417,7 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TResponse> responseCodec,
             TStreams streams,
             ResolvedCallControl control,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, InterceptedAsyncEnumerable<TResponse>? responseLifetime = null)
             where TStreams : struct, IRpcClientStreamWriter
         {
             var group = new ClientStreamPublicationGroup(method.ClientStreamCount);
@@ -396,7 +430,10 @@ internal sealed partial class SharpLinkClient
                 group.AttachOriginTask(Task.CompletedTask);
                 throw;
             }
+            responseLifetime?.CaptureCore(dispatcher);
             var origin = StartDuplexStreamingInvokerAsync(dispatcher, group, method, request, requestCodec, streams, control, cancellationToken);
+            // The pre-admitted existing Duplex anchor exclusively owns the origin outcome.
+            responseLifetime?.CaptureOrigin(origin, supervised: true);
             group.AttachOriginTask(origin);
             return dispatcher;
         }

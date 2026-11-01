@@ -270,6 +270,12 @@ internal sealed partial class SharpLinkClient :
         TaskObservationMode observationMode = TaskObservationMode.FrameworkOwned)
         => _frameworkTasks.Track(task, operation, observationMode, IsExpectedStopException);
 
+    internal void TrackFrameworkTask(Task task, string operation, ref FrameworkTaskRegistration? receipt)
+        => _frameworkTasks.Track(task, operation, TaskObservationMode.FrameworkOwned, IsExpectedStopException, ref receipt);
+
+    internal void TrackOwnedResponseTail(Task task, object ownerRoot, ref FrameworkTaskRegistration? receipt)
+        => _frameworkTasks.TrackOwnedStrictPhysicalTail(task, "InterceptedResponsePhysicalTail", ownerRoot, ref receipt);
+
     internal void AdmitStreamSupervision(Task task, string operation, object ownerRoot,
         ref FrameworkTaskRegistration? receipt)
         => _frameworkTasks.AdmitStrictPhysicalAnchor(task, operation, ownerRoot, ref receipt);

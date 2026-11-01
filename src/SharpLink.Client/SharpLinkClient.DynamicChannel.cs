@@ -204,16 +204,54 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
             SharpLinkClient.EnsureLogicalCallProgress(control);
             throw Draining();
         }
-        var combined = Combine(callCancellation, module.ForcedCancellation);
+        CombinedCancellation combined = default;
+        SharpLinkClientStreamModuleLeaseOwner? noProducer = null;
+        SharpLinkClient.ContractCallSite.InterceptedAsyncEnumerable<TResponse>? responseLifetime = null;
+        Exception? failure = null;
         try
         {
-            SharpLinkClient.EnsureLogicalCallProgress(control);
-            var stream = inner.InvokeServerStreamingResolved(
-                method, request, requestCodec, responseCodec, interceptors, control, combined.Token);
-            await foreach (var item in stream.WithCancellation(enumerationCancellation).ConfigureAwait(false))
-                yield return item;
+            IAsyncEnumerator<TResponse> enumerator;
+            try
+            {
+                combined = Combine(callCancellation, module.ForcedCancellation);
+                SharpLinkClient.EnsureLogicalCallProgress(control);
+                var stream = inner.InvokeServerStreamingResolved(
+                    method, request, requestCodec, responseCodec, interceptors, control, combined.Token,
+                    ownResponse: true, out responseLifetime);
+                enumerator = stream.GetAsyncEnumerator(enumerationCancellation);
+            }
+            catch (Exception error) { failure = error; throw; }
+            try
+            {
+                while (true)
+                {
+                    bool next;
+                    try { next = await enumerator.MoveNextAsync().ConfigureAwait(false); }
+                    catch (Exception error) { failure = error; throw; }
+                    if (!next) break;
+                    TResponse item;
+                    try { item = enumerator.Current; }
+                    catch (Exception error) { failure = error; throw; }
+                    yield return item;
+                }
+            }
+            finally
+            {
+                try { await enumerator.DisposeAsync().ConfigureAwait(false); }
+                catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+            }
         }
-        finally { lease.Dispose(); combined.Dispose(); }
+        finally
+        {
+            if (responseLifetime is not null)
+            {
+                var source = combined.Source;
+                try { await responseLifetime.FinishModuleResponse(ref lease, ref source, ref noProducer).ConfigureAwait(false); }
+                catch (Exception error) { failure = RpcPublicationErrors.Combine(failure, error); }
+                finally { combined = new CombinedCancellation(combined.Token, source); }
+            }
+            CleanupLogicalOwnership(ref lease, ref noProducer, ref combined, failure);
+        }
     }
 
     private async IAsyncEnumerable<TResponse> InvokeDuplexStreamingDeferred<TRequest, TResponse, TStreams>(
@@ -254,6 +292,7 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
         SharpLinkClientStreamModuleLeaseOwner? producerLifetime = null;
         CombinedCancellation combined = default;
         Exception? invocationFailure = null;
+        SharpLinkClient.ContractCallSite.InterceptedAsyncEnumerable<TResponse>? responseLifetime = null;
         try
         {
             try
@@ -271,7 +310,8 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
                 {
                     SharpLinkClient.EnsureLogicalCallProgress(control);
                     var stream = inner.InvokeDuplexStreamingResolved(
-                        method, request, requestCodec, responseCodec, streams, interceptors, control, combined.Token);
+                        method, request, requestCodec, responseCodec, streams, interceptors, control, combined.Token,
+                        ownResponse: true, out responseLifetime);
                     enumerator = stream.GetAsyncEnumerator(enumerationCancellation);
                 }
                 catch (Exception error) { invocationFailure = error; throw; }
@@ -298,6 +338,13 @@ internal sealed class SharpLinkModuleRpcChannel(SharpLinkClient.ContractCallSite
         }
         finally
         {
+            if (responseLifetime is not null)
+            {
+                var source = combined.Source;
+                try { await responseLifetime.FinishModuleResponse(ref lease, ref source, ref producerLifetime).ConfigureAwait(false); }
+                catch (Exception error) { invocationFailure = RpcPublicationErrors.Combine(invocationFailure, error); }
+                finally { combined = new CombinedCancellation(combined.Token, source); }
+            }
             try { producerLease.Dispose(); }
             catch (Exception error) { invocationFailure = RpcPublicationErrors.Combine(invocationFailure, error); }
             CleanupLogicalOwnership(ref lease, ref producerLifetime, ref combined, invocationFailure);

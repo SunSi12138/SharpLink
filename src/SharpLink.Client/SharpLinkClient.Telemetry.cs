@@ -117,12 +117,14 @@ internal sealed partial class SharpLinkClient
             IRpcCodec<TResponse> responseCodec,
             ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, bool ownResponse,
+            out InterceptedAsyncEnumerable<TResponse>? responseLifetime)
         {
+            responseLifetime = null;
             var detailMode = control.TelemetryDetailMode;
             var stream = interceptors.Count != 0
                 ? InvokeServerStreamingIntercepted(
-                    method, request, requestCodec, responseCodec, interceptors, control, cancellationToken)
+                    method, request, requestCodec, responseCodec, interceptors, control, cancellationToken, ownResponse, out responseLifetime)
                 : InvokeServerStreamingCore(
                     method, request, requestCodec, responseCodec, control, cancellationToken);
             return ObserveStream(method, stream, control.LifetimeSource, detailMode);
@@ -136,13 +138,15 @@ internal sealed partial class SharpLinkClient
             TStreams streams,
             ClientInterceptorGeneration interceptors,
             ResolvedCallControl control,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken, bool ownResponse,
+            out InterceptedAsyncEnumerable<TResponse>? responseLifetime)
             where TStreams : struct, IRpcClientStreamWriter
         {
+            responseLifetime = null;
             var detailMode = control.TelemetryDetailMode;
             var stream = interceptors.Count != 0
                 ? InvokeDuplexStreamingIntercepted(
-                    method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken)
+                    method, request, requestCodec, responseCodec, streams, interceptors, control, cancellationToken, ownResponse, out responseLifetime)
                 : InvokeDuplexStreamingCore(
                     method, request, requestCodec, responseCodec, streams, control, cancellationToken);
             return ObserveStream(method, stream, control.LifetimeSource, detailMode);
