@@ -111,7 +111,7 @@ public class CompressionPersistentDecodeDrainAndFailureTests
         await using var harness = await PersistentDecodeHarness.CreateAsync(provider);
         await WaitUntilAsync(() => harness.DecodeWorkerCount > 0, "persistent decode workers started");
         using var cancellation = new CancellationTokenSource();
-        var services = ServerRegistryTestAccessor.OverrideServices(harness.Server);
+        var services = ServerRegistryTestAccessor.OverrideServices((SharpLinkServer)harness.Server);
         Task<int>? call = null;
         List<Exception>? failures = null;
         try

@@ -552,7 +552,7 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
         {
             var ordinal = Interlocked.Increment(ref _connectCount);
             var connection = new TestTransportConnection();
-            connection.EnableManualContractBindings();
+            connection.EnableManualContractBindings(ManualClientContractFixture.AssemblyHash);
             lock (_gate)
                 _connections.Add(connection);
 
