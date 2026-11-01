@@ -157,10 +157,53 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         }
     }
 
-    private sealed class ControlledDynamicAssemblyClient : ISharpLinkClient, IDynamicAssemblyRegistrationInspector
+    private static (long ContractId, string Fingerprint) AssertCoordinatorRoute(
+        SharpLinkMultiClusterClient client, Type contractType, SharpLinkClusterSlot expectedSlot,
+        ISharpLinkClient expectedChild, Assembly expectedOwner, Type? absentContractType = null)
+    {
+        var acquire = typeof(SharpLinkMultiClusterClient).GetMethod("AcquireSnapshot",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Coordinator owned snapshot accessor is missing.");
+        using var snapshot = (MultiClusterSnapshot)(acquire.Invoke(client, null)
+            ?? throw new InvalidOperationException("Coordinator owned snapshot was null."));
+        Ensure(snapshot.Clusters.TryGetValue(expectedSlot.Key, out var slot) &&
+               ReferenceEquals(slot, expectedSlot) && ReferenceEquals(slot.Client, expectedChild),
+            "coordinator retains the exact original slot and child");
+        Ensure(snapshot.Routes.TryGetValue(contractType, out var route), "the exact contract route is published");
+        if (route is null) throw new InvalidOperationException("Expected coordinator route was null.");
+        Ensure(ReferenceEquals(route.ContractType, contractType) && ReferenceEquals(route.Slot, expectedSlot) &&
+               ReferenceEquals(route.Slot.Client, expectedChild) && ReferenceEquals(route.OwnerAssembly, expectedOwner),
+            "the published route retains exact contract, slot, child and assembly identity");
+        Ensure(route.ContractId != 0 && !string.IsNullOrWhiteSpace(route.Fingerprint),
+            "the published route has genuine generated wire identity");
+        Ensure(snapshot.Routes.Values.Count(candidate => candidate.ContractId == route.ContractId) == 1,
+            "the ContractId has exactly one coordinator route");
+        if (absentContractType is not null)
+            Ensure(!snapshot.Routes.ContainsKey(absentContractType), "the competing or retired type is not routed");
+        return (route.ContractId, route.Fingerprint); // Scalars only; no unretained map/slot/type escapes.
+    }
+
+    // Metadata-only coordinator double: real retained prepared metadata, simulated child publication.
+    // It never constructs a provider, codec registry, contract channel, or generated proxy.
+    private sealed class ControlledDynamicAssemblyClient : ISharpLinkClient,
+        ISharpLinkPreparedAssemblyClient, IDynamicAssemblyRegistrationInspector
     {
         private readonly Lock _gate = new();
-        private readonly HashSet<Assembly> _registeredAssemblies = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<Assembly, PreparedRegistration> _registeredAssemblies =
+            new(ReferenceEqualityComparer.Instance);
+        private bool _disposed;
+
+        private sealed class PreparedRegistration : IDisposable
+        {
+            private IDisposable? _metadata;
+            internal PreparedRegistration(PreparedGeneratedManifest manifest)
+            {
+                Assembly = manifest.OwnerAssembly;
+                _metadata = manifest.Preparation.Retain();
+            }
+            internal Assembly Assembly { get; }
+            public void Dispose() => Interlocked.Exchange(ref _metadata, null)?.Dispose();
+        }
         private readonly SharpLinkAssemblyRegistrationResult _registrationResult;
         private int _unregisterCalls;
         private int _rejectNextUnregister;
@@ -187,10 +230,35 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         public SharpLinkConnectionState State => SharpLinkConnectionState.Ready;
 
         public SharpLinkAssemblyRegistrationResult RegisterAssembly(Assembly assembly)
+            => throw new NotSupportedException("This coordinator double requires prepared metadata.");
+
+        public SharpLinkAssemblyRegistrationResult RegisterPreparedAssembly(PreparedGeneratedManifest manifest,
+            Func<Func<SharpLinkAssemblyRegistrationResult>, SharpLinkAssemblyRegistrationResult>? publication = null)
         {
-            lock (_gate)
-                _registeredAssemblies.Add(assembly);
-            return _registrationResult;
+            PreparedRegistration? candidate = new(manifest);
+            try
+            {
+                // The coordinator callback takes its own gate; never call it under the child gate.
+                return publication is null ? Commit() : publication(Commit);
+            }
+            finally
+            {
+                // Conflict/duplicate rejection before Commit retains no child metadata owner.
+                candidate?.Dispose();
+            }
+
+            SharpLinkAssemblyRegistrationResult Commit()
+            {
+                lock (_gate)
+                {
+                    ObjectDisposedException.ThrowIf(_disposed, this);
+                    var owned = candidate ?? throw new InvalidOperationException("Candidate already committed.");
+                    if (!_registrationResult.Succeeded) return _registrationResult;
+                    _registeredAssemblies.Add(owned.Assembly, owned);
+                    candidate = null; // Exact ownership transfers only after successful publication.
+                    return _registrationResult;
+                }
+            }
         }
 
         public ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
@@ -224,43 +292,84 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Assembly newAssembly,
             TimeSpan gracefulTimeout,
             CancellationToken cancellationToken = default)
+            => throw new NotSupportedException("This coordinator double requires prepared metadata.");
+
+        public ValueTask<SharpLinkAssemblyReplacementResult> ReplacePreparedAssemblyAsync(
+            Assembly oldAssembly, PreparedGeneratedManifest manifest, TimeSpan gracefulTimeout)
         {
             _ = gracefulTimeout;
-            _ = cancellationToken;
             if (Interlocked.Exchange(ref _publishReplacementThenFailCleanup, 0) == 0)
                 throw new NotSupportedException();
-            lock (_gate)
+            PreparedRegistration? candidate = new(manifest);
+            PreparedRegistration? retired = null;
+            try
             {
-                _registeredAssemblies.Remove(oldAssembly);
-                _registeredAssemblies.Add(newAssembly);
+                lock (_gate)
+                {
+                    ObjectDisposedException.ThrowIf(_disposed, this);
+                    if (!_registeredAssemblies.TryGetValue(oldAssembly, out retired))
+                        throw new InvalidOperationException("Original registration is missing.");
+                    // Add before remove: failed candidate publication cannot lose the old owner.
+                    _registeredAssemblies.Add(candidate.Assembly, candidate);
+                    candidate = null;
+                    _registeredAssemblies.Remove(oldAssembly);
+                }
+                retired.Dispose();
             }
+            finally { candidate?.Dispose(); }
+            // Deliberately already faulted: exercise the coordinator's catch/reconciliation path,
+            // not the pending-operation optimistic publication path.
             return ValueTask.FromException<SharpLinkAssemblyReplacementResult>(
                 new InvalidOperationException("controlled replacement cleanup failure"));
         }
 
         public ValueTask ConnectAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
 
-        public ValueTask StopAsync(CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+        public ValueTask StopAsync(CancellationToken cancellationToken = default)
+        {
+            // Coordinator teardown calls Stop, not Dispose. Cleanup is unconditional even when
+            // the caller's token is canceled; this double has no asynchronous transport shutdown.
+            _ = cancellationToken;
+            return DisposeAsync();
+        }
 
         public ValueTask<SharpLinkHealthCheckResult> CheckHealthAsync(CancellationToken cancellationToken = default)
             => ValueTask.FromResult(new SharpLinkHealthCheckResult(SharpLinkHealthStatus.Ready));
 
-        public TContract Get<TContract>() where TContract : IService
-            => default!;
-
-
-
-        public TContract GetWithMetadata<TContract>(SharpLinkMetadata metadata) where TContract : IService
-
-
+        // None of the four coordinator controls invokes child factories or runtime services.
+        public IRpcRuntimeContext RuntimeContext => throw new NotSupportedException();
+        public RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService
+            => throw new NotSupportedException();
+        public RpcLocalContract GetLocalContract<TContract>() where TContract : IService
+            => throw new NotSupportedException();
+        public RpcLocalContract GetLocalContract(Assembly registeredAssembly, long contractId)
+            => throw new NotSupportedException();
+        public IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null)
             => throw new NotSupportedException();
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            PreparedRegistration[] owners;
+            lock (_gate)
+            {
+                if (_disposed) return ValueTask.CompletedTask;
+                _disposed = true;
+                owners = _registeredAssemblies.Values.ToArray();
+                _registeredAssemblies.Clear();
+            }
+            List<Exception>? errors = null;
+            foreach (var owner in owners)
+            {
+                try { owner.Dispose(); }
+                catch (Exception error) { (errors ??= []).Add(error); }
+            }
+            return errors is null ? ValueTask.CompletedTask : ValueTask.FromException(new AggregateException(errors));
+        }
 
         public bool IsDynamicAssemblyRegistered(Assembly assembly)
         {
             lock (_gate)
-                return _registeredAssemblies.Contains(assembly);
+                return _registeredAssemblies.ContainsKey(assembly);
         }
 
         internal void CompleteTimedOutUnregister()
@@ -272,8 +381,10 @@ public sealed partial class RuntimeAssemblyIntegrationTests
 
         internal void ReleaseAssembly(Assembly assembly)
         {
+            PreparedRegistration? owner;
             lock (_gate)
-                _registeredAssemblies.Remove(assembly);
+                _registeredAssemblies.Remove(assembly, out owner);
+            owner?.Dispose();
         }
 
         internal void RejectNextUnregister() => Volatile.Write(ref _rejectNextUnregister, 1);

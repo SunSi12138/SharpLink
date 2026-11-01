@@ -200,6 +200,7 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(client.RegisterAssembly("plugins", plugin.ContractAssembly).Succeeded,
             "multi-cluster controlled registration");
 
+        var originalRoute = AssertCoordinatorRoute(client, plugin.ContractType, slot, child, plugin.ContractAssembly);
         child.RejectNextUnregister();
         try
         {
@@ -213,7 +214,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
                 "child unregister rejection is preserved");
         }
 
-        _ = GetMultiClusterProxy(client, plugin.ContractType);
+        Ensure(AssertCoordinatorRoute(client, plugin.ContractType, slot, child, plugin.ContractAssembly) == originalRoute,
+            "rejected unregister restores the original ContractId and fingerprint");
         Ensure(child.IsDynamicAssemblyRegistered(plugin.ContractAssembly),
             "child retains the rejected dynamic assembly");
     }
@@ -242,6 +244,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(client.RegisterAssembly("original", originalPlugin.ContractAssembly).Succeeded,
             "initial contract registration");
 
+        var originalRoute = AssertCoordinatorRoute(client, originalPlugin.ContractType, originalSlot,
+            originalChild, originalPlugin.ContractAssembly, reloadedPlugin.ContractType);
         originalChild.BlockAndRejectNextUnregister();
         var unregister = client.UnregisterAssemblyAsync(
             "original", originalPlugin.ContractAssembly, TimeSpan.Zero).AsTask();
@@ -264,7 +268,12 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             Ensure(exception.Message.Contains("rejected", StringComparison.Ordinal),
                 "the controlled child rejection is preserved");
         }
-        _ = GetMultiClusterProxy(client, originalPlugin.ContractType);
+        Ensure(AssertCoordinatorRoute(client, originalPlugin.ContractType, originalSlot,
+            originalChild, originalPlugin.ContractAssembly, reloadedPlugin.ContractType) == originalRoute,
+            "reserved ContractId and fingerprint return to their original slot after rejection");
+        Ensure(originalChild.IsDynamicAssemblyRegistered(originalPlugin.ContractAssembly) &&
+               !reloadedChild.IsDynamicAssemblyRegistered(reloadedPlugin.ContractAssembly),
+            "the rejected competitor owns no child registration");
     }
 
     [Test]
@@ -290,6 +299,8 @@ public sealed partial class RuntimeAssemblyIntegrationTests
             []);
         Ensure(client.RegisterAssembly("plugins", oldPlugin.ContractAssembly).Succeeded,
             "multi-cluster controlled registration");
+        var originalRoute = AssertCoordinatorRoute(client, oldPlugin.ContractType, slot, child,
+            oldPlugin.ContractAssembly, newPlugin.ContractType);
         child.PublishReplacementThenFailCleanup();
 
         try
@@ -310,7 +321,9 @@ public sealed partial class RuntimeAssemblyIntegrationTests
         Ensure(child.IsDynamicAssemblyRegistered(newPlugin.ContractAssembly) &&
                !child.IsDynamicAssemblyRegistered(oldPlugin.ContractAssembly),
             "the child has already committed the replacement generation");
-        _ = GetMultiClusterProxy(client, newPlugin.ContractType);
+        Ensure(AssertCoordinatorRoute(client, newPlugin.ContractType, slot, child,
+            newPlugin.ContractAssembly, oldPlugin.ContractType) == originalRoute,
+            "replacement cleanup failure reconciles the same wire identity to the new exact assembly");
     }
 
     [Test]
