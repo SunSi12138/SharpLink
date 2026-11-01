@@ -55,7 +55,7 @@ public sealed class CodecColdOwnershipRecoveryTests
             release.Set();
             Ensure(await resolve.WaitAsync(Bound) is ObjectDisposedException, "closed owner cannot refill cache after callback");
             await retire.WaitAsync(Bound);
-            Ensure(manifest.Adapter.Disposals == 1 && Capture(() => provider.GetCodec<ValueA>()) is ObjectDisposedException, "retired escaped provider rejects new resolution");
+            Ensure(manifest.Adapter!.Disposals == 1 && Capture(() => provider.GetCodec<ValueA>()) is ObjectDisposedException, "retired escaped provider rejects new resolution");
         }
         catch (Exception error) { primary = error; throw; }
         finally { release.Set(); await Join(primary, resolve, retire); }
