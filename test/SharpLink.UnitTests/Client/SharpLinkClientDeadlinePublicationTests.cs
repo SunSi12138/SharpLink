@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Buffers;
 using System.Reflection;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using SharpLink.Client;
@@ -22,55 +23,166 @@ public sealed class SharpLinkClientDeadlinePublicationTests
     {
         var timeProvider = new ManualTimeProvider();
         var transport = CreateDeadlineTransport(ProtocolV2Capabilities.CancellationReason);
-        await using var client = ClientBuilderTestHelper.Build(
+        var client = ClientBuilderTestHelper.Build(
             transport,
             builder => builder
                 .UseTimeProvider(timeProvider)
                 .UseRuntime(static options => options.FlowControl.MaxSendQueueBytes = 32 * 1024));
-        await client.ConnectAsync();
+        Task? invocation = null;
+        var invocationJoined = false;
+        var failures = new List<Exception>();
+        var cleanupTasks = new List<(string Stage, Task Task)>();
+        var diagnostic = new RefusedPublicationDiagnostic();
+        try
+        {
+            await client.ConnectAsync();
 
-        var method = new RpcMethodDescriptor(
-            ContractId: 1,
-            MethodId: 303,
-            Kind: RpcMethodKind.OneWay,
-            HasResponsePayload: false,
-            HasClientStreams: true,
-            HasMethodTimeout: true,
-            MethodTimeout: TimeSpan.FromSeconds(5),
-            ClientStreamCount: 1);
-        var channel = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
-        var request = default(RpcEmptyRequest);
-        var streams = new SilentClientStreams(channel.RuntimeContext.Codecs.GetCodec<int>());
-        await DrainSentFramesAsync(transport);
+            var method = new RpcMethodDescriptor(
+                ContractId: 1,
+                MethodId: 303,
+                Kind: RpcMethodKind.OneWay,
+                HasResponsePayload: false,
+                HasClientStreams: true,
+                HasMethodTimeout: true,
+                MethodTimeout: TimeSpan.FromSeconds(5),
+                ClientStreamCount: 1);
+            var channel = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
+            var request = default(RpcEmptyRequest);
+            var streams = new SilentClientStreams(channel.RuntimeContext.Codecs.GetCodec<int>());
+            await DrainSentFramesAsync(transport);
 
-        // The frame is larger than the share of the send queue a normal frame may occupy even when
-        // that queue is empty, so admission refuses it and the pump never owns it. The codec's clock
-        // advance leaves the pending deadline elapsed without running its timer, so the terminal
-        // decision is taken by the refusal path - the path that used to mark the Request published.
-        var codec = new DeadlineAdvancingPayloadCodec(
-            timeProvider,
-            TimeSpan.FromSeconds(5),
-            payloadBytes: 30 * 1024,
-            runTimers: false);
-        var invocation = channel.InvokeOneWayAsync(
-            method,
-            in request,
-            codec,
-            in streams,
-            metadata: null,
-            cancellationToken: default).AsTask();
+            // The frame is larger than the share of the send queue a normal frame may occupy even when
+            // that queue is empty, so admission refuses it and the pump never owns it. The codec's clock
+            // advance leaves the pending deadline elapsed without running its timer, so the terminal
+            // decision is taken by the refusal path - the path that used to mark the Request published.
+            var codec = new DeadlineAdvancingPayloadCodec(
+                timeProvider,
+                TimeSpan.FromSeconds(5),
+                payloadBytes: 30 * 1024,
+                runTimers: false);
+            invocation = channel.InvokeOneWayAsync(
+                method,
+                in request,
+                codec,
+                in streams,
+                metadata: null,
+                cancellationToken: default).AsTask();
 
-        var failure = await CaptureSharpLinkExceptionAsync(invocation).WaitAsync(TimeSpan.FromSeconds(5));
-        Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
-            "the elapsed deadline must own the terminal reason of a call the send queue refused");
+            Exception? callerFailure = null;
+            try { await invocation.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception error) { callerFailure = error; }
+            invocationJoined = invocation.IsCompleted;
+            diagnostic.Record("caller", invocation, callerFailure);
+            try
+            {
+                if (callerFailure is not SharpLinkException failure)
+                {
+                    if (callerFailure is not null)
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(callerFailure).Throw();
+                    throw new InvalidOperationException("Expected SharpLinkException from the refused call.");
+                }
+                Ensure(failure.Code == SharpLinkErrorCode.DeadlineExceeded,
+                    "the elapsed deadline must own the terminal reason of a call the send queue refused");
+            }
+            catch (Exception error) { failures.Add(error); } // Preserve the strict oracle; still inspect wire evidence.
 
-        // Neither half of the pair may reach the peer: the Request was refused, so the cancel that
-        // the terminal transition wanted to publish belongs to no Request at all.
-        var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request and not ProtocolV2FrameType.OneWayStreamRequest),
-            "a Request the send queue refused must not reach the peer");
-        Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
-            "a Request that never entered the send queue must never produce a cancel");
+            // Neither half of the pair may reach the peer: the Request was refused, so the cancel that
+            // the terminal transition wanted to publish belongs to no Request at all.
+            var frames = await ReadSentFramesAsync(transport, TimeSpan.FromMilliseconds(200));
+            Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Request and not ProtocolV2FrameType.OneWayStreamRequest),
+                "a Request the send queue refused must not reach the peer");
+            Ensure(frames.TrueForAll(static frame => frame.Header.Type is not ProtocolV2FrameType.Cancel),
+                "a Request that never entered the send queue must never produce a cancel");
+            diagnostic.Record("wire-oracles", Task.CompletedTask, null);
+        }
+        catch (Exception error) { failures.Add(error); }
+        finally
+        {
+            // Diagnostic ownership is explicit: an independent Stop/Dispose failure must not
+            // replace the original caller/assertion outcome. No teardown exception is accepted.
+            await ObserveCleanupAsync("stop", () => client.StopAsync().AsTask());
+            if (invocation is not null && !invocationJoined)
+                await ObserveCleanupAsync("original-call-join", () => invocation);
+            await ObserveCleanupAsync("dispose", () => client.DisposeAsync().AsTask());
+            foreach (var owned in cleanupTasks)
+                if (!owned.Task.IsCompleted)
+                    failures.Add(new TimeoutException($"Diagnostic {owned.Stage} task did not physically join."));
+            if (invocation is not null && !invocation.IsCompleted)
+                failures.Add(new TimeoutException("The original refused invocation did not join."));
+            try { diagnostic.Write(); }
+            catch (Exception error) { failures.Add(new InvalidOperationException("Diagnostic graph publication failed.", error)); }
+        }
+        if (failures.Count == 1)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count > 1)
+            throw new AggregateException("Refused publication caller/body and independent cleanup outcomes.", failures);
+
+        async Task ObserveCleanupAsync(string stage, Func<Task> action)
+        {
+            Task? task = null;
+            Exception? failure = null;
+            try
+            {
+                task = action();
+                cleanupTasks.Add((stage, task));
+                await task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (Exception error)
+            {
+                failure = error;
+                failures.Add(new InvalidOperationException($"Independent diagnostic stage '{stage}' failed.", error));
+            }
+            try { diagnostic.Record(stage, task, failure); }
+            catch (Exception error)
+            {
+                failures.Add(new InvalidOperationException($"Diagnostic graph stage '{stage}' failed.", error));
+            }
+        }
+    }
+
+    private sealed class RefusedPublicationDiagnostic
+    {
+        private readonly Dictionary<Exception, int> _ids = new(ReferenceEqualityComparer.Instance);
+        private readonly List<object> _nodes = [];
+        private readonly List<object> _stages = [];
+
+        internal void Record(string stage, Task? task, Exception? observed)
+            => _stages.Add(new
+            {
+                stage,
+                taskStatus = task?.Status.ToString(),
+                taskCompleted = task?.IsCompleted,
+                observedException = Identify(observed),
+                taskException = Identify(task is { IsFaulted: true } ? task.Exception : null)
+            });
+
+        private int? Identify(Exception? error)
+        {
+            if (error is null) return null;
+            if (_ids.TryGetValue(error, out var existing)) return existing;
+            var id = _nodes.Count;
+            _ids.Add(error, id);
+            _nodes.Add(new object()); // Register identity before traversing repeated inner references.
+            var aggregate = error is AggregateException many
+                ? many.InnerExceptions.Select(Identify).ToArray() : Array.Empty<int?>();
+            _nodes[id] = new
+            {
+                id,
+                runtimeIdentityHash = RuntimeHelpers.GetHashCode(error),
+                type = error.GetType().FullName,
+                error.Message,
+                error.StackTrace,
+                code = (error as SharpLinkException)?.Code.ToString(),
+                detailCode = (error as SharpLinkException)?.DetailCode,
+                inner = Identify(error.InnerException),
+                aggregate
+            };
+            return id;
+        }
+
+        internal void Write()
+            => Console.WriteLine("REFUSED_PUBLICATION_DIAGNOSTIC " +
+                System.Text.Json.JsonSerializer.Serialize(new { stages = _stages, exceptions = _nodes }));
     }
 
     [Test]

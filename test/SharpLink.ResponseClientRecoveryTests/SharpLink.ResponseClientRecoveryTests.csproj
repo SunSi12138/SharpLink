@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>SharpLink.UnitTests</AssemblyName>
+    <RootNamespace>SharpLink.UnitTests</RootNamespace>
+    <AssemblyTitle>SharpLink.ResponseClientRecoveryTests v1 intercepted response ownership validation</AssemblyTitle>
+    <UseTestingPlatformProtocol>false</UseTestingPlatformProtocol>
+    <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="SharpLink.TestSubset" Value="ResponseClientRecovery-v1" />
+    <ProjectReference Include="../../src/SharpLink.Abstractions/SharpLink.Abstractions.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Runtime/SharpLink.Runtime.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Client/SharpLink.Client.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Server/SharpLink.Server.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Sdk/SharpLink.Sdk.csproj" />
+    <ProjectReference Include="../../src/SharpLink.Serializer.SharpPack/SharpLink.Serializer.SharpPack.csproj" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../SharpLink.UnitTests/GlobalUsings.cs" Link="GlobalUsings.cs" />
+    <Compile Include="../SharpLink.UnitTests/TestClientTransportFactory.cs" Link="TestClientTransportFactory.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/ManualClientContractFixture.cs" Link="ManualClientContractFixture.cs" />
+    <Compile Include="../SharpLink.UnitTests/Runtime/ManualTimeProvider.cs" Link="ManualTimeProvider.cs" />
+    <Compile Include="../SharpLink.UnitTests/Client/InterceptedResponseLifetimeRecoveryTests.cs" Link="InterceptedResponseLifetimeRecoveryTests.cs" />
+  </ItemGroup>
+</Project>
