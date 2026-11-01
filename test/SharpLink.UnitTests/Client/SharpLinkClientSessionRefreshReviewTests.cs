@@ -326,8 +326,13 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
     private static async Task AssertPostReservationRejectionAsync(bool clustered, bool invalidateToken)
     {
         var transport = ClientInvokerTestHelper.CreateTransport();
+        // A real cluster requires two endpoints; the one-connection budget keeps the guarded
+        // owner singular. The spare factory creates no physical connection unless dialed.
+        var spareFactory = new ReviewRefreshTransportFactory();
         var client = clustered
-            ? ClientBuilderTestHelper.BuildStatic([new StaticEndpointConfiguration(CreateEndpoint("guard", 6501), transport)],
+            ? ClientBuilderTestHelper.BuildStatic(
+                [new StaticEndpointConfiguration(CreateEndpoint("guard", 6501), transport),
+                 new StaticEndpointConfiguration(CreateEndpoint("guard-spare", 6502), spareFactory)],
                 builder => builder.UseCluster(options =>
                 {
                     options.MinReadyEndpoints = 1;
@@ -337,6 +342,9 @@ public sealed class SharpLinkClientSessionRefreshReviewTests
             : ClientBuilderTestHelper.Build(transport);
         await WithOwnedClientAsync(client, async () =>
         {
+            await client.ConnectAsync();
+            Ensure(transport.ConnectCount == 1 && spareFactory.ConnectCount == 0,
+                "the real one-connection topology must bind only the guarded transport");
             var channel = await ClientInvokerTestHelper.CreatePreparedChannelAsync(client);
             var site = (SharpLinkClient.ContractCallSite)channel;
             var gate = (Lock)typeof(SharpLinkClient.ContractCallSite).GetField("_bindingGate", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(site)!;
