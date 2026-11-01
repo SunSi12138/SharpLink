@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 
 namespace SharpLink.IntegrationTests;
 
@@ -53,7 +54,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
 
     [Test]
     [NotInParallel]
-    public async Task UnknownOneWayMethodShapeShouldTerminateInsteadOfStallingOversizedStream()
+    public async Task UnknownOneWayMethodWithExplicitCountShouldDrainBeyondWindowAndKeepConnectionUsable()
     {
         OneWayInboundDrainService.Reset();
         var harness = await Harness.CreateAsync(options =>
@@ -61,35 +62,37 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.StreamReceiveWindowBytes = 128;
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
         });
-        List<Exception> cleanupFailures = [];
+        List<Exception> failures = [];
         Task? send = null;
-        (Task Operation, Exception Failure)? acceptedSendFailure = null;
+        Task<int>? probe = null;
         try
         {
             var service = await harness.CreateUnknownOneWayMethodServiceAsync();
-            {
-                send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
-                var failure = await CaptureFailureAsync(send);
-
-                Ensure(failure is not null,
-                    "an unresolved OneWay method shape should terminate the connection instead of completing successfully");
-                Ensure(failure is not TimeoutException,
-                    "an unresolved OneWay method shape must not leave oversized client-stream data stalled behind receive flow control");
-                acceptedSendFailure = (send, failure!);
-                Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
-                    "an unresolved OneWay method must not invoke the service method");
-            }
+            var originalConnection = harness.SingleConnection;
+            send = service.IgnoreStreamAfterGateAsync(ManyPayloads(128, 32)).AsTask();
+            await send.WaitAsync(PhaseTimeout);
+            Ensure(!OneWayInboundDrainService.Entered.IsCompleted && OneWayInboundDrainService.EnumeratedItemCount == 0,
+                "an absent method with explicit wire count drains without business invocation or enumeration");
+            probe = service.PingAsync(61).AsTask();
+            Ensure(await probe.WaitAsync(PhaseTimeout) == 62,
+                "the same connection must remain usable after the absent-method stream reaches peer terminal");
+            Ensure(ReferenceEquals(originalConnection, harness.SingleConnection) && originalConnection.Session.CanAcceptCalls,
+                "explicit-count rejection must not be hidden by reconnecting another physical Session");
+            await harness.WaitForRejectedResourcesAsync(originalConnection);
         }
-        catch (Exception primary) { cleanupFailures.Add(primary); }
+        catch (Exception primary) { failures.Add(primary); }
+        try { OneWayInboundDrainService.Release(); }
+        catch (Exception cleanup) { failures.Add(cleanup); }
         try { await harness.DisposeAsync(); }
-        catch (Exception cleanup) { cleanupFailures.Add(cleanup); }
-        await JoinRetainedOperationAsync(cleanupFailures, send, acceptedSendFailure);
-        ThrowFailures(cleanupFailures);
+        catch (Exception cleanup) { failures.Add(cleanup); }
+        await JoinRetainedOperationAsync(failures, send);
+        await JoinRetainedOperationAsync(failures, probe);
+        ThrowFailures(failures);
     }
 
     [Test]
     [NotInParallel]
-    public async Task UnknownOneWayMethodShapeShouldTerminateBeforeCompressedDecodeAndStreamWindowStalls()
+    public async Task UnknownOneWayMethodWithExplicitCountShouldDrainWithoutCompressedDecode()
     {
         OneWayInboundDrainService.Reset();
         var compression = new CorruptingCompressionProvider();
@@ -99,64 +102,116 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             options.FlowControl.ConnectionReceiveWindowBytes = 128;
             options.Compression.Providers.Add(compression);
         });
-        List<Exception> cleanupFailures = [];
+        List<Exception> failures = [];
         Task? send = null;
-        (Task Operation, Exception Failure)? acceptedSendFailure = null;
+        Task<int>? probe = null;
         try
         {
             var service = await harness.CreateUnknownOneWayMethodServiceAsync();
-            {
-                var requestPayload = Enumerable.Repeat((byte)0x67, 4096).ToArray();
-                send = service.IgnoreCorruptiblePayloadAndStreamAsync(
-                    requestPayload,
-                    ManyPayloads(128, 32)).AsTask();
-                var failure = await CaptureFailureAsync(send);
-
-                Ensure(Volatile.Read(ref compression.CompressCount) > 0,
-                    "the large OneWay request payload must use the negotiated compression provider");
-                Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
-                    "an unresolved OneWay method shape must terminate before invoking the request decompressor");
-                Ensure(failure is not null,
-                    "an unresolved compressed OneWay shape should terminate the connection");
-                Ensure(failure is not TimeoutException,
-                    "an unresolved compressed OneWay shape must not leave subsequent StreamData stalled behind receive flow control");
-                acceptedSendFailure = (send, failure!);
-                Ensure(!OneWayInboundDrainService.Entered.IsCompleted,
-                    "an unresolved compressed OneWay request must not invoke the service method");
-            }
+            var originalConnection = harness.SingleConnection;
+            send = service.IgnoreCorruptiblePayloadAndStreamAsync(
+                Enumerable.Repeat((byte)0x67, 4096).ToArray(), ManyPayloads(128, 32)).AsTask();
+            await send.WaitAsync(PhaseTimeout);
+            Ensure(Volatile.Read(ref compression.CompressCount) > 0,
+                "the large absent-method request must actually use negotiated compression");
+            Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
+                "absent-method rejection must precede request decompression");
+            Ensure(!OneWayInboundDrainService.Entered.IsCompleted && OneWayInboundDrainService.EnumeratedItemCount == 0,
+                "absent-method rejection must not invoke or enumerate the business service");
+            probe = service.PingAsync(71).AsTask();
+            Ensure(await probe.WaitAsync(PhaseTimeout) == 72,
+                "explicit-count compressed rejection must drain without a stream-window stall");
+            Ensure(ReferenceEquals(originalConnection, harness.SingleConnection) && originalConnection.Session.CanAcceptCalls,
+                "the exact physical Session must survive compressed absent-method rejection");
+            await harness.WaitForRejectedResourcesAsync(originalConnection);
+            Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
+                "terminal drain and the small unary probe must not decode the rejected payload");
         }
-        catch (Exception primary) { cleanupFailures.Add(primary); }
+        catch (Exception primary) { failures.Add(primary); }
+        try { OneWayInboundDrainService.Release(); }
+        catch (Exception cleanup) { failures.Add(cleanup); }
         try { await harness.DisposeAsync(); }
-        catch (Exception cleanup) { cleanupFailures.Add(cleanup); }
-        await JoinRetainedOperationAsync(cleanupFailures, send, acceptedSendFailure);
-        ThrowFailures(cleanupFailures);
+        catch (Exception cleanup) { failures.Add(cleanup); }
+        await JoinRetainedOperationAsync(failures, send);
+        await JoinRetainedOperationAsync(failures, probe);
+        ThrowFailures(failures);
     }
 
-    private static async Task JoinRetainedOperationAsync(
-        List<Exception> failures,
-        Task? operation,
-        (Task Operation, Exception Failure)? acceptedFailure = null)
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [NotInParallel]
+    public async Task BoundOneWayStreamCountMismatchShouldCloseExactSessionBeforeDecode(bool compressed)
+    {
+        OneWayInboundDrainService.Reset();
+        var compression = new CorruptingCompressionProvider();
+        var harness = await Harness.CreateAsync(options =>
+        {
+            options.FlowControl.StreamReceiveWindowBytes = 128;
+            options.FlowControl.ConnectionReceiveWindowBytes = 128;
+            if (compressed) options.Compression.Providers.Add(compression);
+        }, observeProtocolViolation: true);
+        List<Exception> failures = [];
+        Task? publication = null;
+        Task? close = null;
+        ServerConnectionState? connection = null;
+        try
+        {
+            var bound = await harness.PrepareCountMismatchAsync();
+            connection = bound.Connection;
+            var disconnected = new TaskCompletionSource<(Exception? Error, bool ProtocolObserved)>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            connection.Session.OnDisconnected += error => disconnected.TrySetResult(
+                (error, harness.ProtocolViolation.IsCompletedSuccessfully));
+            var published = harness.PublishCountMismatch(connection, bound.Client, bound.Token, bound.MethodId, bound.Count);
+            publication = published.Publication;
+            await publication.WaitAsync(PhaseTimeout);
+            var violation = await harness.ProtocolViolation.WaitAsync(PhaseTimeout);
+            Ensure(violation.RequestId == published.RequestId && violation.Reason == "malformed_frame" &&
+                   violation.OriginalFormat == "Client connection was closed because of a protocol violation ({Reason}).",
+                "the actual server must classify this exact request as MalformedFrame, not an unrelated transport/heartbeat close");
+            // Observe peer-induced terminal BEFORE calling CloseAsync: test cleanup must
+            // never manufacture the terminal event that the malformed-wire oracle requires.
+            var terminal = await disconnected.Task.WaitAsync(PhaseTimeout);
+            // Current dispatch logs the structured cause, then CloseAsync emits the generic
+            // Session stopping terminal. Do not pretend OnDisconnected preserves that cause.
+            Ensure(terminal.ProtocolObserved && terminal.Error is SharpLinkException { Code: SharpLinkErrorCode.ConnectionClosed },
+                "the exact Session must report its actual stopping terminal after the classified protocol violation");
+            close = connection.CloseAsync().AsTask();
+            await close.WaitAsync(PhaseTimeout);
+            await harness.WaitForRejectedResourcesAsync(connection);
+            Ensure(connection.LifecycleState == ServerConnectionLifecycleState.Closed &&
+                   !connection.Session.IsConnected && connection.Bindings.IsClosed,
+                "mismatched declared count must physically close this exact prepared Session and its bindings");
+            Ensure(!OneWayInboundDrainService.Entered.IsCompleted && OneWayInboundDrainService.EnumeratedItemCount == 0,
+                "malformed count must not enter the generated business method");
+            Ensure((Volatile.Read(ref compression.CompressCount) > 0) == compressed,
+                "the compressed malformed-count row must actually publish a compressed request");
+            Ensure(Volatile.Read(ref compression.DecompressCount) == 0,
+                "bound shape validation must terminate before any request decompression");
+        }
+        catch (Exception primary) { failures.Add(primary); }
+        try { OneWayInboundDrainService.Release(); }
+        catch (Exception cleanup) { failures.Add(cleanup); }
+        try { await harness.DisposeAsync(); }
+        catch (Exception cleanup) { failures.Add(cleanup); }
+        await JoinRetainedOperationAsync(failures, publication);
+        try { if (connection is not null) close ??= connection.CloseAsync().AsTask(); }
+        catch (Exception cleanup) { failures.Add(cleanup); }
+        await JoinRetainedOperationAsync(failures, close);
+        ThrowFailures(failures);
+    }
+
+    private static async Task JoinRetainedOperationAsync(List<Exception> failures, Task? operation)
     {
         if (operation is null) return;
-        bool IsAccepted(Exception error)
-            => acceptedFailure is { } accepted && ReferenceEquals(accepted.Operation, operation) &&
-               (ReferenceEquals(accepted.Failure, error) ||
-                (operation.IsCanceled && accepted.Failure is OperationCanceledException original &&
-                 error is OperationCanceledException repeated && original.CancellationToken == repeated.CancellationToken));
         try { await operation.WaitAsync(PhaseTimeout); }
         catch (Exception error)
         {
-            // Only an outcome already accepted from this exact immutable task can be
-            // acknowledged twice. A timeout is never an accepted logical RPC failure.
-            if (error is TimeoutException)
+            if (error is TimeoutException || operation is not { IsFaulted: true })
                 failures.Add(error);
             if (operation is { IsFaulted: true, Exception: { } aggregate })
-            {
-                foreach (var fault in aggregate.InnerExceptions)
-                    if (!IsAccepted(fault)) failures.Add(fault);
-            }
-            else if (error is not TimeoutException && !IsAccepted(error))
-                failures.Add(error);
+                failures.AddRange(aggregate.InnerExceptions);
         }
     }
 
@@ -166,19 +221,6 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
         if (failures.Count > 1)
             throw new AggregateException("Body/setup and independent cleanup failures.", failures);
-    }
-
-    private static async Task<Exception?> CaptureFailureAsync(Task operation)
-    {
-        try
-        {
-            await operation.WaitAsync(PhaseTimeout);
-            return null;
-        }
-        catch (Exception exception)
-        {
-            return exception;
-        }
     }
 
     private static async IAsyncEnumerable<byte[]> ManyPayloads(
@@ -240,10 +282,56 @@ public class OneWayEarlyRejectionDrainIntegrationTests
         }
     }
 
+    // One isolated server, one expected protocol event: no formatted-text matching or
+    // process-global listener. The actual RequestId scope distinguishes heartbeat closes.
+    private sealed class ProtocolViolationProbe : ILoggerFactory, ILogger
+    {
+        private readonly AsyncLocal<long?> _requestId = new();
+        private readonly TaskCompletionSource<(long? RequestId, string? Reason, string? OriginalFormat)> _violation =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Task<(long? RequestId, string? Reason, string? OriginalFormat)> Violation => _violation.Task;
+        public ILogger CreateLogger(string categoryName)
+            => categoryName == typeof(SharpLinkServer).FullName
+                ? this : Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+        public void AddProvider(ILoggerProvider provider) => throw new NotSupportedException("This fixture owns its single observer.");
+        public bool IsEnabled(LogLevel level) => true;
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull
+        {
+            var previous = _requestId.Value;
+            if (state is IEnumerable<KeyValuePair<string, object?>> values)
+                foreach (var item in values)
+                    if (item.Key == "RequestId" && item.Value is long requestId) _requestId.Value = requestId;
+            return new Scope(this, previous);
+        }
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (level != LogLevel.Warning || eventId.Id != LogEvents.Connection.ProtocolViolation) return;
+            string? reason = null;
+            string? originalFormat = null;
+            if (state is IEnumerable<KeyValuePair<string, object?>> values)
+                foreach (var item in values)
+                {
+                    if (item.Key == "Reason") reason = item.Value as string;
+                    if (item.Key == "{OriginalFormat}") originalFormat = item.Value as string;
+                }
+            _violation.TrySetResult((_requestId.Value, reason, originalFormat));
+        }
+        public void Dispose() => _requestId.Value = null;
+        private sealed class Scope(ProtocolViolationProbe owner, long? previous) : IDisposable
+        {
+            public void Dispose() => owner._requestId.Value = previous;
+        }
+    }
+
     private sealed class Harness : IAsyncDisposable
     {
         private readonly CancellationTokenSource _serverCts;
         private readonly Task _serverTask;
+        private readonly ProtocolViolationProbe? _protocolLog;
+
+        internal Task<(long? RequestId, string? Reason, string? OriginalFormat)> ProtocolViolation
+            => (_protocolLog ?? throw new InvalidOperationException("No protocol observer was requested.")).Violation;
 
         public ISharpLinkServer Server { get; }
         public ISharpLinkClient Client { get; }
@@ -252,18 +340,22 @@ public class OneWayEarlyRejectionDrainIntegrationTests
             CancellationTokenSource serverCts,
             Task serverTask,
             ISharpLinkServer server,
-            ISharpLinkClient client)
+            ISharpLinkClient client,
+            ProtocolViolationProbe? protocolLog)
         {
             _serverCts = serverCts;
             _serverTask = serverTask;
             Server = server;
             Client = client;
+            _protocolLog = protocolLog;
         }
 
         public static async Task<Harness> CreateAsync(
             Action<SharpLinkRuntimeOptions> runtimeConfigure,
-            bool dynamicRegistration = false)
+            bool dynamicRegistration = false,
+            bool observeProtocolViolation = false)
         {
+            var protocolLog = observeProtocolViolation ? new ProtocolViolationProbe() : null;
             var cts = new CancellationTokenSource();
             ISharpLinkServer? server = null;
             ISharpLinkClient? client = null;
@@ -275,6 +367,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                     .UseTcp(0, IPAddress.Loopback)
                     .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
                     .UseRuntime(runtimeConfigure);
+                if (protocolLog is not null) serverBuilder.UseLoggerFactory(protocolLog);
                 var clientBuilder = SharpClientBuilder.Create().DisableRequestTimeout()
                     .UseHeartbeat(TimeSpan.FromMilliseconds(100), TimeSpan.FromSeconds(2))
                     .UseRuntime(runtimeConfigure);
@@ -300,7 +393,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                     () => server.RunUntilStoppedAsync(serverToken).AsTask(), CancellationToken.None);
                 connectTask = client.ConnectAsync(cts.Token).AsTask();
                 await connectTask.WaitAsync(PhaseTimeout);
-                return new Harness(cts, serverTask, server, client);
+                return new Harness(cts, serverTask, server, client, protocolLog);
             }
             catch (Exception primary)
             {
@@ -310,6 +403,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                     () => server?.DisposeAsync() ?? ValueTask.CompletedTask,
                     () => connectTask is null ? ValueTask.CompletedTask : new ValueTask(connectTask),
                     () => serverTask is null ? ValueTask.CompletedTask : new ValueTask(serverTask),
+                    () => { protocolLog?.Dispose(); return ValueTask.CompletedTask; },
                     () => { cts.Dispose(); return ValueTask.CompletedTask; });
                 throw;
             }
@@ -357,6 +451,108 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 new UnknownOneWayMethodChannel(channel, absentMethod), provider);
         }
 
+        internal async Task<(ServerConnectionState Connection, ClientConnection Client, ulong Token, long MethodId, ushort Count)>
+            PrepareCountMismatchAsync()
+        {
+            var server = (SharpLinkServer)Server;
+            var captured = new TaskCompletionSource<(ServerConnectionState, Protocol3BindResult)>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            server.BeforeBindingResultForTesting = (connection, result) =>
+            {
+                captured.TrySetResult((connection, result));
+                return Task.CompletedTask;
+            };
+            try
+            {
+                var proxy = Client.CreateProxy<IOneWayInboundDrainService>();
+                await proxy.PrepareAsync(PhaseTimeout);
+                var (connection, result) = await captured.Task.WaitAsync(PhaseTimeout);
+                Ensure(result.Status == Protocol3BindStatus.Success, "malformed-frame fixture owns a real successful Bind result");
+                var runtime = (SharpLinkRuntimeContext)Client.RuntimeContext;
+                var contract = runtime.GeneratedManifests.SelectMany(manifest => manifest.Contracts)
+                    .Single(item => item.ContractType == typeof(IOneWayInboundDrainService));
+                var method = contract.Methods.Single(item => item.Name == nameof(IOneWayInboundDrainService.IgnoreCorruptiblePayloadAndStreamAsync));
+                var entry = connection.Bindings.Capture(result.Token)
+                    ?? throw new InvalidOperationException("The real Bind token is absent from its exact Session.");
+                var facts = entry.Registration.Facts!.Resolve(method.MethodId);
+                Ensure(facts.IsKnown && facts.Kind == RpcMethodKind.OneWay && facts.ClientStreamCount == 1,
+                    "the malformed fixture changes only the explicit count, not the actual bound one-stream facts");
+                const ushort mismatchedCount = 2;
+                Ensure(connection.Session.BindingAuthority.Limits.MaxClientStreamsPerCall >= mismatchedCount,
+                    "count mismatch is syntactically valid within the negotiated domain");
+                var client = ((ClientConnection[])typeof(SharpLinkClient).GetField("_readyConnections",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                    .GetValue(Client)!).Single();
+                return (connection, client, result.Token, method.MethodId, mismatchedCount);
+            }
+            finally { server.BeforeBindingResultForTesting = null; }
+        }
+
+        internal (Task Publication, long RequestId) PublishCountMismatch(
+            ServerConnectionState connection, ClientConnection client, ulong token, long method, ushort count)
+        {
+            var session = client.Session;
+            var requestId = client.PendingCalls.AllocateRequestId();
+            var writer = session.RentFrameWriter();
+            IRpcByteBufferWriter? ownedPacket = writer;
+            try
+            {
+                using (writer.BeginPacketScope(ProtocolV2FrameType.OneWayStreamRequest,
+                           ProtocolV2FrameFlags.OneWay, unchecked((ulong)requestId)))
+                {
+                    var prefix = writer.GetSpan(ProtocolV2Constants.OneWayStreamRequestPrefixBytes);
+                    BinaryPrimitives.WriteUInt64LittleEndian(prefix, token);
+                    BinaryPrimitives.WriteInt64LittleEndian(prefix[8..], method);
+                    BinaryPrimitives.WriteUInt16LittleEndian(prefix[16..], count);
+                    writer.Advance(ProtocolV2Constants.OneWayStreamRequestPrefixBytes);
+                    writer.Write(Enumerable.Repeat((byte)0x67, 4096).ToArray());
+                }
+                // Preparation owns the writer on failure; enqueue owns its prepared result.
+                ownedPacket = null;
+                var prepared = session.PrepareOutboundFrame(writer, CancellationToken.None);
+                ownedPacket = prepared;
+                // Verify the exact prepared (possibly compressed) bytes are structurally
+                // legal. The server rejection must be the bound facts mismatch, not an
+                // accidental parser, compression-prefix or negotiated-limit rejection.
+                var bytes = new ReadOnlySequence<byte>(prepared.WrittenMemory);
+                Ensure(ProtocolV2FrameParser.TryReadFrame(ref bytes, connection.Session.RuntimeContext.Protocol,
+                           out var header, out var payload) && bytes.IsEmpty &&
+                       header.Type == ProtocolV2FrameType.OneWayStreamRequest && header.RequestId == (ulong)requestId,
+                    "the malformed fixture publishes one structurally valid Type23 frame for the exact request");
+                var envelope = ServerRequestEnvelopeReader.Read(connection.Session, payload, header.Flags,
+                    connection.Session.RuntimeContext.Protocol.MaxMetadataBytes,
+                    connection.Session.RuntimeContext.TimeProvider, frameType: header.Type);
+                Ensure(envelope.BindingId == token && envelope.MethodHash == method && envelope.ClientStreamCount == count,
+                    "wire parsing preserves the genuine binding/method and deliberate explicit count mismatch");
+                ownedPacket = null;
+                if (!session.TryEnqueuePreparedFrame(prepared, false, CancellationToken.None, null,
+                        out var emission, out var rejection))
+                    throw rejection ?? new InvalidOperationException("Malformed fixture frame was not admitted locally.");
+                return (emission.AsTask(), requestId);
+            }
+            catch (Exception primary)
+            {
+                if (ownedPacket is not null)
+                {
+                    try { session.RuntimeContext.Buffers.Return(ownedPacket); }
+                    catch (Exception cleanup) { throw new AggregateException(primary, cleanup); }
+                }
+                throw;
+            }
+        }
+
+        internal async Task WaitForRejectedResourcesAsync(ServerConnectionState connection)
+        {
+            var server = (SharpLinkServer)Server;
+            using var timeout = new CancellationTokenSource(PhaseTimeout);
+            while (connection.ActiveCalls != 0 || connection.CallCancellations.Count != 0 ||
+                   connection.Session.StreamManager.ActiveStreamCount != 0 ||
+                   server.ActiveCallCountForDiagnostics != 0 || server.PendingCallAdmissionsForDiagnostics != 0 ||
+                   server.ActiveDecodeCountForDiagnostics != 0 || server.RetainedCompressedBytesForDiagnostics != 0 ||
+                   server.DecodedBytesInFlightForDiagnostics != 0 || server.PreAdmissionStreamBytesForDiagnostics != 0)
+                await Task.Delay(10, timeout.Token);
+        }
+
         private Task? _disposeTask;
         public ValueTask DisposeAsync() => new(_disposeTask ??= DisposeCoreAsync());
 
@@ -367,6 +563,7 @@ public class OneWayEarlyRejectionDrainIntegrationTests
                 () => new ValueTask(_serverCts.CancelAsync()),
                 () => Server.DisposeAsync(),
                 () => new ValueTask(_serverTask),
+                () => { _protocolLog?.Dispose(); return ValueTask.CompletedTask; },
                 () => { _serverCts.Dispose(); return ValueTask.CompletedTask; });
         }
 

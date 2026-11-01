@@ -510,9 +510,11 @@ public partial class TransportConnectionIntegrationTests
 
             ulong boundToken = 0;
             var requestIds = new HashSet<ulong>();
-            var expectedMethods = contract.Methods.Where(method =>
-                method.Name is nameof(ITestService.SlowAddAsync) or nameof(ITestService.SlowDownloadAsync))
-                .Select(method => method.MethodId).ToHashSet();
+            var unaryMethod = contract.Methods.Single(method => method.Name == nameof(ITestService.SlowAddAsync));
+            var streamMethod = contract.Methods.Single(method => method.Name == nameof(ITestService.SlowDownloadAsync));
+            Ensure(unaryMethod.Kind == RpcMethodKind.Unary && streamMethod.Kind == RpcMethodKind.ServerStreaming,
+                "pending-call identities must retain their exact generated unary/server-streaming shapes");
+            var expectedMethods = new HashSet<long> { unaryMethod.MethodId, streamMethod.MethodId };
             Ensure(expectedMethods.Count == 2, "both exact generated pending-call method IDs are declared");
             // This is a simulated peer, not a production registry. It nevertheless correlates
             // the actual Bind operation and exact generated identity before granting its token.
@@ -544,12 +546,18 @@ public partial class TransportConnectionIntegrationTests
                 }
                 Ensure(frame.Header.Type == ProtocolV2FrameType.Request && boundToken != 0 &&
                        frame.Payload.Length >= ProtocolV2Constants.RequestPrefixBytes &&
-                       (frame.Header.Flags & ProtocolV2FrameFlags.OneWay) == 0 &&
-                       (frame.Header.Flags & ProtocolV2FrameFlags.HasReturn) != 0,
-                    "both pending operations must be actual response-bearing bound requests");
+                       (frame.Header.Flags & ProtocolV2FrameFlags.OneWay) == 0,
+                    $"both pending operations must be actual non-OneWay bound requests; type={frame.Header.Type}, flags={frame.Header.Flags}");
                 Ensure(BinaryPrimitives.ReadUInt64LittleEndian(frame.Payload) == boundToken,
                     "the request must carry the confirmed physical-session binding token");
                 var methodId = BinaryPrimitives.ReadInt64LittleEndian(frame.Payload.AsSpan(sizeof(long)));
+                var hasReturn = (frame.Header.Flags & ProtocolV2FrameFlags.HasReturn) != 0;
+                var cancellable = (frame.Header.Flags & ProtocolV2FrameFlags.Cancellable) != 0;
+                // HasReturn denotes a single return payload, not the existence of a response
+                // stream. The actual server-streaming sender uses Cancellable without HasReturn.
+                Ensure(methodId == unaryMethod.MethodId && hasReturn ||
+                       methodId == streamMethod.MethodId && !hasReturn && cancellable,
+                    $"request flags must match the exact generated method; method={methodId}, flags={frame.Header.Flags}");
                 Ensure(expectedMethods.Remove(methodId) && requestIds.Add(frame.Header.RequestId),
                     "observe one distinct actual request for each generated pending method");
             }
