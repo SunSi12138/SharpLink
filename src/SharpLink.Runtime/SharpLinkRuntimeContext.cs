@@ -40,13 +40,16 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         TimeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         _options = options.CloneValidated();
         Concurrency = concurrency.CloneValidated();
-        Codecs = new RpcCodecProvider(preparation);
+        Codecs = null!;
         using var registryCharge = preparation.ReserveCollection(0);
         var generatedRegistrations = new Dictionary<Type, RpcGeneratedCodecRegistration>();
         using var preparedCharge = preparation.ReserveCollection(generatedManifests.Manifests.Count);
         var prepared = new List<RpcGeneratedManifestRegistration>(generatedManifests.Manifests.Count);
         try
         {
+            // The provider now owns independent storage: constructor rollback must own it
+            // before any later reservation, callback, map construction or buffer setup.
+            Codecs = new RpcCodecProvider(preparation);
             foreach (var manifest in generatedManifests.Manifests)
             {
                 var owner = PrepareGeneratedManifest(manifest, validateReferencedDependencies: false);
@@ -66,6 +69,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
                 }
             }
             ValidateReferencedCodecDependencies(prepared, generatedRegistrations);
+            foreach (var registration in prepared) registration.BindDependencies(generatedRegistrations);
+            foreach (var registration in prepared) registration.PrepareCodecs();
             PublishGeneratedCodecs(generatedRegistrations);
             foreach (var registration in prepared)
                 AdoptGeneratedManifest(registration);
@@ -103,7 +108,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     private static void ThrowAfterConstructionRollback(
         Exception preparationException,
         IReadOnlyList<RpcGeneratedManifestRegistration> prepared,
-        RpcCodecProvider codecProvider)
+        RpcCodecProvider? codecProvider)
     {
         List<Exception>? cleanupFailures = null;
         for (var index = prepared.Count - 1; index >= 0; index--)
@@ -111,7 +116,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             try { prepared[index].Dispose(); }
             catch (Exception cleanupException) { (cleanupFailures ??= []).Add(cleanupException); }
         }
-        try { codecProvider.Dispose(); }
+        try { codecProvider?.Dispose(); }
         catch (Exception cleanupException) { (cleanupFailures ??= []).Add(cleanupException); }
         if (cleanupFailures is null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(preparationException).Throw();
@@ -154,24 +159,32 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     private RpcGeneratedManifestRegistration PrepareGeneratedManifest(
         ISharpLinkGeneratedAssemblyManifest manifest, bool validateReferencedDependencies)
     {
+        using var admission = Domain.BeginPreparation();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (manifest is not PreparedGeneratedManifest prepared || !ReferenceEquals(prepared.Preparation.Authority, Authority))
             throw new InvalidOperationException("Codec preparation requires this authority's exact prepared manifest.");
         var callbackOwner = _metadataOwner ?? throw new ObjectDisposedException(nameof(SharpLinkRuntimeContext));
-        using var callback = callbackOwner.EnterCallback();
+        using var callback = RpcCodecColdUse.EnterPreparation(callbackOwner);
         SharpLinkGeneratedManifestStructureValidator.ValidatePrepared(prepared);
         var registration = RpcGeneratedManifestRegistration.Create(prepared, Codecs, callbackOwner);
         try
         {
             if (validateReferencedDependencies)
-                ValidateReferencedCodecDependency(registration, CreateGeneratedCodecSnapshot());
+            {
+                using var source = CaptureGeneratedCodecSnapshot();
+                ValidateReferencedCodecDependency(registration, source.Registrations);
+                registration.BindDependencies(source.Registrations);
+                registration.PrepareCodecs();
+            }
             return registration;
         }
-        catch { registration.Dispose(); throw; }
+        catch (Exception primary)
+        {
+            try { registration.Dispose(); }
+            catch (Exception cleanup) { throw new AggregateException(primary, cleanup); }
+            throw;
+        }
     }
-
-    internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateGeneratedCodecSnapshot()
-        => ((RpcCodecProvider)Codecs).CreateGeneratedRegistrationSnapshot();
 
     internal void PublishGeneratedCodecs(
         IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> registrations,
@@ -195,25 +208,40 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             return PrepareGeneratedCodecPublicationCore(registrations, pendingRegistration,
                 adoptPendingRegistration, sourceSnapshot.Version, sourceSnapshot.ProviderIdentity);
         }
-        return PrepareGeneratedCodecPublicationCore(registrations, pendingRegistration, adoptPendingRegistration, null);
+        using var admission = Domain.BeginPreparation();
+        using var source = CaptureGeneratedCodecSnapshot();
+        return PrepareGeneratedCodecPublicationCore(registrations, pendingRegistration, adoptPendingRegistration, source.Version, source.ProviderIdentity);
     }
 
     internal CapturedGeneratedCodecs CaptureGeneratedCodecSnapshot()
     {
         var storage = CreateMetadataStorage();
+        RpcCodecProvider.GeneratedRegistrationView? view = null;
+        ColdMetadataReservation? leaseListCharge = null;
+        List<IDisposable>? leases = null;
         try
         {
+            leaseListCharge = storage.ReserveCollection(0);
+            leases = new List<IDisposable>();
             lock (_registrationGate)
             {
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-                var snapshot = ((RpcCodecProvider)Codecs).CaptureGeneratedRegistrationState();
-                storage.ReserveCollection(snapshot.Registrations.Count);
-                var copy = new Dictionary<Type, RpcGeneratedCodecRegistration>(snapshot.Registrations.Count, ReferenceEqualityComparer.Instance);
-                foreach (var pair in snapshot.Registrations) copy.Add(pair.Key, pair.Value);
-                return new CapturedGeneratedCodecs(this, _registrationVersion, snapshot.Identity, copy, storage);
+                storage.ReserveCollection(_manifestRegistrations.Count);
+                storage.ReserveCollection(_manifestRegistrations.Count);
+                leaseListCharge.GrowTo(_manifestRegistrations.Count);
+                var manifests = new RpcGeneratedManifestRegistration.ImmutableMetadata[_manifestRegistrations.Count];
+                view = ((RpcCodecProvider)Codecs).CaptureGeneratedRegistrationState();
+                var index = 0;
+                foreach (var owner in _manifestRegistrations)
+                {
+                    leases.Add(owner.MetadataLifetime.Retain());
+                    manifests[index++] = owner.Metadata;
+                }
+                return new CapturedGeneratedCodecs(this, _registrationVersion, view, manifests, [.. leases], storage);
             }
         }
-        catch { storage.Dispose(); throw; }
+        catch { view?.Dispose(); if (leases is not null) foreach (var lease in leases) lease.Dispose(); storage.Dispose(); throw; }
+        finally { leaseListCharge?.Dispose(); }
     }
 
     private PreparedGeneratedCodecPublication PrepareGeneratedCodecPublicationCore(
@@ -227,10 +255,12 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         ArgumentNullException.ThrowIfNull(registrations);
         if (adoptPendingRegistration && pendingRegistration is null)
             throw new ArgumentException("Adoption requires the exact pending manifest registration.", nameof(pendingRegistration));
+        using var pendingMetadata = pendingRegistration?.MetadataLifetime.Retain();
         var storage = (_metadataOwner ?? throw new ObjectDisposedException(nameof(SharpLinkRuntimeContext))).ForkStorage();
         RpcGeneratedManifestRegistration[]? manifests = null;
         Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>>? providers = null;
         HashSet<RpcGeneratedManifestRegistration>? nextManifests = null;
+        RpcCodecProvider.PreparedGeneratedRegistrations? codecs = null;
         try
         {
             object version;
@@ -249,11 +279,13 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
                 foreach (var pair in _manifestCodecProviders)
                     providers.Add(pair.Key, new List<ManifestCodecProviderEntry>(pair.Value));
             }
-            var codecs = ((RpcCodecProvider)Codecs).PrepareGeneratedRegistrations(registrations);
-            if (requiredProviderIdentity is not null && !ReferenceEquals(codecs.Expected.Identity, requiredProviderIdentity))
+            codecs = ((RpcCodecProvider)Codecs).PrepareGeneratedRegistrations(registrations);
+            if (requiredProviderIdentity is not null && !ReferenceEquals(codecs.ExpectedIdentity, requiredProviderIdentity))
                 throw new InvalidOperationException("The captured source Codec map changed before preparation.");
             foreach (var manifest in manifests) manifest.ThrowIfDisposed();
-            ValidateReferencedCodecDependencies(manifests, codecs.Registrations);
+            // Previously admitted owners keep their exact bound graph even if the current map
+            // republishes the same Type. No implicit dependency rebinding during publication.
+            foreach (var manifest in manifests) ValidateReferencedCodecDependency(manifest, manifest.Dependencies);
             if (pendingRegistration is not null)
             {
                 pendingRegistration.ThrowIfDisposed();
@@ -278,6 +310,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             var publication = new PreparedGeneratedCodecPublication(this, version,
                 new PreparedCodecPublicationPayload(codecs, nextManifests, providers, disposalOrder, pendingRegistration, storage));
             Array.Clear(manifests);
+            codecs = null;
             return publication;
         }
         catch
@@ -289,6 +322,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
                 foreach (var list in providers.Values) list.Clear();
                 providers.Clear();
             }
+            codecs?.Dispose();
             storage.Dispose();
             throw;
         }
@@ -316,6 +350,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
                     throw new InvalidOperationException("Prepared Runtime Codec publication is stale or belongs to another context.");
                 payload.PendingRegistration?.ThrowIfDisposed();
                 ((RpcCodecProvider)Codecs).CommitGeneratedRegistrations(payload.Codecs);
+                publication.RetainCommittedCodecs(payload.Codecs);
                 // Old cold-map readers copied under this gate. Cleanup is transferred to the
                 // token and runs only when its caller disposes it outside publication locks.
                 publication.Retire(_manifestRegistrations, _manifestCodecProviders,
@@ -382,17 +417,8 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
     internal void AdoptGeneratedManifest(RpcGeneratedManifestRegistration registration)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> codecs;
-        object version;
-        lock (_registrationGate)
-        {
-            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            if (_manifestRegistrations.Contains(registration))
-                return;
-            version = _registrationVersion;
-            codecs = CreateGeneratedCodecSnapshot();
-        }
-        using var publication = PrepareGeneratedCodecPublicationCore(codecs, registration, true, version);
+        using var snapshot = CaptureGeneratedCodecSnapshot();
+        using var publication = PrepareGeneratedCodecPublication(snapshot.Registrations, registration, true, snapshot);
         CommitGeneratedCodecPublication(publication);
     }
 
@@ -426,25 +452,9 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             $"Generated Contract owner '{ownerAssembly.FullName}' has a generated manifest but it was not adopted by this SharpLink runtime context. Rebuild the client/server runtime after loading the Contract assembly.");
     }
 
-    internal RpcGeneratedCodecRegistration? FindGeneratedCodec(ISharpLinkGeneratedAssemblyManifest manifest, Type targetType)
-    {
-        lock (_registrationGate)
-        {
-            foreach (var registration in _manifestRegistrations)
-            {
-                if ((ReferenceEquals(registration.Manifest, manifest) ||
-                     registration.Manifest is PreparedGeneratedManifest prepared && ReferenceEquals(prepared.OriginalManifest, manifest)) &&
-                    registration.Codecs.TryGetValue(targetType, out var codec))
-                    return codec;
-            }
-        }
-        return null;
-    }
-
     internal void ReleaseGeneratedManifest(RpcGeneratedManifestRegistration registration)
     {
         var nextVersion = new object();
-        ((RpcCodecProvider)Codecs).RemoveResolvedCodecs(registration);
         lock (_registrationGate)
         {
             _manifestRegistrations.Remove(registration);
@@ -501,30 +511,46 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
             throw new AggregateException(failures);
     }
 
+    // Lexical host-only NONCONCURRENT view. No returned map, enumerator or registration may
+    // escape its using scope. Dispose must not overlap lookup/enumeration on this same view.
+    // It owns standing immutable metadata only, never an active callback/retirement user.
     internal sealed class CapturedGeneratedCodecs : IDisposable
     {
+        private SharpLinkRuntimeContext? _owner;
         private ColdMetadataPreparation? _storage;
-        private readonly Dictionary<Type, RpcGeneratedCodecRegistration> _registrations;
+        private RpcCodecProvider.GeneratedRegistrationView? _view;
+        private RpcGeneratedManifestRegistration.ImmutableMetadata[]? _manifests;
+        private IDisposable[]? _leases;
         internal CapturedGeneratedCodecs(SharpLinkRuntimeContext owner, object version,
-            object providerIdentity,
-            Dictionary<Type, RpcGeneratedCodecRegistration> registrations, ColdMetadataPreparation storage)
-        { Owner = owner; Version = version; ProviderIdentity = providerIdentity; _registrations = registrations; _storage = storage; }
-        internal SharpLinkRuntimeContext Owner { get; }
+            RpcCodecProvider.GeneratedRegistrationView view, RpcGeneratedManifestRegistration.ImmutableMetadata[] manifests,
+            IDisposable[] leases, ColdMetadataPreparation storage)
+        { _owner = owner; Version = version; _view = view; _manifests = manifests; _leases = leases; _storage = storage; }
         internal object Version { get; }
-        internal object ProviderIdentity { get; }
-        internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Registrations
-            => _storage is not null ? _registrations : throw new ObjectDisposedException(nameof(CapturedGeneratedCodecs));
+        internal object ProviderIdentity => (_view ?? throw new ObjectDisposedException(nameof(CapturedGeneratedCodecs))).Identity;
+        internal IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> Registrations =>
+            (_view ?? throw new ObjectDisposedException(nameof(CapturedGeneratedCodecs))).Registrations;
+        internal RpcGeneratedCodecRegistration? FindGeneratedCodec(ISharpLinkGeneratedAssemblyManifest manifest, Type target)
+        {
+            ObjectDisposedException.ThrowIf(_storage is null, this);
+            foreach (var metadata in _manifests!)
+                if ((ReferenceEquals(metadata.Manifest, manifest) || metadata.Manifest is PreparedGeneratedManifest prepared &&
+                    ReferenceEquals(prepared.OriginalManifest, manifest)) && metadata.Codecs.TryGetValue(target, out var codec)) return codec;
+            return null;
+        }
         internal void ThrowIfUnavailable(SharpLinkRuntimeContext owner)
         {
             ObjectDisposedException.ThrowIf(_storage is null, this);
-            if (!ReferenceEquals(owner, Owner)) throw new InvalidOperationException("Captured Codec map belongs to another Runtime.");
+            if (!ReferenceEquals(owner, _owner)) throw new InvalidOperationException("Captured Codec map belongs to another Runtime.");
         }
         public void Dispose()
         {
-            var storage = Interlocked.Exchange(ref _storage, null);
-            if (storage is null) return;
-            _registrations.Clear();
-            storage.Dispose();
+            var storage = Interlocked.Exchange(ref _storage, null); if (storage is null) return;
+            _owner = null;
+            var manifests = _manifests; _manifests = null; Array.Clear(manifests!);
+            var view = _view; _view = null; view!.Dispose();
+            var leases = _leases; _leases = null;
+            foreach (var lease in leases!) lease.Dispose();
+            Array.Clear(leases!); storage.Dispose();
         }
     }
 
@@ -539,6 +565,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         private PreparedCodecPublicationPayload? _payload;
         private PreparedCodecPublicationPayload? _failed;
         private ColdMetadataPreparation? _retiredStorage;
+        private RpcCodecProvider.PreparedGeneratedRegistrations? _committedCodecs;
         private HashSet<RpcGeneratedManifestRegistration>? _retiredManifests;
         private Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>>? _retiredProviders;
         private RpcGeneratedManifestRegistration[]? _retiredOrder;
@@ -552,12 +579,14 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
                 ?? throw new InvalidOperationException("Prepared Codec publication has already been consumed or disposed.");
         internal PreparedCodecPublicationPayload? Peek() => Volatile.Read(ref _payload);
         internal void Failed(PreparedCodecPublicationPayload payload) => _failed = payload;
+        internal void RetainCommittedCodecs(RpcCodecProvider.PreparedGeneratedRegistrations codecs) => _committedCodecs = codecs;
         internal void Retire(HashSet<RpcGeneratedManifestRegistration> manifests,
             Dictionary<System.Reflection.Assembly, List<ManifestCodecProviderEntry>> providers,
             RpcGeneratedManifestRegistration[] order, ColdMetadataPreparation? storage)
         { _retiredManifests = manifests; _retiredProviders = providers; _retiredOrder = order; _retiredStorage = storage; }
         public void Dispose()
         {
+            Interlocked.Exchange(ref _committedCodecs, null)?.Dispose();
             Interlocked.Exchange(ref _payload, null)?.Dispose();
             Interlocked.Exchange(ref _failed, null)?.Dispose();
             Interlocked.Exchange(ref _retiredManifests, null)?.Clear();
@@ -594,6 +623,7 @@ public sealed class SharpLinkRuntimeContext : IRpcRuntimeContext, IRpcContractCo
         {
             var owner = Interlocked.Exchange(ref _storage, null);
             if (owner is null) return;
+            Codecs.Dispose();
             Manifests.Clear();
             Array.Clear(DisposalOrder);
             foreach (var list in Providers.Values) list.Clear();

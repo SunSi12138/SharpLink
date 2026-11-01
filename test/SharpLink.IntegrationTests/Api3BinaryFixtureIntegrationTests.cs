@@ -151,11 +151,13 @@ public sealed class Api3BinaryFixtureIntegrationTests
                 BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(owner) ??
             throw new MissingFieldException(owner.GetType().FullName, "_runtimeContext");
         var snapshot = runtimeContext.GetType().GetMethod(
-                "CreateGeneratedCodecSnapshot",
+                "CaptureGeneratedCodecSnapshot",
                 BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(runtimeContext, null) ??
-            throw new MissingMethodException(runtimeContext.GetType().FullName, "CreateGeneratedCodecSnapshot");
-        return (int)(snapshot.GetType().GetProperty("Count")?.GetValue(snapshot) ??
-            throw new MissingMemberException(snapshot.GetType().FullName, "Count"));
+            throw new MissingMethodException(runtimeContext.GetType().FullName, "CaptureGeneratedCodecSnapshot");
+        using var ownerLease = (IDisposable)snapshot;
+        var registrations = snapshot.GetType().GetProperty("Registrations", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(snapshot)!;
+        return (int)(registrations.GetType().GetProperty("Count")?.GetValue(registrations) ??
+            throw new MissingMemberException(registrations.GetType().FullName, "Count"));
     }
 
     private static void AssertApi3Rejection(

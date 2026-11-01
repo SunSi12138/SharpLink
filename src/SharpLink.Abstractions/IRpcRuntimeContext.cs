@@ -24,7 +24,13 @@ public interface IRpcCodecProvider
 {
     /// <summary>Gets the codec registered for <typeparamref name="T"/>.</summary>
     /// <typeparam name="T">The value type to encode or decode.</typeparam>
-    /// <returns>The codec bound to this runtime context.</returns>
+    /// <returns>A borrowed codec bound to the selected registration and its exact dependencies.</returns>
+    /// <remarks>
+    /// Holding the provider or codec object is not a module-lifetime lease. Manual callers must
+    /// coordinate use with the physical lifetime of the exact registration and every dependency,
+    /// not merely with the runtime context. Concurrent physical retirement during borrowed use
+    /// is unsupported. Logical unpublication alone does not retire an already-owned provider.
+    /// </remarks>
     IRpcCodec<T> GetCodec<T>();
 }
 

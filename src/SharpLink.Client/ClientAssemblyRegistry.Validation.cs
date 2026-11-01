@@ -74,15 +74,16 @@ internal sealed partial class ClientAssemblyRegistry
 
     private IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateCodecSnapshotWithout(
         SharpLinkDynamicModule removedModule,
-        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> source,
+        SharpLinkRuntimeContext.CapturedGeneratedCodecs codecSource,
         ColdMetadataPreparation preparation)
     {
+        var source = codecSource.Registrations;
         preparation.ReserveCollection(source.Count);
         var nextFactories = new Dictionary<Type, RpcGeneratedCodecRegistration>(source.Count);
         foreach (var pair in source) nextFactories.Add(pair.Key, pair.Value);
         foreach (var codec in removedModule.CodecRegistration.Codecs)
         {
-            var replacement = FindReplacementCodec(codec.Key, removedModule);
+            var replacement = FindReplacementCodec(codec.Key, removedModule, codecSource);
             if (replacement is null)
                 nextFactories.Remove(codec.Key);
             else

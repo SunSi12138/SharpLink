@@ -188,6 +188,9 @@ internal sealed class ColdMetadataPreparation : IDisposable
         if (capacity < 0) throw ColdMetadataException.Invalid("Metadata collection count is negative.");
         return Reserve(checked(ColdMetadataAuthority.HeaderCharge + ColdMetadataAuthority.SlotCharge * (ulong)capacity), 0, capacity, scope);
     }
+    internal ColdMetadataReservation ReserveCollectionSlot(ColdMetadataScope? scope = null)
+        => Reserve(ColdMetadataAuthority.SlotCharge, 0, 1, scope);
+
     internal ColdMetadataReservation ReserveMethods(int count, ColdMetadataScope scope)
     {
         if (count < 0) throw ColdMetadataException.Invalid("Declared method count is negative.");
@@ -268,6 +271,7 @@ internal sealed class ColdMetadataPreparation : IDisposable
     }
     internal static void ThrowIfCallbackReentry(ColdMetadataDomain domain)
     {
+        RpcCodecColdUse.ThrowIfDomainReentry(domain);
         if (CallbackOwner.Value is { } owner && owner.Domain.IsWithin(domain))
             throw new ColdMetadataException(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                 "A metadata callback cannot reenter its owning admission or shutdown domain.");

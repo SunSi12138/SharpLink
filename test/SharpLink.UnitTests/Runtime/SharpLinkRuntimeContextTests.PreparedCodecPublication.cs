@@ -19,7 +19,8 @@ public partial class SharpLinkRuntimeContextTests
 
         context.CommitGeneratedCodecPublication(publication);
 
-        Ensure(context.CreateGeneratedCodecSnapshot().ContainsKey(typeof(ThirdAdapterValue)),
+        using var snapshot = context.CaptureGeneratedCodecSnapshot();
+        Ensure(snapshot.Registrations.ContainsKey(typeof(ThirdAdapterValue)),
             "commit uses the privately frozen map, not the changed input dictionary");
         Ensure(ReferenceEquals(provider, context.GetManifestCodecProvider(typeof(PublicationGuardManifest).Assembly)),
             "adoption uses the provider and owner assembly captured before publication");
@@ -37,9 +38,10 @@ public partial class SharpLinkRuntimeContextTests
 
         Ensure(CaptureFailure(() => context.CommitGeneratedCodecPublication(publication)) is InvalidOperationException,
             "even an unrelated version change is rejected by this bounded foundation");
-        Ensure(context.CreateGeneratedCodecSnapshot().Count == 0,
+        using var snapshot = context.CaptureGeneratedCodecSnapshot();
+        Ensure(snapshot.Registrations.Count == 0,
             "stale publication cannot overwrite the current map");
-        Ensure(context.FindGeneratedCodec(registration.Manifest, typeof(ThirdAdapterValue)) is null,
+        Ensure(snapshot.FindGeneratedCodec(registration.Manifest, typeof(ThirdAdapterValue)) is null,
             "stale publication cannot adopt its pending registration");
         Ensure(CaptureFailure(() => context.CommitGeneratedCodecPublication(publication)) is InvalidOperationException,
             "failed publication cannot replay callbacks or commit");
@@ -58,7 +60,9 @@ public partial class SharpLinkRuntimeContextTests
         registration.Dispose();
         Ensure(CaptureFailure(() => owner.CommitGeneratedCodecPublication(disposedPublication)) is ObjectDisposedException,
             "disposed candidate cannot publish or adopt");
-        Ensure(owner.CreateGeneratedCodecSnapshot().Count == 0 && foreign.CreateGeneratedCodecSnapshot().Count == 0,
+        using var ownSnapshot = owner.CaptureGeneratedCodecSnapshot();
+        using var foreignSnapshot = foreign.CaptureGeneratedCodecSnapshot();
+        Ensure(ownSnapshot.Registrations.Count == 0 && foreignSnapshot.Registrations.Count == 0,
             "both rejected commits leave their maps unchanged");
     }
 
@@ -70,8 +74,9 @@ public partial class SharpLinkRuntimeContextTests
         manifest.RejectCallbacks = true;
         Ensure(CaptureFailure(() => context.PrepareGeneratedManifest(manifest)) is InvalidOperationException,
             "metadata callback failure is observed during private capture, not replayed at publication");
-        Ensure(context.CreateGeneratedCodecSnapshot().Count == 0 &&
-               context.FindGeneratedCodec(manifest, typeof(ThirdAdapterValue)) is null,
+        using var snapshot = context.CaptureGeneratedCodecSnapshot();
+        Ensure(snapshot.Registrations.Count == 0 &&
+               snapshot.FindGeneratedCodec(manifest, typeof(ThirdAdapterValue)) is null,
             "failed preparation changes neither codec publication nor adoption");
     }
 

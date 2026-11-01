@@ -244,10 +244,10 @@ public sealed class ManifestSourceIsolationTests
             .UseGeneratedManifestSource(new FixedGeneratedManifestSource(
                 [CodecManifest.For<CodecValueB>("dynamic-peer-b")]))
             .Build();
-        var originalA = contextA.CreateGeneratedCodecSnapshot();
+        using var originalA = contextA.CaptureGeneratedCodecSnapshot();
         var registration = contextA.PrepareGeneratedManifest(
             CodecManifest.For<DynamicCodecValue>("dynamic-add"));
-        var withDynamic = originalA
+        var withDynamic = originalA.Registrations
             .Concat(registration.Codecs)
             .ToDictionary(static pair => pair.Key, static pair => pair.Value);
 
@@ -257,7 +257,7 @@ public sealed class ManifestSourceIsolationTests
             "the owning runtime must publish its explicit dynamic registration");
         EnsureCodecIsMissing<DynamicCodecValue>(contextB);
 
-        contextA.PublishGeneratedCodecs(originalA);
+        contextA.PublishGeneratedCodecs(originalA.Registrations);
         contextA.ReleaseGeneratedManifest(registration);
         EnsureCodecIsMissing<DynamicCodecValue>(contextA);
         Ensure(contextB.Codecs.GetCodec<CodecValueB>() is TestCodec<CodecValueB>,

@@ -31,8 +31,10 @@ internal sealed partial class SharpLinkServer
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
         var published = false;
+        SharpLinkRuntimeContext.CapturedGeneratedCodecs? codecSource = null;
         try
         {
+            codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
             preparationOwner.SelectDependencies(manifest!);
             while (true)
             {
@@ -66,7 +68,7 @@ internal sealed partial class SharpLinkServer
                 }
 
                 var candidate = BuildRegistrationCandidate(
-                    manifest!, currentServices, currentModules, currentCodecs: null,
+                    manifest!, currentServices, currentModules, codecSource.Registrations,
                     out var module, out codecRegistration, out candidateFactsGroup, out candidateSnapshot, out var error);
                 if (error is not null)
                 {
@@ -77,7 +79,7 @@ internal sealed partial class SharpLinkServer
                 candidateFactsGroup = candidate.FactsGroup;
                 retainedCandidateServices = currentServices;
                 using var codecPublication = _runtimeContext.PrepareGeneratedCodecPublication(
-                    candidate.Codecs, codecRegistration, adoptPendingRegistration: true);
+                    candidate.Codecs, codecRegistration, adoptPendingRegistration: true, sourceSnapshot: codecSource);
                 candidate.ReleaseCodecWorkspace();
 
                 var retry = false;
@@ -135,24 +137,28 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            retiredSnapshot?.Dispose();
-            if (published) candidateFactsGroup?.Dispose();
-            if (!published)
+            try
             {
-                try
+                retiredSnapshot?.Dispose();
+                if (published) candidateFactsGroup?.Dispose();
+                if (!published)
                 {
-                    DisposeRegistrationCandidate(
-                        candidateServices,
-                        retainedCandidateServices,
-                        codecRegistration,
-                        candidateFactsGroup,
-                        candidateSnapshot);
-                }
-                catch (Exception cleanupException)
-                {
-                    ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException);
+                    try
+                    {
+                        DisposeRegistrationCandidate(
+                            candidateServices,
+                            retainedCandidateServices,
+                            codecRegistration,
+                            candidateFactsGroup,
+                            candidateSnapshot);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException);
+                    }
                 }
             }
+            finally { codecSource?.Dispose(); }
         }
     }
 
@@ -195,8 +201,10 @@ internal sealed partial class SharpLinkServer
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
         var published = false;
+        SharpLinkRuntimeContext.CapturedGeneratedCodecs? codecSource = null;
         try
         {
+            codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
             preparationOwner.SelectDependencies(manifest!);
             while (true)
             {
@@ -256,7 +264,7 @@ internal sealed partial class SharpLinkServer
                         .Where(pair => !ReferenceEquals(pair.Value.Module, oldModule))
                         .ToDictionary(static pair => pair.Key, static pair => pair.Value)
                         .ToFrozenDictionary();
-                    retainedCodecs = CreateCodecSnapshotWithout(oldModule);
+                    retainedCodecs = CreateCodecSnapshotWithout(oldModule, codecSource);
                 }
 
                 detachedSnapshot = preparationOwner.TransferDetachedSnapshot(detachedServices);
@@ -276,7 +284,7 @@ internal sealed partial class SharpLinkServer
                 candidateFactsGroup = candidate.FactsGroup;
                 retainedCandidateServices = retainedServices;
                 using var codecPublication = _runtimeContext.PrepareGeneratedCodecPublication(
-                    candidate.Codecs, codecRegistration, adoptPendingRegistration: true);
+                    candidate.Codecs, codecRegistration, adoptPendingRegistration: true, sourceSnapshot: codecSource);
                 candidate.ReleaseCodecWorkspace();
 
                 var retry = false;
@@ -347,25 +355,29 @@ internal sealed partial class SharpLinkServer
         }
         finally
         {
-            retiredSnapshot?.Dispose();
-            if (published) candidateFactsGroup?.Dispose();
-            if (!published)
+            try
             {
-                detachedSnapshot?.Dispose();
-                try
+                retiredSnapshot?.Dispose();
+                if (published) candidateFactsGroup?.Dispose();
+                if (!published)
                 {
-                    DisposeRegistrationCandidate(
-                        candidateServices,
-                        retainedCandidateServices,
-                        codecRegistration,
-                        candidateFactsGroup,
-                        candidateSnapshot);
-                }
-                catch (Exception cleanupException)
-                {
-                    ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException);
+                    detachedSnapshot?.Dispose();
+                    try
+                    {
+                        DisposeRegistrationCandidate(
+                            candidateServices,
+                            retainedCandidateServices,
+                            codecRegistration,
+                            candidateFactsGroup,
+                            candidateSnapshot);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException);
+                    }
                 }
             }
+            finally { codecSource?.Dispose(); }
         }
 
         // The published candidate no longer needs preparation pins. In particular, release
@@ -394,7 +406,7 @@ internal sealed partial class SharpLinkServer
         PreparedGeneratedManifest incoming,
         FrozenDictionary<long, ServiceRegistration> currentServices,
         SharpLinkDynamicModule[] currentModules,
-        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration>? currentCodecs,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> currentCodecs,
         out SharpLinkDynamicModule? module,
         out RpcGeneratedManifestRegistration? codecRegistration,
         out ServerDeclaredMethodFactsGroupReservation? preparedFactsGroup,
@@ -499,7 +511,7 @@ internal sealed partial class SharpLinkServer
             workspace.ClearBeforeRelease(nextServices.Clear);
             var candidateMapCharge = incoming.Preparation.ReserveCollection(candidateCapacity, incoming.RegistrationScope);
 
-            var factories = currentCodecs ?? _runtimeContext.CreateGeneratedCodecSnapshot();
+            var factories = currentCodecs;
             var codecCapacity = checked(factories.Count + incoming.Codecs.Count + incoming.ContractCodecs.Count);
             var codecWorkspaceCharge = incoming.Preparation.ReserveCollection(codecCapacity, incoming.RegistrationScope);
             var nextFactories = new Dictionary<Type, RpcGeneratedCodecRegistration>(codecCapacity);
@@ -577,13 +589,14 @@ internal sealed partial class SharpLinkServer
     }
 
     private IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> CreateCodecSnapshotWithout(
-        SharpLinkDynamicModule removedModule)
+        SharpLinkDynamicModule removedModule,
+        SharpLinkRuntimeContext.CapturedGeneratedCodecs codecSource)
     {
-        var nextFactories = _runtimeContext.CreateGeneratedCodecSnapshot()
+        var nextFactories = codecSource.Registrations
             .ToDictionary(static pair => pair.Key, static pair => pair.Value);
         foreach (var codec in removedModule.CodecRegistration.Codecs)
         {
-            var replacement = FindReplacementCodec(codec.Key, removedModule);
+            var replacement = FindReplacementCodec(codec.Key, removedModule, codecSource);
             if (replacement is null)
                 nextFactories.Remove(codec.Key);
             else

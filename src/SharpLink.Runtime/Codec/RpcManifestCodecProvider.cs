@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Linq;
 using System.Runtime.CompilerServices;
 
 namespace SharpLink.Runtime;
@@ -12,9 +13,6 @@ internal enum RpcGeneratedCodecResolutionScope
 /// <summary>Resolves generated codecs using the immutable policy owned by one Contract assembly generation.</summary>
 public static class RpcGeneratedCodecResolver
 {
-    private static readonly ConditionalWeakTable<RpcGeneratedManifestRegistration, RpcManifestCodecProvider> ContractOwnerProviders = new();
-    private static readonly ConditionalWeakTable<RpcGeneratedManifestRegistration, RpcManifestCodecProvider> GlobalOwnerProviders = new();
-
     /// <summary>Gets the Codec provider bound to one generated Contract assembly.</summary>
     public static IRpcCodecProvider GetProvider(
         IRpcRuntimeContext runtimeContext,
@@ -48,13 +46,7 @@ public static class RpcGeneratedCodecResolver
         RpcGeneratedCodecResolutionScope scope)
     {
         ArgumentNullException.ThrowIfNull(registration);
-        registration.ThrowIfDisposed();
-        var providers = scope == RpcGeneratedCodecResolutionScope.Contract
-            ? ContractOwnerProviders
-            : GlobalOwnerProviders;
-        return providers.GetValue(
-            registration,
-            owner => new RpcManifestCodecProvider(owner, owner.BaseProvider, scope));
+        return registration.GetProvider(scope);
     }
 
     internal static IRpcCodecProvider GetProvider(
@@ -75,168 +67,159 @@ public static class RpcGeneratedCodecResolver
 internal sealed class RpcManifestCodecProvider : IRpcCodecProvider, IRpcGeneratedUnsafeBlitCodecProvider
 {
     private readonly RpcGeneratedManifestRegistration _owner;
-    private readonly RpcCodecProvider? _runtimeProvider;
     private readonly RpcGeneratedCodecResolutionScope _scope;
-    private readonly ConcurrentDictionary<Type, IRpcCodec> _resolved = new();
+    private readonly Lock _gate = new();
+    private readonly ConcurrentDictionary<Type, CachedCodec> _resolved = new();
+    private readonly Dictionary<RpcCodecOwnerIdentity, IDisposable> _origins = new(ReferenceEqualityComparer.Instance);
+    private ColdMetadataReservation? _header;
+    private ColdMetadataReservation? _originHeader;
+    private bool _closed;
 
-    internal RpcManifestCodecProvider(
-        RpcGeneratedManifestRegistration owner,
-        IRpcCodecProvider baseProvider,
+    internal RpcManifestCodecProvider(RpcGeneratedManifestRegistration owner, IRpcCodecProvider baseProvider,
         RpcGeneratedCodecResolutionScope scope = RpcGeneratedCodecResolutionScope.Contract)
     {
-        _owner = owner ?? throw new ArgumentNullException(nameof(owner));
         ArgumentNullException.ThrowIfNull(baseProvider);
-        _runtimeProvider = baseProvider as RpcCodecProvider;
-        _scope = scope;
+        _owner = owner; _scope = scope;
+        _header = owner.Storage.ReserveCollection(0, owner.RegistrationScope);
+        try { _originHeader = owner.Storage.ReserveCollection(0, owner.RegistrationScope); }
+        catch { _header.Dispose(); throw; }
     }
-
     public IRpcCodec<T> GetCodec<T>()
     {
         _owner.ThrowIfDisposed();
-        var targetType = typeof(T);
-
-        // Contract-owned bindings are visible only while resolving the Contract graph. A global
-        // generated factory is frozen to the owner's global graph and must never inherit a
-        // Contract-only policy merely because the same manifest also owns one.
-        if (_scope == RpcGeneratedCodecResolutionScope.Contract &&
-            _owner.ContractCodecs.TryGetValue(targetType, out var contractRegistration))
-        {
-            return ResolveOwned<T>(targetType, contractRegistration);
-        }
-
-        // Generated defaults are resolved from the owner-local global graph. Endpoint runtime
-        // Generated defaults only consult owner-local bindings and referenced generated dependencies.
-        if (_owner.Codecs.TryGetValue(targetType, out var ownerRegistration))
-            return ResolveOwned<T>(targetType, ownerRegistration);
-
-        var referencedDependency = FindReferencedCodecDependency(targetType);
-        if (_runtimeProvider is not null &&
-            _runtimeProvider.CreateGeneratedRegistrationSnapshot().TryGetValue(targetType, out var dependency) &&
-            IsGeneratedDependencyAllowed(targetType, dependency, referencedDependency))
-        {
-            return ResolveOwned<T>(targetType, dependency);
-        }
-        if (referencedDependency is not null)
-        {
-            throw new InvalidOperationException(
-                $"Contract assembly '{_owner.Manifest.OwnerAssembly.FullName}' requires referenced generated Codec " +
-                $"'{targetType.FullName}' from the exact bound runtime Type/assembly generation with CodecHash " +
-                $"'{referencedDependency.ExpectedCodecHash}', but that exact generated registration is not available.");
-        }
-
-        if (BuiltinRpcCodecs.TryGet(targetType, out var builtin))
-            return Cast<T>(builtin, targetType);
-        if (targetType.IsEnum)
-            return EnumCodec<T>.Instance;
-        if (typeof(T).IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
-        {
-            throw new PlatformNotSupportedException(
-                $"UnsafeBlit Codec for '{targetType.FullName}' requires source-generated ABI metadata in its owner-local factory.");
-        }
-
-        throw new NotSupportedException(
-            $"Codec for '{targetType.FullName}' is not part of the compile-time Codec graph owned by Contract assembly '{_owner.Manifest.OwnerAssembly.FullName}'.");
+        if (_resolved.TryGetValue(typeof(T), out var cached) && cached.Codec is { } hit && !cached.Origin.IsClosed)
+            return Cast<T>(hit, typeof(T));
+        using var use = _owner.AcquireColdUse();
+        var target = typeof(T);
+        RpcGeneratedCodecRegistration? registration = null;
+        if (_scope == RpcGeneratedCodecResolutionScope.Contract) _owner.ContractCodecs.TryGetValue(target, out registration);
+        if (registration is null) _owner.Codecs.TryGetValue(target, out registration);
+        if (registration is null) _owner.Dependencies.TryGetValue(target, out registration);
+        if (registration is not null) return ResolveOwned<T>(target, registration);
+        if (FindReferencedCodecDependency(_owner.Manifest, target) is { } referenced)
+            throw new InvalidOperationException($"Contract assembly '{_owner.OwnerAssembly.FullName}' requires referenced generated Codec '{target.FullName}' with CodecHash '{referenced.ExpectedCodecHash}', but that exact generated registration is not available.");
+        if (BuiltinRpcCodecs.TryGet(target, out var builtin)) return CacheBuiltin<T>(target, builtin);
+        if (target.IsEnum) return CacheBuiltin<T>(target, EnumCodec<T>.Instance);
+        if (target.IsValueType && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+            throw new PlatformNotSupportedException($"UnsafeBlit Codec for '{target.FullName}' requires source-generated ABI metadata in its owner-local factory.");
+        throw new NotSupportedException($"Codec for '{target.FullName}' is not part of the compile-time Codec graph owned by Contract assembly '{_owner.OwnerAssembly.FullName}'.");
     }
-
-    public IRpcCodec<T> GetGeneratedUnsafeBlitCodec<T>(
-        IRpcGeneratedUnsafeBlitCodecFactory factory,
-        SharpLinkGeneratedUnsafeBlitRequirement requirement)
+    private IRpcCodec<T> CacheBuiltin<T>(Type target, IRpcCodec codec)
     {
-        _owner.ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(factory);
-        var targetType = typeof(T);
-        RpcGeneratedCodecRegistration? registration;
-        if (_scope != RpcGeneratedCodecResolutionScope.Contract ||
-            !_owner.ContractCodecs.TryGetValue(targetType, out registration))
+        ColdMetadataReservation? charge = _owner.Storage.ReserveCollectionSlot(_owner.RegistrationScope);
+        try
         {
-            _owner.Codecs.TryGetValue(targetType, out registration);
-        }
-        // Select only this owner's active binding. Do not resolve dependencies or call the
-        // factory here: its Create method is the caller, so either would permit a bypass or recurse.
-        if (registration is null ||
-            !ReferenceEquals(registration.Owner, _owner) ||
-            !ReferenceEquals(registration.FactoryIdentity, factory) ||
-            !ReferenceEquals(registration.TargetType, targetType) ||
-            registration.UnsafeBlitRequirement is not { } admittedRequirement ||
-            admittedRequirement != requirement)
-        {
-            throw new PlatformNotSupportedException(
-                $"UnsafeBlit Codec for '{targetType.FullName}' requires matching source-generated ABI metadata and its exact owner-local factory registration.");
-        }
-        RpcUnsafeBlitPlatform.EnsureGeneratedSupported(targetType, admittedRequirement);
-        _owner.ThrowIfDisposed();
-        return UnsafeBlitCodec<T>.Instance;
-    }
-
-    private IRpcCodec<T> ResolveOwned<T>(Type targetType, RpcGeneratedCodecRegistration registration)
-    {
-        _owner.ThrowIfDisposed();
-        var codec = _resolved.GetOrAdd(
-            targetType,
-            _ => registration.GetCodec());
-        _owner.ThrowIfDisposed();
-        return Cast<T>(codec, targetType);
-    }
-
-    private bool IsGeneratedDependencyAllowed(
-        Type targetType,
-        RpcGeneratedCodecRegistration registration,
-        SharpLinkReferencedCodecDependency? referencedDependency)
-    {
-        if (referencedDependency is not null)
-        {
-            return ReferenceEquals(referencedDependency.TargetType, targetType) &&
-                   ReferenceEquals(registration.Owner.Manifest.OwnerAssembly, targetType.Assembly) &&
-                   registration.Factory.CodecHash == referencedDependency.ExpectedCodecHash;
-        }
-
-        if (ReferenceEquals(registration.Owner, _owner))
-            return true;
-
-        var dependencyAssembly = registration.Owner.Manifest.OwnerAssembly;
-        if (!IsTargetOwnedByDependency(targetType, dependencyAssembly))
-            return false;
-
-        if (ContainsBoundDependency(_owner.Manifest.ContractDependencies, dependencyAssembly))
-            return true;
-
-        // Compatibility for custom manifests that predate ContractDependencies and publish their
-        // whole generated-module closure through Dependencies. The string is only a CLR AssemblyRef
-        // locator; the actual permission is bound to the resolved Assembly object/generation.
-        return ContainsBoundDependency(_owner.Manifest.Dependencies, dependencyAssembly);
-    }
-
-    private SharpLinkReferencedCodecDependency? FindReferencedCodecDependency(Type targetType)
-    {
-        if (_owner.Manifest is not ISharpLinkReferencedCodecDependencyManifest dependencyManifest)
-            return null;
-        var dependencies = dependencyManifest.ReferencedCodecDependencies;
-        for (var index = 0; index < dependencies.Count; index++)
-        {
-            var dependency = dependencies[index];
-            if (dependency is not null && ReferenceEquals(dependency.TargetType, targetType))
-                return dependency;
-        }
-        return null;
-    }
-
-    private bool ContainsBoundDependency(
-        IReadOnlyList<string> dependencies,
-        Assembly dependencyAssembly)
-    {
-        for (var index = 0; index < dependencies.Count; index++)
-        {
-            if (SharpLinkGeneratedDependencyBinding.Matches(
-                    _owner.Manifest.OwnerAssembly,
-                    dependencies[index],
-                    dependencyAssembly))
+            lock (_gate)
             {
-                return true;
+                ObjectDisposedException.ThrowIf(_closed, this); _owner.ThrowIfDisposed();
+                var entry = new CachedCodec(codec, _owner.Identity, charge);
+                if (_resolved.TryAdd(target, entry)) charge = null;
+                return Cast<T>(_resolved[target].Codec!, target);
             }
         }
-        return false;
+        finally { charge?.Dispose(); }
     }
-
+    private IRpcCodec<T> ResolveOwned<T>(Type target, RpcGeneratedCodecRegistration registration)
+    {
+        using var dependency = registration.Owner.AcquireColdUse();
+        var codec = registration.GetCodec();
+        ColdMetadataReservation? slot = null;
+        try
+        {
+            if (!ReferenceEquals(registration.Owner, _owner)) EnsureOrigin(registration.Owner);
+            slot = _owner.Storage.ReserveCollectionSlot(_owner.RegistrationScope);
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_closed, this); _owner.ThrowIfDisposed(); registration.Owner.ThrowIfDisposed();
+                if (_resolved.TryGetValue(target, out var existing) && existing.Codec is { } ready) return Cast<T>(ready, target);
+                var cached = new CachedCodec(codec, registration.Owner.Identity, slot);
+                if (_resolved.TryAdd(target, cached)) slot = null;
+                return Cast<T>(_resolved[target].Codec!, target);
+            }
+        }
+        finally { slot?.Dispose(); }
+    }
+    private void EnsureOrigin(RpcGeneratedManifestRegistration origin)
+    {
+        ColdMetadataReservation? charge = _owner.Storage.ReserveCollection(2, _owner.RegistrationScope);
+        IDisposable? lease = null;
+        try
+        {
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_closed, this); _owner.ThrowIfDisposed(); origin.ThrowIfDisposed();
+                if (_origins.ContainsKey(origin.Identity)) return;
+                lease = origin.RegisterCacheConsumer(this);
+                _origins.Add(origin.Identity, new OriginLease(lease, charge));
+                lease = null; charge = null;
+            }
+        }
+        finally { lease?.Dispose(); charge?.Dispose(); }
+    }
+    private sealed class OriginLease(IDisposable lease, ColdMetadataReservation charge) : IDisposable
+    {
+        private IDisposable? _lease = lease;
+        public void Dispose() { Interlocked.Exchange(ref _lease, null)?.Dispose(); charge.Dispose(); }
+    }
+    internal void RemoveOrigin(RpcCodecOwnerIdentity origin)
+    {
+        // A cached owner codec may embed a codec returned by a nested dependency lookup.
+        // Invalidate the whole owner's scalar resolution identity, not just the direct leaf.
+        _owner.InvalidateResolvedGraph();
+    }
+    internal void Clear()
+    {
+        IDisposable[] observers;
+        lock (_gate)
+        {
+            if (_closed) return; _closed = true;
+            foreach (var pair in _resolved) if (_resolved.TryRemove(pair.Key, out var entry)) entry.Dispose();
+            observers = _origins.Values.ToArray(); _origins.Clear();
+        }
+        foreach (var observer in observers) observer.Dispose();
+        Array.Clear(observers);
+        Interlocked.Exchange(ref _header, null)?.Dispose();
+        Interlocked.Exchange(ref _originHeader, null)?.Dispose();
+    }
+    private sealed class CachedCodec(IRpcCodec codec, RpcCodecOwnerIdentity origin, ColdMetadataReservation charge) : IDisposable
+    {
+        private IRpcCodec? _codec = codec;
+        internal IRpcCodec? Codec => Volatile.Read(ref _codec);
+        internal RpcCodecOwnerIdentity Origin { get; } = origin;
+        public void Dispose() { Interlocked.Exchange(ref _codec, null); charge.Dispose(); }
+    }
+    public IRpcCodec<T> GetGeneratedUnsafeBlitCodec<T>(IRpcGeneratedUnsafeBlitCodecFactory factory,
+        SharpLinkGeneratedUnsafeBlitRequirement requirement)
+    {
+        using var use = _owner.AcquireColdUse();
+        ArgumentNullException.ThrowIfNull(factory);
+        var target = typeof(T); RpcGeneratedCodecRegistration? registration = null;
+        if (_scope == RpcGeneratedCodecResolutionScope.Contract) _owner.ContractCodecs.TryGetValue(target, out registration);
+        if (registration is null) _owner.Codecs.TryGetValue(target, out registration);
+        if (registration is null || !ReferenceEquals(registration.Owner, _owner) ||
+            !ReferenceEquals(registration.FactoryIdentity, factory) || !ReferenceEquals(registration.TargetType, target) ||
+            registration.UnsafeBlitRequirement is not { } admitted || admitted != requirement)
+            throw new PlatformNotSupportedException($"UnsafeBlit Codec for '{target.FullName}' requires matching source-generated ABI metadata and its exact owner-local factory registration.");
+        RpcUnsafeBlitPlatform.EnsureGeneratedSupported(target, admitted);
+        _owner.ThrowIfDisposed(); return UnsafeBlitCodec<T>.Instance;
+    }
+    internal static bool IsAllowedDependency(RpcGeneratedManifestRegistration owner, RpcGeneratedCodecRegistration registration)
+    {
+        var target = registration.TargetType; var manifest = owner.Manifest;
+        if (FindReferencedCodecDependency(manifest, target) is { } referenced)
+            return ReferenceEquals(target.Assembly, registration.Owner.OwnerAssembly) && registration.Factory.CodecHash == referenced.ExpectedCodecHash;
+        var assembly = registration.Owner.OwnerAssembly;
+        if (!IsTargetOwnedByDependency(target, assembly)) return false;
+        return manifest.ContractDependencies.Concat(manifest.Dependencies).Any(name =>
+            SharpLinkGeneratedDependencyBinding.Matches(manifest.OwnerAssembly, name, assembly));
+    }
+    private static SharpLinkReferencedCodecDependency? FindReferencedCodecDependency(ISharpLinkGeneratedAssemblyManifest manifest, Type target)
+    {
+        if (manifest is not ISharpLinkReferencedCodecDependencyManifest dependencies) return null;
+        foreach (var dependency in dependencies.ReferencedCodecDependencies)
+            if (ReferenceEquals(dependency.TargetType, target)) return dependency;
+        return null;
+    }
     internal static bool IsTargetOwnedByDependency(Type targetType, Assembly dependencyAssembly)
     {
         if (ReferenceEquals(targetType.Assembly, dependencyAssembly))

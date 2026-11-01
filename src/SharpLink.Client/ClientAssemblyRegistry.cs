@@ -120,8 +120,10 @@ internal sealed partial class ClientAssemblyRegistry
         var published = false;
         SharpLinkAssemblyRegistrationError? rollbackError = null;
         Exception? rollbackException = null;
+        SharpLinkRuntimeContext.CapturedGeneratedCodecs? codecSource = null;
         try
         {
+            codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
             long generation;
             ClientProxySnapshot current;
             SharpLinkDynamicModule[] modules;
@@ -144,7 +146,6 @@ internal sealed partial class ClientAssemblyRegistry
             using (current)
             {
                 codecRegistration = _runtimeContext.PrepareGeneratedManifest(manifest);
-                using var codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
                 var module = new SharpLinkDynamicModule(assembly, manifest, codecRegistration);
                 var candidate = BuildRegistrationCandidate(manifest, module, current.Map, current,
                     modules, codecSource.Registrations, preparation, out var error);
@@ -185,13 +186,17 @@ internal sealed partial class ClientAssemblyRegistry
         }
         finally
         {
-            if (!published)
+            try
             {
-                candidateSnapshot?.Dispose();
-                try { codecRegistration?.Dispose(); }
-                catch (Exception cleanupException)
-                { ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException); }
+                if (!published)
+                {
+                    candidateSnapshot?.Dispose();
+                    try { codecRegistration?.Dispose(); }
+                    catch (Exception cleanupException)
+                    { ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException); }
+                }
             }
+            finally { codecSource?.Dispose(); }
         }
     }
 
@@ -292,7 +297,7 @@ internal sealed partial class ClientAssemblyRegistry
                         .Where(pair => !ReferenceEquals(pair.Value.Module, oldModule))
                         .ToDictionary(static pair => pair.Key, static pair => pair.Value)
                         .ToFrozenDictionary();
-                    retainedCodecs = CreateCodecSnapshotWithout(oldModule, codecSource.Registrations, preparation);
+                    retainedCodecs = CreateCodecSnapshotWithout(oldModule, codecSource, preparation);
                 }
 
                 codecRegistration = _runtimeContext.PrepareGeneratedManifest(manifest!);
@@ -620,7 +625,7 @@ internal sealed partial class ClientAssemblyRegistry
                     codecRegistration = module.CodecRegistration;
                     foreach (var codecType in codecRegistration.Codecs.Keys)
                     {
-                        var replacement = FindReplacementCodec(codecType, module);
+                        var replacement = FindReplacementCodec(codecType, module, codecSource);
                         if (replacement is null) nextFactories.Remove(codecType);
                         else nextFactories[codecType] = replacement;
                     }
@@ -646,11 +651,12 @@ internal sealed partial class ClientAssemblyRegistry
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(
         Type targetType,
-        SharpLinkDynamicModule removedModule)
+        SharpLinkDynamicModule removedModule,
+        SharpLinkRuntimeContext.CapturedGeneratedCodecs codecSource)
     {
         for (var index = 0; index < _staticManifests.Count; index++)
         {
-            var replacement = _runtimeContext.FindGeneratedCodec(_staticManifests[index], targetType);
+            var replacement = codecSource.FindGeneratedCodec(_staticManifests[index], targetType);
             if (replacement is not null)
                 return replacement;
         }

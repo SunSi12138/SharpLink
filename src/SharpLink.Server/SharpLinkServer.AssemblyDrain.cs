@@ -179,6 +179,7 @@ internal sealed partial class SharpLinkServer
             }
             using (snapshot)
             using (var storage = _runtimeContext.CreateMetadataStorage())
+            using (var codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot())
             {
                 using var workspace = new ServerMetadataWorkspace(storage);
                 var services = snapshot.Services;
@@ -194,7 +195,7 @@ internal sealed partial class SharpLinkServer
                 try
                 {
                     next = new ServerServiceSnapshot(nextMap.ToFrozenDictionary(), storage, mapCharge);
-                    var factories = _runtimeContext.CreateGeneratedCodecSnapshot();
+                    var factories = codecSource.Registrations;
                     workspace.Reserve(factories.Count);
                     var nextFactories = factories.ToDictionary(static pair => pair.Key, static pair => pair.Value);
                     workspace.ClearBeforeRelease(nextFactories.Clear);
@@ -207,13 +208,13 @@ internal sealed partial class SharpLinkServer
                         if (!_serviceModuleRegistry.IsCurrentServices(snapshot)) continue;
                         foreach (var codecType in codecRegistration.Codecs.Keys)
                         {
-                            var replacement = FindReplacementCodec(codecType, module);
+                            var replacement = FindReplacementCodec(codecType, module, codecSource);
                             if (replacement is null) nextFactories.Remove(codecType);
                             else nextFactories[codecType] = replacement;
                         }
                     }
                     // Fallible wrapper construction/validation is outside the registry gate.
-                    using var publication = _runtimeContext.PrepareGeneratedCodecPublication(nextFactories);
+                    using var publication = _runtimeContext.PrepareGeneratedCodecPublication(nextFactories, sourceSnapshot: codecSource);
                     lock (_registryGate)
                     {
                         if (!_serviceModuleRegistry.IsCurrentServices(snapshot) ||
@@ -286,11 +287,12 @@ internal sealed partial class SharpLinkServer
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(
         Type targetType,
-        SharpLinkDynamicModule removedModule)
+        SharpLinkDynamicModule removedModule,
+        SharpLinkRuntimeContext.CapturedGeneratedCodecs codecSource)
     {
         for (var index = 0; index < _staticManifests.Count; index++)
         {
-            var replacement = _runtimeContext.FindGeneratedCodec(_staticManifests[index], targetType);
+            var replacement = codecSource.FindGeneratedCodec(_staticManifests[index], targetType);
             if (replacement is not null)
                 return replacement;
         }
