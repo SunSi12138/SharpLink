@@ -444,7 +444,10 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <summary>Creates a locally registered proxy and its exact-site preparation handle.</summary>
     /// <typeparam name="TContract">The generated RPC contract interface.</typeparam>
     /// <param name="options">Immutable scope, receipt requirement, and metadata captured at construction.</param>
-    /// <remarks>Does not wait for connectivity or remote binding. Keep the handle to prepare the same site.</remarks>
+    /// <remarks>Does not wait for connectivity or remote binding. Keep the handle to prepare the same site.
+    /// Proxy factories and publication callbacks cannot reenter same-client contract construction,
+    /// registration management, or Stop. Codec resolution remains supported inside these callbacks.
+    /// Stop joins an admitted factory and its publication rollback before disposing runtime codec state.</remarks>
     RpcProxy<TContract> CreateProxy<TContract>(RpcProxyOptions? options = null) where TContract : IService;
 
     /// <summary>Selects the current exact local registration of a generated contract.</summary>
@@ -460,6 +463,8 @@ public interface ISharpLinkClient : ISharpLinkAssemblyRegistry, IAsyncDisposable
     /// <summary>Creates an identity-bearing channel for one exact client-issued local selector.</summary>
     /// <param name="local">The local selector issued by this client.</param>
     /// <param name="options">Immutable scope, receipt requirement, and metadata captured at construction.</param>
-    /// <remarks>Registers bounded local demand without waiting for connectivity or remote binding.</remarks>
+    /// <remarks>Registers bounded local demand without waiting for connectivity or remote binding.
+    /// Contract publication callbacks obey the same nonreentrant management contract as
+    /// <see cref="CreateProxy{TContract}"/>. Shutdown joins admitted construction and rollback.</remarks>
     IRpcContractChannel CreateContractChannel(RpcLocalContract local, RpcProxyOptions? options = null);
 }

@@ -23,11 +23,16 @@ internal sealed partial class SharpLinkClient : ISharpLinkContractFactoryTransac
         options.Validate();
         var local = GetLocalContract<TContract>();
         options.ValidateFor(local);
+        // This cold admission spans factory/publication callbacks and rollback. Static registrations
+        // have no per-call module lease; shutdown joins this existing domain before disposing codecs.
+        using var preparation = _runtimeContext.Domain.BeginPreparation();
+        using var callback = preparation.EnterCallback();
         var registration = _assemblyRegistry.AcquireLocalContract(local, out var moduleLease);
         using (moduleLease)
         {
             var construction = AcquireContractSite(registration, options);
             var published = false;
+            Exception? primary = null;
             try
             {
                 var channel = CreateLocalChannel(registration, construction.Site, options.Metadata);
@@ -39,9 +44,18 @@ internal sealed partial class SharpLinkClient : ISharpLinkContractFactoryTransac
                 published = true;
                 return proxy;
             }
+            catch (Exception error)
+            {
+                primary = error;
+                throw;
+            }
             finally
             {
-                CompleteContractSiteConstruction(construction, published);
+                try { CompleteContractSiteConstruction(construction, published); }
+                catch (Exception cleanup) when (primary is not null)
+                {
+                    throw new AggregateException(primary, cleanup);
+                }
             }
         }
     }
@@ -59,11 +73,16 @@ internal sealed partial class SharpLinkClient : ISharpLinkContractFactoryTransac
         ArgumentNullException.ThrowIfNull(local);
         options ??= new RpcProxyOptions();
         options.ValidateFor(local);
+        // This cold admission spans factory/publication callbacks and rollback. Static registrations
+        // have no per-call module lease; shutdown joins this existing domain before disposing codecs.
+        using var preparation = _runtimeContext.Domain.BeginPreparation();
+        using var callback = preparation.EnterCallback();
         var registration = _assemblyRegistry.AcquireLocalContract(local, out var moduleLease);
         using (moduleLease)
         {
             var construction = AcquireContractSite(registration, options);
             var published = false;
+            Exception? primary = null;
             try
             {
                 var channel = CreateLocalChannel(registration, construction.Site, options.Metadata);
@@ -72,9 +91,18 @@ internal sealed partial class SharpLinkClient : ISharpLinkContractFactoryTransac
                 published = true;
                 return channel;
             }
+            catch (Exception error)
+            {
+                primary = error;
+                throw;
+            }
             finally
             {
-                CompleteContractSiteConstruction(construction, published);
+                try { CompleteContractSiteConstruction(construction, published); }
+                catch (Exception cleanup) when (primary is not null)
+                {
+                    throw new AggregateException(primary, cleanup);
+                }
             }
         }
     }
