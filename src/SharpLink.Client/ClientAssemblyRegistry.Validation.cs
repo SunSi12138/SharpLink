@@ -189,26 +189,30 @@ internal sealed partial class ClientAssemblyRegistry
         => EnumerateRegisteredManifests(modules).First(manifest => ReferenceEquals(manifest.OwnerAssembly, assembly));
 
     private bool IsAssemblyRegistered(Assembly assembly)
-        => _dynamicModules.ContainsKey(assembly) ||
+        => _dynamicModules.ContainsKey(assembly) || _unregisterOperations.ContainsKey(assembly) ||
            _staticManifests.Any(manifest => ReferenceEquals(manifest.OwnerAssembly, assembly));
 
-    private Assembly[] GetDynamicAssembliesForShutdown()
+    private KeyValuePair<Assembly, SharpLinkDynamicModule>[] GetDynamicModulesForShutdown(
+        out (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module)[] terminal)
     {
-        SharpLinkDynamicModule[] modules;
         lock (_gate)
-            modules = [.. _dynamicModules.Values];
-
-        if (modules.Length == 0)
-            return [];
-        if (modules.Length == 1)
-            return [modules[0].Assembly];
-
-        var manifests = modules.Select(static module => module.Manifest).ToArray();
-        var order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
-        var assemblies = new Assembly[order.Length];
-        for (var index = 0; index < order.Length; index++)
-            assemblies[index] = modules[order[index]].Assembly;
-        return assemblies;
+        {
+            // Capture removed-but-not-fully-published outcomes in the SAME gate cut as the
+            // dependency graph. Otherwise A could vanish between two independent snapshots.
+            foreach (var pair in _unregisterOperations)
+                if (_dynamicModules.TryGetValue(pair.Key, out var active) && !ReferenceEquals(active, pair.Value.Module))
+                    throw new InvalidOperationException("Retirement operation and active module generation disagree.");
+            terminal = _unregisterOperations.Where(pair => !_dynamicModules.ContainsKey(pair.Key))
+                .Select(static pair => pair.Value).ToArray();
+            // Ordering consumes immutable dependency metadata while MarkReleased is excluded.
+            // Only exact module/assembly pairs escape; no manifest property is read after the gate.
+            var modules = _dynamicModules.ToArray();
+            var manifests = modules.Select(static pair => pair.Value.Manifest).ToArray();
+            var order = SharpLinkGeneratedDependencyBinding.GetDependantsFirstOrder(manifests);
+            var ordered = new KeyValuePair<Assembly, SharpLinkDynamicModule>[order.Length];
+            for (var index = 0; index < order.Length; index++) ordered[index] = modules[order[index]];
+            return ordered;
+        }
     }
 
     private void EnsureNoDynamicDependants(SharpLinkDynamicModule module)
@@ -222,21 +226,6 @@ internal sealed partial class ClientAssemblyRegistry
                 throw new InvalidOperationException(
                     $"Assembly '{identity}' cannot be unregistered while '{candidate.Manifest.OwnerAssembly.FullName}' depends on it.");
         }
-    }
-
-    private static ValueTask<SharpLinkAssemblyUnregisterResult> WaitForUnregisterAsync(
-        Task<SharpLinkAssemblyUnregisterResult> operation,
-        CancellationToken cancellationToken)
-        => new SharpLinkRetirementHandle<SharpLinkAssemblyUnregisterResult>(operation)
-            .WaitAsync(cancellationToken);
-
-    private static async ValueTask<SharpLinkAssemblyReplacementResult> WaitForReplacementAsync(
-        Task<SharpLinkAssemblyUnregisterResult> operation,
-        CancellationToken cancellationToken)
-    {
-        var drain = await new SharpLinkRetirementHandle<SharpLinkAssemblyUnregisterResult>(operation)
-            .WaitAsync(cancellationToken).ConfigureAwait(false);
-        return SharpLinkAssemblyReplacementResult.Published(drain);
     }
 
     [System.Diagnostics.CodeAnalysis.DoesNotReturn]

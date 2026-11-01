@@ -34,11 +34,11 @@ internal sealed partial class ClientAssemblyRegistry
     private IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> _staticManifests;
     private readonly ClientProxyLookup _proxyLookup;
     private readonly Func<SharpLinkConnectionState> _stateProvider;
-    private readonly Action<Task, string, TaskObservationMode> _trackFrameworkTask;
+    private readonly FrameworkTaskSupervisor _frameworkTasks;
     private readonly Lock _gate = new();
     private readonly Dictionary<Assembly, SharpLinkDynamicModule> _dynamicModules =
         new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Assembly, Task<SharpLinkAssemblyUnregisterResult>> _unregisterOperations =
+    private readonly Dictionary<Assembly, (Task<SharpLinkAssemblyUnregisterResult> Task, SharpLinkDynamicModule Module)> _unregisterOperations =
         new(ReferenceEqualityComparer.Instance);
     private long _generation;
     private bool _shutdownStarted;
@@ -49,13 +49,13 @@ internal sealed partial class ClientAssemblyRegistry
         IReadOnlyList<ISharpLinkGeneratedAssemblyManifest> staticManifests,
         ClientProxyLookup proxyLookup,
         Func<SharpLinkConnectionState> stateProvider,
-        Action<Task, string, TaskObservationMode> trackFrameworkTask)
+        FrameworkTaskSupervisor frameworkTasks)
     {
         _runtimeContext = runtimeContext ?? throw new ArgumentNullException(nameof(runtimeContext));
         _staticManifests = staticManifests ?? throw new ArgumentNullException(nameof(staticManifests));
         _proxyLookup = proxyLookup ?? throw new ArgumentNullException(nameof(proxyLookup));
         _stateProvider = stateProvider ?? throw new ArgumentNullException(nameof(stateProvider));
-        _trackFrameworkTask = trackFrameworkTask ?? throw new ArgumentNullException(nameof(trackFrameworkTask));
+        _frameworkTasks = frameworkTasks ?? throw new ArgumentNullException(nameof(frameworkTasks));
         foreach (var registration in _proxyLookup.Capture().Values)
             registration.LocalControl = CreateLocalControl(
                 registration.Descriptor.ContractId, FindOwningManifest(registration).RpcAssemblyHash);
@@ -161,7 +161,7 @@ internal sealed partial class ClientAssemblyRegistry
                 {
                     lock (_gate)
                     {
-                        if (generation != _generation || RejectMutationLocked(out _) ||
+                        if (generation != _generation || RejectMutationLocked(out _) || IsAssemblyRegistered(assembly) ||
                             !_runtimeContext.IsCurrentGeneratedCodecPublication(codecPublication))
                             return Failure(SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
                                 "The registry changed while this exact candidate was prepared; no callbacks were replayed.", assembly);
@@ -232,7 +232,10 @@ internal sealed partial class ClientAssemblyRegistry
         using var codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
         ClientLocalContractControl[] retiredControls = [];
         Task<SharpLinkAssemblyUnregisterResult>? drainOperation = null;
-        TaskCompletionSource<SharpLinkAssemblyUnregisterResult>? drainCompletion = null;
+        Task<(Exception? Failure, bool SupervisorOwned)>? drainObservation = null;
+        TaskCompletionSource<Exception?>? retirementReady = null;
+        Task<Exception?>? retirementTracking = null;
+        Exception? publicationFailure = null;
         SharpLinkDynamicModule? oldModule = null;
         SharpLinkDynamicModule? newModule = null;
         ClientProxySnapshot? candidateSnapshot = null;
@@ -342,18 +345,21 @@ internal sealed partial class ClientAssemblyRegistry
                                 newAssembly);
                             return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
                         }
-                        drainCompletion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
-                            TaskCreationOptions.RunContinuationsAsynchronously);
-                        drainOperation = drainCompletion.Task;
+                        if (!ReplacementCodecsRemainCurrent(oldModule, retainedCodecs, codecSource))
+                            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(CreateError(
+                                SharpLinkAssemblyRegistrationErrorCode.InvalidObjectState,
+                                "A replacement codec owner started retiring while callbacks ran; callbacks were not replayed.", newAssembly)));
                         retiredControls = CaptureLocalControlsLocked(oldModule);
                         _runtimeContext.CommitGeneratedCodecPublication(codecPublication);
                         _dynamicModules.Add(newAssembly, newModule);
-                        _unregisterOperations.Add(oldAssembly, drainOperation);
                         RetireLocalControls(retiredControls);
                         oldModule.TryBeginDraining();
-                        _proxyLookup.Publish(candidate.Proxies);
+                        published = true; // Runtime/new-module adoption is committed; never roll it back as a draft.
+                        drainOperation = StartRetirementLocked(oldAssembly, oldModule, out retirementReady);
+                        drainObservation = oldModule.RetirementObservation;
+                        retirementTracking = oldModule.RetirementTracking;
                         _generation++;
-                        published = true;
+                        _proxyLookup.Publish(candidate.Proxies);
                         break;
                     }
                 }
@@ -362,37 +368,44 @@ internal sealed partial class ClientAssemblyRegistry
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
         {
-            rollbackException = exception;
-            rollbackError = CreateError(
-                exception is ColdMetadataException cold ? cold.Code : SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
-                $"Assembly replacement failed transactionally: {exception.GetType().Name}: {exception.Message}",
-                newAssembly);
-            return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
+            if (published) AddRetirementFailure(ref publicationFailure, exception);
+            else
+            {
+                rollbackException = exception;
+                rollbackError = CreateError(
+                    exception is ColdMetadataException cold ? cold.Code : SharpLinkAssemblyRegistrationErrorCode.InvalidManifest,
+                    $"Assembly replacement failed transactionally: {exception.GetType().Name}: {exception.Message}",
+                    newAssembly);
+                return ValueTask.FromResult(SharpLinkAssemblyReplacementResult.Failure(rollbackError));
+            }
         }
         finally
         {
-            retainedSourceOwners?.Dispose();
-            if (!published)
+            if (published)
             {
-                candidateSnapshot?.Dispose();
-                try
-                {
-                    codecRegistration?.Dispose();
-                }
-                catch (Exception cleanupException)
-                {
-                    ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupException);
-                }
+                // These are all post-commit obligations of the physical retirement owner.
+                // The outer using declarations are idempotent after explicit disposal here.
+                AttemptRetirementCleanup(retainedSourceOwners, ref publicationFailure);
+                AttemptRetirementCleanup(codecSource, ref publicationFailure);
+                AttemptRetirementCleanup(preparation, ref publicationFailure);
+                try { NotifyLocalRetirement(retiredControls); }
+                catch (Exception exception) { AddRetirementFailure(ref publicationFailure, exception); }
+                retirementReady!.TrySetResult(publicationFailure);
+            }
+            else
+            {
+                Exception? cleanupFailure = null;
+                AttemptRetirementCleanup(retainedSourceOwners, ref cleanupFailure);
+                AttemptRetirementCleanup(candidateSnapshot, ref cleanupFailure);
+                AttemptRetirementCleanup(codecRegistration, ref cleanupFailure);
+                AttemptRetirementCleanup(codecSource, ref cleanupFailure);
+                AttemptRetirementCleanup(preparation, ref cleanupFailure);
+                if (cleanupFailure is not null)
+                    ThrowAfterAssemblyRollback(rollbackError, rollbackException, cleanupFailure);
             }
         }
 
-        _trackFrameworkTask(
-            drainOperation!,
-            "DynamicAssemblyReplacementDrain",
-            TaskObservationMode.ExternallyObserved);
-        NotifyLocalRetirement(retiredControls);
-        _ = CompleteUnregisterOperationAsync(oldAssembly, oldModule!, gracefulTimeout, drainCompletion!);
-        return WaitForReplacementAsync(drainOperation!, cancellationToken);
+        return WaitForReplacementRetirementAsync(drainOperation!, oldModule!, drainObservation, retirementTracking, gracefulTimeout, cancellationToken);
     }
 
     internal ValueTask<SharpLinkAssemblyUnregisterResult> UnregisterAssemblyAsync(
@@ -402,56 +415,113 @@ internal sealed partial class ClientAssemblyRegistry
     {
         ArgumentNullException.ThrowIfNull(assembly);
         ArgumentOutOfRangeException.ThrowIfLessThan(gracefulTimeout, TimeSpan.Zero);
+        ColdMetadataPreparation.ThrowIfCallbackReentry(_runtimeContext.Domain);
         Task<SharpLinkAssemblyUnregisterResult> operation;
-        ClientLocalContractControl[] retiredControls;
+        SharpLinkDynamicModule? module;
+        Task<(Exception? Failure, bool SupervisorOwned)>? observation;
+        Task<Exception?>? tracking;
+        TaskCompletionSource<Exception?>? retirementReady = null;
+        ClientLocalContractControl[] retiredControls = [];
         lock (_gate)
         {
-            if (_unregisterOperations.TryGetValue(assembly, out operation!))
-                return WaitForUnregisterAsync(operation, cancellationToken);
-            if (!_dynamicModules.TryGetValue(assembly, out var module))
-                return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
-            EnsureNoDynamicDependants(module);
-            var completion = new TaskCompletionSource<SharpLinkAssemblyUnregisterResult>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            operation = completion.Task;
-            retiredControls = CaptureLocalControlsLocked(module);
-            _unregisterOperations.Add(assembly, operation);
-            RetireLocalControls(retiredControls);
-            module.TryBeginDraining();
-            _ = CompleteUnregisterOperationAsync(assembly, module, gracefulTimeout, completion);
-            if (_stateProvider() != SharpLinkConnectionState.Draining)
+            if (_unregisterOperations.TryGetValue(assembly, out var existing))
             {
-                _trackFrameworkTask(
-                    operation,
-                    "DynamicAssemblyUnregister",
-                    TaskObservationMode.ExternallyObserved);
+                if (_dynamicModules.TryGetValue(assembly, out var active) && !ReferenceEquals(active, existing.Module))
+                    throw new InvalidOperationException("An unregister operation belongs to another module generation.");
+                operation = existing.Task;
+                module = existing.Module;
             }
+            else
+            {
+                if (!_dynamicModules.TryGetValue(assembly, out module))
+                    return ValueTask.FromResult(new SharpLinkAssemblyUnregisterResult { ReferencesReleased = false });
+                EnsureNoDynamicDependants(module);
+                retiredControls = CaptureLocalControlsLocked(module);
+                RetireLocalControls(retiredControls);
+                module.TryBeginDraining();
+                operation = StartRetirementLocked(assembly, module, out retirementReady);
+            }
+            observation = module?.RetirementObservation;
+            tracking = module?.RetirementTracking;
         }
-        NotifyLocalRetirement(retiredControls);
-        return WaitForUnregisterAsync(operation, cancellationToken);
+        Exception? notificationFailure = null;
+        try { NotifyLocalRetirement(retiredControls); }
+        catch (Exception exception) { notificationFailure = exception; }
+        finally { retirementReady?.TrySetResult(notificationFailure); }
+        return WaitForRetirementAsync(operation, module, observation, tracking, gracefulTimeout, cancellationToken);
     }
 
     internal async ValueTask<Exception[]> DrainForShutdownAsync()
     {
         await _metadataPreparationsJoined.ConfigureAwait(false);
-        var dynamicAssemblies = GetDynamicAssembliesForShutdown();
         List<Exception>? failures = null;
-        for (var index = 0; index < dynamicAssemblies.Length; index++)
+        var modules = GetDynamicModulesForShutdown(out var terminal);
+        foreach (var value in terminal)
         {
-            try
+            Exception? original = null;
+            try { await value.Task.ConfigureAwait(false); }
+            catch (Exception exception) { original = PhysicalTaskFailureException.GetRaw(exception); }
+            var observed = await value.Module.RetirementObservation!.ConfigureAwait(false);
+            if (original is not null && !observed.SupervisorOwned) (failures ??= []).Add(original);
+            if (observed.Failure is not null) (failures ??= []).Add(observed.Failure);
+            lock (_gate)
             {
-                await UnregisterAssemblyAsync(dynamicAssemblies[index], TimeSpan.Zero).ConfigureAwait(false);
+                // Released modules no longer expose Assembly. Remove by the exact task entry,
+                // after its late infrastructure outcome has transferred into this Stop owner.
+                var key = _unregisterOperations.FirstOrDefault(pair => ReferenceEquals(pair.Value.Task, value.Task)).Key;
+                if (key is not null) _unregisterOperations.Remove(key);
             }
-            catch (Exception exception)
+        }
+        foreach (var pair in modules)
+        {
+            Task<SharpLinkAssemblyUnregisterResult> operation;
+            Task<(Exception? Failure, bool SupervisorOwned)>? observation;
+            TaskCompletionSource<Exception?>? retirementReady = null;
+            lock (_gate)
             {
-                (failures ??= []).Add(exception);
+                pair.Value.TryBeginDraining();
+                if (_unregisterOperations.TryGetValue(pair.Key, out var existing))
+                {
+                    if (!ReferenceEquals(existing.Module, pair.Value))
+                        throw new InvalidOperationException("Shutdown retirement selected a different module generation.");
+                    operation = existing.Task;
+                }
+                else operation = StartRetirementLocked(pair.Key, pair.Value, out retirementReady);
+                observation = pair.Value.RetirementObservation;
+            }
+            retirementReady?.TrySetResult(null);
+            pair.Value.CancelRemainingCalls();
+            Exception? operationFailure = null;
+            try { await operation.ConfigureAwait(false); }
+            catch (Exception exception) { operationFailure = PhysicalTaskFailureException.GetRaw(exception); }
+            var observed = observation is null ? (Failure: (Exception?)null, SupervisorOwned: false)
+                : await observation.ConfigureAwait(false);
+            if (operationFailure is not null && !observed.SupervisorOwned)
+                (failures ??= []).Add(operationFailure);
+            if (observed.Failure is not null) (failures ??= []).Add(observed.Failure);
+            bool released;
+            lock (_gate)
+            {
+                released = pair.Value.State == SharpLinkDynamicModuleState.Released;
+                // Definitive adoption into this retained Stop owner, not a shutdown-state guess.
+                if (_unregisterOperations.TryGetValue(pair.Key, out var retained) &&
+                    ReferenceEquals(retained.Task, operation) && ReferenceEquals(retained.Module, pair.Value))
+                    _unregisterOperations.Remove(pair.Key);
+            }
+            // Completed faulted is not released. Do not advance to B or Runtime disposal.
+            if (!released)
+            {
+                // This is the existing lifecycle reporter, not a second copy of the task fault.
+                try { await _frameworkTasks.DrainAsync().ConfigureAwait(false); }
+                catch (Exception exception) { (failures ??= []).Add(exception); }
+                if (failures is { Count: 1 }) ThrowRetirementFailure(failures[0]);
+                if (failures is not null) throw new AggregateException(failures);
+                throw new InvalidOperationException("Dynamic module cleanup ended without physical release; dependent ownership is retained.");
             }
         }
         return failures?.ToArray() ?? [];
     }
 
-    // Called only after Client framework/physical cleanup has joined. No published map
-    // or static-manifest root remains when Runtime releases its retained metadata bundle.
     internal void ReleaseMetadataAfterDrain()
     {
         lock (_gate)
@@ -525,29 +595,109 @@ internal sealed partial class ClientAssemblyRegistry
                    SharpLinkConnectionState.Faulted;
     }
 
-    private async Task<SharpLinkAssemblyUnregisterResult> UnregisterCoreAsync(
-        Assembly assembly,
-        SharpLinkDynamicModule module,
-        TimeSpan gracefulTimeout)
+    // Caller holds _gate. The cold readiness gate is released OUTSIDE the registry gate
+    // after publication/notification cleanup; the dictionary roots the actual suspended worker.
+    private Task<SharpLinkAssemblyUnregisterResult> StartRetirementLocked(
+        Assembly assembly, SharpLinkDynamicModule module, out TaskCompletionSource<Exception?>? ready)
     {
-        module.TryBeginDraining();
-        var drainTask = module.WaitForDrainAsync();
-        if (!drainTask.IsCompleted)
+        ready = null;
+        if (module.State == SharpLinkDynamicModuleState.Released && module.RetirementOperation is { } completed)
+            return completed;
+        ready = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        module.RetirementRegistration = null;
+        var tracking = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        module.RetirementTracking = tracking.Task;
+        var operation = RetireModulePhysicalAsync(assembly, module, ready.Task, tracking);
+        module.RetirementOperation = operation;
+        _unregisterOperations.Add(assembly, (operation, module));
+        module.RetirementObservation = ObserveRetirementExitAsync(assembly, module, operation);
+        return operation;
+    }
+
+    private async Task<SharpLinkAssemblyUnregisterResult> RetireModulePhysicalAsync(
+        Assembly assembly, SharpLinkDynamicModule module, Task<Exception?> ready,
+        TaskCompletionSource<Exception?> tracking)
+    {
+        var failure = await ready.ConfigureAwait(false);
+        Task<SharpLinkAssemblyUnregisterResult> operation;
+        bool supervise;
+        lock (_gate)
         {
-            if (!await SharpLinkDynamicModule.WaitForDrainAsync(
-                    drainTask,
-                    gracefulTimeout,
-                    _runtimeContext.TimeProvider).ConfigureAwait(false))
+            operation = _unregisterOperations[assembly].Task;
+            supervise = !_shutdownStarted;
+        }
+        FrameworkTaskRegistration? receipt = null;
+        Exception? trackingFailure = null;
+        if (supervise)
+        {
+            try { _frameworkTasks.TrackOwnedStrictPhysicalTail(operation, "DynamicAssemblyPhysicalRetirement", module, ref receipt); }
+            catch (Exception exception)
+            {
+                trackingFailure = exception;
+                AddRetirementFailure(ref failure, exception);
+            }
+            finally { module.RetirementRegistration = receipt; }
+        }
+        tracking.TrySetResult(trackingFailure);
+        try
+        {
+            await module.WaitForDrainAsync().ConfigureAwait(false);
+            await ReleaseModuleAsync(assembly, module).ConfigureAwait(false);
+        }
+        catch (Exception exception) { AddRetirementFailure(ref failure, PhysicalTaskFailureException.GetRaw(exception)); }
+        if (failure is not null) throw PhysicalTaskFailureException.From(failure);
+        return new SharpLinkAssemblyUnregisterResult { ReferencesReleased = true };
+    }
+
+    private async Task<(Exception? Failure, bool SupervisorOwned)> ObserveRetirementExitAsync(
+        Assembly assembly, SharpLinkDynamicModule module, Task<SharpLinkAssemblyUnregisterResult> operation)
+    {
+        // Actual task remains in the dictionary through this exact terminal receipt handling.
+        try { await operation.ConfigureAwait(false); }
+        catch { /* Raw operation outcome remains with its explicit caller/supervisor owner. */ }
+        Exception? failure = null;
+        var receipt = module.RetirementRegistration;
+        try
+        {
+            if (receipt is not null)
+                receipt.Supervisor.CompleteAcceptedRegistration(receipt);
+        }
+        catch (Exception exception) { failure = exception; }
+        finally
+        {
+            lock (_gate)
+                if (receipt is not null && failure is null &&
+                    _unregisterOperations.TryGetValue(assembly, out var current) &&
+                    ReferenceEquals(current.Task, operation) && ReferenceEquals(current.Module, module))
+                    _unregisterOperations.Remove(assembly);
+                // Receipt-null is NOT proof that Stop has adopted this outcome. Retain the exact
+                // task/module until actual Stop joins it, even after physical removal or success.
+                // Independent observer failures follow the same retained transfer rule.
+        }
+        return (failure, receipt is not null);
+    }
+
+    private async ValueTask<SharpLinkAssemblyUnregisterResult> WaitForRetirementAsync(
+        Task<SharpLinkAssemblyUnregisterResult> operation, SharpLinkDynamicModule? module,
+        Task<(Exception? Failure, bool SupervisorOwned)>? observation, Task<Exception?>? tracking,
+        TimeSpan gracefulTimeout, CancellationToken cancellationToken)
+    {
+        var trackingFailure = tracking is null ? null : cancellationToken.CanBeCanceled
+            ? await tracking.WaitAsync(cancellationToken).ConfigureAwait(false)
+            : await tracking.ConfigureAwait(false);
+        // A failed registration is joined by its actual caller/physical lifecycle owner;
+        // it is never mislabeled as a successfully detached zero-grace operation.
+        if (trackingFailure is null && module is not null && !module.WaitForDrainAsync().IsCompleted)
+        {
+            var drained = await SharpLinkTimer.WaitAsync(module.WaitForDrainAsync(), gracefulTimeout,
+                _runtimeContext.TimeProvider, cancellationToken).ConfigureAwait(false);
+            if (!drained)
             {
                 module.CancelRemainingCalls();
                 await Task.Yield();
-                if (!drainTask.IsCompleted)
+                if (!module.WaitForDrainAsync().IsCompleted)
                 {
                     module.MarkDrainTimedOut();
-                    _trackFrameworkTask(
-                        CompleteTimedOutUnregisterAsync(assembly, module, drainTask),
-                        "DynamicAssemblyTimedOutUnregisterCleanup",
-                        TaskObservationMode.FrameworkOwned);
                     return new SharpLinkAssemblyUnregisterResult
                     {
                         ReferencesReleased = false,
@@ -557,96 +707,195 @@ internal sealed partial class ClientAssemblyRegistry
                 }
             }
         }
-        ReleaseModule(assembly, module);
-        return new SharpLinkAssemblyUnregisterResult { ReferencesReleased = true };
-    }
-
-    private async Task CompleteUnregisterOperationAsync(
-        Assembly assembly,
-        SharpLinkDynamicModule module,
-        TimeSpan gracefulTimeout,
-        TaskCompletionSource<SharpLinkAssemblyUnregisterResult> completion)
-    {
-        // Unregister publishes its tracker under the registry gate; disposal callbacks
-        // and cleanup-map preparation must begin only after that caller leaves the gate.
-        await Task.Yield();
+        Exception? failure = null;
+        SharpLinkAssemblyUnregisterResult result = default!;
         try
         {
-            completion.TrySetResult(await UnregisterCoreAsync(
-                assembly, module, gracefulTimeout).ConfigureAwait(false));
+            result = cancellationToken.CanBeCanceled
+                ? await operation.WaitAsync(cancellationToken).ConfigureAwait(false)
+                : await operation.ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            completion.TrySetException(exception);
+            // Cancellation of this waiter must not turn into an unbounded observer join.
+            if (!operation.IsCompleted) throw;
+            failure = PhysicalTaskFailureException.GetRaw(exception);
         }
-        finally
+        if (observation is not null)
         {
-            lock (_gate)
-                _unregisterOperations.Remove(assembly);
+            var observed = await observation.ConfigureAwait(false);
+            if (observed.Failure is not null) AddRetirementFailure(ref failure, observed.Failure);
         }
+        ThrowRetirementFailure(failure);
+        return result;
     }
 
-    private async Task CompleteTimedOutUnregisterAsync(Assembly assembly, SharpLinkDynamicModule module, Task drainTask)
-    {
-        await drainTask.ConfigureAwait(false);
-        ReleaseModule(assembly, module);
-    }
+    private async ValueTask<SharpLinkAssemblyReplacementResult> WaitForReplacementRetirementAsync(
+        Task<SharpLinkAssemblyUnregisterResult> operation, SharpLinkDynamicModule module,
+        Task<(Exception? Failure, bool SupervisorOwned)>? observation, Task<Exception?>? tracking,
+        TimeSpan gracefulTimeout, CancellationToken cancellationToken)
+        => SharpLinkAssemblyReplacementResult.Published(
+            await WaitForRetirementAsync(operation, module, observation, tracking, gracefulTimeout, cancellationToken).ConfigureAwait(false));
 
-    private void ReleaseModule(Assembly assembly, SharpLinkDynamicModule module)
+    private async Task ReleaseModuleAsync(Assembly assembly, SharpLinkDynamicModule module)
     {
-        RpcGeneratedManifestRegistration codecRegistration;
-        while (true)
+        Task<Exception?>? existing;
+        RpcGeneratedManifestRegistration? codecRegistration = null;
+        IDisposable? metadata = null;
+        lock (_gate)
         {
-            // Retained cleanup storage is not management admission and remains usable after seal.
-            using var storage = _runtimeContext.CreateMetadataStorage();
-            using var codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
-            ClientProxySnapshot? nextSnapshot = null;
-            var published = false;
-            try
+            existing = module.CleanupCompletion?.Task;
+            if (existing is null)
             {
-                long generation;
-                Dictionary<Type, RpcGeneratedCodecRegistration> nextFactories;
-                lock (_gate)
+                if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
+                    return;
+                codecRegistration = module.CodecRegistration;
+                metadata = codecRegistration.MetadataLifetime.Retain();
+            }
+        }
+        if (existing is not null)
+        {
+            ThrowRetirementFailure(await existing.ConfigureAwait(false));
+            return;
+        }
+
+        var completion = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Exception? failure = null;
+        var claimed = false;
+        try
+        {
+            while (!claimed && existing is null)
+            {
+                ColdMetadataPreparation? storage = null;
+                SharpLinkRuntimeContext.CapturedGeneratedCodecs? codecSource = null;
+                SharpLinkRuntimeContext.PreparedGeneratedCodecPublication? publication = null;
+                ClientProxySnapshot? nextSnapshot = null;
+                var published = false;
+                var retry = false;
+                try
                 {
-                    if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
-                        return;
-                    generation = _generation;
-                    var currentSnapshot = _proxyLookup.Current;
-                    storage.ReserveCollection(currentSnapshot.Map.Count);
-                    storage.ReserveCollection(currentSnapshot.Map.Count);
-                    var nextProxies = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>(currentSnapshot.Map.Count);
-                    foreach (var pair in currentSnapshot.Map)
-                        if (!ReferenceEquals(pair.Value.Module, module)) nextProxies.Add(pair.Key, pair.Value);
-                    nextSnapshot = ClientProxySnapshot.Create(nextProxies.ToFrozenDictionary(), storage, currentSnapshot);
-                    var factories = codecSource.Registrations;
-                    storage.ReserveCollection(factories.Count);
-                    nextFactories = new Dictionary<Type, RpcGeneratedCodecRegistration>(factories.Count);
-                    foreach (var pair in factories) nextFactories.Add(pair.Key, pair.Value);
-                    codecRegistration = module.CodecRegistration;
-                    foreach (var codecType in codecRegistration.Codecs.Keys)
+                    // Owned cleanup storage, not new management admission after shutdown seal.
+                    storage = _runtimeContext.CreateMetadataStorage();
+                    codecSource = _runtimeContext.CaptureGeneratedCodecSnapshot();
+                    long generation;
+                    Dictionary<Type, RpcGeneratedCodecRegistration> nextFactories;
+                    lock (_gate)
                     {
-                        var replacement = FindReplacementCodec(codecType, module, codecSource);
-                        if (replacement is null) nextFactories.Remove(codecType);
-                        else nextFactories[codecType] = replacement;
+                        existing = module.CleanupCompletion?.Task;
+                        if (existing is not null) continue;
+                        if (!_dynamicModules.TryGetValue(assembly, out var current) || !ReferenceEquals(current, module))
+                            throw new InvalidOperationException("The unclaimed retirement module disappeared.");
+                        generation = _generation;
+                        var currentSnapshot = _proxyLookup.Current;
+                        storage.ReserveCollection(currentSnapshot.Map.Count);
+                        storage.ReserveCollection(currentSnapshot.Map.Count);
+                        var nextProxies = new Dictionary<Type, SharpLinkClient.ClientProxyRegistration>(currentSnapshot.Map.Count);
+                        foreach (var pair in currentSnapshot.Map)
+                            if (!ReferenceEquals(pair.Value.Module, module)) nextProxies.Add(pair.Key, pair.Value);
+                        nextSnapshot = ClientProxySnapshot.Create(nextProxies.ToFrozenDictionary(), storage, currentSnapshot);
+                        var factories = codecSource.Registrations;
+                        storage.ReserveCollection(factories.Count);
+                        nextFactories = new Dictionary<Type, RpcGeneratedCodecRegistration>(factories.Count);
+                        foreach (var pair in factories) nextFactories.Add(pair.Key, pair.Value);
+                        foreach (var codecType in codecRegistration!.Codecs.Keys)
+                        {
+                            var replacement = FindReplacementCodec(codecType, module, codecSource);
+                            if (replacement is null) nextFactories.Remove(codecType);
+                            else nextFactories[codecType] = replacement;
+                        }
+                    }
+                    publication = _runtimeContext.PrepareGeneratedCodecPublication(nextFactories, sourceSnapshot: codecSource);
+                    lock (_gate)
+                    {
+                        existing = module.CleanupCompletion?.Task;
+                        if (existing is not null) continue;
+                        if (generation != _generation || !_runtimeContext.IsCurrentGeneratedCodecPublication(publication) ||
+                            !ReplacementCodecsRemainCurrent(module, nextFactories, codecSource))
+                        {
+                            retry = true;
+                        }
+                        else
+                        {
+                            _runtimeContext.CommitGeneratedCodecPublication(publication);
+                            module.CleanupCompletion = completion;
+                            claimed = true;
+                            _generation++;
+                            // Publish swaps before releasing its previous snapshot. A refund failure
+                            // is a winner-owned cleanup error, never permission to discard the new map.
+                            published = true;
+                            _proxyLookup.Publish(nextSnapshot);
+                        }
                     }
                 }
-                using var publication = _runtimeContext.PrepareGeneratedCodecPublication(nextFactories, sourceSnapshot: codecSource);
+                catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
+                finally
+                {
+                    AttemptRetirementCleanup(publication, ref failure);
+                    if (!published) AttemptRetirementCleanup(nextSnapshot, ref failure);
+                    AttemptRetirementCleanup(codecSource, ref failure);
+                    AttemptRetirementCleanup(storage, ref failure);
+                }
+                if (failure is not null || (!claimed && existing is null && !retry)) break;
+            }
+            if (claimed)
+            {
+                try { _runtimeContext.ReleaseGeneratedManifest(codecRegistration!); }
+                catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
+                // Keep A dependency-visible throughout every actual adapter/codec callback.
                 lock (_gate)
                 {
-                    if (generation != _generation || !_runtimeContext.IsCurrentGeneratedCodecPublication(publication))
-                        continue; // Rebuild only host maps; never reload a manifest or replay a factory.
-                    _runtimeContext.CommitGeneratedCodecPublication(publication);
-                    _proxyLookup.Publish(nextSnapshot);
-                    _dynamicModules.Remove(assembly);
-                    _generation++;
-                    published = true;
-                    break;
+                    if (_dynamicModules.TryGetValue(assembly, out var current) && ReferenceEquals(current, module))
+                    {
+                        _dynamicModules.Remove(assembly);
+                        _generation++;
+                    }
+                    module.MarkReleased();
                 }
             }
-            finally { if (!published) nextSnapshot?.Dispose(); }
         }
-        try { _runtimeContext.ReleaseGeneratedManifest(codecRegistration); }
-        finally { module.MarkReleased(); }
+        catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
+        finally
+        {
+            // Root clearing precedes the last standing metadata refund, outside the registry gate.
+            AttemptRetirementCleanup(metadata, ref failure);
+            if (claimed) completion.TrySetResult(failure);
+        }
+        if (existing is not null)
+        {
+            var original = await existing.ConfigureAwait(false);
+            if (original is not null) AddRetirementFailure(ref failure, original);
+        }
+        ThrowRetirementFailure(failure);
+    }
+
+    private bool ReplacementCodecsRemainCurrent(
+        SharpLinkDynamicModule removedModule,
+        IReadOnlyDictionary<Type, RpcGeneratedCodecRegistration> expected,
+        SharpLinkRuntimeContext.CapturedGeneratedCodecs codecSource)
+    {
+        // Caller holds the host gate. Logical draining need not change _generation.
+        foreach (var type in removedModule.CodecRegistration.Codecs.Keys)
+        {
+            expected.TryGetValue(type, out var selected);
+            if (!ReferenceEquals(selected, FindReplacementCodec(type, removedModule, codecSource)))
+                return false;
+        }
+        return true;
+    }
+
+    private static void AttemptRetirementCleanup(IDisposable? resource, ref Exception? failure)
+    {
+        try { resource?.Dispose(); }
+        catch (Exception exception) { AddRetirementFailure(ref failure, exception); }
+    }
+
+    private static void AddRetirementFailure(ref Exception? failure, Exception exception)
+        => failure = failure is null ? exception : new AggregateException(failure, exception);
+
+    private static void ThrowRetirementFailure(Exception? failure)
+    {
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private RpcGeneratedCodecRegistration? FindReplacementCodec(
@@ -662,7 +911,7 @@ internal sealed partial class ClientAssemblyRegistry
         }
         foreach (var candidate in _dynamicModules.Values)
         {
-            if (ReferenceEquals(candidate, removedModule))
+            if (ReferenceEquals(candidate, removedModule) || candidate.State != SharpLinkDynamicModuleState.Running)
                 continue;
             if (candidate.CodecRegistration.Codecs.TryGetValue(targetType, out var replacement))
                 return replacement;

@@ -97,7 +97,7 @@ internal sealed partial class SharpLinkClient :
             composition.StaticManifests,
             _proxies,
             () => State,
-            TrackFrameworkTask);
+            _frameworkTasks);
 
         // Builder has already selected and materialized exactly one tagged topology. Creating the
         // Client-owned cluster object here does not enumerate endpoints, invoke a transport factory,

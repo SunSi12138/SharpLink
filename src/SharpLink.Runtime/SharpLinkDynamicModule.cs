@@ -207,6 +207,17 @@ internal sealed class SharpLinkDynamicModule
     private int _state;
     private int _preparationOwners; // Cold registration callbacks only; never ordinary RPC admission.
 
+    // Cold retirement only. Claim/operation election uses the host registry gate. The worker
+    // publishes its receipt before tracking-ready/task completion; observers read it only after
+    // awaiting that exact task, rather than relying on an unrelated registry lock.
+    // Deliberately survives MarkReleased: a caller holding the exact old module must still
+    // join final metadata refund and observe the same outcome after dictionary removal.
+    internal TaskCompletionSource<Exception?>? CleanupCompletion { get; set; }
+    internal Task<SharpLinkAssemblyUnregisterResult>? RetirementOperation { get; set; }
+    internal Task<Exception?>? RetirementTracking { get; set; }
+    internal FrameworkTaskRegistration? RetirementRegistration { get; set; }
+    internal Task<(Exception? Failure, bool SupervisorOwned)>? RetirementObservation { get; set; }
+
     internal SharpLinkDynamicModule(
         Assembly assembly,
         ISharpLinkGeneratedAssemblyManifest manifest,
