@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks.Sources;
+using System.Threading.Channels;
 using SharpLink.Client;
 using SharpLink.UnitTests.Runtime;
 
@@ -271,6 +272,7 @@ public sealed class ClientHeadEmissionDispositionTests
             var deadline = new SharpLinkException(SharpLinkErrorCode.DeadlineExceeded, "selected before physical output fault");
             Task<ClientStreamPublicationGroup.HeadEmissionDecision>? ready = null;
             Task? physical = null;
+            Task<bool>? acceptedCleanupFence = null;
             if (terminalBeforeOutput)
             {
                 ready = f.Own(f.Group.ObserveHeadEmissionAsync().AsTask());
@@ -285,6 +287,8 @@ public sealed class ClientHeadEmissionDispositionTests
                 Ensure(!physical.IsCompleted && f.Connection.PendingCalls.ActiveCount == 1 &&
                     f.Connection.CallAdmissionReservationCount == 1,
                     "actual physical finish/fence and original capacity remain held after logical terminal");
+                acceptedCleanupFence = await f.CaptureAcceptedCleanupFence(raw);
+                f.AssertHeadOutputHeld(raw); // Recheck after observation, immediately before release.
             }
             f.Output.Release.TrySetResult();
             var rawOutcome = await ActualStageFailure(raw);
@@ -293,6 +297,13 @@ public sealed class ClientHeadEmissionDispositionTests
                 "actual pump normalizes one exact transport cause; nested intentional aggregate is unchanged", rawOutcome);
             var emission = rawOutcome!;
             f.Accept(raw);
+            if (acceptedCleanupFence is not null)
+            {
+                var fenceOutcome = await ActualStageFailure(acceptedCleanupFence);
+                Ensure(ReferenceEquals(fenceOutcome, emission),
+                    "the positively accepted original cleanup fence receives the same exact emission failure", fenceOutcome);
+                f.Accept(acceptedCleanupFence);
+            }
             Ensure(f.EmissionObserver.Calls == 1 && f.EmissionObserver.RequestId == f.Group.RequestId &&
                 ReferenceEquals(f.EmissionObserver.Observed, emission),
                 "the actual emission observer received the same normalized source before raw completion");
@@ -548,6 +559,175 @@ public sealed class ClientHeadEmissionDispositionTests
                 "actual accepted transaction", rejection);
             Ensure(emission.IsCompletedSuccessfully, "selected finalization does not return a cancellation-forwarding head wrapper");
             await emission;
+        }
+        // This diagnostic is intentionally pinned to the reviewed .NET 10.0.2 channel
+        // implementation. It never consumes/requeues a frame or adds a production probe.
+        internal async Task<Task<bool>> CaptureAcceptedCleanupFence(Task<bool> raw)
+        {
+            AssertHeadOutputHeld(raw);
+            var witness = new AcceptedFenceWitness(_session!);
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            while (true)
+            {
+                if (System.Diagnostics.Stopwatch.GetElapsedTime(started) >= Limit)
+                    throw new TimeoutException("Actual cleanup-fence admission was not witnessed within the original bound.");
+                var snapshot = witness.Capture(this, raw); // Synchronous: no frame in an async state machine.
+                // Register the actual source before ANY assertion/exit can reach Finish's Release.
+                if (snapshot.Completion is { } captured) _ = Own(captured);
+                var failure = snapshot.Failure;
+                if (System.Diagnostics.Stopwatch.GetElapsedTime(started) >= Limit)
+                {
+                    var timeout = new TimeoutException("Actual cleanup-fence observation exceeded the original bound.");
+                    failure = failure is null ? timeout : new AggregateException(failure, timeout);
+                }
+                if (failure is not null)
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+                AssertHeadOutputHeld(raw); // Monitor is no longer held; recheck sole-reader exclusion.
+                Ensure(!snapshot.Invalid, "unexpected frame/ownership shape in the held normal queue");
+                if (snapshot.Completion is { } completion)
+                {
+                    Ensure(snapshot.Total == 3 && snapshot.Cancels == 1 && snapshot.Terminals == 1 &&
+                        snapshot.Fences == 1 && !completion.IsCompleted,
+                        "actual accepted cohort must be exactly Cancel, stream1 terminal and its early fence");
+                    return completion;
+                }
+                await Task.Yield(); // Finite phase observation, not a delay guessed to imply admission.
+            }
+        }
+        internal void AssertHeadOutputHeld(Task<bool> raw)
+            => Ensure(IsHeadOutputHeld(raw), "actual head Flush/raw source/release/session no longer prove a paused sole reader");
+        private bool IsHeadOutputHeld(Task<bool> raw)
+            => Output.Entered.Task.IsCompletedSuccessfully && !Output.Release.Task.IsCompleted && !raw.IsCompleted &&
+                _session!.ProtocolPhase == RpcSessionProtocolPhase.Ready && _session.IsConnected;
+
+        private struct FenceSnapshot
+        {
+            internal int Total, Cancels, Terminals, Fences;
+            internal bool Invalid;
+            internal Task<bool>? Completion;
+            internal Exception? Failure;
+        }
+        private sealed class AcceptedFenceWitness
+        {
+            private readonly object _channel;
+            private readonly object _sync;
+            private readonly MethodInfo _enumerate;
+
+            internal AcceptedFenceWitness(RpcSession session)
+            {
+                var assembly = typeof(Channel<OwnedFrame>).Assembly;
+                Ensure(assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ==
+                    "10.0.2+44525024595742ebe09023abe709df51de65009b",
+                    "accepted-fence observation requires the reviewed channel runtime bytes/version");
+                var pump = typeof(RpcSession).GetMethod("CapturePumpForStop", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(session, null) ?? throw new InvalidOperationException("Actual held Session pump is absent.");
+                Ensure(pump.GetType() == typeof(RpcSession.SendPump), "unexpected actual pump type");
+                _channel = typeof(RpcSession.SendPump).GetField("_normalQueue", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(pump) ?? throw new InvalidOperationException("Actual normal queue is absent.");
+                var expected = assembly.GetType("System.Threading.Channels.SingleConsumerUnboundedChannel`1", throwOnError: true)!
+                    .MakeGenericType(typeof(OwnedFrame));
+                Ensure(_channel.GetType() == expected && _channel is Channel<OwnedFrame>, "unexpected actual normal-channel type");
+                _sync = expected.GetProperty("SyncObj", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_channel)
+                    ?? throw new InvalidOperationException("Actual channel synchronization object is absent.");
+                var items = expected.GetField("_items", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(_channel);
+                Ensure(ReferenceEquals(_sync, items) && _sync.GetType().IsGenericType &&
+                    _sync.GetType().GetGenericTypeDefinition().FullName ==
+                        "System.Collections.Concurrent.SingleProducerSingleConsumerQueue`1" &&
+                    _sync.GetType().GenericTypeArguments.SequenceEqual([typeof(OwnedFrame)]),
+                    "channel SyncObj must be its actual reviewed producer-synchronized item queue");
+                var contract = assembly.GetType("System.Threading.Channels.IDebugEnumerable`1", throwOnError: true)!
+                    .MakeGenericType(typeof(OwnedFrame));
+                Ensure(contract.IsInstanceOfType(_channel), "actual channel has no reviewed non-consuming enumeration interface");
+                _enumerate = contract.GetMethod("GetEnumerator")!;
+                Ensure(_enumerate.GetParameters().Length == 0 && _enumerate.ReturnType == typeof(IEnumerator<OwnedFrame>),
+                    "unexpected non-consuming enumeration signature");
+            }
+
+            // The writer monitor alone cannot stop the lock-free consumer. The independently
+            // held original Flush is required before, during and after this entire snapshot.
+            // Only counters and the original completion Task leave; no OwnedFrame/Memory/owner
+            // or enumerator is stored on this object or in an async state machine.
+            internal FenceSnapshot Capture(Fixture fixture, Task<bool> raw)
+            {
+                var result = new FenceSnapshot();
+                var entered = false;
+                IEnumerator<OwnedFrame>? enumerator = null;
+                try
+                {
+                    Monitor.TryEnter(_sync, ref entered);
+                    if (entered)
+                    {
+                        if (!fixture.IsHeadOutputHeld(raw)) result.Invalid = true;
+                        else
+                        {
+                            enumerator = (IEnumerator<OwnedFrame>?)_enumerate.Invoke(_channel, null);
+                            if (enumerator is null) result.Invalid = true;
+                            else
+                            {
+                                while (enumerator.MoveNext())
+                                {
+                                    var frame = enumerator.Current;
+                                    ++result.Total;
+                                    if (result.Total > 3) { result.Invalid = true; break; }
+                                    Inspect(frame, fixture.Group, ref result);
+                                }
+                            }
+                        }
+                        if (!fixture.IsHeadOutputHeld(raw)) result.Invalid = true;
+                    }
+                }
+                catch (Exception failure) { result.Failure = failure; }
+                finally
+                {
+                    try { enumerator?.Dispose(); }
+                    catch (Exception cleanup) { AddFailure(ref result, cleanup); }
+                    // Dispose failure must never prevent releasing the actual producer monitor.
+                    if (entered)
+                        try { Monitor.Exit(_sync); }
+                        catch (Exception cleanup) { AddFailure(ref result, cleanup); }
+                }
+                return result;
+            }
+            private static void AddFailure(ref FenceSnapshot result, Exception failure)
+                => result.Failure = result.Failure is null ? failure : new AggregateException(result.Failure, failure);
+
+            private static void Inspect(in OwnedFrame frame, ClientStreamPublicationGroup group, ref FenceSnapshot result)
+            {
+                if (frame.PublicationRole == RpcFramePublicationRole.StreamCleanupFence)
+                {
+                    ++result.Fences;
+                    // Capture before other validation: even a malformed known source is retained.
+                    result.Completion ??= frame.FlushCompletion?.Task;
+                    result.Invalid |= result.Fences != 1 || !ReferenceEquals(frame.Publication, group) ||
+                        frame.Length != 0 || frame.ForceFlush || frame.IsProtocolProgress ||
+                        frame.FlushCompletion is null || frame.FlushCompletion.Task.IsCompleted;
+                    return;
+                }
+                var span = frame.Memory.Span;
+                if (frame.IsProtocolProgress || frame.ForceFlush || frame.FlushCompletion is not null ||
+                    span.Length != frame.Length || span.Length < ProtocolV2Constants.HeaderBytes ||
+                    span[0] != ProtocolV2Constants.Magic ||
+                    BinaryPrimitives.ReadInt32LittleEndian(span[1..]) != span.Length - ProtocolV2Constants.HeaderBytes ||
+                    BinaryPrimitives.ReadInt64LittleEndian(span[7..]) != group.RequestId)
+                { result.Invalid = true; return; }
+                if (span[5] == (byte)ProtocolV2FrameType.Cancel)
+                {
+                    ++result.Cancels;
+                    result.Invalid |= result.Cancels != 1 || frame.Publication is not null ||
+                        frame.PublicationRole != RpcFramePublicationRole.None || span[6] != (byte)ProtocolV2FrameFlags.None ||
+                        span.Length != ProtocolV2Constants.HeaderBytes + 1 ||
+                        span[ProtocolV2Constants.HeaderBytes] != (byte)ProtocolV2CancelReason.DeadlineExceeded;
+                }
+                else if (span[5] == (byte)ProtocolV2FrameType.StreamComplete)
+                {
+                    ++result.Terminals;
+                    result.Invalid |= result.Terminals != 1 || !ReferenceEquals(frame.Publication, group) ||
+                        frame.PublicationRole != RpcFramePublicationRole.StreamTerminal || frame.StreamId != 1 ||
+                        span[6] != (byte)ProtocolV2FrameFlags.Error || span.Length < ProtocolV2Constants.HeaderBytes + 2 ||
+                        BinaryPrimitives.ReadUInt16LittleEndian(span[ProtocolV2Constants.HeaderBytes..]) != 1;
+                }
+                else result.Invalid = true;
+            }
         }
         internal Task<bool> RawSource()
             => Own((Task<bool>)(typeof(ClientStreamPublicationGroup).GetField("_headEmissionSource", BindingFlags.Instance | BindingFlags.NonPublic)!
